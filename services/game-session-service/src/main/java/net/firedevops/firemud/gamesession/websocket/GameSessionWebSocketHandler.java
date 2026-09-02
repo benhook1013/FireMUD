@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
@@ -687,6 +689,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 resolvePointerVersion(session),
                 null,
                 null,
+                null,
                 resolveLocaleTag(session)),
             gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
                 tenantId.get(), bootstrapGameInstanceId.get()));
@@ -705,6 +708,31 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     var connectContext = maybeContext.orElseThrow();
+    List<GameplayAdmissionPointerSnapshot> currentPointers;
+    try {
+      currentPointers =
+          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+              connectContext.tenantId(), connectContext.gameInstanceId());
+    } catch (RuntimeException ex) {
+      logger.warn("Unable to resolve runtime pointer for first-party bootstrap", ex);
+      closeInvalidFirstPartyContext(session);
+      return;
+    }
+    Optional<GameplayAdmissionPointerSnapshot> currentPointer =
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(currentPointers);
+    if (currentPointer.isEmpty()
+        || !GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+            currentPointers,
+            connectContext.tenantId(),
+            connectContext.gameInstanceId(),
+            connectContext.worldSlug(),
+            connectContext.realmSlug(),
+            connectContext.pointerVersion(),
+            currentPointer.orElseThrow().stateScope())) {
+      closeInvalidFirstPartyContext(session);
+      return;
+    }
+    String playableStateScope = currentPointer.orElseThrow().stateScope();
     firstPartyConnectContextRegistry.register(sessionId, connectContext);
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(
@@ -719,6 +747,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               connectContext.worldSlug(),
               connectContext.realmSlug(),
               connectContext.pointerVersion(),
+              playableStateScope,
               connectContext.connectScopeId(),
               connectContext.connectRequestId(),
               resolveLocaleTag(session)));
@@ -732,6 +761,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             connectContext.worldSlug(),
             connectContext.realmSlug(),
             connectContext.pointerVersion(),
+            playableStateScope,
             connectContext.connectScopeId(),
             connectContext.connectRequestId(),
             resolveLocaleTag(session)));
@@ -767,7 +797,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 existing.worldSlug(),
                 existing.realmSlug(),
                 existing.pointerVersion(),
-                null,
+                incomingShell.playableStateScope(),
                 incomingShell.connectScopeId(),
                 incomingShell.connectRequestId()));
         return;
@@ -812,7 +842,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             incomingShell.worldSlug(),
             incomingShell.realmSlug(),
             incomingShell.pointerVersion(),
-            null,
+            incomingShell.playableStateScope(),
             incomingShell.connectScopeId(),
             incomingShell.connectRequestId()));
   }
@@ -832,6 +862,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       String worldSlug,
       String realmSlug,
       long pointerVersion,
+      String playableStateScope,
       String connectScopeId,
       String connectRequestId,
       String localeTag) {
@@ -850,7 +881,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         worldSlug,
         realmSlug,
         pointerVersion,
-        null,
+        playableStateScope,
         connectScopeId,
         connectRequestId);
   }

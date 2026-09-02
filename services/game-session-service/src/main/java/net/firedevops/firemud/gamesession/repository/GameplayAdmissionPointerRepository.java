@@ -7,10 +7,13 @@ import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPo
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.exception.DataAccessException;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -69,10 +72,48 @@ public class GameplayAdmissionPointerRepository {
 
   public GameplayAdmissionPointer save(GameplayAdmissionPointer entity) {
     if (entity.getId() == null) {
+      lockRuntimeTargetForCreation(entity);
+      if (countByRuntimeTarget(entity.getTenantId(), entity.getGameInstanceId()) != 0) {
+        throw new IllegalStateException(
+            "Admission pointer creation conflicted with another route for the runtime target");
+      }
       GameplayAdmissionPointerRecord record = dsl.newRecord(GAMEPLAY_ADMISSION_POINTER);
       populate(record, entity);
-      record.store();
+      try {
+        record.store();
+      } catch (DataAccessException ex) {
+        throw new IllegalStateException(
+            "Admission pointer creation conflicted with another committed pointer", ex);
+      }
       return findById(record.getId()).orElseThrow();
+    }
+    if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 1L) {
+      throw new IllegalArgumentException("Existing admission pointer must advance its version");
+    }
+    GameplayAdmissionPointer current =
+        findById(entity.getId())
+            .orElseThrow(
+                () ->
+                    new AdmissionPointerVersionMismatchException(
+                        "Admission pointer no longer exists: id=" + entity.getId()));
+    lockRuntimeTargets(current, entity);
+    current =
+        findById(entity.getId())
+            .orElseThrow(
+                () ->
+                    new AdmissionPointerVersionMismatchException(
+                        "Admission pointer no longer exists: id=" + entity.getId()));
+    if (!Long.valueOf(entity.getPointerVersion() - 1L).equals(current.getPointerVersion())) {
+      throw new AdmissionPointerVersionMismatchException(
+          "Admission pointer changed before the requested version could be committed: id="
+              + entity.getId());
+    }
+    long destinationCount =
+        countByRuntimeTargetExcludingId(
+            entity.getTenantId(), entity.getGameInstanceId(), entity.getId());
+    if (destinationCount != 0) {
+      throw new IllegalStateException(
+          "Admission pointer update conflicted with another route for the runtime target");
     }
     int updated =
         dsl.update(GAMEPLAY_ADMISSION_POINTER)
@@ -98,11 +139,18 @@ public class GameplayAdmissionPointerRepository {
             .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATE_REASON, entity.getLastUpdateReason())
             .set(GAMEPLAY_ADMISSION_POINTER.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(GAMEPLAY_ADMISSION_POINTER.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
-            .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(entity.getId()))
+            .where(
+                GAMEPLAY_ADMISSION_POINTER
+                    .ID
+                    .eq(entity.getId())
+                    .and(
+                        GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
+                            entity.getPointerVersion() - 1L)))
             .execute();
     if (updated != 1) {
-      throw new IllegalStateException(
-          "Failed to update gameplay_admission_pointer id=" + entity.getId());
+      throw new AdmissionPointerVersionMismatchException(
+          "Admission pointer changed before the requested version could be committed: id="
+              + entity.getId());
     }
     return findById(entity.getId()).orElseThrow();
   }
@@ -115,6 +163,51 @@ public class GameplayAdmissionPointerRepository {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  private long countByRuntimeTarget(Long tenantId, Long gameInstanceId) {
+    return dsl.fetchCount(
+        dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+            .where(
+                GAMEPLAY_ADMISSION_POINTER
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))));
+  }
+
+  private long countByRuntimeTargetExcludingId(
+      Long tenantId, Long gameInstanceId, Long excludedId) {
+    return dsl.fetchCount(
+        dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+            .where(
+                GAMEPLAY_ADMISSION_POINTER
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(GAMEPLAY_ADMISSION_POINTER.ID.ne(excludedId))));
+  }
+
+  private void lockRuntimeTargets(
+      GameplayAdmissionPointer current, GameplayAdmissionPointer requested) {
+    Stream.of(
+            runtimeTargetLockKey(current.getTenantId(), current.getGameInstanceId()),
+            runtimeTargetLockKey(requested.getTenantId(), requested.getGameInstanceId()))
+        .distinct()
+        .sorted()
+        .forEach(this::lockRuntimeTarget);
+  }
+
+  private void lockRuntimeTarget(String lockKey) {
+    dsl.fetch(
+        "select pg_advisory_xact_lock(hashtextextended(cast(? as text), 0))", lockKey);
+  }
+
+  private static String runtimeTargetLockKey(Long tenantId, Long gameInstanceId) {
+    return tenantId + ":" + gameInstanceId;
+  }
+
+  private void lockRuntimeTargetForCreation(GameplayAdmissionPointer entity) {
+    lockRuntimeTarget(runtimeTargetLockKey(entity.getTenantId(), entity.getGameInstanceId()));
   }
 
   private void populate(GameplayAdmissionPointerRecord record, GameplayAdmissionPointer entity) {

@@ -3338,7 +3338,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
     assertEquals(
-        "world_slug, realm_slug, and pointer_version must be provided together",
+        "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together",
         responseRef.get().getError().getMessage());
     assertEquals(
         1.0, meterRegistry.get("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter().count());

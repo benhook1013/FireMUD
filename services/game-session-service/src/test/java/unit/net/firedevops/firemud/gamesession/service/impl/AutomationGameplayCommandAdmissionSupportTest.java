@@ -589,6 +589,41 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void reusesDuplicateWhenPlayableStateScopeOnlyDiffersByCaseAndWhitespace() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, automationRequest());
+    existing.setPlayableStateScope(" shared ");
+    existing.setCommandId("auto-existing");
+    existing.setExecutionOutcome("STAGED");
+    when(
+            gameplayCommandRepository
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                    1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertEquals(true, result.accepted());
+    assertEquals("DUPLICATE_NOOP", result.admissionOutcome());
+    assertEquals("auto-existing", result.commandId());
+  }
+
+  @Test
   void rejectsPreReadReuseWhenAnyImmutableAdmissionFieldChanges() {
     for (AdmissionRequest changed : changedAdmissionRequests()) {
       assertPreReadReuseConflict(changed);
@@ -815,7 +850,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
                     runtimeRegionStatusRepository,
                     tickService));
     assertEquals(
-        "world_slug, realm_slug, and pointer_version must be provided together", ex.getMessage());
+        "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together",
+        ex.getMessage());
   }
 
   @Test
@@ -1278,6 +1314,55 @@ class AutomationGameplayCommandAdmissionSupportTest {
         runtimeRegionStatusRepository,
         pointerAuthority,
         tickService);
+  }
+
+  @Test
+  void routedAdmissionRetriesWhenCurrentPointerCasRejectsInsert() {
+    AdmissionRequest request = automationRequest();
+    GameInstance instance = new GameInstance();
+    instance.setId(request.gameInstanceId());
+    instance.setTenantId(request.tenantId());
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
+        .thenReturn(Optional.of(instance));
+    when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))
+        .thenReturn(List.of(currentPointer("demo", "production", 17L)));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                request.tenantId(),
+                request.gameInstanceId(),
+                request.regionId(),
+                request.regionEpoch(),
+                request.automationDispatchId()))
+        .thenReturn(Optional.empty());
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(
+            request.tenantId(), request.regionId()))
+        .thenReturn(Optional.of(runtimeOwnership(request)));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenThrow(
+            new GameplayCommandRepository.AdmissionPointerUnavailableException(
+                "pointer changed before command insert"));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            pointerAuthority,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("RETRY_QUEUED", result.admissionOutcome());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.errorCode());
+  }
+
+  private static RuntimeRegionStatus runtimeOwnership(AdmissionRequest request) {
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(request.tenantId());
+    ownership.setGameInstanceId(request.gameInstanceId());
+    ownership.setRegionId(request.regionId());
+    ownership.setRegionEpoch(request.regionEpoch());
+    return ownership;
   }
 
   private static GameplayAdmissionPointerSnapshot currentPointer(

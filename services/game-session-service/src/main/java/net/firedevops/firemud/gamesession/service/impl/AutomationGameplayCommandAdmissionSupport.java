@@ -156,8 +156,12 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
 
     GameplayCommand command = requestedCommand;
-    GameplayCommandRepository.IdempotentInsertResult insertResult =
-        gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
+    GameplayCommandRepository.IdempotentInsertResult insertResult;
+    try {
+      insertResult = gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
+    } catch (GameplayCommandRepository.AdmissionPointerUnavailableException ex) {
+      return temporaryPointerAuthorityUnavailable(false);
+    }
     command = insertResult.command();
     if (!insertResult.inserted()) {
       return existingAdmissionResult(command, requestedCommand);
@@ -288,11 +292,22 @@ final class AutomationGameplayCommandAdmissionSupport {
         && !requested.getRemoteFollowupId().isBlank()) {
       return true;
     }
-    return sameText(existing.getPlayableStateScope(), requested.getPlayableStateScope());
+    return samePlayableStateScope(
+        existing.getPlayableStateScope(), requested.getPlayableStateScope());
   }
 
   private static boolean sameText(String left, String right) {
     return Objects.equals(blankToNull(left), blankToNull(right));
+  }
+
+  private static boolean samePlayableStateScope(String left, String right) {
+    String normalizedLeft = normalizePlayableStateScope(left);
+    String normalizedRight = normalizePlayableStateScope(right);
+    return Objects.equals(normalizedLeft, normalizedRight);
+  }
+
+  private static String normalizePlayableStateScope(String value) {
+    return value == null || value.isBlank() ? null : value.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
   private static boolean sameRoutingSlug(String left, String right) {
@@ -341,7 +356,8 @@ final class AutomationGameplayCommandAdmissionSupport {
         request.worldSlug(),
         request.realmSlug(),
         request.pointerVersion(),
-        "world_slug, realm_slug, and pointer_version must be provided together");
+        request.playableStateScope(),
+        "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
   }
 
   private static Optional<GameplayCommand> findExistingCommand(

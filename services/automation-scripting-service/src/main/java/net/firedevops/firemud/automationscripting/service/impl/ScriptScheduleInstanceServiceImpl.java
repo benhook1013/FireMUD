@@ -1269,7 +1269,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     ScriptWorkItem saved = insertResult.workItem();
     persistTimerAudit(candidate, saved, now);
-    runAfterCommit(() -> automationQueueService.enqueueWorkItem(saved));
+    AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, saved, LOGGER);
     if (candidate.wallClock()) {
       settleWallClockCandidate(instance, now);
     }

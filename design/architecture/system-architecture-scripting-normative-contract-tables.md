@@ -180,7 +180,8 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `DSL_EVAL` | DSL graph evaluation and sandbox enforcement (validation, loop safety, runtime budgets). | A resolved handler uses `completed_no_commands` when it validly emits no commands, or its applicable handler failure outcome. `readiness_success` is reserved for the tenant-readiness patch-level owner/projection and is never a resolved-handler `finalOutcome`; tenant readiness uses a separate readiness-owner record with readiness-level status/outcome fields. `dry_run_completed` is a legacy-only outcome, permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN` |
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
 | `TICK_HANDOFF` | Durable handoff of every required dispatch to Game Session. | Only `handoff_accepted` |
-| `DRY_RUN_RESULT` | Target ADR 0114 non-committing preview after DSL evaluation; the would-be commands are returned directly to the authorized caller or retained on the isolated preview result/audit surface, never in handler `script_event_audit`, and are not persisted as live work or handed off. | Target preview only, with `finalOutcome=dry_run_success`. |
+
+Target ADR 0114 non-committing previews may use `DRY_RUN_RESULT` and `dry_run_success` only on their isolated preview result/audit surface. Those values are not `script_event_audit` stages or outcomes; preview commands are returned directly to the authorized caller or retained on that isolated surface and are never persisted as live work or handed off.
 
 ### Required Audit Write Semantics (Normative)
 
@@ -200,7 +201,7 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `DSL_EVAL` | Sandbox failures use `finalOutcome=sandbox_error`. A valid live handler that intentionally emits no commands uses `finalOutcome=completed_no_commands`; it does not claim handoff. |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=handoff_accepted` is permitted only when Game Session has durably accepted every required child dispatch. Evaluation or partial handoff is not handoff acceptance. |
-| `DRY_RUN_RESULT` | `finalOutcome=dry_run_success` is permitted only for the target ADR 0114 authorized `isDryRun=true` preview after DSL evaluation completes and the non-committing result has been returned directly to the authorized caller or stored on the isolated preview result/audit surface; it never creates a handler `script_event_audit` row and must not imply durable work-item persistence or tick handoff. The current legacy materialized dry-run/test handler instead records `finalStage=DSL_EVAL`, `finalOutcome=dry_run_completed`, and `finalReason=dry_run_no_handoff`. |
+| *(isolated preview only)* | `finalOutcome=dry_run_success` is permitted only for the target ADR 0114 authorized `isDryRun=true` preview after DSL evaluation completes and the non-committing result has been returned directly to the authorized caller or stored on the isolated preview result/audit surface; it never creates a handler `script_event_audit` row and must not imply durable work-item persistence or tick handoff. The current legacy materialized dry-run/test handler instead records `finalStage=DSL_EVAL`, `finalOutcome=dry_run_completed`, and `finalReason=dry_run_no_handoff`. |
 
 Additional non-committing terminal outcome rules:
 

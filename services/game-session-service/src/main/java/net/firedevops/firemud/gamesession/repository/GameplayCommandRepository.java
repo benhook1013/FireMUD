@@ -8,14 +8,21 @@ import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFF
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
+import net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayCommandRecord;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Select;
+import org.jooq.SelectFieldOrAsterisk;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -29,6 +36,13 @@ public class GameplayCommandRepository {
       value = "EI_EXPOSE_REP",
       justification = "Repository results intentionally return the managed command entity")
   public record IdempotentInsertResult(GameplayCommand command, boolean inserted) {}
+
+  /** Raised when a routed command could not be inserted against the current pointer authority. */
+  public static final class AdmissionPointerUnavailableException extends IllegalStateException {
+    public AdmissionPointerUnavailableException(String message) {
+      super(message);
+    }
+  }
 
   public GameplayCommandRepository(DSLContext dsl) {
     this.dsl = dsl;
@@ -325,34 +339,21 @@ public class GameplayCommandRepository {
     GameplayCommandRecord record = dsl.newRecord(GAMEPLAY_COMMAND);
     populate(record, entity);
 
+    boolean hasRoutingBundle =
+        hasText(entity.getWorldSlug())
+            && hasText(entity.getRealmSlug())
+            && entity.getPointerVersion() != null
+            && entity.getPointerVersion() > 0L;
+    if (hasRoutingBundle && !hasText(entity.getPlayableStateScope())) {
+      throw new IllegalArgumentException(
+          "A routed gameplay command requires a nonblank playable state scope");
+    }
+
     Optional<GameplayCommand> inserted;
-    if (hasText(entity.getRemoteFollowupId())) {
-      inserted =
-          dsl.insertInto(GAMEPLAY_COMMAND)
-              .set(record)
-              .onConflict(
-                  GAMEPLAY_COMMAND.TENANT_ID,
-                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
-                  GAMEPLAY_COMMAND.REGION_ID,
-                  GAMEPLAY_COMMAND.REGION_EPOCH,
-                  GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID)
-              .where(GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID.isNotNull())
-              .doNothing()
-              .returning()
-              .fetchOptional(this::toEntity);
+    if (hasRoutingBundle) {
+      inserted = insertAgainstCurrentAdmissionPointer(record, entity);
     } else {
-      inserted =
-          dsl.insertInto(GAMEPLAY_COMMAND)
-              .set(record)
-              .onConflict(
-                  GAMEPLAY_COMMAND.TENANT_ID,
-                  GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
-                  GAMEPLAY_COMMAND.REGION_ID,
-                  GAMEPLAY_COMMAND.REGION_EPOCH,
-                  GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID)
-              .doNothing()
-              .returning()
-              .fetchOptional(this::toEntity);
+      inserted = insertWithoutAdmissionPointer(record, entity);
     }
 
     if (inserted.isPresent()) {
@@ -377,12 +378,107 @@ public class GameplayCommandRepository {
               entity.getRegionEpoch(),
               entity.getAutomationDispatchId());
     }
-    return new IdempotentInsertResult(
-        existing.orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "Idempotency conflict did not yield a gameplay_command row")),
-        false);
+    if (existing.isPresent()) {
+      return new IdempotentInsertResult(existing.orElseThrow(), false);
+    }
+    if (hasRoutingBundle) {
+      throw new AdmissionPointerUnavailableException(
+          "Current gameplay admission pointer does not match the routed command");
+    }
+    throw new IllegalStateException("Idempotency conflict did not yield a gameplay_command row");
+  }
+
+  private Optional<GameplayCommand> insertWithoutAdmissionPointer(
+      GameplayCommandRecord record, GameplayCommand entity) {
+    if (hasText(entity.getRemoteFollowupId())) {
+      return dsl.insertInto(GAMEPLAY_COMMAND)
+          .set(record)
+          .onConflict(
+              GAMEPLAY_COMMAND.TENANT_ID,
+              GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+              GAMEPLAY_COMMAND.REGION_ID,
+              GAMEPLAY_COMMAND.REGION_EPOCH,
+              GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID)
+          .where(GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID.isNotNull())
+          .doNothing()
+          .returning()
+          .fetchOptional(this::toEntity);
+    }
+    return dsl.insertInto(GAMEPLAY_COMMAND)
+        .set(record)
+        .onConflict(
+            GAMEPLAY_COMMAND.TENANT_ID,
+            GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+            GAMEPLAY_COMMAND.REGION_ID,
+            GAMEPLAY_COMMAND.REGION_EPOCH,
+            GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID)
+        .doNothing()
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  private Optional<GameplayCommand> insertAgainstCurrentAdmissionPointer(
+      GameplayCommandRecord record, GameplayCommand entity) {
+    Field<?>[] fields =
+        Arrays.stream(GAMEPLAY_COMMAND.fields()).filter(record::changed).toArray(Field<?>[]::new);
+    List<SelectFieldOrAsterisk> values =
+        Arrays.stream(fields)
+            .map(field -> (SelectFieldOrAsterisk) DSL.val(record.get(field), field.getDataType()))
+            .toList();
+    GameplayAdmissionPointer pointer = GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
+    Condition pointerMatch =
+        pointer
+            .TENANT_ID
+            .eq(entity.getTenantId())
+            .and(pointer.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()))
+            .and(
+                DSL.lower(pointer.WORLD_SLUG)
+                    .eq(entity.getWorldSlug().toLowerCase(java.util.Locale.ROOT)))
+            .and(
+                DSL.lower(pointer.REALM_SLUG)
+                    .eq(entity.getRealmSlug().toLowerCase(java.util.Locale.ROOT)))
+            .and(pointer.POINTER_VERSION.eq(entity.getPointerVersion()))
+            .and(
+                DSL.upper(DSL.trim(pointer.STATE_SCOPE))
+                    .eq(entity.getPlayableStateScope().trim().toUpperCase(java.util.Locale.ROOT)));
+    Condition targetMatch =
+        pointer.TENANT_ID
+            .eq(entity.getTenantId())
+            .and(pointer.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()));
+    Select<Record> source =
+        dsl.select(values).from(pointer).where(pointerMatch.and(exactlyOne(targetMatch)));
+    if (hasText(entity.getRemoteFollowupId())) {
+      return dsl.insertInto(GAMEPLAY_COMMAND)
+          .columns(fields)
+          .select(source)
+          .onConflict(
+              GAMEPLAY_COMMAND.TENANT_ID,
+              GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+              GAMEPLAY_COMMAND.REGION_ID,
+              GAMEPLAY_COMMAND.REGION_EPOCH,
+              GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID)
+          .where(GAMEPLAY_COMMAND.REMOTE_FOLLOWUP_ID.isNotNull())
+          .doNothing()
+          .returning()
+          .fetchOptional(this::toEntity);
+    }
+    return dsl.insertInto(GAMEPLAY_COMMAND)
+        .columns(fields)
+        .select(source)
+        .onConflict(
+            GAMEPLAY_COMMAND.TENANT_ID,
+            GAMEPLAY_COMMAND.GAME_INSTANCE_ID,
+            GAMEPLAY_COMMAND.REGION_ID,
+            GAMEPLAY_COMMAND.REGION_EPOCH,
+            GAMEPLAY_COMMAND.AUTOMATION_DISPATCH_ID)
+        .doNothing()
+        .returning()
+        .fetchOptional(this::toEntity);
+  }
+
+  private static Condition exactlyOne(Condition pointerMatch) {
+    GameplayAdmissionPointer pointer = GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
+    return DSL.selectCount().from(pointer).where(pointerMatch).asField().eq(1);
   }
 
   private static boolean hasIdempotencyIdentity(GameplayCommand entity) {

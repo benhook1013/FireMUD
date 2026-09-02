@@ -439,7 +439,7 @@ class TickServiceImplTest {
   }
 
   @Test
-  void processTickFailsClosedOnInvalidStageArgumentsWithoutMarkingLeaseLost() {
+  void processTickFailsClosedAndRollsBackOnInvalidStageArguments() {
     RedisScript<Long> stageMarker = mock(RedisScript.class);
     RedisScript<Long> rollbackMarker = mock(RedisScript.class);
     setField(service, "stageScript", stageMarker);

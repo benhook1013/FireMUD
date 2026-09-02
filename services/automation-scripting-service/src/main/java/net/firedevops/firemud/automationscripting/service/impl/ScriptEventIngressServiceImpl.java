@@ -39,6 +39,8 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.json.JsonParserFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected Spring dependencies are not exposed externally")
 public class ScriptEventIngressServiceImpl implements ScriptEventIngressService {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ScriptEventIngressServiceImpl.class);
   private static final String SCOPE_ACTION_CATEGORY = "ACTION_CATEGORY";
   private static final String SCOPE_ACTION_TAG = "ACTION_TAG";
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
@@ -773,7 +776,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setAdmissionEpoch(admissionEpoch);
     ScriptWorkItem saved = workItemRepository.save(item);
     rolloutProjectionService.refreshForWorkItem(saved);
-    automationQueueService.enqueueWorkItem(saved);
+    AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, saved, LOGGER);
     persistHandlerAudit(
         request,
         schemaVersion,

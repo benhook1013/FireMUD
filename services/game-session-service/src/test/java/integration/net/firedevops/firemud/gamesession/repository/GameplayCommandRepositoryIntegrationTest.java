@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayCommand.GAMEPLAY_COMMAND;
 import static net.firedevops.firemud.gamesession.jooq.tables.TickEffect.TICK_EFFECT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -57,7 +59,87 @@ class GameplayCommandRepositoryIntegrationTest {
 
   @BeforeEach
   void cleanTable() {
-    dsl.execute("TRUNCATE TABLE gameplay_command RESTART IDENTITY CASCADE");
+    dsl.execute(
+        "TRUNCATE TABLE gameplay_command, gameplay_admission_pointer RESTART IDENTITY CASCADE");
+  }
+
+  @Test
+  void routedInsertIsConditionallyBoundToCurrentAdmissionPointer() {
+    insertAdmissionPointer("demo", "production", 17L, "SHARED", 7L);
+    GameplayCommand command = automationCommand("routed-current", "dispatch-routed-current");
+    command.setPlayableStateScope("SHARED");
+    command.setWorldSlug("DEMO");
+    command.setRealmSlug("Production");
+    command.setPointerVersion(17L);
+
+    GameplayCommandRepository.IdempotentInsertResult inserted =
+        repository.insertIfAbsentByIdempotencyIdentity(command);
+    assertThat(inserted.inserted()).isTrue();
+
+    dsl.update(GAMEPLAY_ADMISSION_POINTER)
+        .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, 18L)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER
+                .TENANT_ID
+                .eq(1L)
+                .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq("demo")))
+        .execute();
+
+    GameplayCommand stale = automationCommand("routed-stale", "dispatch-routed-stale");
+    stale.setPlayableStateScope("SHARED");
+    stale.setWorldSlug("demo");
+    stale.setRealmSlug("production");
+    stale.setPointerVersion(17L);
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByIdempotencyIdentity(stale))
+        .isInstanceOf(GameplayCommandRepository.AdmissionPointerUnavailableException.class);
+    assertThat(dsl.fetchCount(GAMEPLAY_COMMAND)).isEqualTo(1);
+  }
+
+  @Test
+  void routedIdempotencyConflictRemainsDistinctFromStalePointer() {
+    insertAdmissionPointer("demo", "production", 17L, "SHARED", 7L);
+    GameplayCommand first = automationCommand("routed-existing", "dispatch-routed-existing");
+    first.setPlayableStateScope("SHARED");
+    first.setWorldSlug("demo");
+    first.setRealmSlug("production");
+    first.setPointerVersion(17L);
+    repository.insertIfAbsentByIdempotencyIdentity(first);
+
+    GameplayCommand retry = automationCommand("routed-retry", "dispatch-routed-existing");
+    retry.setPlayableStateScope("SHARED");
+    retry.setWorldSlug("demo");
+    retry.setRealmSlug("production");
+    retry.setPointerVersion(17L);
+
+    GameplayCommandRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdempotencyIdentity(retry);
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.command().getCommandId()).isEqualTo("routed-existing");
+  }
+
+  private void insertAdmissionPointer(
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String stateScope,
+      long gameInstanceId) {
+    dsl.insertInto(GAMEPLAY_ADMISSION_POINTER)
+        .set(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG, worldSlug)
+        .set(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME, "Demo")
+        .set(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG, realmSlug)
+        .set(GAMEPLAY_ADMISSION_POINTER.REALM_DISPLAY_NAME, "Production")
+        .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, 1L)
+        .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, gameInstanceId)
+        .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, pointerVersion)
+        .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, true)
+        .set(GAMEPLAY_ADMISSION_POINTER.PUBLIC_PRODUCTION_REALM, true)
+        .set(GAMEPLAY_ADMISSION_POINTER.REQUIRES_CHARACTER_SELECTION, false)
+        .set(GAMEPLAY_ADMISSION_POINTER.STATE_SCOPE, stateScope)
+        .set(GAMEPLAY_ADMISSION_POINTER.CHARACTER_CREATION_POLICY, "NONE")
+        .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATED_BY, "test")
+        .set(GAMEPLAY_ADMISSION_POINTER.LAST_UPDATE_REASON, "test")
+        .execute();
   }
 
   @Test
