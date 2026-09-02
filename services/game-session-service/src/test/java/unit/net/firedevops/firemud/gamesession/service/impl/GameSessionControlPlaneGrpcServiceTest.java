@@ -4456,12 +4456,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setFollowupId("rf-1");
     coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-a");
-    coordinator.setOriginRegionEpoch(3L);
+    coordinator.setOriginRegionEpoch(300L);
     coordinator.setTargetGameInstanceId(9L);
     coordinator.setTargetRegionId("region-b");
-    coordinator.setTargetRegionEpoch(4L);
+    coordinator.setTargetRegionEpoch(400L);
     coordinator.setTargetDueTickId(55L);
-    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setOriginDeadlineRegionEpoch(300L);
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setState("PENDING_REMOTE");
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
@@ -4481,10 +4481,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setTenantId(1L);
     followup.setOriginGameInstanceId(7L);
     followup.setOriginRegionId("region-a");
-    followup.setOriginRegionEpoch(3L);
+    followup.setOriginRegionEpoch(300L);
     followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-b");
-    followup.setTargetRegionEpoch(4L);
+    followup.setTargetRegionEpoch(400L);
     followup.setStatus("CLAIMED");
     followup.setClaimedTickBatchId("tb-1");
     followup.setClaimOrdinal(3L);
@@ -4507,10 +4507,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setFollowupId("rf-1");
     result.setOriginGameInstanceId(7L);
     result.setOriginRegionId("region-a");
-    result.setOriginRegionEpoch(3L);
+    result.setOriginRegionEpoch(300L);
     result.setTargetGameInstanceId(9L);
     result.setTargetRegionId("region-b");
-    result.setTargetRegionEpoch(4L);
+    result.setTargetRegionEpoch(400L);
     result.setOutcome("APPLIED");
     result.setResultPayloadJson(
         "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload"
@@ -4542,13 +4542,13 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setTenantId(1L);
     targetCommand.setGameInstanceId(9L);
     targetCommand.setRegionId("region-b");
-    targetCommand.setRegionEpoch(4L);
+    targetCommand.setRegionEpoch(400L);
     targetCommand.setExecutionOutcome("STAGED");
     targetCommand.setGameplayResult("PENDING");
     Mockito.when(
             gameplayCommandRepository
                 .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
-                    1L, 9L, "region-b", 4L, "rf-1"))
+                    1L, 9L, "region-b", 400L, "rf-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -4846,10 +4846,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setFollowupId("rf-1");
     result.setOriginGameInstanceId(7L);
     result.setOriginRegionId("region-a");
-    result.setOriginRegionEpoch(3L);
+    result.setOriginRegionEpoch(300L);
     result.setTargetGameInstanceId(9L);
     result.setTargetRegionId("region-b");
-    result.setTargetRegionEpoch(4L);
+    result.setTargetRegionEpoch(400L);
     result.setOutcome("REMOTE_APPLIED");
     result.setResultPayloadJson(
         "{\"commandId\":\"payload-cmd\",\"errorCode\":\"payload-error\",\"message\":\"payload"
@@ -4886,11 +4886,11 @@ class GameSessionControlPlaneGrpcServiceTest {
     coordinator.setCommandId("cmd-1");
     coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-a");
-    coordinator.setOriginRegionEpoch(3L);
+    coordinator.setOriginRegionEpoch(300L);
     coordinator.setTargetGameInstanceId(9L);
     coordinator.setTargetRegionId("region-b");
-    coordinator.setTargetRegionEpoch(4L);
-    coordinator.setOriginDeadlineRegionEpoch(3L);
+    coordinator.setTargetRegionEpoch(400L);
+    coordinator.setOriginDeadlineRegionEpoch(300L);
     coordinator.setOriginDeadlineTickId(88L);
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
     RemoteFollowup followup = new RemoteFollowup();
@@ -4898,10 +4898,10 @@ class GameSessionControlPlaneGrpcServiceTest {
     followup.setFollowupId("rf-1");
     followup.setOriginGameInstanceId(7L);
     followup.setOriginRegionId("region-a");
-    followup.setOriginRegionEpoch(3L);
+    followup.setOriginRegionEpoch(300L);
     followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-b");
-    followup.setTargetRegionEpoch(4L);
+    followup.setTargetRegionEpoch(400L);
     followup.setTargetEntityId("npc-7");
     followup.setClaimTargetAggregate("entity:npc-7");
     followup.setEffectKey("remote-followup:dispatch-1");
@@ -4920,7 +4920,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     targetCommand.setTenantId(1L);
     targetCommand.setGameInstanceId(9L);
     targetCommand.setRegionId("region-b");
-    targetCommand.setRegionEpoch(4L);
+    targetCommand.setRegionEpoch(400L);
     targetCommand.setRemoteFollowupId("rf-1");
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("SUCCESS");
@@ -4932,7 +4932,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(
             gameplayCommandRepository
                 .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
-                    1L, 9L, "region-b", 4L, "rf-1"))
+                    1L, 9L, "region-b", 400L, "rf-1"))
         .thenReturn(Optional.of(targetCommand));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =

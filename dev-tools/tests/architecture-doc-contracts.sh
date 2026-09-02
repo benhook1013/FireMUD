@@ -1826,6 +1826,8 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
+        "may be applied as an initial emergency fence",
+        "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
         "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces are not a recovery authorization",
         "do not yet provide a durable request-result acknowledgement or matching readback identity",

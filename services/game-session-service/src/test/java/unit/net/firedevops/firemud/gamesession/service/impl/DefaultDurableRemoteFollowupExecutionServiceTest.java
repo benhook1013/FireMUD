@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
@@ -34,6 +36,8 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -343,41 +347,16 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "originGameInstanceId",
-        "targetGameInstanceId",
-        "originRegionIdNull",
-        "originRegionIdBlank",
-        "targetRegionIdNull",
-        "targetRegionIdBlank",
-        "originRegionEpoch",
-        "targetRegionEpoch"
-      })
-  void executeRejectsIncompleteScopeBeforeTargetCommandOrResultSideEffects(String incompleteScope) {
+  @MethodSource("incompleteScopeMutations")
+  void executeRejectsIncompleteScopeBeforeTargetCommandOrResultSideEffects(
+      String incompleteScope, ScopeMutator mutation) {
     TickEffect effect = triggerScriptEventEffect();
     RemoteFollowup followup =
         triggerScriptEventFollowup("{\"kind\":\"enqueue_gameplay_command\",\"command\":\"LOOK\"}");
     followup.setPayloadKind("enqueue_gameplay_command");
     followup.setRequestedCommand("LOOK");
-    if ("originGameInstanceId".equals(incompleteScope)) {
-      followup.setOriginGameInstanceId(null);
-    } else if ("targetGameInstanceId".equals(incompleteScope)) {
-      followup.setTargetGameInstanceId(null);
-    } else if ("originRegionIdNull".equals(incompleteScope)) {
-      followup.setOriginRegionId(null);
-    } else if ("originRegionIdBlank".equals(incompleteScope)) {
-      followup.setOriginRegionId(" ");
-    } else if ("targetRegionIdNull".equals(incompleteScope)) {
-      followup.setTargetRegionId(null);
-    } else if ("targetRegionIdBlank".equals(incompleteScope)) {
-      followup.setTargetRegionId(" ");
-    } else if ("originRegionEpoch".equals(incompleteScope)) {
-      followup.setOriginRegionEpoch(0L);
-    } else {
-      followup.setTargetRegionEpoch(0L);
-    }
     RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    mutation.apply(followup, coordinator);
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
@@ -404,6 +383,80 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         tickService,
         automationScriptingClient);
   }
+
+  private static Stream<Arguments> incompleteScopeMutations() {
+    return Stream.of(
+            scopeMutation(
+                "originGameInstanceId.null",
+                followup -> followup.setOriginGameInstanceId(null),
+                coordinator -> coordinator.setOriginGameInstanceId(null)),
+            scopeMutation(
+                "originGameInstanceId.zero",
+                followup -> followup.setOriginGameInstanceId(0L),
+                coordinator -> coordinator.setOriginGameInstanceId(0L)),
+            scopeMutation(
+                "targetGameInstanceId.null",
+                followup -> followup.setTargetGameInstanceId(null),
+                coordinator -> coordinator.setTargetGameInstanceId(null)),
+            scopeMutation(
+                "targetGameInstanceId.zero",
+                followup -> followup.setTargetGameInstanceId(0L),
+                coordinator -> coordinator.setTargetGameInstanceId(0L)),
+            scopeMutation(
+                "originRegionId.null",
+                followup -> followup.setOriginRegionId(null),
+                coordinator -> coordinator.setOriginRegionId(null)),
+            scopeMutation(
+                "originRegionId.blank",
+                followup -> followup.setOriginRegionId(" "),
+                coordinator -> coordinator.setOriginRegionId(" ")),
+            scopeMutation(
+                "targetRegionId.null",
+                followup -> followup.setTargetRegionId(null),
+                coordinator -> coordinator.setTargetRegionId(null)),
+            scopeMutation(
+                "targetRegionId.blank",
+                followup -> followup.setTargetRegionId(" "),
+                coordinator -> coordinator.setTargetRegionId(" ")),
+            scopeMutation(
+                "originRegionEpoch.zero",
+                followup -> followup.setOriginRegionEpoch(0L),
+                coordinator -> coordinator.setOriginRegionEpoch(0L)),
+            scopeMutation(
+                "targetRegionEpoch.zero",
+                followup -> followup.setTargetRegionEpoch(0L),
+                coordinator -> coordinator.setTargetRegionEpoch(0L)))
+        .flatMap(
+            mutation ->
+                Stream.of(
+                    Arguments.of(
+                        "followup." + mutation.name(),
+                        (ScopeMutator)
+                            (followup, coordinator) ->
+                                mutation.followupMutation().accept(followup)),
+                    Arguments.of(
+                        "coordinator." + mutation.name(),
+                        (ScopeMutator)
+                            (followup, coordinator) ->
+                                mutation.coordinatorMutation().accept(coordinator))));
+  }
+
+  private static ScopeMutation scopeMutation(
+      String name,
+      Consumer<RemoteFollowup> followupMutation,
+      Consumer<RemoteCommandCoordinator> coordinatorMutation) {
+    return new ScopeMutation(name, followupMutation, coordinatorMutation);
+  }
+
+  @FunctionalInterface
+  private interface ScopeMutator {
+    void apply(RemoteFollowup followup, RemoteCommandCoordinator coordinator);
+  }
+
+  private record ScopeMutation(
+      String name,
+      Consumer<RemoteFollowup> followupMutation,
+      Consumer<RemoteCommandCoordinator> coordinatorMutation) {}
 
   @Test
   void executeUsesDurablePayloadAuthorityWhenPayloadJsonIsMalformed() {

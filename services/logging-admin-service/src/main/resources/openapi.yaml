@@ -1602,6 +1602,7 @@ paths:
           required: true
           schema:
             type: integer
+            minimum: 1
       responses:
         '200':
           description: Saga step list

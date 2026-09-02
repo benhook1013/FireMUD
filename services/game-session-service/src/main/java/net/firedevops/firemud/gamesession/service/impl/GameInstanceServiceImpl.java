@@ -408,18 +408,23 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   },
                   "delete failed starting session row"));
     }
-    if (oldWorldTerminationCompleted
-        && !oldSessionStopped
-        && stage.existingRunningState() != null) {
+    if (oldWorldTerminationCompleted && !oldSessionStopped && existingRunningState != null) {
       runRollbackSafely(
           "finalize terminated replaced session row",
           () ->
               inTransaction(
                   () -> {
-                    markSessionStopped(stage.existingRunningState().id());
+                    markSessionStopped(existingRunningState.id());
                     return null;
                   },
                   "finalize terminated replaced session row"));
+    } else if (oldWorldTerminationRequested
+        && !oldWorldTerminationCompleted
+        && !oldSessionStopped
+        && existingRunningState != null) {
+      logger.warn(
+          "Leaving replaced session {} STOPPING after ambiguous World termination",
+          existingRunningState.id());
     }
   }
 

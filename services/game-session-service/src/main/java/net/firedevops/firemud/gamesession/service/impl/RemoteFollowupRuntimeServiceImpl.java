@@ -281,6 +281,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
       if (!hasCompleteRuntimeScope(coordinator)) {
+        logger.warn(
+            "Skipping pending remote reconciliation for coordinator {} with incomplete runtime scope",
+            coordinator == null ? null : coordinator.getCoordinatorId());
         continue;
       }
       if (!Objects.equals(coordinator.getOriginRegionEpoch(), currentOriginRegionEpoch)) {
@@ -313,6 +316,9 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
       if (!hasCompleteRuntimeScope(coordinator)) {
+        logger.warn(
+            "Skipping late remote result reconciliation for coordinator {} with incomplete runtime scope",
+            coordinator == null ? null : coordinator.getCoordinatorId());
         continue;
       }
       RemoteFollowupResult result = latestResult(coordinator).orElse(null);

@@ -302,42 +302,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   @Test
   void scheduleFollowupRejectsMissingOriginDeadlineRegionEpochBeforePersistence() {
     RemoteFollowupRuntimeService.ScheduleRequest request =
-        new RemoteFollowupRuntimeService.ScheduleRequest(
-            1L,
-            "cmd-1",
-            "coord-1",
-            7L,
-            "region-a",
-            4L,
-            8L,
-            "region-b",
-            8L,
-            22L,
-            0L,
-            25L,
-            "late_result_safe_to_ignore",
-            "followup-1",
-            "effect-1",
-            "entity-9",
-            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
-            "enqueue_automation_command",
-            "LOOK",
-            true,
-            "SHARED",
-            "demo",
-            "production",
-            17L,
-            "patch-1",
-            "plugin-1",
-            "plugin-v1",
-            "dispatch-1",
-            "work-1",
-            "script-1",
-            "REMOTE_FOLLOWUP",
-            "TARGET_REGION_EXECUTED",
-            44L,
-            22L,
-            1700L);
+        scheduleRequestWithOriginDeadline(0L, 25L);
 
     IllegalArgumentException ex =
         assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(request));
@@ -349,42 +314,7 @@ class RemoteFollowupRuntimeServiceImplTest {
   @Test
   void scheduleFollowupRejectsMissingOriginDeadlineTickIdBeforePersistence() {
     RemoteFollowupRuntimeService.ScheduleRequest request =
-        new RemoteFollowupRuntimeService.ScheduleRequest(
-            1L,
-            "cmd-1",
-            "coord-1",
-            7L,
-            "region-a",
-            4L,
-            8L,
-            "region-b",
-            8L,
-            22L,
-            4L,
-            0L,
-            "late_result_safe_to_ignore",
-            "followup-1",
-            "effect-1",
-            "entity-9",
-            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
-            "enqueue_automation_command",
-            "LOOK",
-            true,
-            "SHARED",
-            "demo",
-            "production",
-            17L,
-            "patch-1",
-            "plugin-1",
-            "plugin-v1",
-            "dispatch-1",
-            "work-1",
-            "script-1",
-            "REMOTE_FOLLOWUP",
-            "TARGET_REGION_EXECUTED",
-            44L,
-            22L,
-            1700L);
+        scheduleRequestWithOriginDeadline(4L, 0L);
 
     IllegalArgumentException ex =
         assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(request));
@@ -2284,11 +2214,21 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest() {
-    return scheduleRequest(8L);
+    return scheduleRequest(8L, 4L, 25L);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
       long targetGameInstanceId) {
+    return scheduleRequest(targetGameInstanceId, 4L, 25L);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithOriginDeadline(
+      long originDeadlineRegionEpoch, long originDeadlineTickId) {
+    return scheduleRequest(8L, originDeadlineRegionEpoch, originDeadlineTickId);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest(
+      long targetGameInstanceId, long originDeadlineRegionEpoch, long originDeadlineTickId) {
     return new RemoteFollowupRuntimeService.ScheduleRequest(
         1L,
         "cmd-1",
@@ -2300,8 +2240,8 @@ class RemoteFollowupRuntimeServiceImplTest {
         "region-b",
         8L,
         22L,
-        4L,
-        25L,
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
         "late_result_safe_to_ignore",
         "followup-1",
         "effect-1",

@@ -1877,10 +1877,10 @@ final class GameSessionRemoteControlPlaneService {
         && matchesOptionalIdentity(followup.getCommandId(), coordinator.getCommandId())
         && Objects.equals(followup.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(followup.getOriginRegionId(), coordinator.getOriginRegionId())
-        && followup.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
+        && Objects.equals(followup.getOriginRegionEpoch(), coordinator.getOriginRegionEpoch())
         && Objects.equals(followup.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(followup.getTargetRegionId(), coordinator.getTargetRegionId())
-        && followup.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
+        && Objects.equals(followup.getTargetRegionEpoch(), coordinator.getTargetRegionEpoch());
   }
 
   private static boolean matchesCoordinatorScope(
@@ -1908,10 +1908,10 @@ final class GameSessionRemoteControlPlaneService {
         && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
         && Objects.equals(result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
         && Objects.equals(result.getOriginRegionId(), coordinator.getOriginRegionId())
-        && result.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
+        && Objects.equals(result.getOriginRegionEpoch(), coordinator.getOriginRegionEpoch())
         && Objects.equals(result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
         && Objects.equals(result.getTargetRegionId(), coordinator.getTargetRegionId())
-        && result.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
+        && Objects.equals(result.getTargetRegionEpoch(), coordinator.getTargetRegionEpoch());
   }
 
   private static boolean matchesCoordinatorScope(
@@ -1938,10 +1938,10 @@ final class GameSessionRemoteControlPlaneService {
         && Objects.equals(followup.getFollowupId(), result.getFollowupId())
         && Objects.equals(followup.getOriginGameInstanceId(), result.getOriginGameInstanceId())
         && Objects.equals(followup.getOriginRegionId(), result.getOriginRegionId())
-        && followup.getOriginRegionEpoch() == result.getOriginRegionEpoch()
+        && Objects.equals(followup.getOriginRegionEpoch(), result.getOriginRegionEpoch())
         && Objects.equals(followup.getTargetGameInstanceId(), result.getTargetGameInstanceId())
         && Objects.equals(followup.getTargetRegionId(), result.getTargetRegionId())
-        && followup.getTargetRegionEpoch() == result.getTargetRegionEpoch();
+        && Objects.equals(followup.getTargetRegionEpoch(), result.getTargetRegionEpoch());
   }
 
   private Map<String, RemoteFollowup> followupMap(

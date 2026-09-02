@@ -162,7 +162,25 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     followupRepository.save(remoteFollowup(observedAt));
     resultRepository.save(
         remoteResult("result-current-target-scope", observedAt, "REMOTE_APPLIED", "EXACT"));
-    insertRuntimeRegionStatus(1L, 9L, "region-sibling", 99L);
+    insertRuntimeRegionStatus(1L, 9L, "region-target", 4L);
+
+    assertThat(findCoordinatorsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-target-scope");
+
+    dsl.execute(
+        "UPDATE runtime_region_status SET region_id = ?, region_epoch = ?"
+            + " WHERE tenant_id = ? AND game_instance_id = ?",
+        "region-sibling",
+        99L,
+        1L,
+        9L);
 
     assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
     assertThat(findFollowupsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
