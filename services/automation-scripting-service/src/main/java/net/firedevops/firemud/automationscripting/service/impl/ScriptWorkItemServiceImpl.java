@@ -95,6 +95,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
+    String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
@@ -106,7 +107,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                         || item.getGameInstanceId().equals(command.gameInstanceId()))
             .filter(
                 item ->
-                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+                    normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
             .toList();
     return cancelCandidates(candidates, command.reason());
   }
@@ -117,6 +118,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.pluginVersionId(), "plugin_version_id");
+    String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
@@ -131,7 +133,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                         || item.getGameInstanceId().equals(command.gameInstanceId()))
             .filter(
                 item ->
-                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+                    normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
             .toList();
     return cancelCandidates(candidates, command.reason());
   }
@@ -776,12 +778,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
+    String normalizedRegionId = normalizeRegionId(command.regionId());
     return (command.gameInstanceId() == null
             || command.gameInstanceId().isBlank()
             || item.getGameInstanceId().equals(command.gameInstanceId()))
-        && (command.regionId() == null
-            || command.regionId().isBlank()
-            || item.getRegionId().equals(command.regionId()))
+        && (normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
         && (command.scriptPatchVersion() == null
             || command.scriptPatchVersion().isBlank()
             || item.getScriptPatchVersion().equals(command.scriptPatchVersion()))
