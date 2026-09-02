@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -175,7 +176,11 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
     verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
-    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(3)).saveState(states.capture());
+    assertEquals(
+        List.of("STARTING", "RUNNING", "STARTING"),
+        states.getAllValues().stream().map(GameInstanceDto::status).toList());
     verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
@@ -193,7 +198,11 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
     verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
-    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(3)).saveState(states.capture());
+    assertEquals(
+        List.of("STARTING", "RUNNING", "STARTING"),
+        states.getAllValues().stream().map(GameInstanceDto::status).toList());
     verify(stateService, never()).deleteState(1L, 10L);
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());

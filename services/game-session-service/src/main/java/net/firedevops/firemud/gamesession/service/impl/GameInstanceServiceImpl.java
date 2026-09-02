@@ -382,6 +382,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       logger.warn(
           "Quarantining session {} in STARTING after World activation may have committed",
           stage.startingState().id());
+      if (STATUS_RUNNING.equals(runtimeState.status())) {
+        runRollbackSafely(
+            "restore quarantined starting session runtime state",
+            () ->
+                sessionStateService.saveState(
+                    withStatus(stage.startingState(), STATUS_STARTING)));
+      }
       runRollbackSafely(
           "retain quarantined starting session row",
           () ->
