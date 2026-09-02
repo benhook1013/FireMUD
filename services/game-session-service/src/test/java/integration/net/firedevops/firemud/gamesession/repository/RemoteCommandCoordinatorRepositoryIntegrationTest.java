@@ -156,7 +156,7 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   }
 
   @Test
-  void controlPlaneListJoinsRequireExactCurrentTargetRegionScope() {
+  void followupControlPlaneListUsesCurrentTargetScopeForStaleFollowup() {
     Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
     coordinatorRepository.save(remoteCoordinator(observedAt));
     followupRepository.save(remoteFollowup(observedAt));
@@ -183,7 +183,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         9L);
 
     assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
-    assertThat(findFollowupsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
+    assertThat(findFollowupsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
     assertThat(findResultsByCurrentTarget("region-sibling", 99L, 9L)).isEmpty();
   }
 
