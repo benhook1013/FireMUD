@@ -474,8 +474,7 @@ class GameInstanceServiceImplTest {
 
   private void configureMapper() {
     when(mapper.toDto(any(GameInstance.class)))
-        .thenAnswer(
-            invocation -> configureMappedDto(invocation.getArgument(0)));
+        .thenAnswer(invocation -> configureMappedDto(invocation.getArgument(0)));
   }
 
   private GameInstanceDto configureMappedDto(GameInstance entity) {

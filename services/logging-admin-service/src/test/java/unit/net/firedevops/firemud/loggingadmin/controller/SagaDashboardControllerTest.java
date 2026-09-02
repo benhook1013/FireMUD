@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import java.util.Objects;
 import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -144,9 +145,10 @@ class SagaDashboardControllerTest {
     ResponseEntity<?> response = unavailable.listInstances();
 
     org.junit.jupiter.api.Assertions.assertEquals(503, response.getStatusCode().value());
+    net.firedevops.firemud.common.ApiResponse<?> body =
+        (net.firedevops.firemud.common.ApiResponse<?>) Objects.requireNonNull(response.getBody());
     org.junit.jupiter.api.Assertions.assertEquals(
-        "SAGA_DASHBOARD_UNAVAILABLE",
-        ((net.firedevops.firemud.common.ApiResponse<?>) response.getBody()).error().code());
+        "SAGA_DASHBOARD_UNAVAILABLE", body.error().code());
   }
 
   @Test
@@ -159,8 +161,9 @@ class SagaDashboardControllerTest {
     ResponseEntity<?> response = unavailable.listSteps("1");
 
     org.junit.jupiter.api.Assertions.assertEquals(503, response.getStatusCode().value());
+    net.firedevops.firemud.common.ApiResponse<?> body =
+        (net.firedevops.firemud.common.ApiResponse<?>) Objects.requireNonNull(response.getBody());
     org.junit.jupiter.api.Assertions.assertEquals(
-        "SAGA_DASHBOARD_UNAVAILABLE",
-        ((net.firedevops.firemud.common.ApiResponse<?>) response.getBody()).error().code());
+        "SAGA_DASHBOARD_UNAVAILABLE", body.error().code());
   }
 }

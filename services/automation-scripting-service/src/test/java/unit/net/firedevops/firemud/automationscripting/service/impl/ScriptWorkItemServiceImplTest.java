@@ -753,7 +753,10 @@ class ScriptWorkItemServiceImplTest {
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     AutomationAdmissionStateService admissionStateService = admissionStateService();
     when(workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-            "1", "game-1", "region-1", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
+            "1",
+            "game-1",
+            "region-1",
+            List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
         .thenReturn(List.of());
     ScriptWorkItemService service =
         service(
@@ -775,7 +778,10 @@ class ScriptWorkItemServiceImplTest {
     verify(admissionStateService).getState("1", "game-1", "region-1");
     verify(workItemRepository)
         .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-            "1", "game-1", "region-1", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT"));
+            "1",
+            "game-1",
+            "region-1",
+            List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT"));
   }
 
   @Test
