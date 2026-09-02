@@ -261,12 +261,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String tenantId, String gameInstanceId, String regionId) {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
+    String normalizedRegionId = normalizeRegionId(regionId);
     Instant now = Instant.now();
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        automationAdmissionStateService.getState(tenantId, gameInstanceId, regionId);
+        automationAdmissionStateService.getState(tenantId, gameInstanceId, normalizedRegionId);
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-            tenantId, gameInstanceId, blankToEmpty(regionId), DRAIN_RELEVANT_STATUSES);
+            tenantId, gameInstanceId, normalizedRegionId, DRAIN_RELEVANT_STATUSES);
     List<ScriptWorkItem> countedWorkItems =
         "PAUSED_FOR_ROLLBACK".equals(admissionState.mode())
             ? scopedWorkItems.stream()
@@ -294,7 +295,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     return new AutomationDrainStatusSummary(
         tenantId,
         gameInstanceId,
-        blankToEmpty(regionId),
+        normalizedRegionId,
         admissionState.mode(),
         admissionState.admissionEpoch(),
         activeExecutionCount,
@@ -652,6 +653,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private static String blankToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizeRegionId(String value) {
+    return value == null || value.isBlank() ? "" : value.strip();
   }
 
   private record PublicationMetadata(

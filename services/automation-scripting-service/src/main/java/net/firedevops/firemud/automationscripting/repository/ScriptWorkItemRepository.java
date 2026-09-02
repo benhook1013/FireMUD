@@ -167,10 +167,8 @@ public class ScriptWorkItemRepository {
             .TENANT_ID
             .eq(tenantId)
             .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
             .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
-    if (!regionId.isBlank()) {
-      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
-    }
     return fetchMany(condition, SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc());
   }
 

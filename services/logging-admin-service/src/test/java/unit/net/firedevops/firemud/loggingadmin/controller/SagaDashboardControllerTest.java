@@ -20,6 +20,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -104,5 +105,20 @@ class SagaDashboardControllerTest {
         .andExpect(jsonPath("$.error.message").value("id must be positive"));
 
     verifyNoInteractions(service);
+  }
+
+  @Test
+  void unavailableDashboardReturns503() {
+    org.springframework.beans.factory.ObjectProvider<SagaDashboardService> provider =
+        org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    org.mockito.Mockito.when(provider.getIfAvailable()).thenReturn(null);
+    SagaDashboardController unavailable = new SagaDashboardController(provider);
+
+    ResponseEntity<?> response = unavailable.listInstances();
+
+    org.junit.jupiter.api.Assertions.assertEquals(503, response.getStatusCode().value());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "SAGA_DASHBOARD_UNAVAILABLE",
+        ((net.firedevops.firemud.common.ApiResponse<?>) response.getBody()).error().code());
   }
 }

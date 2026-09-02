@@ -34,19 +34,28 @@ final class GameSessionAdmissionPointerControlPlaneService {
   }
 
   ListAdmissionPointersResponse listAdmissionPointers() {
-    return ListAdmissionPointersResponse.newBuilder()
-        .addAllPointers(
-            gameplayAdmissionPointerAuthorityService.listPointers().stream()
-                .flatMap(
-                    pointer ->
-                        gameplayAdmissionPointerAuthorityService
-                            .listPointerAudit(
-                                pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
-                            .stream()
-                            .limit(1)
-                            .map(this::toEntry))
-                .toList())
-        .build();
+    java.util.List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
+        pointers = gameplayAdmissionPointerAuthorityService.listPointers();
+    java.util.List<AdmissionPointerControlPlaneEntry> entries =
+        pointers.stream()
+            .map(
+                pointer -> {
+                  java.util.List<GameplayAdmissionPointerAuditEntry> audit =
+                      gameplayAdmissionPointerAuthorityService.listPointerAudit(
+                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
+                  if (audit.isEmpty()) {
+                    throw new IllegalStateException(
+                        "Admission pointer audit unavailable for current pointer "
+                            + pointer.tenantId()
+                            + ":"
+                            + pointer.worldSlug()
+                            + "/"
+                            + pointer.realmSlug());
+                  }
+                  return toEntry(audit.getFirst());
+                })
+            .toList();
+    return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
   }
 
   ListAdmissionPointerAuditResponse listAdmissionPointerAudit(

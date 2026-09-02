@@ -300,19 +300,18 @@ FireMUD uses a **shared short synchronous saga orchestration library**, not a se
   - Centralized in the **common-saga** library located under
     `services/common-saga`
   - The engine and its shared Flyway migrations live in `services/common-saga/src/main/resources/db/migration/saga`
-  - Consuming services expose those migrations through the shared `classpath:db/migration/saga` Flyway location alongside their service-local `classpath:db/migration` chain
+  - A service may expose the shared migration location only after an owning service document or tracker explicitly classifies a concrete workflow as a short-Saga adopter and records its owner, local retry/compensation boundary, and focused proof. No finite repository-wide adopter registry is currently established from accepted workflow ownership and canonical service documents; broad current service-convention wiring is implementation drift, not an adopter allowlist. Service-local ownership remains governed by [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
   - Hosts define short, synchronous compensation-aware flows declaratively using the fluent API
   - Saga execution is initiated by services that can own synchronous retry/failure handling, but **coordination logic lives in the library**
-  - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**
   
 - **State Management**:
   - All saga state is persisted in the `saga_instance` and `saga_step` tables provided by the common library.
-  - These tables reside inside the owning service schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) inside **each service’s own database**. Flyway migrations from `common-saga` are applied per service database so saga state stays local to the service that owns the workflow.
+  - These tables reside inside the owning service schema (for example `${serviceSchema}.saga_instance` and `${serviceSchema}.saga_step`) inside **each adopting service’s own database**. Flyway migrations from `common-saga` are applied per adopting service database so saga state stays local to the service that owns the workflow.
   - Tracks in-progress, completed, and failed synchronous orchestration attempts.
   - Supports compensation.
-  - Flyway migrations bundled with the library create these tables automatically when consuming services start.
+  - Explicitly classified adopters apply the bundled migrations as part of their own startup; non-adopter startup must not create Saga tables.
   - `SagaRunner` emits a `sagas.active` metric and attaches a `correlationId` to logs for each orchestration using MDC.
-  - Operators monitor progress via the Saga Dashboard (`/sagas` and `/sagas/{id}/steps` endpoints) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md), which queries saga status via service APIs rather than directly reading every database.
+  - The current Saga Dashboard (`/sagas` and `/sagas/{id}/steps`) provided by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) reads only Logging & Admin's own local Saga rows. It does not aggregate adopter-local Saga state; target cross-owner visibility requires owner read APIs plus a bounded aggregation/read model, and must distinguish an unknown/unavailable adopter from an empty result.
 
 This library is intentionally not FireMUD's durable workflow engine. World lifecycle, publish, and script-patch readiness now use Temporal because they need restart-safe continuation, stable workflow identity, and operator-visible runtime state independent of one service process.
   
@@ -398,9 +397,7 @@ This is a target-state branch illustration, not current implementation or proof.
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
 The `common-saga` module provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
-Services include the library and the accompanying Flyway migrations exposed via
-`classpath:db/migration/saga` to persist saga state in the owning service schema's
-`saga_instance` and `saga_step` tables.
+A concrete adopter's owning service document or tracker must record that classification before it exposes the library's accompanying Flyway migrations at `classpath:db/migration/saga`; module or convention inclusion alone does not establish Saga adoption. See [Mandatory Workflow Adopter Classification](#mandatory-workflow-adopter-classification) and [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
 and in the Logging & Admin Service README.
 

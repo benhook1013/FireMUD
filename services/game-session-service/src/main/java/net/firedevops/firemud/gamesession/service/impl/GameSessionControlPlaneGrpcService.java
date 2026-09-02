@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
@@ -78,6 +79,7 @@ import org.springframework.grpc.server.service.GrpcService;
         "Injected repository/services and config properties are internal Spring collaborators")
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
+  private static final String AUTOMATION_SCRIPTING_SERVICE = "automation-scripting-service";
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
   private final GameSessionCommandControlPlaneService commandControlPlaneService;
@@ -121,6 +123,15 @@ public final class GameSessionControlPlaneGrpcService
     AdminRoleGuard.requireAdminRole();
   }
 
+  private static void requireAutomationScriptingInternalService() {
+    if (!SessionContext.isInternalService()
+        || !AUTOMATION_SCRIPTING_SERVICE.equals(SessionContext.getServiceName())) {
+      throw new AdminAuthorizationException(
+          "ScheduleRemoteFollowup requires automation-scripting-service as an internal service"
+              + " caller");
+    }
+  }
+
   private ErrorDetail authorizationError(String operation, AdminAuthorizationException ex) {
     return GrpcAppErrors.error(
         meterRegistry, logger, operation, "PERMISSION_DENIED", ex.getMessage());
@@ -148,6 +159,20 @@ public final class GameSessionControlPlaneGrpcService
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
               .setError(authorizationError("ListAdmissionPointers", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      logger.warn("ListAdmissionPointers authority unavailable", ex);
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListAdmissionPointers",
+                      "AUTHORITY_UNAVAILABLE",
+                      "Admission pointer audit authority unavailable"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -435,9 +460,16 @@ public final class GameSessionControlPlaneGrpcService
       ScheduleRemoteFollowupRequest request,
       StreamObserver<ScheduleRemoteFollowupResponse> responseObserver) {
     try {
+      requireAutomationScriptingInternalService();
       responseObserver.onNext(
           remoteControlPlaneService.scheduleRemoteFollowup(
               parseTenantId(request.getTenantId()), request));
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setError(authorizationError("ScheduleRemoteFollowup", ex))
+              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(

@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -117,8 +118,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   public ScheduleOutcome scheduleFollowup(ScheduleRequest request) {
     validateScheduleRequest(request);
     Instant now = Instant.now(clock);
-    GameplayCommand command =
-        gameplayCommandRepository.findByCommandId(request.commandId()).orElse(null);
+    GameplayCommand command = findScheduleSourceCommand(request);
 
     Optional<RemoteCommandCoordinator> existingCoordinator =
         remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
@@ -148,7 +148,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     remoteFollowupScheduledCounter.increment();
 
     logger.info(
-        "Scheduled remote followup tenantId={} commandId={} coordinatorId={} followupId={} targetRegionId={}",
+        "Scheduled remote followup tenantId={} commandId={} coordinatorId={} followupId={}"
+            + " targetRegionId={}",
         request.tenantId(),
         request.commandId(),
         coordinator.getCoordinatorId(),
@@ -283,12 +284,17 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         continue;
       }
       RemoteFollowupResult result =
-          latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+          latestResult(coordinator).orElse(null);
       if (result == null) {
         continue;
       }
       GameplayCommand targetCommand =
-          linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+          linkedTargetCommand(
+              coordinator.getTenantId(),
+              coordinator.getTargetGameInstanceId(),
+              coordinator.getTargetRegionId(),
+              coordinator.getTargetRegionEpoch(),
+              coordinator.getFollowupId());
       if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
           && !isTerminalTargetCommand(targetCommand)) {
         continue;
@@ -305,7 +311,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     int reconciled = 0;
     for (RemoteCommandCoordinator coordinator : coordinators) {
       RemoteFollowupResult result =
-          latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+          latestResult(coordinator).orElse(null);
       if (result == null) {
         continue;
       }
@@ -313,7 +319,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
           LATE_RESULT_REQUIRES_RECONCILIATION.equals(coordinator.getLateResultPolicy());
       if (requiresReconciliation) {
         GameplayCommand targetCommand =
-            linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+            linkedTargetCommand(
+                coordinator.getTenantId(),
+                coordinator.getTargetGameInstanceId(),
+                coordinator.getTargetRegionId(),
+                coordinator.getTargetRegionEpoch(),
+                coordinator.getFollowupId());
         if (RESULT_APPLIED.equalsIgnoreCase(result.getOutcome())
             && !isTerminalTargetCommand(targetCommand)) {
           continue;
@@ -339,18 +350,66 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     return reconciled;
   }
 
-  private Optional<RemoteFollowupResult> latestResult(long tenantId, String coordinatorId) {
-    return remoteFollowupResultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(
-        tenantId, coordinatorId);
+  private Optional<RemoteFollowupResult> latestResult(RemoteCommandCoordinator coordinator) {
+    if (remoteFollowupResultRepository == null || coordinator == null) {
+      return Optional.empty();
+    }
+    return remoteFollowupResultRepository
+        .findLatestForCoordinator(coordinator)
+        .filter(result -> matchesCoordinatorScope(result, coordinator));
   }
 
-  private GameplayCommand linkedTargetCommand(long tenantId, String followupId) {
-    if (followupId == null || followupId.isBlank()) {
+  private GameplayCommand linkedTargetCommand(
+      long tenantId,
+      Long targetGameInstanceId,
+      String targetRegionId,
+      Long targetRegionEpoch,
+      String followupId) {
+    if (followupId == null
+        || followupId.isBlank()
+        || targetGameInstanceId == null
+        || targetRegionId == null
+        || targetRegionId.isBlank()
+        || targetRegionEpoch == null) {
       return null;
     }
     return gameplayCommandRepository
-        .findFirstByTenantIdAndRemoteFollowupId(tenantId, followupId)
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+            tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch, followupId)
+        .filter(
+            candidate ->
+                matchesTargetScope(
+                    candidate, tenantId, targetGameInstanceId, targetRegionId, targetRegionEpoch))
         .orElse(null);
+  }
+
+  private static boolean matchesTargetScope(
+      GameplayCommand command,
+      long tenantId,
+      Long targetGameInstanceId,
+      String targetRegionId,
+      Long targetRegionEpoch) {
+    return Objects.equals(command.getTenantId(), tenantId)
+        && Objects.equals(command.getGameInstanceId(), targetGameInstanceId)
+        && Objects.equals(command.getRegionId(), targetRegionId)
+        && Objects.equals(command.getRegionEpoch(), targetRegionEpoch);
+  }
+
+  private static boolean matchesCoordinatorScope(
+      RemoteFollowupResult result, RemoteCommandCoordinator coordinator) {
+    return result != null
+        && coordinator != null
+        && Objects.equals(result.getTenantId(), coordinator.getTenantId())
+        && Objects.equals(result.getCoordinatorId(), coordinator.getCoordinatorId())
+        && Objects.equals(result.getFollowupId(), coordinator.getFollowupId())
+        && Objects.equals(
+            result.getOriginGameInstanceId(), coordinator.getOriginGameInstanceId())
+        && Objects.equals(result.getOriginRegionId(), coordinator.getOriginRegionId())
+        && result.getOriginRegionEpoch() == coordinator.getOriginRegionEpoch()
+        && Objects.equals(
+            result.getTargetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        && Objects.equals(result.getTargetRegionId(), coordinator.getTargetRegionId())
+        && result.getTargetRegionEpoch() == coordinator.getTargetRegionEpoch();
   }
 
   private static boolean deadlineReached(
@@ -417,7 +476,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.resultId(), "result_id");
     requireNotBlank(request.coordinatorId(), "coordinator_id");
     requireNotBlank(request.followupId(), "followup_id");
+    ControlPlaneRequestParser.requirePositive(
+        request.originGameInstanceId(), "origin_game_instance_id");
     requireNotBlank(request.originRegionId(), "origin_region_id");
+    ControlPlaneRequestParser.requirePositive(
+        request.targetGameInstanceId(), "target_game_instance_id");
     requireNotBlank(request.targetRegionId(), "target_region_id");
     requireNotBlank(request.outcome(), "outcome");
     resultSummary(
@@ -432,19 +495,23 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     if (!request.followupId().equals(coordinator.getFollowupId())) {
       throw new IllegalArgumentException("coordinator does not reference followup_id");
     }
-    if (!request.originRegionId().equals(coordinator.getOriginRegionId())
+    if (!Objects.equals(request.originGameInstanceId(), coordinator.getOriginGameInstanceId())
+        || !request.originRegionId().equals(coordinator.getOriginRegionId())
         || request.originRegionEpoch() != coordinator.getOriginRegionEpoch()) {
       throw new IllegalArgumentException("origin scope does not match remote coordinator");
     }
-    if (!request.targetRegionId().equals(coordinator.getTargetRegionId())
+    if (!Objects.equals(request.targetGameInstanceId(), coordinator.getTargetGameInstanceId())
+        || !request.targetRegionId().equals(coordinator.getTargetRegionId())
         || request.targetRegionEpoch() != coordinator.getTargetRegionEpoch()) {
       throw new IllegalArgumentException("target scope does not match remote coordinator");
     }
-    if (!request.originRegionId().equals(followup.getOriginRegionId())
+    if (!Objects.equals(request.originGameInstanceId(), followup.getOriginGameInstanceId())
+        || !request.originRegionId().equals(followup.getOriginRegionId())
         || request.originRegionEpoch() != followup.getOriginRegionEpoch()) {
       throw new IllegalArgumentException("origin scope does not match remote followup");
     }
-    if (!request.targetRegionId().equals(followup.getTargetRegionId())
+    if (!Objects.equals(request.targetGameInstanceId(), followup.getTargetGameInstanceId())
+        || !request.targetRegionId().equals(followup.getTargetRegionId())
         || request.targetRegionEpoch() != followup.getTargetRegionEpoch()) {
       throw new IllegalArgumentException("target scope does not match remote followup");
     }
@@ -453,8 +520,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   private static void validateExistingResult(RemoteFollowupResult existing, ResultRequest request) {
     if (!request.coordinatorId().equals(existing.getCoordinatorId())
         || !request.followupId().equals(existing.getFollowupId())
+        || !Objects.equals(request.originGameInstanceId(), existing.getOriginGameInstanceId())
         || !request.originRegionId().equals(existing.getOriginRegionId())
         || request.originRegionEpoch() != existing.getOriginRegionEpoch()
+        || !Objects.equals(request.targetGameInstanceId(), existing.getTargetGameInstanceId())
         || !request.targetRegionId().equals(existing.getTargetRegionId())
         || request.targetRegionEpoch() != existing.getTargetRegionEpoch()
         || !request.outcome().equals(existing.getOutcome())
@@ -707,16 +776,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     result.setTenantId(request.tenantId());
     result.setCoordinatorId(request.coordinatorId());
     result.setFollowupId(request.followupId());
-    result.setOriginGameInstanceId(
-        coordinator != null && coordinator.getOriginGameInstanceId() != null
-            ? coordinator.getOriginGameInstanceId()
-            : followup == null ? null : followup.getOriginGameInstanceId());
+    result.setOriginGameInstanceId(request.originGameInstanceId());
     result.setOriginRegionId(request.originRegionId());
     result.setOriginRegionEpoch(request.originRegionEpoch());
-    result.setTargetGameInstanceId(
-        coordinator != null && coordinator.getTargetGameInstanceId() != null
-            ? coordinator.getTargetGameInstanceId()
-            : followup == null ? null : followup.getTargetGameInstanceId());
+    result.setTargetGameInstanceId(request.targetGameInstanceId());
     result.setTargetRegionId(request.targetRegionId());
     result.setTargetRegionEpoch(request.targetRegionEpoch());
     result.setOutcome(request.outcome());
@@ -1304,11 +1367,26 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private void mirrorCoordinatorToCommand(RemoteCommandCoordinator coordinator, Instant now) {
     GameplayCommand command =
-        gameplayCommandRepository.findByCommandId(coordinator.getCommandId()).orElse(null);
+        gameplayCommandRepository
+            .findByCommandId(coordinator.getCommandId())
+            .filter(
+                candidate ->
+                    matchesScope(
+                        candidate,
+                        coordinator.getTenantId(),
+                        coordinator.getOriginGameInstanceId(),
+                        coordinator.getOriginRegionId(),
+                        coordinator.getOriginRegionEpoch()))
+            .orElse(null);
     GameplayCommand targetCommand =
-        linkedTargetCommand(coordinator.getTenantId(), coordinator.getFollowupId());
+        linkedTargetCommand(
+            coordinator.getTenantId(),
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch(),
+            coordinator.getFollowupId());
     RemoteFollowupResult latestResult =
-        latestResult(coordinator.getTenantId(), coordinator.getCoordinatorId()).orElse(null);
+        latestResult(coordinator).orElse(null);
     ResultSummary resultSummary =
         latestResult == null
             ? new ResultSummary(null, null, null)
@@ -1369,6 +1447,35 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       }
     }
     gameplayCommandRepository.save(command);
+  }
+
+  private GameplayCommand findScheduleSourceCommand(ScheduleRequest request) {
+    GameplayCommand command =
+        gameplayCommandRepository.findByCommandId(request.commandId()).orElse(null);
+    if (command != null
+        && !matchesScope(
+            command,
+            request.tenantId(),
+            request.originGameInstanceId(),
+            request.originRegionId(),
+            request.originRegionEpoch())) {
+      throw new IllegalArgumentException(
+          "source command does not match tenant_id, origin_game_instance_id, origin_region_id, and"
+              + " origin_region_epoch");
+    }
+    return command;
+  }
+
+  private static boolean matchesScope(
+      GameplayCommand command,
+      long tenantId,
+      long gameInstanceId,
+      String regionId,
+      long regionEpoch) {
+    return Objects.equals(command.getTenantId(), tenantId)
+        && Objects.equals(command.getGameInstanceId(), gameInstanceId)
+        && Objects.equals(command.getRegionId(), regionId)
+        && Objects.equals(command.getRegionEpoch(), regionEpoch);
   }
 
   private void writeRemoteHint(long tenantId, long gameInstanceId, String targetEntityId) {

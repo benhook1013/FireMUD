@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.common.saga.persistence.SagaInstance;
 import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.web.server.ResponseStatusException;
 
 class SagaDashboardServiceImplTest {
   @Mock SagaInstanceRepository instanceRepository;
@@ -38,5 +40,20 @@ class SagaDashboardServiceImplTest {
 
     assertEquals(1, result.size());
     assertEquals(dto, result.get(0));
+  }
+
+  @Test
+  void listStepsRejectsUnknownInstanceButAllowsKnownEmptyInstance() {
+    when(instanceRepository.findById(404L)).thenReturn(Optional.empty());
+
+    ResponseStatusException exception =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            ResponseStatusException.class, () -> service.listSteps(404L));
+    assertEquals(404, exception.getStatusCode().value());
+
+    SagaInstance entity = new SagaInstance();
+    when(instanceRepository.findById(1L)).thenReturn(Optional.of(entity));
+    when(stepRepository.findByInstanceId(1L)).thenReturn(List.of());
+    assertEquals(List.of(), service.listSteps(1L));
   }
 }

@@ -83,7 +83,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetRegionId("region-b");
@@ -92,7 +92,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
     followup.setClaimedTickBatchId("tb-1");
     followup.setPayloadJson("{\"kind\":\"teleport\"}");
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -113,6 +113,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
     assertEquals("coord-1", requestCaptor.getValue().coordinatorId());
     assertEquals("followup-1", requestCaptor.getValue().followupId());
+    assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
+    assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
     assertEquals("ABANDONED", requestCaptor.getValue().outcome());
   }
 
@@ -121,7 +123,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetRegionId("region-b");
@@ -135,7 +137,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_automation_command","command":"LOOK"}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -164,7 +166,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED);
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
@@ -183,7 +185,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
@@ -211,7 +213,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -232,7 +234,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setOriginSourceOrdinal(44L);
     followup.setOriginSourceDueTickId(22L);
     followup.setOriginSourceDueAtMs(1700L);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -302,6 +304,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
+    assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
+    assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 
@@ -310,7 +314,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -333,7 +337,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setOriginSourceOrdinal(44L);
     followup.setOriginSourceDueTickId(22L);
     followup.setOriginSourceDueAtMs(1700L);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -402,7 +406,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -420,7 +424,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_gameplay_command","command":"LOOK","requiresSoloTick":"sometimes"}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -448,7 +452,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -466,7 +470,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_gameplay_command","command":"LOOK","pointerVersion":1.5}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -494,7 +498,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -512,7 +516,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_gameplay_command","command":true}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -540,7 +544,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -562,7 +566,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
     followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -613,6 +617,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
+    assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
+    assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 
@@ -831,7 +837,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -857,7 +863,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setOriginSourceOrdinal(44L);
     followup.setOriginSourceDueTickId(22L);
     followup.setOriginSourceDueAtMs(1700L);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -916,7 +922,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -932,7 +938,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_gameplay_command","command":"LOOK"}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -962,7 +968,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -982,7 +988,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
     followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -1010,7 +1016,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -1035,7 +1041,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTriggerMode("TRIGGER_MODE_NORMAL");
     followup.setReadSnapshotToken("game-session:onEnterRegion:9:8:remote-enter-1");
     followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -1072,7 +1078,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -1090,7 +1096,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_automation_command","command":"LOOK"}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -1156,7 +1162,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -1174,7 +1180,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         """
         {"kind":"enqueue_gameplay_command","command":"LOOK"}
         """);
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -1240,6 +1246,8 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
+    assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
+    assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
     assertEquals("APPLIED", requestCaptor.getValue().outcome());
   }
 
@@ -1251,7 +1259,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   private static RemoteFollowup triggerScriptEventFollowup(String payloadJson) {
-    RemoteFollowup followup = new RemoteFollowup();
+    RemoteFollowup followup = remoteFollowup();
     followup.setFollowupId("followup-1");
     followup.setTenantId(1L);
     followup.setTargetGameInstanceId(9L);
@@ -1277,7 +1285,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   private static RemoteCommandCoordinator triggerScriptEventCoordinator() {
-    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    RemoteCommandCoordinator coordinator = remoteCoordinator();
     coordinator.setCoordinatorId("coord-1");
     coordinator.setTenantId(1L);
     coordinator.setFollowupId("followup-1");
@@ -1285,6 +1293,20 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     coordinator.setOriginRegionEpoch(4L);
     coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
+    return coordinator;
+  }
+
+  private static RemoteFollowup remoteFollowup() {
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setOriginGameInstanceId(7L);
+    followup.setTargetGameInstanceId(9L);
+    return followup;
+  }
+
+  private static RemoteCommandCoordinator remoteCoordinator() {
+    RemoteCommandCoordinator coordinator = new RemoteCommandCoordinator();
+    coordinator.setOriginGameInstanceId(7L);
+    coordinator.setTargetGameInstanceId(9L);
     return coordinator;
   }
 }

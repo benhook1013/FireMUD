@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.gamesession.jooq.tables.records.RemoteFollowupResultRecord;
 import org.jooq.Condition;
@@ -88,6 +89,40 @@ public class RemoteFollowupResultRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(REMOTE_FOLLOWUP_RESULT.COORDINATOR_ID.in(coordinatorIds)))
+        .orderBy(REMOTE_FOLLOWUP_RESULT.OBSERVED_AT.asc(), REMOTE_FOLLOWUP_RESULT.ID.asc())
+        .fetch(this::toEntity);
+  }
+
+  public Optional<RemoteFollowupResult> findLatestForCoordinator(
+      RemoteCommandCoordinator coordinator) {
+    if (coordinator == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(REMOTE_FOLLOWUP_RESULT)
+        .where(exactCoordinatorScope(REMOTE_FOLLOWUP_RESULT, coordinator))
+        .orderBy(REMOTE_FOLLOWUP_RESULT.OBSERVED_AT.desc(), REMOTE_FOLLOWUP_RESULT.ID.desc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
+  }
+
+  public List<RemoteFollowupResult> findForCoordinatorScopes(
+      Collection<RemoteCommandCoordinator> coordinators) {
+    if (coordinators == null || coordinators.isEmpty()) {
+      return List.of();
+    }
+    Condition combinedScope = null;
+    for (RemoteCommandCoordinator coordinator : coordinators) {
+      if (coordinator == null) {
+        continue;
+      }
+      Condition scope = exactCoordinatorScope(REMOTE_FOLLOWUP_RESULT, coordinator);
+      combinedScope = combinedScope == null ? scope : combinedScope.or(scope);
+    }
+    if (combinedScope == null) {
+      return List.of();
+    }
+    return dsl.selectFrom(REMOTE_FOLLOWUP_RESULT)
+        .where(combinedScope)
         .orderBy(REMOTE_FOLLOWUP_RESULT.OBSERVED_AT.asc(), REMOTE_FOLLOWUP_RESULT.ID.asc())
         .fetch(this::toEntity);
   }
@@ -266,6 +301,17 @@ public class RemoteFollowupResultRepository {
                             .TENANT_ID
                             .eq(result.TENANT_ID)
                             .and(coordinator.COORDINATOR_ID.eq(result.COORDINATOR_ID))
+                            .and(coordinator.FOLLOWUP_ID.eq(result.FOLLOWUP_ID))
+                            .and(
+                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
+                                    result.ORIGIN_GAME_INSTANCE_ID))
+                            .and(coordinator.ORIGIN_REGION_ID.eq(result.ORIGIN_REGION_ID))
+                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(result.ORIGIN_REGION_EPOCH))
+                            .and(
+                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
+                                    result.TARGET_GAME_INSTANCE_ID))
+                            .and(coordinator.TARGET_REGION_ID.eq(result.TARGET_REGION_ID))
+                            .and(coordinator.TARGET_REGION_EPOCH.eq(result.TARGET_REGION_EPOCH))
                             .and(coordinator.LATE_RESULT_POLICY.eq(lateResultPolicy)))));
     addIfNotBlank(
         conditions,
@@ -344,27 +390,61 @@ public class RemoteFollowupResultRepository {
             currentOrigin
                 .TENANT_ID
                 .eq(result.TENANT_ID)
-                .and(currentOrigin.GAME_INSTANCE_ID.eq(result.ORIGIN_GAME_INSTANCE_ID)))
+                .and(currentOrigin.GAME_INSTANCE_ID.eq(result.ORIGIN_GAME_INSTANCE_ID))
+                .and(currentOrigin.REGION_ID.eq(result.ORIGIN_REGION_ID))
+                .and(currentOrigin.REGION_EPOCH.eq(result.ORIGIN_REGION_EPOCH)))
         .leftJoin(currentTarget)
         .on(
             currentTarget
                 .TENANT_ID
                 .eq(result.TENANT_ID)
-                .and(currentTarget.GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID)))
+                .and(currentTarget.GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID))
+                .and(currentTarget.REGION_ID.eq(result.TARGET_REGION_ID))
+                .and(currentTarget.REGION_EPOCH.eq(result.TARGET_REGION_EPOCH)))
         .leftJoin(linkedFollowup)
         .on(
             linkedFollowup
                 .TENANT_ID
                 .eq(result.TENANT_ID)
+                .and(linkedFollowup.ORIGIN_GAME_INSTANCE_ID.eq(result.ORIGIN_GAME_INSTANCE_ID))
+                .and(linkedFollowup.ORIGIN_REGION_ID.eq(result.ORIGIN_REGION_ID))
+                .and(linkedFollowup.ORIGIN_REGION_EPOCH.eq(result.ORIGIN_REGION_EPOCH))
+                .and(linkedFollowup.TARGET_GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID))
+                .and(linkedFollowup.TARGET_REGION_ID.eq(result.TARGET_REGION_ID))
+                .and(linkedFollowup.TARGET_REGION_EPOCH.eq(result.TARGET_REGION_EPOCH))
                 .and(linkedFollowup.FOLLOWUP_ID.eq(result.FOLLOWUP_ID)))
         .leftJoin(resultCommand)
-        .on(resultCommand.COMMAND_ID.eq(result.RESULT_COMMAND_ID));
+        .on(
+            resultCommand
+                .TENANT_ID
+                .eq(result.TENANT_ID)
+                .and(resultCommand.GAME_INSTANCE_ID.eq(result.TARGET_GAME_INSTANCE_ID))
+                .and(resultCommand.REGION_ID.isNotDistinctFrom(result.TARGET_REGION_ID))
+                .and(resultCommand.REGION_EPOCH.isNotDistinctFrom(result.TARGET_REGION_EPOCH))
+                .and(resultCommand.REMOTE_FOLLOWUP_ID.eq(result.FOLLOWUP_ID))
+                .and(resultCommand.COMMAND_ID.eq(result.RESULT_COMMAND_ID)));
   }
 
   private Optional<RemoteFollowupResult> findById(Long id) {
     return dsl.selectFrom(REMOTE_FOLLOWUP_RESULT)
         .where(REMOTE_FOLLOWUP_RESULT.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  private static Condition exactCoordinatorScope(
+      net.firedevops.firemud.gamesession.jooq.tables.RemoteFollowupResult result,
+      RemoteCommandCoordinator coordinator) {
+    return result
+        .TENANT_ID
+        .eq(coordinator.getTenantId())
+        .and(result.COORDINATOR_ID.eq(coordinator.getCoordinatorId()))
+        .and(result.FOLLOWUP_ID.eq(coordinator.getFollowupId()))
+        .and(result.ORIGIN_GAME_INSTANCE_ID.eq(coordinator.getOriginGameInstanceId()))
+        .and(result.ORIGIN_REGION_ID.eq(coordinator.getOriginRegionId()))
+        .and(result.ORIGIN_REGION_EPOCH.eq(coordinator.getOriginRegionEpoch()))
+        .and(result.TARGET_GAME_INSTANCE_ID.eq(coordinator.getTargetGameInstanceId()))
+        .and(result.TARGET_REGION_ID.eq(coordinator.getTargetRegionId()))
+        .and(result.TARGET_REGION_EPOCH.eq(coordinator.getTargetRegionEpoch()));
   }
 
   private void populate(RemoteFollowupResultRecord record, RemoteFollowupResult entity) {

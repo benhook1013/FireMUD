@@ -452,9 +452,39 @@ Outputs:
 
 - A list of `GetScriptPatchStatus` records, including `baseVersionId` and `abilitySchemaDigest`.
 
+#### `SetAutomationAdmissionMode`
+
+Implementation note: the current Automation proto/runtime exposes this mutation and supports `regionId`, but its state row and response do not provide the target request-result/acknowledgement record or request-id deduplication. Current normalization may turn blank `controlPlaneRequestId`, actor, and reason values into empty strings, and repeated requests can overwrite state-row request metadata; these are explicit implementation drift and do not relax the target validation below.
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional `regionId`
+- `mode` (`NORMAL` | `PAUSED_FOR_ROLLBACK`)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Target semantics:
+
+- The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted `regionId` is the exact unscoped/empty-region row and never a wildcard for regional rows. The explicit step/target mode (`PAUSED_FOR_ROLLBACK` or `NORMAL`) is part of the request-result key. A workflow-scoped `controlPlaneRequestId` may deliberately span distinct steps or exact scopes, including the pause and normal steps, but each idempotency key is the tuple `(controlPlaneRequestId, normalized exact scope, explicit step/target mode)`.
+- `controlPlaneRequestId`, `actor`, and `reason` are required nonblank values after normalization. Blank or missing values are rejected before request fingerprinting, durable result creation, barrier mutation, or any state read used to select a mutation target.
+- Normalization is deterministic and applied once at the API boundary: trim surrounding whitespace from tenant, game-instance, region, request, actor, and reason identifiers; map omitted/null/blank `regionId` to the empty string; preserve case; and compare `mode` against its exact enum token. The canonical fingerprint serializes the normalized operation, scope, step/target mode, request ID, actor, and reason in a fixed field order with length-delimited values, so equivalent omitted/blank regions have one preimage and embedded delimiters cannot collide.
+- The immutable canonical request fingerprint binds the operation, normalized exact scope, explicit step/target mode, `controlPlaneRequestId`, actor, and reason. An exact retry reuses the same idempotency tuple and fingerprint and returns the identical stored result without reapplying the transition. Changed immutable fields for one tuple conflict before mutation; a deliberate new step or exact scope may use the same workflow ID with its own tuple and result.
+- `PAUSED_FOR_ROLLBACK` prevents new external, scheduler, and timer triggers for the exact scope while allowing already-admitted work to drain or cancel, and advances that scope's admission epoch on entry. `NORMAL` changes only the exact requested scope after the workflow's other owner gates succeed; it does not imply that any regional scope was covered by an omitted `regionId`.
+- Automation durably stores one request-result/acknowledgement record for the accepted tuple, including `controlPlaneRequestId`, normalized exact scope, explicit step/target mode, immutable request fingerprint, resulting `admissionEpoch`, bounded `outcome`, and recorded timestamp. The bounded outcome vocabulary is `APPLIED` (the mode changed) or `ALREADY_APPLIED` (the exact requested mode was already durable); only those outcomes are successful acknowledgements. Blank-field validation and an immutable-fingerprint conflict fail before a successful result is recorded, and neither satisfies recovery. The successful record is the owner acknowledgement used for recovery validation.
+
+Outputs:
+
+- the exact `tenantId`, `gameInstanceId`, and optional `regionId` scope
+- resulting `admissionMode` and `admissionEpoch`
+- `controlPlaneRequestId`
+- explicit target `mode`, bounded `outcome`, immutable request fingerprint, and acknowledgement/result timestamp
+
 #### `GetAutomationDrainStatus`
 
-Implementation note: the current Automation & Scripting implementation now persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, exposes `SetAutomationAdmissionMode`, stamps admitted `script_work_items` with the current `admissionEpoch`, and serves `GetAutomationDrainStatus` from that durable admission state plus durable work-item truth. While paused for rollback, drain counts are scoped to pre-pause work (`workItem.admissionEpoch < current admissionEpoch`) rather than all work items in the scope.
+Implementation note: the current Automation & Scripting implementation persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, exposes `SetAutomationAdmissionMode`, stamps admitted `script_work_items` with the current `admissionEpoch`, and serves this read from admission state plus durable work-item truth. Its current `findOrCreate` path writes a missing state row during a read, and the live response omits the durable request ID/outcome acknowledgement fields; these are implementation drift and do not establish the target read-only behavior. While paused for rollback, current drain counts are scoped to pre-pause work (`workItem.admissionEpoch < current admissionEpoch`) rather than all work items in the scope.
 
 Inputs:
 
@@ -466,8 +496,12 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - Optional `regionId`
+- `statePresent`
 - `admissionMode`
 - `admissionEpoch`
+- `controlPlaneRequestId` (nullable when no successful mutation exists for the exact scope)
+- `outcome` (bounded current owner result; a missing exact state returns an explicit diagnostic result rather than an inferred acknowledgement)
+- explicit target `mode` and request-result fingerprint when a successful acknowledgement exists
 - `activeExecutionCount`
 - `oldestActiveExecutionStartedAt` (nullable/zero when no active work exists)
 - `pendingCancelableWorkItemCount`
@@ -475,8 +509,10 @@ Outputs:
 
 Contract rules:
 
-- This is a read-only operator surface for rollback/promotion drain checks; it must not mutate work-item state.
+- This is a read-only operator surface for rollback/promotion drain checks; it must not create or mutate an admission row, request-result record, or work-item state. If the exact scope has no state row, the response returns an explicit diagnostic/default result such as `statePresent=false`, `admissionMode=NORMAL`, `admissionEpoch=0`, no `controlPlaneRequestId`, and `outcome=NOT_FOUND`; that result is not a successful acknowledgement and is not persisted.
+- The response always identifies the exact requested scope. Omission of `regionId` selects only the unscoped/empty-region row and never aggregates or matches regional rows. A regional rollback must enumerate the authoritative affected region set and read each exact regional scope, as well as any actual unscoped work, before claiming containment.
 - The live response is backed by durable Automation-owned admission mode/epoch state plus durable work-item truth already owned by Automation & Scripting.
+- Target readback also returns the durable successful request-result/acknowledgement's `controlPlaneRequestId`, exact scope, explicit target mode, immutable request fingerprint, resulting `admissionEpoch`, and bounded `outcome`. Recovery validates all of those fields against the current successful Set tuple; a drain count, omitted-region row, missing result, or diagnostic/default response cannot authorize progression.
 - This read is diagnostic cleanup progress only. Its counts do not gate Automation resumption or ordinary gameplay ticks; exact target-artifact convergence and schedule reconciliation are unconditional Automation admission gates, and fresh signer-policy convergence is an additional admission gate only for plugin-backed scopes. Missing, stale, revoked, or otherwise fail-closed signer evidence keeps plugin admission blocked and cannot be replaced by drain counts. Cleanup remains asynchronous and may be bounded pending after the workflow reaches `COMPLETED`, subject to the displaced `(scriptPatchVersion, scriptPinEpoch)` fence.
 
 #### `ListScriptPatchInstanceRolloutEvents`

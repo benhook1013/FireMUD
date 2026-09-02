@@ -42,6 +42,15 @@ components:
           type: string
         error:
           $ref: '#/components/schemas/ErrorDetail'
+    ApiResponseError:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/ResultStatus'
+        data:
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
     BuiltInCommandAliasValidationDto:
       type: object
       properties:
@@ -1576,6 +1585,12 @@ paths:
                       $ref: '#/components/schemas/SagaInstanceDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Saga dashboard unavailable because its conditional database/Saga beans are absent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /sagas/{id}/steps:
     get:
       summary: List saga steps for an instance
@@ -1602,6 +1617,18 @@ paths:
                       $ref: '#/components/schemas/SagaStepDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Saga instance was not found in the Logging & Admin-local Saga store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
+        '503':
+          description: Saga dashboard unavailable because its conditional database/Saga beans are absent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers:
     get:
       summary: List visible gameplay admission pointers

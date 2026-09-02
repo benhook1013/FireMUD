@@ -1108,13 +1108,18 @@ require_contains(
 )
 
 serialized_replay_first_pattern = re.compile(
-    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*replay\s*_\s*first\b",
     re.IGNORECASE,
 )
 serialized_bare_reset_pattern = re.compile(
-    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*reset[`'\" ]*(?![-_A-Za-z0-9])",
+    re.IGNORECASE,
+)
+serialized_reset_first_pattern = re.compile(
+    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"[`'\" ]*reset\s*_\s*first\b",
     re.IGNORECASE,
 )
 serialized_bare_reset_upgrade_pattern = re.compile(
@@ -1146,6 +1151,14 @@ for fixture_text in (
             f"canonical serialized replay-first token was incorrectly rejected: {fixture_text!r}"
         )
 for fixture_text in (
+    "myCompatibilityClass=replay_first",
+    '"myCompatibilityClass": "replay_first"',
+):
+    if serialized_replay_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"embedded replay_first field was incorrectly recognized: {fixture_text!r}"
+        )
+for fixture_text in (
     "compatibilityClass=reset",
     '"compatibilityClass": "reset"',
     "`compatibilityClass` is `reset`",
@@ -1161,6 +1174,43 @@ for fixture_text in (
     if serialized_bare_reset_pattern.search(fixture_text) is not None:
         raise SystemExit(
             f"canonical serialized reset-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "myCompatibilityClass=reset",
+    '"myCompatibilityClass": "reset"',
+):
+    if serialized_bare_reset_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"embedded bare reset field was incorrectly recognized: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset_first",
+    "compatibilityClass = reset _ first",
+    'compatibilityClass: "reset_first"',
+    '"compatibilityClass": "reset_first"',
+    "'compatibilityClass' : 'reset_first'",
+    "`compatibilityClass` is `reset_first`",
+):
+    if serialized_reset_first_pattern.search(fixture_text) is None:
+        raise SystemExit(
+            f"serialized reset_first fixture was not rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset-first",
+    '"compatibilityClass": "reset-first"',
+    "`compatibilityClass` is `reset-first`",
+):
+    if serialized_reset_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized reset-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "myCompatibilityClass=reset_first",
+    '"myCompatibilityClass": "reset_first"',
+):
+    if serialized_reset_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"unrelated serialized field identifier was incorrectly rejected: {fixture_text!r}"
         )
 for fixture_text in (
     "upgrade the class to `reset`",
@@ -1196,6 +1246,10 @@ for path in [
     if serialized_bare_reset_pattern.search(serialized_text):
         raise SystemExit(
             f"{path}: bare reset must not be used as serialized compatibilityClass"
+        )
+    if serialized_reset_first_pattern.search(serialized_text):
+        raise SystemExit(
+            f"{path}: reset_first must not be used as serialized compatibilityClass"
         )
     if serialized_bare_reset_upgrade_pattern.search(serialized_text):
         raise SystemExit(
@@ -1739,6 +1793,43 @@ require_contains(
         "`resetReason` is absent from lifecycle and trip rows",
         "persisted non-identity `playableStateNamespaceId` evidence",
         "`currentRuntimePlayableStateNamespaceId`",
+        "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted `regionId` is the exact unscoped/empty-region row and never a wildcard",
+        "Normalization is deterministic and applied once at the API boundary",
+        "The bounded outcome vocabulary is `APPLIED` (the mode changed) or `ALREADY_APPLIED`",
+        "only those outcomes are successful acknowledgements",
+        "`statePresent=false`, `admissionMode=NORMAL`, `admissionEpoch=0`",
+        "never aggregates or matches regional rows",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-operations.md",
+    [
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime owner inventory",
+        "omitted or blank `regionId` selects only the durable empty/unscoped row and never aggregates regional rows",
+        "durable successful Set acknowledgement (`APPLIED` or `ALREADY_APPLIED`)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-rollout-and-rollback.md",
+    [
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
+        "Each Set must return and durably persist a successful `APPLIED` or `ALREADY_APPLIED` request-result acknowledgement",
+        "for every exact enumerated scope",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
+        "omitted/blank `regionId` selects only the exact empty/unscoped row and never regional rows",
+        "durable successful Set result and matching `GetAutomationDrainStatus` readback",
+    ],
+)
+require_contains(
+    "design/operations/deployments/production/recovery/README.md",
+    [
+        "complete authoritative affected scope set from the durable PostgreSQL/runtime inventory",
+        "successful `APPLIED` or `ALREADY_APPLIED` outcome",
     ],
 )
 require_absent(

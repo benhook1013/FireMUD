@@ -34,6 +34,8 @@ import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
 
@@ -711,6 +713,38 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.activeExecutionCount()).isZero();
     assertThat(summary.oldestActiveExecutionStartedAtMs()).isZero();
     assertThat(summary.pendingCancelableWorkItemCount()).isZero();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"   ", "\u2003"})
+  void normalizesBlankAutomationDrainRegionToExactUnscopedRow(String regionId) {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationAdmissionStateService admissionStateService = admissionStateService();
+    when(workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            "1", "game-1", "", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
+        .thenReturn(List.of());
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    ScriptWorkItemService.AutomationDrainStatusSummary summary =
+        service.getAutomationDrainStatus("1", "game-1", regionId);
+
+    assertThat(summary.regionId()).isEmpty();
+    verify(admissionStateService).getState("1", "game-1", "");
+    verify(workItemRepository)
+        .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            "1", "game-1", "", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT"));
   }
 
   @Test

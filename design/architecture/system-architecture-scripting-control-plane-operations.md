@@ -4,6 +4,8 @@ This document defines the service participation and API-usage layer for scriptin
 
 The direct API surface and request/response contracts for pinning, plugin activation, plugin drain, patch visibility, and admission outcomes live in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
 
+Admission request normalization, exact-scope idempotency, bounded outcomes, durable request-result acknowledgements, and readback rules are owned by that API contract; this workflow document only defines service participation and operational sequencing.
+
 The accepted rollback boundary is epoch-fenced and does not routinely pause gameplay; see [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Game Session owns the exact pin tuple and rollout history ([ADR 0109](./decisions/adr-0109-game-session-owned-script-rollout-history.md)); Automation owns only scoped admission, convergence, schedule, and recovery consequences. Stage-aware dead-letter recovery follows [ADR 0107](./decisions/adr-0107-stage-aware-script-dead-letter-recovery.md), no degraded admission follows [ADR 0108](./decisions/adr-0108-no-degraded-script-admission-without-authoritative-pin.md), emergency component revocation follows [ADR 0116](./decisions/adr-0116-routine-component-migration-and-explicit-emergency-revocation.md), and per-instance plugin activation fencing follows [ADR 0119](./decisions/adr-0119-epoch-fenced-per-instance-plugin-activation.md).
 
 ## Normative Target Contract
@@ -142,8 +144,12 @@ Outputs:
 
 - `tenantId`, `gameInstanceId`
 - Optional `regionId`
+- `statePresent`
 - `admissionMode` (`NORMAL` | `PAUSED_FOR_ROLLBACK`)
 - `admissionEpoch`
+- `controlPlaneRequestId` (nullable when no successful exact-scope mutation exists)
+- explicit target `mode` and bounded `outcome` for the durable successful request-result acknowledgement
+- immutable request fingerprint when a successful acknowledgement exists
 - `activeExecutionCount`
 - `oldestActiveExecutionStartedAt` (nullable)
 - `pendingCancelableWorkItemCount`
@@ -152,6 +158,8 @@ Outputs:
 Semantics:
 
 - Read-only.
+- The response identifies the exact requested scope: omitted or blank `regionId` selects only the durable empty/unscoped row and never aggregates regional rows. A regional recovery must enumerate the complete affected scope set from the authoritative durable PostgreSQL/runtime owner inventory and issue exact-scope Set/readback pairs for every regional and unscoped scope that exists; unavailable or incomplete inventory fails closed.
+- A missing exact admission row is returned as an explicit diagnostic/default (`statePresent=false`, `NORMAL`, epoch `0`, no request ID, and `NOT_FOUND` outcome) and is not created or persisted by this read. Recovery accepts only a durable successful Set acknowledgement (`APPLIED` or `ALREADY_APPLIED`) whose request ID, exact scope, target mode, fingerprint, epoch, and outcome match the requested tuple; counts or a successful RPC response alone do not authorize progression.
 - Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
 - For authoritative pause/resume readback, the returned tenant, instance, and optional region scope must match the requested scope, `admissionMode` must match the requested mode, `admissionEpoch` must be current for that scope, and `observedAt` must be fresh. Missing, stale, earlier-epoch, or contradictory readback is diagnostic only and cannot authorize workflow advancement or completion. The microservice-local API contract documents the same projection; Automation's durable admission state remains the authority.
 - Rollback orchestration uses this API to expose asynchronous cleanup progress. Drain counts do not gate Automation resumption or ordinary gameplay ticks; the [Pin Convergence Acknowledgment Predicate](./system-architecture-scripting-rollout-and-rollback.md#pin-convergence-acknowledgment-predicate), including fresh exact-tuple acknowledgments from `GetAutomationPinConvergence` and `GetGameSessionPinConvergence`, exact target-artifact convergence, and schedule reconciliation are the admission gates. For a scope with applicable plugin-backed admission, fresh signer-policy convergence is an additional admission gate: missing, stale, revoked, or otherwise fail-closed signer evidence keeps plugin admission blocked and cannot be replaced by drain counts. A cached, stale, or earlier-epoch response remains diagnostic rather than convergence evidence, and bounded cleanup may remain pending after `COMPLETED` under the displaced exact epoch fence.

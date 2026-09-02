@@ -224,6 +224,82 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupRejectsSourceCommandFromDifferentTenantBeforePersistence() {
+    GameplayCommand foreignCommand = gameplayCommand();
+    foreignCommand.setTenantId(2L);
+    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+        .thenReturn(Optional.of(foreignCommand));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals(
+        "source command does not match tenant_id, origin_game_instance_id, origin_region_id, and"
+            + " origin_region_epoch",
+        ex.getMessage());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandFromDifferentGameInstanceBeforePersistence() {
+    GameplayCommand foreignCommand = gameplayCommand();
+    foreignCommand.setGameInstanceId(99L);
+    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+        .thenReturn(Optional.of(foreignCommand));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals(
+        "source command does not match tenant_id, origin_game_instance_id, origin_region_id, and"
+            + " origin_region_epoch",
+        ex.getMessage());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandFromDifferentOriginRegionBeforePersistence() {
+    GameplayCommand foreignCommand = gameplayCommand();
+    foreignCommand.setRegionId("region-other");
+    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+        .thenReturn(Optional.of(foreignCommand));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals(
+        "source command does not match tenant_id, origin_game_instance_id, origin_region_id, and"
+            + " origin_region_epoch",
+        ex.getMessage());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
+  void scheduleFollowupRejectsSourceCommandFromDifferentOriginRegionEpochBeforePersistence() {
+    GameplayCommand foreignCommand = gameplayCommand();
+    foreignCommand.setRegionEpoch(99L);
+    when(gameplayCommandRepository.findByCommandId("cmd-1"))
+        .thenReturn(Optional.of(foreignCommand));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+
+    assertEquals(
+        "source command does not match tenant_id, origin_game_instance_id, origin_region_id, and"
+            + " origin_region_epoch",
+        ex.getMessage());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
   void scheduleFollowupDropsPartialRoutingBundle() {
     when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
         .thenReturn(Optional.empty());
@@ -573,6 +649,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                 1L, 8L, "region-b", 8L, "effect-1"))
         .thenReturn(Optional.of(existing));
     GameplayCommand command = gameplayCommand();
+    command.setGameInstanceId(99L);
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     IllegalArgumentException ex =
@@ -1299,8 +1376,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "result-1",
                 "coord-1",
                 "followup-1",
+                7L,
                 "region-a",
                 4L,
+                8L,
                 "region-b",
                 8L,
                 "ABANDONED",
@@ -1334,8 +1413,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "result-1",
                 "coord-1",
                 "followup-1",
+                7L,
                 "region-a",
                 4L,
+                8L,
                 "region-b",
                 8L,
                 "ABANDONED",
@@ -1376,12 +1457,15 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "result-1",
                         "coord-1",
                         "followup-1",
+                        7L,
                         "region-a",
                         4L,
+                        8L,
                         "region-b",
                         8L,
                         "ABANDONED",
-                        "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}",
+                        "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the"
+                            + " command\"}",
                         null,
                         "OTHER_CODE",
                         "Target region rejected the command")));
@@ -1410,8 +1494,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "result-1",
                         "coord-1",
                         "followup-1",
+                        7L,
                         "region-a",
                         4L,
+                        8L,
                         "region-wrong",
                         8L,
                         "APPLIED",
@@ -1421,6 +1507,42 @@ class RemoteFollowupRuntimeServiceImplTest {
                         null)));
 
     assertEquals("target scope does not match remote coordinator", ex.getMessage());
+    verify(resultRepository, never()).save(any());
+  }
+
+  @Test
+  void recordResultRejectsMismatchedOriginGameInstance() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    RemoteFollowup followup = followup();
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.recordResult(
+                    new RemoteFollowupRuntimeService.ResultRequest(
+                        1L,
+                        "result-1",
+                        "coord-1",
+                        "followup-1",
+                        99L,
+                        "region-a",
+                        4L,
+                        8L,
+                        "region-b",
+                        8L,
+                        "APPLIED",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("origin scope does not match remote coordinator", ex.getMessage());
     verify(resultRepository, never()).save(any());
   }
 
@@ -1435,8 +1557,10 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setTenantId(1L);
     existing.setCoordinatorId("coord-1");
     existing.setFollowupId("followup-1");
+    existing.setOriginGameInstanceId(7L);
     existing.setOriginRegionId("region-a");
     existing.setOriginRegionEpoch(4L);
+    existing.setTargetGameInstanceId(8L);
     existing.setTargetRegionId("region-b");
     existing.setTargetRegionEpoch(8L);
     existing.setOutcome("APPLIED");
@@ -1458,8 +1582,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                         "result-1",
                         "coord-1",
                         "followup-1",
+                        7L,
                         "region-a",
                         4L,
+                        8L,
                         "region-b",
                         8L,
                         "ABANDONED",
@@ -1484,13 +1610,16 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setTenantId(1L);
     existing.setCoordinatorId("coord-1");
     existing.setFollowupId("followup-1");
+    existing.setOriginGameInstanceId(7L);
     existing.setOriginRegionId("region-a");
     existing.setOriginRegionEpoch(4L);
+    existing.setTargetGameInstanceId(8L);
     existing.setTargetRegionId("region-b");
     existing.setTargetRegionEpoch(8L);
     existing.setOutcome("APPLIED");
     existing.setResultPayloadJson(
-        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}");
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target"
+            + " region rejected the command\"}");
     existing.setResultCommandId("auto-1");
     existing.setResultErrorCode("RATE_LIMIT");
     existing.setResultMessage("Target region rejected the command");
@@ -1513,6 +1642,50 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void recordResultRejectsReplayWithDifferentTargetGameInstance() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setTargetGameInstanceId(9L);
+    RemoteFollowup followup = followup();
+    followup.setTargetGameInstanceId(9L);
+    RemoteFollowupResult existing = result("APPLIED");
+    existing.setTargetGameInstanceId(8L);
+    existing.setResultId("result-1");
+    existing.setId(99L);
+    when(coordinatorRepository.findByTenantIdAndCoordinatorId(1L, "coord-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(resultRepository.findByTenantIdAndResultId(1L, "result-1"))
+        .thenReturn(Optional.of(existing));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.recordResult(
+                    new RemoteFollowupRuntimeService.ResultRequest(
+                        1L,
+                        "result-1",
+                        "coord-1",
+                        "followup-1",
+                        7L,
+                        "region-a",
+                        4L,
+                        9L,
+                        "region-b",
+                        8L,
+                        "APPLIED",
+                        null,
+                        null,
+                        null,
+                        null)));
+
+    assertEquals("result_id already records a different remote outcome", ex.getMessage());
+    verify(resultRepository, never()).save(any());
+  }
+
+  @Test
   void recordResultReusesExistingResultIdWhenReplayOmitsPayloadJson() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
@@ -1523,13 +1696,16 @@ class RemoteFollowupRuntimeServiceImplTest {
     existing.setTenantId(1L);
     existing.setCoordinatorId("coord-1");
     existing.setFollowupId("followup-1");
+    existing.setOriginGameInstanceId(7L);
     existing.setOriginRegionId("region-a");
     existing.setOriginRegionEpoch(4L);
+    existing.setTargetGameInstanceId(8L);
     existing.setTargetRegionId("region-b");
     existing.setTargetRegionEpoch(8L);
     existing.setOutcome("APPLIED");
     existing.setResultPayloadJson(
-        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}");
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target"
+            + " region rejected the command\"}");
     existing.setResultCommandId("auto-1");
     existing.setResultErrorCode("RATE_LIMIT");
     existing.setResultMessage("Target region rejected the command");
@@ -1548,8 +1724,10 @@ class RemoteFollowupRuntimeServiceImplTest {
                 "result-1",
                 "coord-1",
                 "followup-1",
+                7L,
                 "region-a",
                 4L,
+                8L,
                 "region-b",
                 8L,
                 "APPLIED",
@@ -1570,11 +1748,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     coordinator.setGameplayResult("PENDING");
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand command = gameplayCommand();
     GameplayCommand targetCommand = gameplayCommand();
     targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setGameInstanceId(8L);
+    targetCommand.setRegionId("region-b");
+    targetCommand.setRegionEpoch(8L);
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("APPLIED");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
@@ -1583,10 +1763,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1602,16 +1784,45 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileResultsIgnoresLaterResultFromDifferentCoordinatorScope() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    RemoteFollowupResult wrongScopeResult = result("ABANDONED");
+    wrongScopeResult.setTargetRegionId("region-other");
+    wrongScopeResult.setObservedAt(NOW.plusSeconds(1));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findLatestForCoordinator(coordinator))
+        .thenReturn(Optional.of(wrongScopeResult));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(0, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    verify(coordinatorRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).save(any());
+  }
+
+  @Test
   void reconcileResultsKeepsPendingCoordinatorUntilTargetCommandTerminates() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     coordinator.setGameplayResult("PENDING");
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand originCommand = gameplayCommand();
     GameplayCommand targetCommand = gameplayCommand();
     targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setGameInstanceId(8L);
+    targetCommand.setRegionId("region-b");
+    targetCommand.setRegionEpoch(8L);
     targetCommand.setExecutionOutcome("STAGED");
     targetCommand.setGameplayResult("PENDING");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
@@ -1620,10 +1831,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1641,8 +1854,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     coordinator.setGameplayResult("PENDING");
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand originCommand = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
@@ -1650,10 +1862,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.empty());
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1671,11 +1885,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     coordinator.setGameplayResult("PENDING");
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand originCommand = gameplayCommand();
     GameplayCommand targetCommand = gameplayCommand();
     targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setGameInstanceId(8L);
+    targetCommand.setRegionId("region-b");
+    targetCommand.setRegionEpoch(8L);
     targetCommand.setExecutionOutcome("COMPLETED");
     targetCommand.setGameplayResult("NOT_APPLIED");
     targetCommand.setFailureCode("RATE_LIMIT");
@@ -1686,10 +1902,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1709,11 +1927,11 @@ class RemoteFollowupRuntimeServiceImplTest {
   void reconcileResultsMirrorsDurableResultFailureWhenTargetCommandMissing() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("ABANDONED");
+    RemoteFollowupResult result = result("ABANDONED");
     result.setResultErrorCode("RATE_LIMIT");
     result.setResultPayloadJson(
-        "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the remote gameplay command\"}");
+        "{\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the remote gameplay"
+            + " command\"}");
     GameplayCommand originCommand = gameplayCommand();
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
@@ -1721,10 +1939,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.empty());
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1747,11 +1967,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
     coordinator.setGameplayResult("TIMEOUT");
     coordinator.setLateResultPolicy("late_result_safe_to_ignore");
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand command = gameplayCommand();
     GameplayCommand targetCommand = gameplayCommand();
     targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setGameInstanceId(8L);
+    targetCommand.setRegionId("region-b");
+    targetCommand.setRegionEpoch(8L);
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("APPLIED");
     command.setFailureCode(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
@@ -1762,10 +1984,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1789,11 +2013,13 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setGameplayResult("TIMEOUT");
     coordinator.setLateResultPolicy(
         RemoteFollowupRuntimeServiceImpl.LATE_RESULT_REQUIRES_RECONCILIATION);
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     GameplayCommand command = gameplayCommand();
     GameplayCommand targetCommand = gameplayCommand();
     targetCommand.setCommandId("rfcmd-followup-1");
+    targetCommand.setGameInstanceId(8L);
+    targetCommand.setRegionId("region-b");
+    targetCommand.setRegionEpoch(8L);
     targetCommand.setExecutionOutcome("APPLIED");
     targetCommand.setGameplayResult("APPLIED");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
@@ -1802,10 +2028,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of(coordinator));
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
-    when(gameplayCommandRepository.findFirstByTenantIdAndRemoteFollowupId(1L, "followup-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 8L, "region-b", 8L, "followup-1"))
         .thenReturn(Optional.of(targetCommand));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1819,19 +2047,43 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileResultsRejectsSameTenantTargetCandidateFromDifferentGameInstance() {
+    GameplayCommand candidate = gameplayCommand();
+    candidate.setCommandId("same-tenant-wrong-instance");
+    candidate.setGameInstanceId(7L);
+    candidate.setRegionId("region-b");
+    candidate.setRegionEpoch(8L);
+    candidate.setRemoteFollowupId("followup-1");
+
+    assertTargetCandidateRejectedDuringReconciliation(candidate);
+  }
+
+  @Test
+  void reconcileResultsRejectsForeignTenantTargetCandidate() {
+    GameplayCommand candidate = gameplayCommand();
+    candidate.setCommandId("foreign-tenant");
+    candidate.setTenantId(2L);
+    candidate.setGameInstanceId(9L);
+    candidate.setRegionId("region-b");
+    candidate.setRegionEpoch(8L);
+    candidate.setRemoteFollowupId("followup-1");
+
+    assertTargetCandidateRejectedDuringReconciliation(candidate);
+  }
+
+  @Test
   void reconcileResultsSkipsPendingCoordinatorFromStaleOriginEpoch() {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
     coordinator.setOriginRegionEpoch(3L);
-    RemoteFollowupResult result = new RemoteFollowupResult();
-    result.setOutcome("APPLIED");
+    RemoteFollowupResult result = result("APPLIED");
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
         .thenReturn(List.of(coordinator));
     when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
             1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
         .thenReturn(List.of());
-    when(resultRepository.findFirstByTenantIdAndCoordinatorIdOrderByObservedAtDesc(1L, "coord-1"))
+    when(resultRepository.findLatestForCoordinator(coordinator))
         .thenReturn(Optional.of(result));
 
     int reconciled = service.reconcileResults(1L, "region-a", 4L);
@@ -1881,6 +2133,39 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(null, followup.getClaimedTickBatchId());
     assertEquals("REMOTE_COORDINATOR_NOT_FOUND", followup.getFailureCode());
     assertEquals("missing", followup.getFailureMessage());
+  }
+
+  private void assertTargetCandidateRejectedDuringReconciliation(GameplayCommand candidate) {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    RemoteFollowupResult result = result("APPLIED");
+    GameplayCommand originCommand = gameplayCommand();
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findLatestForCoordinator(coordinator))
+        .thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 9L, "region-b", 8L, "followup-1"))
+        .thenReturn(Optional.of(candidate));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(0, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    assertEquals("STAGED", originCommand.getExecutionOutcome());
+    assertEquals("PENDING", originCommand.getGameplayResult());
+    verify(coordinatorRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).save(any());
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequest() {
@@ -1972,12 +2257,15 @@ class RemoteFollowupRuntimeServiceImplTest {
         "result-1",
         "coord-1",
         "followup-1",
+        7L,
         "region-a",
         4L,
+        8L,
         "region-b",
         8L,
         outcome,
-        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target region rejected the command\"}",
+        "{\"status\":\"done\",\"commandId\":\"auto-1\",\"errorCode\":\"RATE_LIMIT\",\"message\":\"Target"
+            + " region rejected the command\"}",
         "auto-1",
         "RATE_LIMIT",
         "Target region rejected the command");
@@ -2011,6 +2299,21 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(NOW);
     return coordinator;
+  }
+
+  private static RemoteFollowupResult result(String outcome) {
+    RemoteFollowupResult result = new RemoteFollowupResult();
+    result.setTenantId(1L);
+    result.setCoordinatorId("coord-1");
+    result.setFollowupId("followup-1");
+    result.setOriginGameInstanceId(7L);
+    result.setOriginRegionId("region-a");
+    result.setOriginRegionEpoch(4L);
+    result.setTargetGameInstanceId(8L);
+    result.setTargetRegionId("region-b");
+    result.setTargetRegionEpoch(8L);
+    result.setOutcome(outcome);
+    return result;
   }
 
   private static RemoteFollowup followup() {
@@ -2056,6 +2359,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     command.setCommandName("LOOK");
     command.setCommandText("LOOK");
     command.setSanitizedCommandText("LOOK");
+    command.setRegionId("region-a");
+    command.setRegionEpoch(4L);
     command.setExecutionOutcome("STAGED");
     command.setGameplayResult("PENDING");
     command.setAcceptedAt(NOW);

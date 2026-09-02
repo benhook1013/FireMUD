@@ -411,7 +411,14 @@ public class RemoteCommandCoordinatorRepository {
                 latest
                     .TENANT_ID
                     .eq(coordinator.TENANT_ID)
-                    .and(latest.COORDINATOR_ID.eq(coordinator.COORDINATOR_ID)))
+                    .and(latest.COORDINATOR_ID.eq(coordinator.COORDINATOR_ID))
+                    .and(latest.FOLLOWUP_ID.eq(coordinator.FOLLOWUP_ID))
+                    .and(latest.ORIGIN_GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID))
+                    .and(latest.ORIGIN_REGION_ID.eq(coordinator.ORIGIN_REGION_ID))
+                    .and(latest.ORIGIN_REGION_EPOCH.eq(coordinator.ORIGIN_REGION_EPOCH))
+                    .and(latest.TARGET_GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
+                    .and(latest.TARGET_REGION_ID.eq(coordinator.TARGET_REGION_ID))
+                    .and(latest.TARGET_REGION_EPOCH.eq(coordinator.TARGET_REGION_EPOCH)))
             .orderBy(latest.OBSERVED_AT.desc(), latest.ID.desc())
             .limit(1)
             .asField();
@@ -423,6 +430,13 @@ public class RemoteCommandCoordinatorRepository {
                     .TENANT_ID
                     .eq(coordinator.TENANT_ID)
                     .and(result.COORDINATOR_ID.eq(coordinator.COORDINATOR_ID))
+                    .and(result.FOLLOWUP_ID.eq(coordinator.FOLLOWUP_ID))
+                    .and(result.ORIGIN_GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID))
+                    .and(result.ORIGIN_REGION_ID.eq(coordinator.ORIGIN_REGION_ID))
+                    .and(result.ORIGIN_REGION_EPOCH.eq(coordinator.ORIGIN_REGION_EPOCH))
+                    .and(result.TARGET_GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
+                    .and(result.TARGET_REGION_ID.eq(coordinator.TARGET_REGION_ID))
+                    .and(result.TARGET_REGION_EPOCH.eq(coordinator.TARGET_REGION_EPOCH))
                     .and(resultCondition)
                     .and(result.ID.eq(latestId))));
   }
@@ -440,24 +454,37 @@ public class RemoteCommandCoordinatorRepository {
             linkedFollowup
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
+                .and(linkedFollowup.ORIGIN_GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID))
+                .and(linkedFollowup.ORIGIN_REGION_ID.eq(coordinator.ORIGIN_REGION_ID))
+                .and(linkedFollowup.ORIGIN_REGION_EPOCH.eq(coordinator.ORIGIN_REGION_EPOCH))
+                .and(linkedFollowup.TARGET_GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
+                .and(linkedFollowup.TARGET_REGION_ID.eq(coordinator.TARGET_REGION_ID))
+                .and(linkedFollowup.TARGET_REGION_EPOCH.eq(coordinator.TARGET_REGION_EPOCH))
                 .and(linkedFollowup.FOLLOWUP_ID.eq(coordinator.FOLLOWUP_ID)))
         .leftJoin(currentOrigin)
         .on(
             currentOrigin
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
-                .and(currentOrigin.GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID)))
+                .and(currentOrigin.GAME_INSTANCE_ID.eq(coordinator.ORIGIN_GAME_INSTANCE_ID))
+                .and(currentOrigin.REGION_ID.eq(coordinator.ORIGIN_REGION_ID))
+                .and(currentOrigin.REGION_EPOCH.eq(coordinator.ORIGIN_REGION_EPOCH)))
         .leftJoin(currentTarget)
         .on(
             currentTarget
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
-                .and(currentTarget.GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID)))
+                .and(currentTarget.GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
+                .and(currentTarget.REGION_ID.eq(coordinator.TARGET_REGION_ID))
+                .and(currentTarget.REGION_EPOCH.eq(coordinator.TARGET_REGION_EPOCH)))
         .leftJoin(targetCommand)
         .on(
             targetCommand
                 .TENANT_ID
                 .eq(coordinator.TENANT_ID)
+                .and(targetCommand.GAME_INSTANCE_ID.eq(coordinator.TARGET_GAME_INSTANCE_ID))
+                .and(targetCommand.REGION_ID.isNotDistinctFrom(coordinator.TARGET_REGION_ID))
+                .and(targetCommand.REGION_EPOCH.isNotDistinctFrom(coordinator.TARGET_REGION_EPOCH))
                 .and(targetCommand.REMOTE_FOLLOWUP_ID.eq(coordinator.FOLLOWUP_ID)));
   }
 

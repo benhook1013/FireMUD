@@ -363,6 +363,16 @@ public class RemoteFollowupRepository {
                             .eq(followup.TENANT_ID)
                             .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
                             .and(
+                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
+                                    followup.ORIGIN_GAME_INSTANCE_ID))
+                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
+                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
+                            .and(
+                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
+                                    followup.TARGET_GAME_INSTANCE_ID))
+                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
+                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
+                            .and(
                                 coordinator.ORIGIN_DEADLINE_REGION_EPOCH.eq(
                                     originDeadlineRegionEpoch)))));
     addIfPositive(
@@ -377,6 +387,16 @@ public class RemoteFollowupRepository {
                             .TENANT_ID
                             .eq(followup.TENANT_ID)
                             .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
+                            .and(
+                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
+                                    followup.TARGET_GAME_INSTANCE_ID))
+                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
+                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
+                            .and(
+                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
+                                    followup.ORIGIN_GAME_INSTANCE_ID))
+                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
+                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
                             .and(coordinator.ORIGIN_DEADLINE_TICK_ID.eq(originDeadlineTickId)))));
     addIfNotBlank(
         conditions,
@@ -390,6 +410,16 @@ public class RemoteFollowupRepository {
                             .TENANT_ID
                             .eq(followup.TENANT_ID)
                             .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
+                            .and(
+                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
+                                    followup.TARGET_GAME_INSTANCE_ID))
+                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
+                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
+                            .and(
+                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
+                                    followup.ORIGIN_GAME_INSTANCE_ID))
+                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
+                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
                             .and(coordinator.LATE_RESULT_POLICY.eq(lateResultPolicy)))));
 
     return baseControlPlaneQuery(followup, currentOrigin, currentTarget, targetCommand)
@@ -487,18 +517,25 @@ public class RemoteFollowupRepository {
             currentOrigin
                 .TENANT_ID
                 .eq(followup.TENANT_ID)
-                .and(currentOrigin.GAME_INSTANCE_ID.eq(followup.ORIGIN_GAME_INSTANCE_ID)))
+                .and(currentOrigin.GAME_INSTANCE_ID.eq(followup.ORIGIN_GAME_INSTANCE_ID))
+                .and(currentOrigin.REGION_ID.eq(followup.ORIGIN_REGION_ID))
+                .and(currentOrigin.REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH)))
         .leftJoin(currentTarget)
         .on(
             currentTarget
                 .TENANT_ID
                 .eq(followup.TENANT_ID)
-                .and(currentTarget.GAME_INSTANCE_ID.eq(followup.TARGET_GAME_INSTANCE_ID)))
+                .and(currentTarget.GAME_INSTANCE_ID.eq(followup.TARGET_GAME_INSTANCE_ID))
+                .and(currentTarget.REGION_ID.eq(followup.TARGET_REGION_ID))
+                .and(currentTarget.REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH)))
         .leftJoin(targetCommand)
         .on(
             targetCommand
                 .TENANT_ID
                 .eq(followup.TENANT_ID)
+                .and(targetCommand.GAME_INSTANCE_ID.eq(followup.TARGET_GAME_INSTANCE_ID))
+                .and(targetCommand.REGION_ID.isNotDistinctFrom(followup.TARGET_REGION_ID))
+                .and(targetCommand.REGION_EPOCH.isNotDistinctFrom(followup.TARGET_REGION_EPOCH))
                 .and(targetCommand.REMOTE_FOLLOWUP_ID.eq(followup.FOLLOWUP_ID)));
   }
 
