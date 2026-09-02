@@ -1618,6 +1618,12 @@ paths:
                       $ref: '#/components/schemas/SagaStepDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: The saga instance ID must be a positive integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
         '404':
           description: Saga instance was not found in the Logging & Admin-local Saga store
           content:

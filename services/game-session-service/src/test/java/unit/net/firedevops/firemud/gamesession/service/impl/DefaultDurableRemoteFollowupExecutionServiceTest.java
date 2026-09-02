@@ -347,6 +347,10 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
       strings = {
         "originGameInstanceId",
         "targetGameInstanceId",
+        "originRegionIdNull",
+        "originRegionIdBlank",
+        "targetRegionIdNull",
+        "targetRegionIdBlank",
         "originRegionEpoch",
         "targetRegionEpoch"
       })
@@ -360,6 +364,14 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
       followup.setOriginGameInstanceId(null);
     } else if ("targetGameInstanceId".equals(incompleteScope)) {
       followup.setTargetGameInstanceId(null);
+    } else if ("originRegionIdNull".equals(incompleteScope)) {
+      followup.setOriginRegionId(null);
+    } else if ("originRegionIdBlank".equals(incompleteScope)) {
+      followup.setOriginRegionId(" ");
+    } else if ("targetRegionIdNull".equals(incompleteScope)) {
+      followup.setTargetRegionId(null);
+    } else if ("targetRegionIdBlank".equals(incompleteScope)) {
+      followup.setTargetRegionId(" ");
     } else if ("originRegionEpoch".equals(incompleteScope)) {
       followup.setOriginRegionEpoch(0L);
     } else {

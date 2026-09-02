@@ -1827,8 +1827,10 @@ require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "omitted/blank `regionId` selects only the exact empty/unscoped row and never regional rows",
-        "durable successful Set result and matching `GetAutomationDrainStatus` readback",
+        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces are not a recovery authorization",
+        "do not yet provide a durable request-result acknowledgement or matching readback identity",
+        "deployment-wide Automation containment only with explicit impact approval",
+        "durable request-result/fingerprint/acknowledgement readback before recovery proceeds",
     ],
 )
 require_contains(

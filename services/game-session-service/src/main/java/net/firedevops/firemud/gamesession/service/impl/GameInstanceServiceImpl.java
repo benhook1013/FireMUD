@@ -136,7 +136,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             "stage session start");
     GameInstanceDto runtimeState = withStatus(stage.startingState(), STATUS_STARTING);
     boolean newStateSaved = false;
-    boolean oldStateDeleted = false;
     boolean oldWorldTerminationRequested = false;
     boolean oldWorldTerminationCompleted = false;
     boolean oldSessionStopped = false;
@@ -152,7 +151,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceDto existingRunningState = stage.existingRunningState();
       if (existingRunningState != null) {
         sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
-        oldStateDeleted = true;
         oldWorldTerminationRequested = true;
         terminateWorldInstance(
             existingRunningState,
@@ -176,7 +174,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           stage,
           runtimeState,
           newStateSaved,
-          oldStateDeleted,
           oldWorldTerminationRequested,
           oldWorldTerminationCompleted,
           oldSessionStopped,
@@ -347,7 +344,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       StartSessionStage stage,
       GameInstanceDto runtimeState,
       boolean newStateSaved,
-      boolean oldStateDeleted,
       boolean oldWorldTerminationRequested,
       boolean oldWorldTerminationCompleted,
       boolean oldSessionStopped,
@@ -357,11 +353,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       runRollbackSafely(
           "delete failed started session state",
           () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));
-    }
-    if (oldStateDeleted && !oldWorldTerminationRequested && stage.existingRunningState() != null) {
-      runRollbackSafely(
-          "restore replaced session state",
-          () -> sessionStateService.saveState(stage.existingRunningState()));
     }
     GameInstanceDto existingRunningState = stage.existingRunningState();
     if (existingRunningState != null && !oldWorldTerminationRequested) {

@@ -176,8 +176,17 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     followupRepository.save(remoteFollowup(observedAt));
     resultRepository.save(
         remoteResult("result-current-origin-scope", observedAt, "REMOTE_APPLIED", "EXACT"));
-    insertRuntimeRegionStatus(1L, 7L, "region-sibling", 99L);
+    insertRuntimeRegionStatus(1L, 7L, "region-origin", 3L);
 
+    assertThat(findCoordinatorsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-origin-scope");
     assertThat(findCoordinatorsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
     assertThat(findFollowupsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
     assertThat(findResultsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
@@ -480,12 +489,12 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
         "",
         "",
         "",
-        "",
-        0L,
-        null,
         currentOriginRuntimeRegionId,
         currentOriginRuntimeRegionEpoch,
-        currentOriginRuntimeGameInstanceId);
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
+        null);
   }
 
   private java.util.List<RemoteFollowupResult> findResultsByCurrentTarget(

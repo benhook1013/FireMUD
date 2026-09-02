@@ -300,6 +300,105 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void scheduleFollowupRejectsMissingOriginDeadlineRegionEpochBeforePersistence() {
+    RemoteFollowupRuntimeService.ScheduleRequest request =
+        new RemoteFollowupRuntimeService.ScheduleRequest(
+            1L,
+            "cmd-1",
+            "coord-1",
+            7L,
+            "region-a",
+            4L,
+            8L,
+            "region-b",
+            8L,
+            22L,
+            0L,
+            25L,
+            "late_result_safe_to_ignore",
+            "followup-1",
+            "effect-1",
+            "entity-9",
+            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+            "enqueue_automation_command",
+            "LOOK",
+            true,
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "dispatch-1",
+            "work-1",
+            "script-1",
+            "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
+            44L,
+            22L,
+            1700L);
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(request));
+
+    assertEquals("origin_deadline_region_epoch must be positive", ex.getMessage());
+    verifyNoPersistenceForInvalidSchedule();
+  }
+
+  @Test
+  void scheduleFollowupRejectsMissingOriginDeadlineTickIdBeforePersistence() {
+    RemoteFollowupRuntimeService.ScheduleRequest request =
+        new RemoteFollowupRuntimeService.ScheduleRequest(
+            1L,
+            "cmd-1",
+            "coord-1",
+            7L,
+            "region-a",
+            4L,
+            8L,
+            "region-b",
+            8L,
+            22L,
+            4L,
+            0L,
+            "late_result_safe_to_ignore",
+            "followup-1",
+            "effect-1",
+            "entity-9",
+            "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\"}",
+            "enqueue_automation_command",
+            "LOOK",
+            true,
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "dispatch-1",
+            "work-1",
+            "script-1",
+            "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
+            44L,
+            22L,
+            1700L);
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(request));
+
+    assertEquals("origin_deadline_tick_id must be positive", ex.getMessage());
+    verifyNoPersistenceForInvalidSchedule();
+  }
+
+  private void verifyNoPersistenceForInvalidSchedule() {
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
   void scheduleFollowupDropsPartialRoutingBundle() {
     when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
         .thenReturn(Optional.empty());
