@@ -386,8 +386,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         runRollbackSafely(
             "restore quarantined starting session runtime state",
             () ->
-                sessionStateService.saveState(
-                    withStatus(stage.startingState(), STATUS_STARTING)));
+                sessionStateService.saveState(withStatus(stage.startingState(), STATUS_STARTING)));
       }
       runRollbackSafely(
           "retain quarantined starting session row",

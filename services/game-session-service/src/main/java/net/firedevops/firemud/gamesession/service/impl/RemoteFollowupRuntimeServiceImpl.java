@@ -123,14 +123,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     Optional<RemoteCommandCoordinator> existingCoordinator =
         remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
             request.tenantId(), request.commandId());
-    RemoteCommandCoordinator coordinator =
-        existingCoordinator.orElseGet(RemoteCommandCoordinator::new);
-    boolean coordinatorCreated = existingCoordinator.isEmpty();
     existingCoordinator.ifPresent(existing -> validateExistingCoordinator(existing, request));
-    populateCoordinator(coordinator, request, command, now);
-    remoteCommandCoordinatorRepository.save(coordinator);
-    mirrorCoordinatorToCommand(coordinator, now);
-
     Optional<RemoteFollowup> existingFollowup =
         remoteFollowupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
@@ -139,9 +132,42 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
                 request.targetRegionId(),
                 request.targetRegionEpoch(),
                 request.effectKey());
+    existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
+
+    if (existingCoordinator.isPresent() != existingFollowup.isPresent()) {
+      throw new IllegalArgumentException(
+          "remote coordinator and followup must be present together");
+    }
+    if (existingCoordinator.isPresent()) {
+      boolean coordinatorTerminal = isTerminalCoordinatorState(existingCoordinator.get().getState());
+      boolean followupTerminal = isTerminalFollowupStatus(existingFollowup.get().getStatus());
+      if (coordinatorTerminal != followupTerminal) {
+        throw new IllegalArgumentException(
+            "remote coordinator and followup terminal states must match");
+      }
+      if (coordinatorTerminal) {
+        if (!isValidTerminalPair(
+            existingCoordinator.get().getState(), existingFollowup.get().getStatus())) {
+          throw new IllegalArgumentException(
+              "remote coordinator and followup terminal outcomes must match");
+        }
+        return new ScheduleOutcome(
+            existingCoordinator.get().getCoordinatorId(),
+            existingFollowup.get().getFollowupId(),
+            false,
+            false);
+      }
+    }
+
+    RemoteCommandCoordinator coordinator =
+        existingCoordinator.orElseGet(RemoteCommandCoordinator::new);
+    boolean coordinatorCreated = existingCoordinator.isEmpty();
+    populateCoordinator(coordinator, request, command, now);
+    remoteCommandCoordinatorRepository.save(coordinator);
+    mirrorCoordinatorToCommand(coordinator, now);
+
     RemoteFollowup followup = existingFollowup.orElseGet(RemoteFollowup::new);
     boolean followupCreated = existingFollowup.isEmpty();
-    existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
     populateFollowup(followup, request, command, now);
     remoteFollowupRepository.save(followup);
     writeRemoteHint(request.tenantId(), request.targetGameInstanceId(), request.targetEntityId());
@@ -635,6 +661,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to a different followup_id on the target timeline");
     }
+    if (!request.commandId().equals(existing.getCommandId())) {
+      throw new IllegalArgumentException(
+          "effect_key already maps to a different command_id on the target timeline");
+    }
     if (!Objects.equals(request.originGameInstanceId(), existing.getOriginGameInstanceId())
         || !request.originRegionId().equals(existing.getOriginRegionId())
         || !Objects.equals(request.originRegionEpoch(), existing.getOriginRegionEpoch())
@@ -671,6 +701,32 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "effect_key already maps to different remote followup metadata");
     }
+  }
+
+  private static boolean isTerminalCoordinatorState(String state) {
+    return COORDINATOR_REMOTE_APPLIED.equals(state)
+        || COORDINATOR_REMOTE_ABANDONED.equals(state)
+        || COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(state)
+        || COORDINATOR_LATE_RESULT_IGNORED.equals(state)
+        || COORDINATOR_LATE_RESULT_RECONCILED.equals(state);
+  }
+
+  private static boolean isTerminalFollowupStatus(String status) {
+    return FOLLOWUP_APPLIED.equals(status) || FOLLOWUP_ABANDONED.equals(status);
+  }
+
+  private static boolean isValidTerminalPair(String coordinatorState, String followupStatus) {
+    if (!isTerminalCoordinatorState(coordinatorState)
+        || !isTerminalFollowupStatus(followupStatus)) {
+      return false;
+    }
+    if (COORDINATOR_REMOTE_APPLIED.equals(coordinatorState)) {
+      return FOLLOWUP_APPLIED.equals(followupStatus);
+    }
+    if (COORDINATOR_REMOTE_ABANDONED.equals(coordinatorState)) {
+      return FOLLOWUP_APPLIED.equals(followupStatus) || FOLLOWUP_ABANDONED.equals(followupStatus);
+    }
+    return true;
   }
 
   private static boolean sameSchedulingMetadata(

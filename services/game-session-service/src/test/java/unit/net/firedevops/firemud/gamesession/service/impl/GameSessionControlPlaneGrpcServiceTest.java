@@ -6355,6 +6355,28 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void scheduleRemoteFollowupRejectsNonAutomationInternalCallerBeforeDispatch() {
+    RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
+
+    AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.scheduleRemoteFollowup(
+        scheduleRemoteFollowupRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ScheduleRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(runtimeService);
+  }
+
+  @Test
   void scheduleRemoteFollowupRejectsPartialRoutingBundle() {
     RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
     setAutomationScriptingInternalContext();

@@ -1818,7 +1818,7 @@ require_section_contains(
         "`resetReason` is absent from lifecycle and trip rows",
         "persisted non-identity `playableStateNamespaceId` evidence",
         "`currentRuntimePlayableStateNamespaceId`",
-        "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted `regionId` is the exact unscoped/empty-region row and never a wildcard",
+        "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted or blank `regionId` selects the exact empty/unscoped row and never a wildcard",
         "Normalization is deterministic and applied once at the API boundary",
         "The bounded outcome vocabulary is `APPLIED` (the mode changed) or `ALREADY_APPLIED`",
         "only those outcomes are successful acknowledgements",
@@ -1838,7 +1838,7 @@ require_contains(
     "design/architecture/system-architecture-scripting-rollout-and-rollback.md",
     [
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
-        "Each Set must return and durably persist a successful `APPLIED` or `ALREADY_APPLIED` request-result acknowledgement",
+        "Each Set must return and durably persist a successful `APPLIED` or `ALREADY_APPLIED` request-result acknowledgment",
         "for every exact enumerated scope",
     ],
 )

@@ -30,6 +30,7 @@ It is a companion to:
 - [Pre-DSL Trigger and Evaluated Descriptor Boundary](#pre-dsl-trigger-and-evaluated-descriptor-boundary)
 - [Work Item Outbox Contract](#work-item-outbox-contract-normative)
 - [Current State Mapping, Drain, and Rebuild Rules](#current-state-mapping-drain-and-rebuild-rules)
+- [Current Queue-Rebuild Concurrency Gap](#current-queue-rebuild-concurrency-gap)
 - [Operator Replay of DEAD_LETTERED Work](#operator-replay-of-dead_lettered-work)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Runtime Deployment & Versioning](#runtime-deployment--versioning)
@@ -361,6 +362,6 @@ Failure handling:
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad` and the target `scriptPatchVersion`; stage/outcome fields follow the [normative audit table](./system-architecture-scripting-normative-contract-tables.md#table-2-script_event_audit-stages-and-outcomes). **Target state only:** Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of all required per-script runs and becomes `READY` only after every required readiness execution succeeds and no fenced stale run remains unresolved. The recovery transition from `ONLOAD_RUNNING` to `READY` must be one atomic conditional durable update whose write predicate revalidates the complete required `onLoad` aggregate for the current readiness identity, the expected readiness generation, and the current publication/readiness row still being current, `ONLOAD_RUNNING`, and not `SUPERSEDED`; a concurrent supersession or stale-run terminalization must win and a partial or stale aggregate must not produce `READY`.
 
-### Current Queue-Rebuild Concurrency Gap
+## Current Queue-Rebuild Concurrency Gap
 
 The current `rebuildPendingWorkItemIndex` implementation checks Redis for an existing pointer and then appends when absent in separate operations. Concurrent rebuilds, or a rebuild racing normal enqueue, can therefore publish duplicate pointers. Drain-time deduplication limits duplicate processing in one batch but does not make the projection idempotent or bound queue growth. The target atomic uniqueness and concurrency proof remain unavailable.
