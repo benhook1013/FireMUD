@@ -2506,8 +2506,6 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setSourceType("AUTOMATION");
     command.setAutomationDispatchId("dispatch-1");
     command.setAutomationWorkItemId("work-1");
-    command.setRegionId("region-1");
-    command.setRegionEpoch(12L);
     command.setEnqueueSeq(44L);
     command.setPlayableStateScope("ISOLATED");
     command.setWorldSlug("ops");

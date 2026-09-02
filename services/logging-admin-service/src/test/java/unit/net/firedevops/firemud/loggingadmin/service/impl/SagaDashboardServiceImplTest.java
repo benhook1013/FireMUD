@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -43,17 +44,23 @@ class SagaDashboardServiceImplTest {
   }
 
   @Test
-  void listStepsRejectsUnknownInstanceButAllowsKnownEmptyInstance() {
+  void listStepsRejectsUnknownInstanceWithoutQueryingSteps() {
     when(instanceRepository.findById(404L)).thenReturn(Optional.empty());
 
     ResponseStatusException exception =
         org.junit.jupiter.api.Assertions.assertThrows(
             ResponseStatusException.class, () -> service.listSteps(404L));
     assertEquals(404, exception.getStatusCode().value());
+    verifyNoInteractions(stepRepository);
+  }
 
+  @Test
+  void listStepsAllowsKnownEmptyInstance() {
     SagaInstance entity = new SagaInstance();
+
     when(instanceRepository.findById(1L)).thenReturn(Optional.of(entity));
     when(stepRepository.findByInstanceId(1L)).thenReturn(List.of());
+
     assertEquals(List.of(), service.listSteps(1L));
   }
 }

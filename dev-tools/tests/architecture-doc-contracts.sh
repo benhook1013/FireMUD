@@ -1108,17 +1108,17 @@ require_contains(
 )
 
 serialized_replay_first_pattern = re.compile(
-    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*replay\s*_\s*first\b",
     re.IGNORECASE,
 )
 serialized_bare_reset_pattern = re.compile(
-    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*reset[`'\" ]*(?![-_A-Za-z0-9])",
     re.IGNORECASE,
 )
 serialized_reset_first_pattern = re.compile(
-    r"(?<![A-Za-z0-9_])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*reset\s*_\s*first\b",
     re.IGNORECASE,
 )
@@ -1153,6 +1153,8 @@ for fixture_text in (
 for fixture_text in (
     "myCompatibilityClass=replay_first",
     '"myCompatibilityClass": "replay_first"',
+    "my-compatibilityClass=replay_first",
+    '"my-compatibilityClass": "replay_first"',
 ):
     if serialized_replay_first_pattern.search(fixture_text) is not None:
         raise SystemExit(
@@ -1178,6 +1180,8 @@ for fixture_text in (
 for fixture_text in (
     "myCompatibilityClass=reset",
     '"myCompatibilityClass": "reset"',
+    "my-compatibilityClass=reset",
+    '"my-compatibilityClass": "reset"',
 ):
     if serialized_bare_reset_pattern.search(fixture_text) is not None:
         raise SystemExit(
@@ -1207,6 +1211,8 @@ for fixture_text in (
 for fixture_text in (
     "myCompatibilityClass=reset_first",
     '"myCompatibilityClass": "reset_first"',
+    "my-compatibilityClass=reset_first",
+    '"my-compatibilityClass": "reset_first"',
 ):
     if serialized_reset_first_pattern.search(fixture_text) is not None:
         raise SystemExit(

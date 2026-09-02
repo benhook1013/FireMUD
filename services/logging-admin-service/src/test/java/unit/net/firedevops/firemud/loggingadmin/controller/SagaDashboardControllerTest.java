@@ -121,4 +121,19 @@ class SagaDashboardControllerTest {
         "SAGA_DASHBOARD_UNAVAILABLE",
         ((net.firedevops.firemud.common.ApiResponse<?>) response.getBody()).error().code());
   }
+
+  @Test
+  void unavailableDashboardReturns503ForSteps() {
+    org.springframework.beans.factory.ObjectProvider<SagaDashboardService> provider =
+        org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    org.mockito.Mockito.when(provider.getIfAvailable()).thenReturn(null);
+    SagaDashboardController unavailable = new SagaDashboardController(provider);
+
+    ResponseEntity<?> response = unavailable.listSteps("1");
+
+    org.junit.jupiter.api.Assertions.assertEquals(503, response.getStatusCode().value());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "SAGA_DASHBOARD_UNAVAILABLE",
+        ((net.firedevops.firemud.common.ApiResponse<?>) response.getBody()).error().code());
+  }
 }

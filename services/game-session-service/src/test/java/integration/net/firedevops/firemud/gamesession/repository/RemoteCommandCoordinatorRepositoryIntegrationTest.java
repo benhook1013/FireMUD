@@ -58,8 +58,8 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE runtime_region_status, remote_followup_result, remote_followup,"
-            + " remote_command_coordinator RESTART IDENTITY CASCADE");
+        "TRUNCATE TABLE gameplay_command, runtime_region_status, remote_followup_result,"
+            + " remote_followup, remote_command_coordinator RESTART IDENTITY CASCADE");
   }
 
   @Test
