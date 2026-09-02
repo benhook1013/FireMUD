@@ -1290,8 +1290,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
-        openFirstPartyDriver(
-            "2", firstPartyClaims("demo", "production", "1", "1", "mismatch"))) {
+        openFirstPartyDriver("2", firstPartyClaims("demo", "production", "1", "1", "mismatch"))) {
       bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
       client.send("LOGIN");
       client.awaitMatching(
