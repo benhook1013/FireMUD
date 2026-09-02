@@ -6659,7 +6659,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         projectLinkedRemoteFollowupResults(sameTenantWrongInstance, foreignTenant);
 
     assertEquals(1, response.getResultsCount());
-    assertEquals("", response.getResults(0).getResultCommandId());
+    assertEquals("durable-result-command", response.getResults(0).getResultCommandId());
     assertEquals("", response.getResults(0).getResultCommandExecutionOutcome());
     assertEquals("", response.getResults(0).getResultCommandGameplayResult());
   }
@@ -7864,6 +7864,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     result.setTargetRegionId("region-b");
     result.setTargetRegionEpoch(8L);
     result.setOutcome("APPLIED");
+    result.setResultCommandId("durable-result-command");
     RemoteFollowupResultRepository resultRepository =
         Mockito.mock(
             RemoteFollowupResultRepository.class,
@@ -7877,6 +7878,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowup followup = new RemoteFollowup();
     followup.setTenantId(1L);
     followup.setFollowupId("followup-1");
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("region-a");
+    followup.setOriginRegionEpoch(4L);
     followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(8L);

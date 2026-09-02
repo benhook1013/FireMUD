@@ -2166,6 +2166,47 @@ class RemoteFollowupRuntimeServiceImplTest {
   }
 
   @Test
+  void reconcileTimeoutsSkipsCoordinatorWithIncompleteRuntimeScope() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setOriginDeadlineRegionEpoch(4L);
+    coordinator.setOriginDeadlineTickId(12L);
+    coordinator.setTargetRegionEpoch(0L);
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+
+    int updated = service.reconcileTimeouts(1L, "region-a", 4L, 12L);
+
+    assertEquals(0, updated);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    verify(coordinatorRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).findByCommandId(anyString());
+  }
+
+  @Test
+  void reconcileTimeoutsSkipsCoordinatorWithIncompleteOriginDeadline() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setOriginDeadlineRegionEpoch(0L);
+    coordinator.setOriginDeadlineTickId(12L);
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+
+    int updated = service.reconcileTimeouts(1L, "region-a", 4L, 12L);
+
+    assertEquals(0, updated);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
+    verify(coordinatorRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).findByCommandId(anyString());
+  }
+
+  @Test
   void abandonFollowupClearsClaimAndMarksTerminalFailure() {
     RemoteFollowup followup = followup();
     followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);

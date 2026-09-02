@@ -261,6 +261,21 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     Instant now = Instant.now(clock);
     int updated = 0;
     for (RemoteCommandCoordinator coordinator : pending) {
+      if (!hasCompleteRuntimeScope(coordinator)) {
+        logger.warn(
+            "Skipping remote timeout reconciliation for coordinator {} with incomplete runtime scope",
+            coordinator == null ? null : coordinator.getCoordinatorId());
+        continue;
+      }
+      if (!hasCompleteOriginDeadline(coordinator)) {
+        logger.warn(
+            "Skipping remote timeout reconciliation for coordinator {} with incomplete origin deadline"
+                + " regionEpoch={} tickId={}",
+            coordinator.getCoordinatorId(),
+            coordinator.getOriginDeadlineRegionEpoch(),
+            coordinator.getOriginDeadlineTickId());
+        continue;
+      }
       if (!deadlineReached(coordinator, currentOriginRegionEpoch, currentTickId)) {
         continue;
       }
@@ -451,6 +466,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && (currentOriginRegionEpoch > deadlineRegionEpoch
             || (currentOriginRegionEpoch == deadlineRegionEpoch
                 && currentTickId >= deadlineTickId));
+  }
+
+  private static boolean hasCompleteOriginDeadline(RemoteCommandCoordinator coordinator) {
+    return coordinator != null
+        && coordinator.getOriginDeadlineRegionEpoch() > 0
+        && coordinator.getOriginDeadlineTickId() > 0;
   }
 
   private static void validateScheduleRequest(ScheduleRequest request) {
