@@ -141,21 +141,22 @@ final class TickStagingService {
     List<TickQueuedCommandEnvelope> entries = new ArrayList<>(rawEntries.size());
     for (Object rawEntry : rawEntries) {
       if (rawEntry == null) {
-        continue;
+        throw new IllegalStateException("Null tick queue entry cannot be staged");
       }
       entries.add(parseQueuedCommand(rawEntry.toString()));
     }
     return List.copyOf(entries);
   }
 
-  List<TickQueuedCommandEnvelope> readExecutablePendingEntries(Long tenantId, Long queueTargetId) {
+  PendingEntriesReadResult readPendingEntriesForReplay(Long tenantId, Long queueTargetId) {
     List<TickQueuedCommandEnvelope> entries = readPendingEntries(tenantId, queueTargetId);
     if (entries.isEmpty()) {
-      return entries;
+      return new PendingEntriesReadResult(PendingEntriesReadStatus.EMPTY, entries);
     }
     RuntimeRegionStatus ownership = currentOwnershipForPendingRead(tenantId, queueTargetId);
     if (ownership == null) {
-      return List.of();
+      return new PendingEntriesReadResult(
+          PendingEntriesReadStatus.AUTHORITY_UNAVAILABLE, List.of());
     }
     Map<String, GameplayCommand> commandsById =
         loadCommands(entries).stream()
@@ -163,6 +164,7 @@ final class TickStagingService {
                 java.util.stream.Collectors.toMap(
                     GameplayCommand::getCommandId, command -> command));
     List<TickQueuedCommandEnvelope> executable = new ArrayList<>(entries.size());
+    boolean hasOrphanedOrStaleEntries = false;
     for (TickQueuedCommandEnvelope entry : entries) {
       GameplayCommand command = commandsById.get(entry.commandId());
       if (command != null
@@ -171,8 +173,9 @@ final class TickStagingService {
         executable.add(entry);
         continue;
       }
+      hasOrphanedOrStaleEntries = true;
       logger.warn(
-          "Discarding stale or out-of-scope tick payload tenantId={} gameInstanceId={} commandId={} durableOutcome={} commandScope=({}, {}, {}, {}) ownershipScope=({}, {}, {}, {})",
+          "Stale or out-of-scope tick payload requires owner reconciliation tenantId={} gameInstanceId={} commandId={} durableOutcome={} commandScope=({}, {}, {}, {}) ownershipScope=({}, {}, {}, {})",
           tenantId,
           queueTargetId,
           entry.commandId(),
@@ -186,7 +189,29 @@ final class TickStagingService {
           ownership.getRegionId(),
           ownership.getRegionEpoch());
     }
-    return List.copyOf(executable);
+    PendingEntriesReadStatus status =
+        hasOrphanedOrStaleEntries
+            ? PendingEntriesReadStatus.ORPHANED_OR_STALE
+            : PendingEntriesReadStatus.EXECUTABLE;
+    return new PendingEntriesReadResult(status, List.copyOf(executable));
+  }
+
+  List<TickQueuedCommandEnvelope> readExecutablePendingEntries(Long tenantId, Long queueTargetId) {
+    return readPendingEntriesForReplay(tenantId, queueTargetId).entries();
+  }
+
+  enum PendingEntriesReadStatus {
+    EMPTY,
+    EXECUTABLE,
+    ORPHANED_OR_STALE,
+    AUTHORITY_UNAVAILABLE
+  }
+
+  record PendingEntriesReadResult(
+      PendingEntriesReadStatus status, List<TickQueuedCommandEnvelope> entries) {
+    PendingEntriesReadResult {
+      entries = List.copyOf(entries);
+    }
   }
 
   private RuntimeRegionStatus currentOwnershipForPendingRead(Long tenantId, Long gameInstanceId) {
@@ -245,16 +270,26 @@ final class TickStagingService {
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
     if (existing.isEmpty()) {
+      boolean replaySolo = uniformMode(replayEntries, "pending replay");
       return createBatch(
-          "PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, replayEntries);
+          "PENDING_REPLAY", tenantId, gameInstanceId, replaySolo, ownership, replayEntries);
     }
     TickBatch batch = existing.orElseThrow();
     List<CommandSelection> replaySelections = commandSelections(replayEntries);
     requireExactCommandSetAndScope(
         replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
+    // Pending Redis entries are volatile coordination evidence. Reject an
+    // internally mixed pending list, but let a uniform stale mode reconcile
+    // against the durable sealed manifest below.
+    boolean replaySolo = uniformMode(replayEntries, "pending replay");
     String replayManifest = selectedWorkManifest(ownership.regionId(), replaySelections);
     String replayDigest = shortHash(replayManifest);
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
+      if (batch.isRequiresSoloTick() != replaySolo) {
+        throw new IllegalStateException(
+            "Pending replay mode does not match durable tick batch mode for tickBatchId="
+                + batch.getTickBatchId());
+      }
       tickBatchExecutionService.requireCompleteEffectSet(batch);
       return batch;
     }
@@ -266,10 +301,17 @@ final class TickStagingService {
         batch.getSelectedWorkManifestDigest(),
         replayDigest);
     List<TickQueuedCommandEnvelope> sealedEntries = loadSealedReplayEntries(batch);
+    boolean sealedSolo = uniformMode(sealedEntries, "sealed replay");
+    if (batch.isRequiresSoloTick() != sealedSolo) {
+      throw new IllegalStateException(
+          "Sealed replay mode does not match durable tick batch mode for tickBatchId="
+              + batch.getTickBatchId());
+    }
     tickBatchExecutionService.restorePendingProjection(
         tenantId, gameInstanceId, replayEntries, sealedEntries);
     tickBatchExecutionService.markBatchManifestMismatch(batch, sealedEntries, replayDigest);
-    return createBatch("PENDING_REPLAY", tenantId, gameInstanceId, false, ownership, sealedEntries);
+    return createBatch(
+        "PENDING_REPLAY", tenantId, gameInstanceId, sealedSolo, ownership, sealedEntries);
   }
 
   TickBatch createBatch(
@@ -281,8 +323,12 @@ final class TickStagingService {
       List<TickQueuedCommandEnvelope> entries) {
     Instant now = Instant.now();
     requireDurableCommandIdentifiers(entries);
+    if (uniformMode(entries, "tick batch") != requiresSoloTick) {
+      throw new IllegalStateException("Tick batch mode does not match all staged entries");
+    }
     List<CommandSelection> selections = commandSelections(entries);
     requireExactCommandSetAndScope(entries, selections, tenantId, gameInstanceId, ownership);
+    requireDurableModeAgreement(selections);
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-" + UUID.randomUUID());
     batch.setTenantId(tenantId);
@@ -305,6 +351,7 @@ final class TickStagingService {
               List<CommandSelection> transactionSelections = commandSelections(entries);
               requireExactCommandSetAndScope(
                   entries, transactionSelections, tenantId, gameInstanceId, ownership);
+              requireDurableModeAgreement(transactionSelections);
               requireCurrentStagingOwnership(tenantId, gameInstanceId, batch);
               String transactionManifest =
                   selectedWorkManifest(ownership.regionId(), transactionSelections);
@@ -328,11 +375,26 @@ final class TickStagingService {
   private TickQueuedCommandEnvelope parseQueuedCommand(String payload) {
     String[] parts = payload.split("\\|", 3);
     if (parts.length < 3) {
-      return new TickQueuedCommandEnvelope(false, null, payload);
+      throw new IllegalStateException("Malformed tick queue entry: " + payload);
+    }
+    if (!("N".equals(parts[0]) || "S".equals(parts[0]))) {
+      throw new IllegalStateException("Malformed tick queue mode: " + payload);
     }
     boolean requiresSoloTick = "S".equals(parts[0]);
-    String commandId = "-".equals(parts[1]) || parts[1].isBlank() ? null : parts[1];
+    String commandId = parts[1];
+    if (commandId.isBlank() || "-".equals(commandId) || parts[2].isBlank()) {
+      throw new IllegalStateException("Malformed tick queue entry: " + payload);
+    }
+    try {
+      TickQueueControlService.requireQueueEncodingSafe(commandId, "command_id");
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException("Malformed tick queue entry: " + payload, ex);
+    }
     return new TickQueuedCommandEnvelope(requiresSoloTick, commandId, parts[2]);
+  }
+
+  boolean requiresSoloTickFromQueueEntry(String payload) {
+    return parseQueuedCommand(payload).requiresSoloTick();
   }
 
   private List<TickQueuedCommandEnvelope> loadSealedReplayEntries(TickBatch batch) {
@@ -347,9 +409,22 @@ final class TickStagingService {
       List<SealedReplayCommand> sealedCommands = new ArrayList<>();
       for (JsonNode item : items) {
         String commandId = item.path("commandId").asText("").trim();
-        if (commandId.isBlank()) {
+        if (commandId.isBlank() || "-".equals(commandId)) {
           throw new IllegalStateException(
               "Sealed replay manifest requires commandId for tickBatchId="
+                  + batch.getTickBatchId());
+        }
+        try {
+          TickQueueControlService.requireQueueEncodingSafe(commandId, "command_id");
+        } catch (IllegalArgumentException ex) {
+          throw new IllegalStateException(
+              "Sealed replay manifest contains an unsafe commandId for tickBatchId="
+                  + batch.getTickBatchId(),
+              ex);
+        }
+        if (!item.has("requiresSoloTick") || !item.get("requiresSoloTick").isBoolean()) {
+          throw new IllegalStateException(
+              "Sealed replay manifest requires boolean requiresSoloTick for tickBatchId="
                   + batch.getTickBatchId());
         }
         sealedCommands.add(
@@ -613,6 +688,28 @@ final class TickStagingService {
     }
   }
 
+  private void requireDurableModeAgreement(List<CommandSelection> selections) {
+    for (CommandSelection selection : selections) {
+      GameplayCommand command = selection.command();
+      if (command == null || command.isRequiresSoloTick() != selection.entry().requiresSoloTick()) {
+        throw new IllegalStateException(
+            "Durable tick staging mode does not match queued command commandId="
+                + selection.entry().commandId());
+      }
+    }
+  }
+
+  private boolean uniformMode(List<TickQueuedCommandEnvelope> entries, String source) {
+    if (entries.isEmpty()) {
+      throw new IllegalStateException("Cannot derive tick mode from empty " + source);
+    }
+    boolean mode = entries.get(0).requiresSoloTick();
+    if (entries.stream().anyMatch(entry -> entry.requiresSoloTick() != mode)) {
+      throw new IllegalStateException("Mixed normal/solo entries in " + source);
+    }
+    return mode;
+  }
+
   private void requireCurrentStagingOwnership(Long tenantId, Long gameInstanceId, TickBatch batch) {
     RuntimeRegionStatus ownership =
         tickQueueControlService.requireRuntimeOwnership(
@@ -664,9 +761,17 @@ final class TickStagingService {
 
   private void requireDurableCommandIdentifiers(List<TickQueuedCommandEnvelope> entries) {
     for (TickQueuedCommandEnvelope entry : entries) {
-      if (entry.commandId() == null || entry.commandId().isBlank()) {
+      if (entry.commandId() == null
+          || entry.commandId().isBlank()
+          || "-".equals(entry.commandId())) {
         throw new IllegalStateException(
             "Durable tick batching requires linked command ids for all queued commands");
+      }
+      try {
+        TickQueueControlService.requireQueueEncodingSafe(entry.commandId(), "command_id");
+      } catch (IllegalArgumentException ex) {
+        throw new IllegalStateException(
+            "Durable tick batching requires queue-safe command ids for all queued commands", ex);
       }
     }
   }

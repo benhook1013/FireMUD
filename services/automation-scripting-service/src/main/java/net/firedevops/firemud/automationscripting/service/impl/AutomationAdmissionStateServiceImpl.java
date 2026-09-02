@@ -5,6 +5,9 @@ import java.time.Instant;
 import net.firedevops.firemud.automationscripting.entity.AutomationAdmissionState;
 import net.firedevops.firemud.automationscripting.repository.AutomationAdmissionStateRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,19 +16,33 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repository is an internal Spring collaborator.")
 public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionStateService {
+  private static final int ADMISSION_SCOPE_LOCK_NAMESPACE = 0x41534D44;
   private static final String MODE_NORMAL = "NORMAL";
   private static final String MODE_PAUSED_FOR_ROLLBACK = "PAUSED_FOR_ROLLBACK";
 
   private final AutomationAdmissionStateRepository repository;
+  private final DSLContext dsl;
 
   public AutomationAdmissionStateServiceImpl(AutomationAdmissionStateRepository repository) {
+    this(repository, null);
+  }
+
+  @Autowired
+  public AutomationAdmissionStateServiceImpl(
+      AutomationAdmissionStateRepository repository, DSLContext dsl) {
     this.repository = repository;
+    this.dsl = dsl;
   }
 
   @Override
   @Transactional
   public AdmissionStateSummary getState(String tenantId, String gameInstanceId, String regionId) {
-    return toSummary(findOrCreate(tenantId, gameInstanceId, regionId));
+    String requiredTenantId = requireText(tenantId, "tenant_id");
+    String requiredGameInstanceId = requireText(gameInstanceId, "game_instance_id");
+    // The first read may create the regional row. It must take the same instance-wide lock as
+    // setMode so a concurrent mode mutation cannot be lost while both callers observe no row.
+    lockMutationScope(dsl, requiredTenantId, requiredGameInstanceId);
+    return toSummary(findOrCreate(requiredTenantId, requiredGameInstanceId, regionId));
   }
 
   @Override
@@ -35,6 +52,7 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     String gameInstanceId = requireText(command.gameInstanceId(), "game_instance_id");
     String regionId = normalize(command.regionId());
     String mode = normalizeMode(command.mode());
+    lockMutationScope(dsl, tenantId, gameInstanceId);
     AutomationAdmissionState state = findOrCreate(tenantId, gameInstanceId, regionId);
     Instant now = Instant.now();
     if (!state.getMode().equals(mode)) {
@@ -48,6 +66,17 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     state.setReason(normalize(command.reason()));
     state.setUpdatedAt(now);
     return toSummary(repository.save(state));
+  }
+
+  /** Serializes admission mutations for one game instance across all regional scope rows. */
+  static void lockMutationScope(DSLContext dsl, String tenantId, String gameInstanceId) {
+    if (dsl == null || dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return;
+    }
+    dsl.execute(
+        "select pg_advisory_xact_lock(?, ?)",
+        ADMISSION_SCOPE_LOCK_NAMESPACE,
+        (tenantId + "\u0000" + gameInstanceId).hashCode());
   }
 
   private AutomationAdmissionState findOrCreate(

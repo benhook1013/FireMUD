@@ -2848,7 +2848,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -2917,7 +2917,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -2960,7 +2960,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3003,7 +3003,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3048,7 +3048,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3091,7 +3091,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3274,7 +3274,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3328,7 +3328,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
-            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            automationPointerAuthority(),
             Mockito.mock(InstanceCutoverCompatibilityService.class),
             Mockito.mock(VersionUpgradePreparationService.class),
             tickService,
@@ -3620,6 +3620,32 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
     GameplayCommand existing = new GameplayCommand();
     existing.setCommandId("auto-existing");
+    existing.setTenantId(1L);
+    existing.setGameInstanceId(7L);
+    existing.setSessionId(0L);
+    existing.setCommandName("SAY");
+    existing.setCommandText("say hello");
+    existing.setSanitizedCommandText("say hello");
+    existing.setRequiresSoloTick(false);
+    existing.setSourceType("AUTOMATION");
+    existing.setAutomationDispatchId("dispatch-1");
+    existing.setAutomationWorkItemId("work-1");
+    existing.setScriptId("script-1");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setPluginId("plugin-1");
+    existing.setPluginVersionId("plugin-v1");
+    existing.setPlayableStateScope("SHARED");
+    existing.setWorldSlug("demo");
+    existing.setRealmSlug("production");
+    existing.setPointerVersion(17L);
+    existing.setOriginSourceKind("SCHEDULE_TIMER");
+    existing.setOriginSourceState("SCHEDULE_DUE_CLAIMED");
+    existing.setOriginSourceOrdinal(5000L);
+    existing.setOriginSourceDueAtMs(5000L);
+    existing.setTargetEntityId("entity-1");
+    existing.setRegionId("region-1");
+    existing.setRegionEpoch(12L);
+    existing.setDueTickId(34L);
     existing.setExecutionOutcome("STAGED");
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
@@ -6809,6 +6835,28 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(repository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(status));
     return repository;
+  }
+
+  private static GameplayAdmissionPointerAuthorityService automationPointerAuthority() {
+    GameplayAdmissionPointerAuthorityService authority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    17L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "NONE")));
+    return authority;
   }
 
   private static RuntimeRegionStatusRepository runtimeRegionStatusRepository(

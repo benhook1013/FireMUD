@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -134,10 +135,33 @@ class TickQueueControlServiceTest {
 
   @Test
   void enqueueCommandPushesToQueue() {
-    service.enqueueCommand(1L, 2L, "cmd-123", "look", false);
+    service.enqueueCommand(1L, 2L, "cmd-123", "look|east", false);
 
-    verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look");
+    verify(listOps).rightPush("gamesession:tick:queue:1:2", "N|cmd-123|look|east");
     verify(gameplayCommandRepository).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
+  void queuePayloadRejectsMissingDurableCommandIdWithoutSentinel() {
+    assertThrows(IllegalArgumentException.class, () -> service.queuePayload(false, null, "look"));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.queuePayload(true, "  ", "generate"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.queuePayload(false, "cmd|with-delimiter", "look"));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.enqueueCommand(1L, 2L, "-", "look", false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd|with-delimiter", "look", false));
+
+    verifyNoInteractions(
+        redisTemplate,
+        lockRedisTemplate,
+        listOps,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        queueLockRenewalExecutor);
   }
 
   @Test
@@ -441,6 +465,55 @@ class TickQueueControlServiceTest {
           .forEach(
               synchronization ->
                   synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void purgeSkipsMalformedCommandIdDuringPostCommitCleanupAndContinues() {
+    GameplayCommand malformed = gameplayCommand("-");
+    malformed.setTenantId(1L);
+    malformed.setGameInstanceId(2L);
+    malformed.setSourceType("AUTOMATION");
+    malformed.setScriptPatchVersion("patch-1");
+    malformed.setCommandText("say malformed");
+    malformed.setExecutionOutcome("STAGED");
+    GameplayCommand valid = gameplayCommand("cmd-valid-after-malformed");
+    valid.setTenantId(1L);
+    valid.setGameInstanceId(2L);
+    valid.setSourceType("AUTOMATION");
+    valid.setScriptPatchVersion("patch-1");
+    valid.setCommandText("say continue");
+    valid.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+            1L, 2L, "region-1", "patch-1"))
+        .thenReturn(List.of(malformed, valid));
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertEquals(
+          2L,
+          service.purgeQueuedAutomationCommandsForScriptPatch(
+              1L, 2L, "region-1", "patch-1", "rollback", logger));
+
+      assertDoesNotThrow(
+          () ->
+              TransactionSynchronizationManager.getSynchronizations()
+                  .forEach(TransactionSynchronization::afterCommit));
+
+      verify(listOps)
+          .remove("gamesession:tick:queue:1:2", 0, "N|cmd-valid-after-malformed|say continue");
+      verify(listOps)
+          .remove("gamesession:tick:pending:1:2", 0, "N|cmd-valid-after-malformed|say continue");
+      verify(logger)
+          .warn(
+              eq(
+                  "Durable purge committed but Redis cleanup failed tenantId={} gameInstanceId={} commandId={}"),
+              eq(1L),
+              eq(2L),
+              eq("-"),
+              any(IllegalArgumentException.class));
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }

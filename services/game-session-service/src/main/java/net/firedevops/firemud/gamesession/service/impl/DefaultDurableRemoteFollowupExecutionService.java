@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.util.Locale;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
@@ -19,9 +20,12 @@ import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRep
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +43,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
+  private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final TickService tickService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
   private final AutomationScriptingClient automationScriptingClient;
@@ -53,11 +58,35 @@ public final class DefaultDurableRemoteFollowupExecutionService
       @Lazy TickService tickService,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
       AutomationScriptingClient automationScriptingClient) {
+    this(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        tickService,
+        remoteFollowupRuntimeService,
+        automationScriptingClient,
+        null);
+  }
+
+  @Autowired
+  public DefaultDurableRemoteFollowupExecutionService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      @Lazy TickService tickService,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      AutomationScriptingClient automationScriptingClient,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
+    this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.tickService = tickService;
     this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
     this.automationScriptingClient = automationScriptingClient;
@@ -110,6 +139,17 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
 
     PayloadExecution payloadExecution = executePayload(coordinator, followup);
+    if ("RETRY_QUEUED".equals(payloadExecution.effectStatus())) {
+      retryFollowup(
+          followup,
+          effect.getTickBatchId(),
+          payloadExecution.failureCode(),
+          payloadExecution.failureMessage());
+      return new DurableRemoteFollowupExecutionResult(
+          payloadExecution.effectStatus(),
+          payloadExecution.failureCode(),
+          payloadExecution.failureMessage());
+    }
     remoteFollowupRuntimeService.recordResult(
         new RemoteFollowupRuntimeService.ResultRequest(
             followup.getTenantId(),
@@ -181,28 +221,55 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "REMOTE_FOLLOWUP_KIND_REQUIRED",
           "Target-side remote followup payload must declare a kind");
     }
-    PlayableStateScope playableStateScope;
-    try {
-      playableStateScope =
-          TriggerScriptEventRequestFactory.requirePlayableStateScope(
-              authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
-    } catch (IllegalArgumentException ex) {
-      return failure(
-          TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)
-              ? "REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID"
-              : "REMOTE_FOLLOWUP_PAYLOAD_INVALID",
-          ex.getMessage());
-    }
     if ("enqueue_gameplay_command".equals(payloadKind)) {
+      try {
+        validateSourceRoutingPayload(followup, root);
+      } catch (IllegalArgumentException ex) {
+        return failure("REMOTE_GAMEPLAY_PAYLOAD_INVALID", ex.getMessage());
+      }
       return executeEnqueueGameplayCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if ("enqueue_automation_command".equals(payloadKind)) {
+      try {
+        validateSourceRoutingPayload(followup, root);
+      } catch (IllegalArgumentException ex) {
+        return failure("REMOTE_AUTOMATION_PAYLOAD_INVALID", ex.getMessage());
+      }
       return executeEnqueueAutomationCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      return executeTriggerScriptEvent(root, coordinator, followup, playableStateScope);
+      if (gameplayAdmissionPointerAuthorityService == null) {
+        try {
+          return executeTriggerScriptEvent(
+              root,
+              coordinator,
+              followup,
+              TriggerScriptEventRequestFactory.requirePlayableStateScope(
+                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")),
+              null);
+        } catch (IllegalArgumentException ex) {
+          return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
+        }
+      }
+      TargetPointerResolution targetPointer = resolveTargetPointer(followup);
+      if (!targetPointer.available()) {
+        return retryableTargetPointerFailure(targetPointer);
+      }
+      PlayableStateScope targetScope;
+      try {
+        targetScope =
+            TriggerScriptEventRequestFactory.requirePlayableStateScope(
+                targetPointer.pointer().stateScope());
+      } catch (IllegalArgumentException ex) {
+        return retryableTargetPointerFailure(
+            TargetPointerResolution.unavailable(
+                "ADMISSION_POINTER_UNAVAILABLE",
+                "Current target gameplay admission pointer is invalid"));
+      }
+      return executeTriggerScriptEvent(
+          root, coordinator, followup, targetScope, targetPointer.pointer());
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -218,7 +285,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       RemoteFollowup followup) {
     try {
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
-          AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+          AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
               new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
                   followup.getTenantId(),
                   followup.getTargetGameInstanceId(),
@@ -234,10 +301,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
-                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"),
-                  authoritativeText(followup.getWorldSlug(), root, "worldSlug"),
-                  authoritativeText(followup.getRealmSlug(), root, "realmSlug"),
-                  authoritativeLong(followup.getPointerVersion(), root, "pointerVersion"),
+                  followup.getPlayableStateScope(),
+                  followup.getWorldSlug(),
+                  followup.getRealmSlug(),
+                  followup.getPointerVersion(),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -261,6 +328,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
               gameInstanceRepository,
               gameplayCommandRepository,
               runtimeRegionStatusRepository,
+              gameplayAdmissionPointerAuthorityService,
               tickService);
       String payload =
           "{\"admissionOutcome\":\""
@@ -273,6 +341,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
       if (result.accepted()) {
         return new PayloadExecution(
             "APPLIED", "APPLIED", null, null, payload, result.commandId(), null, null);
+      }
+      if (isRetryableTargetAdmissionFailure(result)) {
+        return retryablePayloadExecution(
+            result.errorCode(), result.errorMessage(), payload, result.commandId());
       }
       return new PayloadExecution(
           "ABANDONED",
@@ -298,7 +370,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       RemoteFollowup followup) {
     try {
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
-          AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+          AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
               new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
                   followup.getTenantId(),
                   followup.getTargetGameInstanceId(),
@@ -312,10 +384,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
-                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"),
-                  authoritativeText(followup.getWorldSlug(), root, "worldSlug"),
-                  authoritativeText(followup.getRealmSlug(), root, "realmSlug"),
-                  authoritativeLong(followup.getPointerVersion(), root, "pointerVersion"),
+                  followup.getPlayableStateScope(),
+                  followup.getWorldSlug(),
+                  followup.getRealmSlug(),
+                  followup.getPointerVersion(),
                   firstNonBlank(
                       followup.getOriginSourceKind(),
                       textOrDefault(root, "originSourceKind", "REMOTE_FOLLOWUP")),
@@ -339,6 +411,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
               gameInstanceRepository,
               gameplayCommandRepository,
               runtimeRegionStatusRepository,
+              gameplayAdmissionPointerAuthorityService,
               tickService);
       String payload =
           "{\"admissionOutcome\":\""
@@ -351,6 +424,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
       if (result.accepted()) {
         return new PayloadExecution(
             "APPLIED", "APPLIED", null, null, payload, result.commandId(), null, null);
+      }
+      if (isRetryableTargetAdmissionFailure(result)) {
+        return retryablePayloadExecution(
+            result.errorCode(), result.errorMessage(), payload, result.commandId());
       }
       return new PayloadExecution(
           "ABANDONED",
@@ -368,11 +445,128 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
   }
 
+  private static GameplayAdmissionPointerSnapshots.RoutingBundle sourceRoutingBundle(
+      RemoteFollowup followup, JsonNode root) {
+    String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
+    String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
+    Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
+    GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        "worldSlug, realmSlug, and pointerVersion must be provided together");
+    return GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
+        worldSlug, realmSlug, pointerVersion);
+  }
+
+  private static void validateSourceRoutingPayload(RemoteFollowup followup, JsonNode root) {
+    String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
+    String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
+    Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
+    GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        "world_slug, realm_slug, and pointer_version must be provided together");
+  }
+
+  private static PayloadExecution retryablePayloadExecution(
+      String errorCode, String errorMessage, String payload, String commandId) {
+    return new PayloadExecution(
+        "RETRY_QUEUED",
+        "RETRY_QUEUED",
+        errorCode == null ? "AUTH_UNAVAILABLE" : errorCode,
+        errorMessage == null
+            ? "Target admission authority is temporarily unavailable"
+            : errorMessage,
+        payload,
+        commandId,
+        errorCode,
+        errorMessage);
+  }
+
+  private TargetPointerResolution resolveTargetPointer(RemoteFollowup followup) {
+    if (gameplayAdmissionPointerAuthorityService == null) {
+      return TargetPointerResolution.unavailable(
+          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
+    }
+    final java.util.List<GameplayAdmissionPointerSnapshot> pointers;
+    try {
+      pointers =
+          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+              followup.getTenantId(), followup.getTargetGameInstanceId());
+    } catch (RuntimeException ex) {
+      return TargetPointerResolution.unavailable(
+          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
+    }
+    if (pointers == null
+        || pointers.size() != 1
+        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointers.getFirst())) {
+      return TargetPointerResolution.unavailable(
+          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
+    }
+    GameplayAdmissionPointerSnapshot pointer = pointers.getFirst();
+    if (pointer.tenantId() != followup.getTenantId()
+        || pointer.gameInstanceId() != followup.getTargetGameInstanceId()) {
+      return TargetPointerResolution.unavailable(
+          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
+    }
+    return TargetPointerResolution.available(pointer);
+  }
+
+  private static PayloadExecution retryableTargetPointerFailure(
+      TargetPointerResolution targetPointer) {
+    return retryablePayloadExecution(
+        targetPointer.errorCode(),
+        targetPointer.errorMessage(),
+        "{\"admissionOutcome\":\"RETRY_QUEUED\",\"errorCode\":\""
+            + jsonEscape(targetPointer.errorCode())
+            + "\",\"message\":\""
+            + jsonEscape(targetPointer.errorMessage())
+            + "\"}",
+        null);
+  }
+
+  private static boolean isRetryableTargetAdmissionFailure(
+      AutomationGameplayCommandAdmissionSupport.AdmissionResult result) {
+    String normalized =
+        result.errorCode() == null ? "" : result.errorCode().trim().toUpperCase(Locale.ROOT);
+    if ("ADMISSION_POINTER_UNAVAILABLE".equals(normalized)) {
+      return "RETRY_QUEUED".equalsIgnoreCase(result.admissionOutcome());
+    }
+    return switch (normalized) {
+      case "AUTH_UNAVAILABLE",
+          "AUTHORITY_UNAVAILABLE",
+          "OWNERSHIP_UNAVAILABLE",
+          "RUNTIME_OWNERSHIP_NOT_FOUND",
+          "RUNTIME_PAUSED",
+          "QUEUE_UNAVAILABLE",
+          "UNAVAILABLE" ->
+          true;
+      default -> false;
+    };
+  }
+
+  private void retryFollowup(
+      RemoteFollowup followup, String tickBatchId, String failureCode, String failureMessage) {
+    if (!CLAIMED_STATUS.equals(followup.getStatus())
+        || !tickBatchId.equals(followup.getClaimedTickBatchId())) {
+      return;
+    }
+    // Keep the claimed followup bound to the executing durable effect. The effect remains
+    // non-terminal and is retried from the same drained batch, preserving its lineage.
+    followup.setFailureCode(failureCode);
+    followup.setFailureMessage(failureMessage);
+    followup.setUpdatedAt(java.time.Instant.now());
+    remoteFollowupRepository.save(followup);
+  }
+
   private PayloadExecution executeTriggerScriptEvent(
       JsonNode root,
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
-      PlayableStateScope playableStateScope) {
+      PlayableStateScope playableStateScope,
+      GameplayAdmissionPointerSnapshot targetPointer) {
     try {
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
@@ -381,17 +575,13 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
       String pluginVersionId =
           authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
-      String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
-      String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
-      Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
-      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
-          worldSlug,
-          realmSlug,
-          pointerVersion,
-          "worldSlug, realmSlug, and pointerVersion must be provided together");
       GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
-          GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
-              worldSlug, realmSlug, pointerVersion);
+          targetPointer == null
+              ? sourceRoutingBundle(followup, root)
+              : new GameplayAdmissionPointerSnapshots.RoutingBundle(
+                  targetPointer.worldSlug(),
+                  targetPointer.realmSlug(),
+                  targetPointer.pointerVersion());
       boolean isDryRun = authoritativeBoolean(false, root, "isDryRun");
       TriggerScriptEventRequest.Builder request =
           TriggerScriptEventRequestFactory.builder(
@@ -461,6 +651,9 @@ public final class DefaultDurableRemoteFollowupExecutionService
               : response.getAdmissionReason().isBlank()
                   ? "Target-side remote script event was not admitted"
                   : response.getAdmissionReason();
+      if (isRetryableTriggerAdmissionFailure(response, errorCode)) {
+        return retryablePayloadExecution(errorCode, errorMessage, resultPayload, null);
+      }
       return new PayloadExecution(
           "ABANDONED",
           "ABANDONED",
@@ -473,6 +666,33 @@ public final class DefaultDurableRemoteFollowupExecutionService
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
     }
+  }
+
+  private static boolean isRetryableTriggerAdmissionFailure(
+      TriggerScriptEventResponse response, String errorCode) {
+    String normalizedErrorCode = errorCode == null ? "" : errorCode.trim().toUpperCase(Locale.ROOT);
+    if (switch (normalizedErrorCode) {
+      case "AUTOMATION_SCRIPTING_UNAVAILABLE",
+          "AUTH_UNAVAILABLE",
+          "AUTHORITY_UNAVAILABLE",
+          "INFRASTRUCTURE_ERROR",
+          "PIN_STATE_UNAVAILABLE",
+          "SIGNER_POLICY_UNAVAILABLE",
+          "UNAVAILABLE" ->
+          true;
+      default -> false;
+    }) {
+      return true;
+    }
+    return switch (response.getAdmissionOutcome()) {
+      case TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING,
+          TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK,
+          TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR,
+          TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE,
+          TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE ->
+          true;
+      default -> false;
+    };
   }
 
   private PayloadExecution failure(String failureCode, String failureMessage) {
@@ -667,4 +887,19 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String resultCommandId,
       String resultErrorCode,
       String resultMessage) {}
+
+  private record TargetPointerResolution(
+      GameplayAdmissionPointerSnapshot pointer, String errorCode, String errorMessage) {
+    private static TargetPointerResolution available(GameplayAdmissionPointerSnapshot pointer) {
+      return new TargetPointerResolution(pointer, null, null);
+    }
+
+    private static TargetPointerResolution unavailable(String errorCode, String errorMessage) {
+      return new TargetPointerResolution(null, errorCode, errorMessage);
+    }
+
+    private boolean available() {
+      return pointer != null;
+    }
+  }
 }

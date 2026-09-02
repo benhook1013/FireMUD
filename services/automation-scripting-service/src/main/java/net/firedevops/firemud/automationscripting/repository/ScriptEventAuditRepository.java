@@ -5,16 +5,21 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventAuditRecord;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectFieldOrAsterisk;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
@@ -24,6 +29,14 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventAuditRepository {
   private static final String SOURCE_KIND_SCHEDULE_TIMER = "SCHEDULE_TIMER";
+  private static final int MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS = 2;
+  private static final Field<Boolean> INSERTED_ROW =
+      field("xmax = 0", Boolean.class).as("inserted");
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The inserted-or-existing audit is the repository result contract.")
+  public record IdempotentInsertResult(ScriptEventAudit audit, boolean inserted) {}
 
   private final DSLContext dsl;
 
@@ -69,6 +82,90 @@ public class ScriptEventAuditRepository {
             .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun)));
   }
 
+  /** Inserts a timer audit without raising a transaction-aborting uniqueness exception. */
+  public IdempotentInsertResult insertIfAbsentByHandlerIdentity(ScriptEventAudit entity) {
+    if (entity.getId() != null) {
+      throw new IllegalArgumentException("A new script event audit is required");
+    }
+    for (int attempt = 0; attempt < MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
+      Optional<HandlerIdentityInsertResult> inserted = insertHandlerIdentity(entity);
+      if (inserted.isPresent()) {
+        HandlerIdentityInsertResult result = inserted.orElseThrow();
+        return new IdempotentInsertResult(result.audit(), result.inserted());
+      }
+      Optional<ScriptEventAudit> existing =
+          dsl.selectFrom(SCRIPT_EVENT_AUDIT)
+              .where(
+                  SCRIPT_EVENT_AUDIT
+                      .TENANT_ID
+                      .eq(entity.getTenantId())
+                      .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()))
+                      .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(entity.getRegionId()))
+                      .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(entity.getRegionEpoch()))
+                      .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entity.getEntityId()))
+                      .and(
+                          SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(
+                              entity.getPlayableStateScope()))
+                      .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(entity.getWorldSlug()))
+                      .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(entity.getRealmSlug()))
+                      .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(entity.getPointerVersion()))
+                      .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(entity.getScriptId()))
+                      .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
+                      .and(
+                          SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(
+                              entity.getEventSchemaVersion()))
+                      .and(
+                          SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(
+                              entity.getScriptPatchVersion()))
+                      .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
+                      .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(entity.isDryRun())))
+              .fetchOptional(this::toEntity);
+      if (existing.isPresent()) {
+        return new IdempotentInsertResult(existing.orElseThrow(), false);
+      }
+    }
+    throw new IllegalStateException("Audit identity conflict did not yield a row");
+  }
+
+  private Optional<HandlerIdentityInsertResult> insertHandlerIdentity(ScriptEventAudit entity) {
+    ScriptEventAuditRecord record = dsl.newRecord(SCRIPT_EVENT_AUDIT);
+    populate(record, entity);
+    List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
+    Collections.addAll(returningFields, SCRIPT_EVENT_AUDIT.fields());
+    returningFields.add(INSERTED_ROW);
+    // PostgreSQL waits for a concurrent unique-index winner before resolving
+    // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
+    // from the existing row returned by the no-op conflict update, avoiding a
+    // race between DO NOTHING and a separate readback query.
+    return dsl.insertInto(SCRIPT_EVENT_AUDIT)
+        .set(record)
+        .onConflict(
+            SCRIPT_EVENT_AUDIT.TENANT_ID,
+            SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID,
+            SCRIPT_EVENT_AUDIT.REGION_ID,
+            SCRIPT_EVENT_AUDIT.REGION_EPOCH,
+            SCRIPT_EVENT_AUDIT.ENTITY_ID,
+            SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE,
+            SCRIPT_EVENT_AUDIT.WORLD_SLUG,
+            SCRIPT_EVENT_AUDIT.REALM_SLUG,
+            SCRIPT_EVENT_AUDIT.POINTER_VERSION,
+            SCRIPT_EVENT_AUDIT.SCRIPT_ID,
+            SCRIPT_EVENT_AUDIT.EVENT_TYPE,
+            SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
+            SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION,
+            SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID,
+            SCRIPT_EVENT_AUDIT.DRY_RUN)
+        .doUpdate()
+        .set(SCRIPT_EVENT_AUDIT.ID, SCRIPT_EVENT_AUDIT.ID)
+        .returningResult(returningFields)
+        .fetchOptional(
+            returned ->
+                new HandlerIdentityInsertResult(
+                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
+  }
+
+  private record HandlerIdentityInsertResult(ScriptEventAudit audit, boolean inserted) {}
+
   public Optional<ScriptEventAudit> findByWorkItemId(Long workItemId) {
     return dsl.selectFrom(SCRIPT_EVENT_AUDIT)
         .where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.eq(workItemId))
@@ -106,14 +203,14 @@ public class ScriptEventAuditRepository {
       condition = condition.and(SCRIPT_EVENT_AUDIT.FINAL_REASON.eq(finalReason));
     }
     if (changedAfter != null) {
-      condition = condition.and(SCRIPT_EVENT_AUDIT.CREATED_AT.gt(toLocalDateTime(changedAfter)));
+      condition = condition.and(SCRIPT_EVENT_AUDIT.UPDATED_AT.gt(toLocalDateTime(changedAfter)));
     }
     if (changedBefore != null) {
-      condition = condition.and(SCRIPT_EVENT_AUDIT.CREATED_AT.lt(toLocalDateTime(changedBefore)));
+      condition = condition.and(SCRIPT_EVENT_AUDIT.UPDATED_AT.lt(toLocalDateTime(changedBefore)));
     }
     return dsl.selectFrom(SCRIPT_EVENT_AUDIT)
         .where(condition)
-        .orderBy(SCRIPT_EVENT_AUDIT.CREATED_AT.desc(), SCRIPT_EVENT_AUDIT.ID.desc())
+        .orderBy(SCRIPT_EVENT_AUDIT.UPDATED_AT.desc(), SCRIPT_EVENT_AUDIT.ID.desc())
         .limit(limitOrDefault(pageable, 100))
         .offset(offsetOrZero(pageable))
         .fetch(this::toEntity);

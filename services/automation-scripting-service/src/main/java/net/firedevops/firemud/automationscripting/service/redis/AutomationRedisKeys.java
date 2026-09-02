@@ -2,6 +2,9 @@ package net.firedevops.firemud.automationscripting.service.redis;
 
 /** Canonical Redis key builder for Automation & Scripting-owned prefixes. */
 public final class AutomationRedisKeys {
+  private static final String DRY_RUN_CAPACITY_CLUSTER_TAG = "{automation-test-capacity}";
+  private static final String READINESS_CAPACITY_CLUSTER_TAG = "{automation-readiness-capacity}";
+
   private AutomationRedisKeys() {}
 
   public static String automationQueue(String tenantId, String gameInstanceId, String entityId) {
@@ -44,44 +47,50 @@ public final class AutomationRedisKeys {
   }
 
   public static String automationDryRunCapacityCounter(String tenantId) {
-    return "automation:test:capacity:" + requirePart("tenantId", tenantId) + ":tenant";
+    return "automation:test:capacity:{" + requirePart("tenantId", tenantId) + "}:tenant";
   }
 
   public static String automationDryRunCapacityLease(String tenantId, String workItemId) {
-    return "automation:test:capacity:"
+    return "automation:test:capacity:{"
         + requirePart("tenantId", tenantId)
+        + "}"
         + ":lease:"
         + requirePart("workItemId", workItemId);
   }
 
   public static String automationDryRunClusterCapacityCounter() {
-    return "automation:test:capacity:cluster";
+    return "automation:test:capacity:" + DRY_RUN_CAPACITY_CLUSTER_TAG + ":cluster";
   }
 
   public static String automationDryRunClusterCapacityLease(String tenantId, String workItemId) {
-    return "automation:test:capacity:cluster:lease:"
+    return "automation:test:capacity:"
+        + DRY_RUN_CAPACITY_CLUSTER_TAG
+        + ":cluster:lease:"
         + requirePart("tenantId", tenantId)
         + ":"
         + requirePart("workItemId", workItemId);
   }
 
   public static String automationReadinessCapacityCounter(String tenantId) {
-    return "automation:readiness:capacity:" + requirePart("tenantId", tenantId) + ":tenant";
+    return "automation:readiness:capacity:{" + requirePart("tenantId", tenantId) + "}:tenant";
   }
 
   public static String automationReadinessCapacityLease(String tenantId, String workItemId) {
-    return "automation:readiness:capacity:"
+    return "automation:readiness:capacity:{"
         + requirePart("tenantId", tenantId)
+        + "}"
         + ":lease:"
         + requirePart("workItemId", workItemId);
   }
 
   public static String automationReadinessClusterCapacityCounter() {
-    return "automation:readiness:capacity:cluster";
+    return "automation:readiness:capacity:" + READINESS_CAPACITY_CLUSTER_TAG + ":cluster";
   }
 
   public static String automationReadinessClusterCapacityLease(String tenantId, String workItemId) {
-    return "automation:readiness:capacity:cluster:lease:"
+    return "automation:readiness:capacity:"
+        + READINESS_CAPACITY_CLUSTER_TAG
+        + ":cluster:lease:"
         + requirePart("tenantId", tenantId)
         + ":"
         + requirePart("workItemId", workItemId);

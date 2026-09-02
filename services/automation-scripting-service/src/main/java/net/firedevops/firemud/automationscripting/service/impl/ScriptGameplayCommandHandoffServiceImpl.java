@@ -2,15 +2,21 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.repository.AutomationAdmissionStateRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventAuditRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.ScriptGameplayCommandHandoffService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -19,7 +25,12 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRes
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupRequest;
 import net.firedevops.firemud.gamesession.v1.ScheduleRemoteFollowupResponse;
+import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -28,21 +39,25 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected collaborators are framework-managed and retained internally")
 public class ScriptGameplayCommandHandoffServiceImpl
     implements ScriptGameplayCommandHandoffService {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(ScriptGameplayCommandHandoffServiceImpl.class);
   private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
-  private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
-  private static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED =
-      "runtime_region_scope_advanced";
   private static final String REMOTE_LATE_RESULT_POLICY = "late_result_safe_to_ignore";
-  private static final String ERROR_REMOTE_RESPONSE_INVALID = "REMOTE_RESPONSE_INVALID";
 
   private final GameSessionControlPlaneClient gameSessionClient;
   private final ScriptWorkItemRepository workItemRepository;
   private final ScriptEventAuditRepository auditRepository;
   private final ScriptHandoffEventRepository handoffEventRepository;
+  private final DSLContext dsl;
+  private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final ScriptPatchInstanceRolloutProjectionService rolloutProjectionService;
+  private final ThreadLocal<Set<Long>> aggregateFanouts = ThreadLocal.withInitial(HashSet::new);
+  private final ThreadLocal<Map<Long, AggregateAdmissionSnapshot>> aggregateAdmissionSnapshots =
+      ThreadLocal.withInitial(HashMap::new);
 
   public ScriptGameplayCommandHandoffServiceImpl(
       GameSessionControlPlaneClient gameSessionClient,
@@ -51,12 +66,112 @@ public class ScriptGameplayCommandHandoffServiceImpl
       ScriptHandoffEventRepository handoffEventRepository,
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+    this(
+        gameSessionClient,
+        workItemRepository,
+        auditRepository,
+        handoffEventRepository,
+        (DSLContext) null,
+        null,
+        automationAdmissionStateService,
+        rolloutProjectionService);
+  }
+
+  public ScriptGameplayCommandHandoffServiceImpl(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      AutomationAdmissionStateRepository ignoredAdmissionStateRepository,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+    this(
+        gameSessionClient,
+        workItemRepository,
+        auditRepository,
+        handoffEventRepository,
+        (DSLContext) null,
+        null,
+        automationAdmissionStateService,
+        rolloutProjectionService);
+  }
+
+  /** Legacy constructor retained for focused unit tests that do not exercise queue publication. */
+  public ScriptGameplayCommandHandoffServiceImpl(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      DSLContext dsl,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
+    this(
+        gameSessionClient,
+        workItemRepository,
+        auditRepository,
+        handoffEventRepository,
+        dsl,
+        null,
+        automationAdmissionStateService,
+        rolloutProjectionService);
+  }
+
+  @Autowired
+  public ScriptGameplayCommandHandoffServiceImpl(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      DSLContext dsl,
+      AutomationQueueService automationQueueService,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService) {
     this.gameSessionClient = gameSessionClient;
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.handoffEventRepository = handoffEventRepository;
+    this.dsl = dsl;
+    this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.rolloutProjectionService = rolloutProjectionService;
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void beginAggregateFanout(ScriptWorkItem workItem) {
+    requireWorkItem(workItem);
+    lockAdmissionScope(workItem);
+    aggregateFanouts.get().add(workItem.getId());
+    try {
+      aggregateAdmissionSnapshots
+          .get()
+          .put(
+              workItem.getId(),
+              new AggregateAdmissionSnapshot(
+                  admissionFenceReason(workItem), runtimeRegionScopeStatus(workItem)));
+    } catch (RuntimeException ex) {
+      clearAggregateFanout(workItem.getId());
+      throw ex;
+    }
+  }
+
+  @Override
+  public void endAggregateFanout(ScriptWorkItem workItem) {
+    if (workItem == null || workItem.getId() == null) {
+      return;
+    }
+    clearAggregateFanout(workItem.getId());
+  }
+
+  private void clearAggregateFanout(Long workItemId) {
+    Set<Long> active = aggregateFanouts.get();
+    active.remove(workItemId);
+    Map<Long, AggregateAdmissionSnapshot> snapshots = aggregateAdmissionSnapshots.get();
+    snapshots.remove(workItemId);
+    if (active.isEmpty()) {
+      aggregateFanouts.remove();
+      aggregateAdmissionSnapshots.remove();
+    }
   }
 
   @Override
@@ -65,15 +180,72 @@ public class ScriptGameplayCommandHandoffServiceImpl
     requireWorkItem(workItem);
     requireCommand(command);
     String dispatchId = dispatchId(workItem, command.ordinal());
-    if (isEpochAdvanced(workItem)) {
+    lockAdmissionScope(workItem);
+    AggregateAdmissionSnapshot aggregateSnapshot =
+        aggregateAdmissionSnapshots.get().get(workItem.getId());
+    String admissionFenceReason =
+        aggregateSnapshot == null
+            ? admissionFenceReason(workItem)
+            : aggregateSnapshot.admissionFenceReason();
+    if ("runtime_paused".equals(admissionFenceReason)) {
       Instant now = Instant.now();
-      cancelForRollbackEpochAdvance(workItem, command, dispatchId, now);
+      cancelForAdmissionPause(
+          workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
+      return new HandoffResult(false, "runtime_paused", "", "", "", "RUNTIME_PAUSED");
+    }
+    if ("authority_unavailable".equals(admissionFenceReason)) {
+      Instant now = Instant.now();
+      HandoffResult result =
+          new HandoffResult(
+              false,
+              "REMOTE_REJECTED",
+              "",
+              "",
+              "",
+              "AUTHORITY_UNAVAILABLE",
+              "automation admission state unavailable");
+      applyOutcome(workItem, command, dispatchId, result, now);
+      return result;
+    }
+    if ("rollback_epoch_advanced".equals(admissionFenceReason)) {
+      Instant now = Instant.now();
+      cancelForRollbackEpochAdvance(
+          workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
       return new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "");
     }
-    if (isRuntimeRegionScopeAdvanced(workItem)) {
+    RuntimeRegionScopeStatus runtimeScopeStatus =
+        aggregateSnapshot == null
+            ? runtimeRegionScopeStatus(workItem)
+            : aggregateSnapshot.runtimeRegionScopeStatus();
+    if (runtimeScopeStatus == RuntimeRegionScopeStatus.ADVANCED) {
       Instant now = Instant.now();
-      cancelForRuntimeRegionScopeAdvance(workItem, command, dispatchId, now);
-      return new HandoffResult(false, REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
+      cancelForRuntimeRegionScopeAdvance(
+          workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
+      return new HandoffResult(
+          false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
+    }
+    boolean remoteHandoff = requiresRemoteHandoff(workItem, command);
+    if (remoteHandoff && runtimeScopeStatus != RuntimeRegionScopeStatus.CURRENT) {
+      Instant now = Instant.now();
+      String errorCode =
+          runtimeScopeStatus == RuntimeRegionScopeStatus.UNAVAILABLE
+              ? "AUTHORITY_UNAVAILABLE"
+              : "REMOTE_RESPONSE_INVALID";
+      String message =
+          runtimeScopeStatus == RuntimeRegionScopeStatus.UNAVAILABLE
+              ? "runtime owner authority unavailable"
+              : "runtime owner response incomplete";
+      HandoffResult result =
+          new HandoffResult(false, "REMOTE_REJECTED", "", "", "", errorCode, message);
+      applyOutcome(workItem, command, dispatchId, result, now);
+      return result;
+    }
+    if (remoteHandoff && !hasRepresentableDeadline(workItem, command)) {
+      Instant now = Instant.now();
+      HandoffResult result =
+          new HandoffResult(false, "REMOTE_REJECTED", "", "", "", "INVALID_ARGUMENT");
+      applyOutcome(workItem, command, dispatchId, result, now);
+      return result;
     }
     Instant now = Instant.now();
     workItem.setStatus(STATUS_HANDOFF_IN_FLIGHT);
@@ -88,18 +260,19 @@ public class ScriptGameplayCommandHandoffServiceImpl
                 toRequest(workItem, command, dispatchId));
     HandoffResult result;
     if (response != null) {
-      result =
-          new HandoffResult(
-              response.getAccepted(),
-              response.getAdmissionOutcome(),
-              response.getCommandId(),
-              "",
-              "",
-              response.hasError() ? response.getError().getCode() : "");
+      result = localHandoffResult(response);
     } else {
-      String scopeValidationError = validateRemoteHandoffScope(workItem, command);
-      if (scopeValidationError != null) {
-        result = new HandoffResult(false, "REMOTE_REJECTED", "", "", "", scopeValidationError);
+      ScopeValidationResult scopeValidation = validateRemoteHandoffScope(workItem, command);
+      if (scopeValidation != null) {
+        result =
+            new HandoffResult(
+                false,
+                "REMOTE_REJECTED",
+                "",
+                "",
+                "",
+                scopeValidation.errorCode(),
+                scopeValidation.message());
       } else {
         ScheduleRemoteFollowupResponse remoteResponse =
             gameSessionClient.scheduleRemoteFollowup(
@@ -111,21 +284,44 @@ public class ScriptGameplayCommandHandoffServiceImpl
     return result;
   }
 
-  private static String validateRemoteHandoffScope(
+  private static ScopeValidationResult validateRemoteHandoffScope(
       ScriptWorkItem workItem, EmittedCommand command) {
     if (!requiresRemoteHandoff(workItem, command)) {
       return null;
     }
-    if (command.targetGameInstanceId() == null || command.targetGameInstanceId().isBlank()) {
-      return "target_game_instance_id is required for remote handoff";
-    }
-    if (command.targetRegionId() == null || command.targetRegionId().isBlank()) {
-      return "target_region_id is required for remote handoff";
-    }
     if (command.targetRegionEpoch() == null || command.targetRegionEpoch() <= 0) {
-      return "target_region_epoch must be positive for remote handoff";
+      return new ScopeValidationResult(
+          "INVALID_ARGUMENT", "target_region_epoch must be positive for remote handoff");
     }
     return null;
+  }
+
+  private record ScopeValidationResult(String errorCode, String message) {}
+
+  private static HandoffResult localHandoffResult(
+      EnqueueAutomationCommandIfAbsentResponse response) {
+    if (!response.getAccepted()) {
+      return new HandoffResult(
+          false,
+          response.getAdmissionOutcome(),
+          response.getCommandId(),
+          "",
+          "",
+          response.hasError() ? response.getError().getCode() : "");
+    }
+    String admissionOutcome = normalize(response.getAdmissionOutcome());
+    boolean hasNonBlankErrorMetadata =
+        response.hasError()
+            && (!normalize(response.getError().getCode()).isBlank()
+                || !normalize(response.getError().getMessage()).isBlank());
+    boolean coherentOutcome =
+        "ENQUEUED".equals(admissionOutcome) || "DUPLICATE_NOOP".equals(admissionOutcome);
+    if (normalize(response.getCommandId()).isBlank()
+        || hasNonBlankErrorMetadata
+        || !coherentOutcome) {
+      return new HandoffResult(false, "REMOTE_REJECTED", "", "", "", "REMOTE_RESPONSE_INVALID");
+    }
+    return new HandoffResult(true, admissionOutcome, response.getCommandId(), "", "", "");
   }
 
   private static HandoffResult remoteHandoffResult(ScheduleRemoteFollowupResponse remoteResponse) {
@@ -151,76 +347,171 @@ public class ScriptGameplayCommandHandoffServiceImpl
         "",
         remoteCoordinatorId,
         remoteFollowupId,
-        hasDurableIds ? "" : ERROR_REMOTE_RESPONSE_INVALID);
+        hasDurableIds ? "" : ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID);
   }
 
-  private boolean isEpochAdvanced(ScriptWorkItem workItem) {
+  private String admissionFenceReason(ScriptWorkItem workItem) {
     if (workItem.getGameInstanceId() == null || workItem.getGameInstanceId().isBlank()) {
-      return false;
+      return null;
     }
     AutomationAdmissionStateService.AdmissionStateSummary state =
         automationAdmissionStateService.getState(
             workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
-    return state.admissionEpoch() != workItem.getAdmissionEpoch();
+    if (state == null) {
+      return "authority_unavailable";
+    }
+    if (state.admissionEpoch() != workItem.getAdmissionEpoch()) {
+      return "rollback_epoch_advanced";
+    }
+    if ("PAUSED_FOR_ROLLBACK".equals(state.mode())) {
+      return "runtime_paused";
+    }
+    return "NORMAL".equals(state.mode()) ? null : "authority_unavailable";
   }
 
-  private void cancelForRollbackEpochAdvance(
-      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, Instant now) {
+  /**
+   * Uses the same transaction-scoped owner lock as admission mutations. The handoff method is
+   * transactional, so this lock remains held through the durable handoff outcome and the remote
+   * Game Session admission call; a concurrent pause cannot commit between the fence read and that
+   * call. Reentrant PostgreSQL advisory locks are safe for aggregate fan-out on one transaction.
+   */
+  private void lockAdmissionScope(ScriptWorkItem workItem) {
+    if (dsl == null
+        || workItem.getTenantId() == null
+        || workItem.getTenantId().isBlank()
+        || workItem.getGameInstanceId() == null
+        || workItem.getGameInstanceId().isBlank()) {
+      return;
+    }
+    AutomationAdmissionStateServiceImpl.lockMutationScope(
+        dsl, workItem.getTenantId(), workItem.getGameInstanceId());
+  }
+
+  private void cancelForAdmissionPause(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      Instant now,
+      boolean deferAggregateTerminalization) {
+    HandoffResult result = new HandoffResult(false, "runtime_paused", "", "", "", "RUNTIME_PAUSED");
+    appendHandoffEvent(workItem, command, dispatchId, result, now);
+    if (deferAggregateTerminalization) {
+      return;
+    }
     workItem.setStatus(STATUS_CANCELED);
-    workItem.setCancelReason("rollback_epoch_advanced");
+    workItem.setCancelReason(ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
+    updateAudit(
+        workItem,
+        ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+        ScriptHandoffOutcomeSupport.OUTCOME_CANCELED,
+        ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
+        now);
+  }
+
+  private void cancelForRollbackEpochAdvance(
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      Instant now,
+      boolean deferAggregateTerminalization) {
     appendHandoffEvent(
         workItem,
         command,
         dispatchId,
         new HandoffResult(false, "rollback_epoch_advanced", "", "", "", "rollback_epoch_advanced"),
         now);
-    updateAudit(workItem, "HANDOFF", "canceled", "rollback_epoch_advanced", now);
+    if (deferAggregateTerminalization) {
+      return;
+    }
+    workItem.setStatus(STATUS_CANCELED);
+    workItem.setCancelReason("rollback_epoch_advanced");
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    updateAudit(
+        workItem,
+        ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+        ScriptHandoffOutcomeSupport.OUTCOME_CANCELED,
+        ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED,
+        now);
   }
 
-  private boolean isRuntimeRegionScopeAdvanced(ScriptWorkItem workItem) {
+  private enum RuntimeRegionScopeStatus {
+    CURRENT,
+    ADVANCED,
+    UNAVAILABLE,
+    MALFORMED
+  }
+
+  private record AggregateAdmissionSnapshot(
+      String admissionFenceReason, RuntimeRegionScopeStatus runtimeRegionScopeStatus) {}
+
+  private RuntimeRegionScopeStatus runtimeRegionScopeStatus(ScriptWorkItem workItem) {
     if (workItem.getTenantId() == null
         || workItem.getTenantId().isBlank()
         || workItem.getGameInstanceId() == null
         || workItem.getGameInstanceId().isBlank()) {
-      return false;
+      return RuntimeRegionScopeStatus.MALFORMED;
     }
     GetGameInstanceRuntimeStateResponse runtimeState =
         gameSessionClient.getGameInstanceRuntimeState(
             workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
     if (runtimeState == null
-        || runtimeState.hasError()
-        || !runtimeState.hasRuntimeState()
-        || runtimeState.getRuntimeState().getRegionId().isBlank()
-        || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
-      return false;
+        || (runtimeState.hasError() && !runtimeState.getError().getCode().isBlank())) {
+      return RuntimeRegionScopeStatus.UNAVAILABLE;
     }
-    return !runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
-        || runtimeState.getRuntimeState().getRegionEpoch() != workItem.getRegionEpoch();
+    if (!runtimeState.hasRuntimeState()) {
+      return RuntimeRegionScopeStatus.MALFORMED;
+    }
+    if (!runtimeState.getRuntimeState().getTenantId().equals(workItem.getTenantId())
+        || !runtimeState
+            .getRuntimeState()
+            .getGameInstanceId()
+            .equals(workItem.getGameInstanceId())) {
+      return RuntimeRegionScopeStatus.MALFORMED;
+    }
+    if (runtimeState.getRuntimeState().getRegionId().isBlank()
+        || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
+      return RuntimeRegionScopeStatus.MALFORMED;
+    }
+    return runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
+            && runtimeState.getRuntimeState().getRegionEpoch() == workItem.getRegionEpoch()
+        ? RuntimeRegionScopeStatus.CURRENT
+        : RuntimeRegionScopeStatus.ADVANCED;
   }
 
   private void cancelForRuntimeRegionScopeAdvance(
-      ScriptWorkItem workItem, EmittedCommand command, String dispatchId, Instant now) {
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      Instant now,
+      boolean deferAggregateTerminalization) {
+    HandoffResult result =
+        new HandoffResult(
+            false,
+            ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED,
+            "",
+            "",
+            "",
+            ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED);
+    appendHandoffEvent(workItem, command, dispatchId, result, now);
+    if (deferAggregateTerminalization) {
+      return;
+    }
     workItem.setStatus(STATUS_CANCELED);
-    workItem.setCancelReason(REASON_RUNTIME_REGION_SCOPE_ADVANCED);
+    workItem.setCancelReason(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    appendHandoffEvent(
+    updateAudit(
         workItem,
-        command,
-        dispatchId,
-        new HandoffResult(
-            false,
-            REASON_RUNTIME_REGION_SCOPE_ADVANCED,
-            "",
-            "",
-            "",
-            REASON_RUNTIME_REGION_SCOPE_ADVANCED),
+        ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+        ScriptHandoffOutcomeSupport.OUTCOME_CANCELED,
+        ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED,
         now);
-    updateAudit(workItem, "HANDOFF", "canceled", REASON_RUNTIME_REGION_SCOPE_ADVANCED, now);
   }
 
   private EnqueueAutomationCommandIfAbsentRequest toRequest(
@@ -300,29 +591,86 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .build();
   }
 
+  private static boolean hasRepresentableDeadline(ScriptWorkItem workItem, EmittedCommand command) {
+    long dueTickId = effectiveDueTickId(workItem, command);
+    return ScriptCommandMetadataSupport.isRepresentableDueTickId(dueTickId);
+  }
+
   private void applyOutcome(
       ScriptWorkItem workItem,
       EmittedCommand command,
       String dispatchId,
       HandoffResult result,
       Instant now) {
-    String outcome = result.outcome().toLowerCase(Locale.ROOT);
-    String reason = handoffReason(result);
     appendHandoffEvent(workItem, command, dispatchId, result, now);
     if (result.accepted()) {
-      workItem.setStatus(STATUS_HANDED_OFF);
+      // The executor owns the aggregate terminal outcome. This child is only durably accepted;
+      // recording handoff_accepted here would falsely claim that all siblings were accepted.
+      return;
+    }
+    if (ScriptHandoffOutcomeSupport.isRetryable(result)) {
+      if (deferAggregateTerminalization(workItem)) {
+        return;
+      }
+      requeueForRetry(workItem, now);
+      return;
+    }
+    if (deferAggregateTerminalization(workItem)) {
+      return;
+    }
+    if (ScriptHandoffOutcomeSupport.isRuntimeScopeFence(result)) {
+      workItem.setStatus(STATUS_CANCELED);
+      workItem.setCancelReason(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
       workItem.setUpdatedAt(now);
       workItemRepository.save(workItem);
       rolloutProjectionService.refreshForWorkItem(workItem);
-      updateAudit(workItem, "HANDOFF", outcome, "game_session_accepted", now);
+      updateAudit(
+          workItem,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+          ScriptHandoffOutcomeSupport.OUTCOME_CANCELED,
+          ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED,
+          now);
       return;
     }
     workItem.setStatus(STATUS_DEAD_LETTERED);
-    workItem.setCancelReason(result.errorCode().isBlank() ? result.outcome() : result.errorCode());
+    String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
+    workItem.setCancelReason(failureReason);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    updateAudit(workItem, "HANDOFF", "handoff_failed", reason, now);
+    updateAudit(
+        workItem,
+        ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+        ScriptHandoffOutcomeSupport.OUTCOME_INFRASTRUCTURE_ERROR,
+        failureReason,
+        now);
+  }
+
+  private void requeueForRetry(ScriptWorkItem workItem, Instant now) {
+    workItem.setStatus(STATUS_PENDING_EVALUATION);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    publishRetryPointer(workItem);
+  }
+
+  private void publishRetryPointer(ScriptWorkItem workItem) {
+    if (automationQueueService == null) {
+      return;
+    }
+    try {
+      automationQueueService.enqueueWorkItem(workItem);
+    } catch (RuntimeException ex) {
+      // PostgreSQL remains authoritative; the scheduled rebuild can republish this derived pointer.
+      LOGGER.warn(
+          "Automation queue pointer publication failed for retryable work item {}; durable pending state remains rebuildable",
+          workItem.getId(),
+          ex);
+    }
+  }
+
+  private boolean deferAggregateTerminalization(ScriptWorkItem workItem) {
+    return workItem.getId() != null && aggregateFanouts.get().contains(workItem.getId());
   }
 
   private void updateAudit(
@@ -394,7 +742,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
           ? "game_session_accepted"
           : "remote_followup_scheduled";
     }
-    return result.errorCode().isBlank() ? result.outcome() : result.errorCode();
+    String reason = normalize(result.errorCode()).trim();
+    if (reason.isBlank()) {
+      reason = normalize(result.outcome()).trim();
+    }
+    return ScriptHandoffOutcomeSupport.canonicalHandoffReason(reason, result.outcome());
   }
 
   private static boolean requiresRemoteHandoff(ScriptWorkItem workItem, EmittedCommand command) {
@@ -405,13 +757,29 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private static long originDeadlineTickId(ScriptWorkItem workItem, EmittedCommand command) {
-    if (command.dueTickId() > 0) {
-      return command.dueTickId() + 1;
+    long dueTickId = effectiveDueTickId(workItem, command);
+    if (dueTickId <= 0) {
+      return Long.MAX_VALUE;
     }
-    if (workItem.getSourceDueTickId() != null && workItem.getSourceDueTickId() > 0) {
-      return workItem.getSourceDueTickId() + 1;
+    try {
+      return Math.addExact(dueTickId, 1L);
+    } catch (ArithmeticException ex) {
+      throw new IllegalArgumentException("due_tick_id_invalid", ex);
     }
-    return Long.MAX_VALUE;
+  }
+
+  private static long effectiveDueTickId(ScriptWorkItem workItem, EmittedCommand command) {
+    long commandDueTickId = command.dueTickId();
+    if (commandDueTickId > 0) {
+      return commandDueTickId;
+    }
+    if (workItem.getSourceDueTickId() != null) {
+      long sourceDueTickId = workItem.getSourceDueTickId();
+      if (sourceDueTickId > 0) {
+        return sourceDueTickId;
+      }
+    }
+    return 0L;
   }
 
   private static String normalize(String value) {

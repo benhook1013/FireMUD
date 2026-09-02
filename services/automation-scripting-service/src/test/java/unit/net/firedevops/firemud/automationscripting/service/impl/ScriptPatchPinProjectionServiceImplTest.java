@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -39,6 +41,9 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setPinnedScriptPatchVersion("patch-7")
                         .setRegionId("region-7")
                         .setRegionEpoch(22L)
+                        .setPlayableStateScope(
+                            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                                .PLAYABLE_STATE_SCOPE_SHARED)
                         .setScriptPatchPinnedControlPlaneRequestId("req-7")
                         .setScriptPatchPinnedAtMs(700L)
                         .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
@@ -168,6 +173,74 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().pointerVersion()).isEqualTo("11");
   }
 
+  @Test
+  void rejectsMismatchedRuntimeScopeBeforeRefreshingProjection() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("other-tenant")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("attacker-patch")
+                        .build())
+                .build());
+
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.summary()).isEmpty();
+    assertThat(lookup.errorCode()).isEqualTo("RUNTIME_SCOPE_MISMATCH");
+    verify(repository, Mockito.never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
+  void ignoresMismatchedRuntimeScopeBeforeObservingProjection() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("other-tenant")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("attacker-patch")
+            .build());
+
+    verifyNoInteractions(repository, rolloutProjectionService, scheduleInstanceService);
+  }
+
   private static ScriptRuntimeProperties runtimeProperties() {
     return new ScriptRuntimeProperties();
   }
@@ -177,7 +250,10 @@ class ScriptPatchPinProjectionServiceImplTest {
     return AdmissionPointerControlPlaneEntry.newBuilder()
         .setWorldSlug(worldSlug)
         .setRealmSlug(realmSlug)
+        .setTenantId("1")
+        .setGameInstanceId("game-1")
         .setPointerVersion(pointerVersion)
+        .setStateScope("SHARED")
         .build();
   }
 }

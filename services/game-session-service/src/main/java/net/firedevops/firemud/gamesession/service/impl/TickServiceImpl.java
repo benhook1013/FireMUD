@@ -38,6 +38,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TickServiceImpl implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(TickServiceImpl.class);
+  private static final long STAGE_MALFORMED_ENTRY = -2L;
+  private static final long STAGE_INVALID_ARGUMENT = -3L;
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
@@ -77,7 +79,8 @@ public class TickServiceImpl implements TickService {
   private final GenericToStringSerializer<Long> scriptResultSerializer =
       new GenericToStringSerializer<>(Long.class);
 
-  private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
+  private Long executeScriptWithRetry(
+      RedisScript<Long> script, List<String> keys, boolean retryOnException, Object... args) {
     int attempts = 0;
     while (true) {
       try {
@@ -89,6 +92,10 @@ public class TickServiceImpl implements TickService {
       } catch (Exception ex) {
         attempts++;
         redisErrorCounter.increment();
+        if (!retryOnException) {
+          logger.error("Redis script execution failed; refusing to retry ambiguous mutation", ex);
+          throw ex;
+        }
         retryBackoffCounter.increment();
         if (attempts >= 3) {
           logger.error("Redis script execution failed after {} attempts", attempts, ex);
@@ -116,11 +123,23 @@ public class TickServiceImpl implements TickService {
     List<Object> arguments = new ArrayList<>(operationArguments.length + 1);
     arguments.add(lease.token());
     arguments.addAll(List.of(operationArguments));
-    Long result = executeScriptWithRetry(script, keys, arguments.toArray());
-    if (result == null || result < 0L || ("rollback".equals(operation) && result != 1L)) {
+    Long result =
+        executeScriptWithRetry(script, keys, !"stage".equals(operation), arguments.toArray());
+    if (result == null || result == -1L || ("rollback".equals(operation) && result != 1L)) {
       lease.markLost();
       throw new TickQueueControlService.QueueUnavailableException(
           "Lost tick lock " + lease.key() + " during Redis " + operation);
+    }
+    if ("stage".equals(operation) && result == STAGE_MALFORMED_ENTRY) {
+      throw new IllegalStateException("Malformed tick queue entry; staging aborted atomically");
+    }
+    if ("stage".equals(operation) && result == STAGE_INVALID_ARGUMENT) {
+      throw new IllegalStateException("Invalid tick staging arguments; staging aborted atomically");
+    }
+    if (result < 0L) {
+      lease.markLost();
+      throw new TickQueueControlService.QueueUnavailableException(
+          "Invalid Redis result during tick " + operation);
     }
     return result;
   }
@@ -314,9 +333,11 @@ public class TickServiceImpl implements TickService {
           tickRuntimeProgressService.updateRetryQueueDepth(
               normalizedTenantId, normalizedQueueTargetId, depth);
           if (pending != null && pending > 0) {
-            List<TickQueuedCommandEnvelope> replayEntries =
-                tickStagingService.readExecutablePendingEntries(
+            TickStagingService.PendingEntriesReadResult replayResult =
+                tickStagingService.readPendingEntriesForReplay(
                     normalizedTenantId, normalizedQueueTargetId);
+            requireResolvedPendingEntries(replayResult, normalizedQueueTargetId);
+            List<TickQueuedCommandEnvelope> replayEntries = replayResult.entries();
             if (!replayEntries.isEmpty()) {
               TickBatch replayBatch =
                   tickStagingService.resolveReplayBatch(
@@ -349,8 +370,9 @@ public class TickServiceImpl implements TickService {
                       tickQueueControlService.queueKey(normalizedTenantId, normalizedQueueTargetId),
                       0);
           head = headObj != null ? headObj.toString() : null;
-          solo = head != null && head.startsWith("S|");
+          solo = head != null && tickStagingService.requiresSoloTickFromQueueEntry(head);
           int max = solo ? 1 : tickMaxCommands;
+          String stageMode = solo ? "S" : "N";
           lease.requireOwned();
           luaTimer.record(
               () ->
@@ -363,10 +385,13 @@ public class TickServiceImpl implements TickService {
                           tickQueueControlService.pendingKey(
                               normalizedTenantId, normalizedQueueTargetId)),
                       "stage",
-                      String.valueOf(max)));
-          activeBatchEntries =
-              tickStagingService.readExecutablePendingEntries(
+                      String.valueOf(max),
+                      stageMode));
+          TickStagingService.PendingEntriesReadResult stagedResult =
+              tickStagingService.readPendingEntriesForReplay(
                   normalizedTenantId, normalizedQueueTargetId);
+          requireResolvedPendingEntries(stagedResult, normalizedQueueTargetId);
+          activeBatchEntries = stagedResult.entries();
           if (!activeBatchEntries.isEmpty()) {
             activeBatch =
                 tickStagingService.createBatch(
@@ -478,6 +503,19 @@ public class TickServiceImpl implements TickService {
                 lease,
                 List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
                 "commit"));
+  }
+
+  private void requireResolvedPendingEntries(
+      TickStagingService.PendingEntriesReadResult result, Long queueTargetId) {
+    if (result.status() == TickStagingService.PendingEntriesReadStatus.AUTHORITY_UNAVAILABLE) {
+      throw new TickQueueControlService.QueueUnavailableException(
+          "Pending tick entries cannot be reconciled without current runtime ownership for "
+              + queueTargetId);
+    }
+    if (result.status() == TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE) {
+      throw new IllegalStateException(
+          "Pending tick entries require owner reconciliation before commit for " + queueTargetId);
+    }
   }
 
   private String truncate(String value, int maxLength) {

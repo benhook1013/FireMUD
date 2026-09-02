@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -93,26 +94,35 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     } catch (Exception ex) {
       throw new IllegalArgumentException("script_definition_json_invalid");
     }
-    Map<String, Object> eventHandlers = asObjectMap(root.get("eventHandlers"));
-    if (eventHandlers.isEmpty()) {
+    if (root == null) {
+      throw new IllegalArgumentException("script_definition_json_invalid");
+    }
+    if (!root.containsKey("eventHandlers")) {
       return List.of();
     }
+    if (!(root.get("eventHandlers") instanceof Map<?, ?>)) {
+      throw new IllegalArgumentException("schedule_event_handlers_invalid");
+    }
+    Map<String, Object> eventHandlers = asObjectMap(root.get("eventHandlers"));
 
     List<ScriptScheduleDefinition> schedules = new ArrayList<>();
-    eventHandlers.forEach(
-        (eventType, handlerNode) -> {
-          ScriptScheduleDefinition extracted =
-              extractSchedule(
-                  tenantId,
-                  scriptPatchVersion,
-                  definition,
-                  asObjectMap(root),
-                  eventType,
-                  asObjectMap(handlerNode));
-          if (extracted != null) {
-            schedules.add(extracted);
-          }
-        });
+    ScriptCommandMetadataSupport.PluginOwner scriptOwner = null;
+    for (Map.Entry<String, Object> entry : eventHandlers.entrySet()) {
+      String eventType = entry.getKey();
+      if (!isScheduledEventType(eventType)) {
+        continue;
+      }
+      Map<String, Object> handler =
+          ScriptCommandMetadataSupport.extractHandlerNode(asObjectMap(root), eventType);
+      ScriptCommandMetadataSupport.PluginOwner owner =
+          ScriptCommandMetadataSupport.resolvePluginOwner(asObjectMap(root), handler);
+      if (scriptOwner != null && !scriptOwner.equals(owner)) {
+        throw new IllegalArgumentException("plugin_schedule_owner_contradictory");
+      }
+      scriptOwner = owner;
+      schedules.add(
+          extractSchedule(tenantId, scriptPatchVersion, definition, eventType, handler, owner));
+    }
     return List.copyOf(schedules);
   }
 
@@ -120,17 +130,16 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
       long tenantId,
       String scriptPatchVersion,
       ScriptDefinition scriptDefinition,
-      Map<String, Object> rootNode,
       String eventType,
-      Map<String, Object> handlerNode) {
+      Map<String, Object> handlerNode,
+      ScriptCommandMetadataSupport.PluginOwner pluginOwner) {
     String scheduleDefinitionId = normalizedText(handlerNode.get("scheduleDefinitionId"));
     if (scheduleDefinitionId.isBlank()) {
-      return null;
+      throw new IllegalArgumentException("schedule_definition_id_required");
     }
 
     Cadence cadence = resolveCadence(eventType, handlerNode);
     String priorityTag = normalizePriorityTag(handlerNode.get("priorityTag"));
-    PluginOwner pluginOwner = resolvePluginOwner(rootNode, handlerNode);
     String metadataJson =
         scheduleMetadataJson(
             scheduleDefinitionId,
@@ -162,19 +171,19 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
 
   private Cadence resolveCadence(String eventType, Map<String, Object> handlerNode) {
     if (EVENT_ON_INTERVAL.equals(eventType)) {
-      long intervalTicks = positiveLong(handlerNode, "intervalTicks");
-      if (intervalTicks <= 0) {
+      Long intervalTicks = positiveLong(handlerNode, "intervalTicks");
+      if (intervalTicks == null) {
         throw new IllegalArgumentException("schedule_interval_ticks_required");
       }
       return new Cadence(KIND_INTERVAL, UNIT_TICKS, intervalTicks);
     }
     if (EVENT_ON_TIMER_EXPIRE.equals(eventType)) {
-      long delayTicks = positiveLong(handlerNode, "delayTicks");
-      if (delayTicks > 0) {
+      if (handlerNode.containsKey("delayTicks")) {
+        Long delayTicks = positiveLong(handlerNode, "delayTicks");
         return new Cadence(KIND_TIMER, UNIT_TICKS, delayTicks);
       }
-      long delayMs = positiveLong(handlerNode, "delayMs");
-      if (delayMs > 0) {
+      Long delayMs = positiveLong(handlerNode, "delayMs");
+      if (delayMs != null) {
         return new Cadence(KIND_TIMER, UNIT_MILLISECONDS, delayMs);
       }
       throw new IllegalArgumentException("schedule_timer_delay_required");
@@ -182,22 +191,49 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     throw new IllegalArgumentException("unsupported_scheduled_event_type: " + eventType);
   }
 
-  private long positiveLong(Map<String, Object> node, String field) {
+  private static boolean isScheduledEventType(String eventType) {
+    return EVENT_ON_INTERVAL.equals(eventType) || EVENT_ON_TIMER_EXPIRE.equals(eventType);
+  }
+
+  private Long positiveLong(Map<String, Object> node, String field) {
+    if (!node.containsKey(field)) {
+      return null;
+    }
     Object value = node.get(field);
     if (value == null) {
-      return 0L;
+      throw invalidCadence(field);
     }
-    if (value instanceof Number number) {
-      return Math.max(number.longValue(), 0L);
-    }
-    if (value instanceof String text) {
-      try {
-        return Math.max(Long.parseLong(text.trim()), 0L);
-      } catch (NumberFormatException ex) {
-        return 0L;
+    BigDecimal decimal;
+    try {
+      if (value instanceof Double doubleValue) {
+        if (!Double.isFinite(doubleValue)) {
+          throw invalidCadence(field);
+        }
+        decimal = BigDecimal.valueOf(doubleValue);
+      } else if (value instanceof Float floatValue) {
+        if (!Float.isFinite(floatValue)) {
+          throw invalidCadence(field);
+        }
+        decimal = BigDecimal.valueOf(floatValue.doubleValue());
+      } else if (value instanceof Number number) {
+        decimal = new BigDecimal(number.toString());
+      } else if (value instanceof String text && !text.trim().isBlank()) {
+        decimal = new BigDecimal(text.trim());
+      } else {
+        throw invalidCadence(field);
       }
+      long parsed = decimal.longValueExact();
+      if (parsed <= 0 || parsed == Long.MAX_VALUE) {
+        throw invalidCadence(field);
+      }
+      return parsed;
+    } catch (NumberFormatException | ArithmeticException ex) {
+      throw invalidCadence(field);
     }
-    return 0L;
+  }
+
+  private IllegalArgumentException invalidCadence(String field) {
+    return new IllegalArgumentException("invalid_schedule_cadence: " + field);
   }
 
   private String scheduleMetadataJson(
@@ -205,7 +241,7 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
       String eventType,
       Cadence cadence,
       String priorityTag,
-      PluginOwner pluginOwner,
+      ScriptCommandMetadataSupport.PluginOwner pluginOwner,
       String scriptId,
       String scriptPatchVersion) {
     Map<String, Object> metadata = new LinkedHashMap<>();
@@ -236,33 +272,6 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
         + definition.getScheduleDefinitionId();
   }
 
-  private static PluginOwner resolvePluginOwner(
-      Map<String, Object> rootNode, Map<String, Object> handlerNode) {
-    String pluginId =
-        firstPresent(
-            normalizedText(handlerNode.get("pluginId")),
-            normalizedText(asObjectMap(handlerNode.get("plugin")).get("pluginId")),
-            normalizedText(asObjectMap(handlerNode.get("owner")).get("pluginId")),
-            normalizedText(rootNode.get("pluginId")),
-            normalizedText(asObjectMap(rootNode.get("plugin")).get("pluginId")),
-            normalizedText(asObjectMap(rootNode.get("owner")).get("pluginId")));
-    String pluginVersionId =
-        firstPresent(
-            normalizedText(handlerNode.get("pluginVersionId")),
-            normalizedText(asObjectMap(handlerNode.get("plugin")).get("pluginVersionId")),
-            normalizedText(asObjectMap(handlerNode.get("owner")).get("pluginVersionId")),
-            normalizedText(rootNode.get("pluginVersionId")),
-            normalizedText(asObjectMap(rootNode.get("plugin")).get("pluginVersionId")),
-            normalizedText(asObjectMap(rootNode.get("owner")).get("pluginVersionId")));
-    if (pluginId.isBlank()) {
-      return new PluginOwner("", "");
-    }
-    if (pluginVersionId.isBlank()) {
-      throw new IllegalArgumentException("plugin_schedule_owner_incomplete");
-    }
-    return new PluginOwner(pluginId, pluginVersionId);
-  }
-
   @SuppressWarnings("unchecked")
   private static Map<String, Object> asObjectMap(Object value) {
     if (value instanceof Map<?, ?> map) {
@@ -284,15 +293,6 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
     return value == null ? "" : value.toString().trim();
   }
 
-  private static String firstPresent(String... values) {
-    for (String value : values) {
-      if (value != null && !value.isBlank()) {
-        return value;
-      }
-    }
-    return "";
-  }
-
   private static String sha256(String value) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -303,6 +303,4 @@ public class ScriptScheduleDefinitionServiceImpl implements ScriptScheduleDefini
   }
 
   private record Cadence(String kind, String unit, long value) {}
-
-  private record PluginOwner(String pluginId, String pluginVersionId) {}
 }

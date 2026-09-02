@@ -5,17 +5,22 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWorkItemsRecord;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectFieldOrAsterisk;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
@@ -24,6 +29,15 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
+  private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
+  private static final Field<Boolean> INSERTED_ROW =
+      field("xmax = 0", Boolean.class).as("inserted");
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The inserted-or-existing work item is the repository result contract.")
+  public record IdempotentInsertResult(ScriptWorkItem workItem, boolean inserted) {}
+
   public interface ScriptPatchInstanceProjection {
     String getGameInstanceId();
 
@@ -55,23 +69,22 @@ public class ScriptWorkItemRepository {
           boolean dryRun) {
     return dsl.fetchExists(
         SCRIPT_WORK_ITEMS,
-        SCRIPT_WORK_ITEMS
-            .TENANT_ID
-            .eq(tenantId)
-            .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
-            .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
-            .and(SCRIPT_WORK_ITEMS.REGION_EPOCH.eq(regionEpoch))
-            .and(SCRIPT_WORK_ITEMS.ENTITY_ID.eq(entityId))
-            .and(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
-            .and(SCRIPT_WORK_ITEMS.WORLD_SLUG.eq(worldSlug))
-            .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
-            .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
-            .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
-            .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
-            .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
-            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-            .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
-            .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun)));
+        triggerIdentityCondition(
+            tenantId,
+            gameInstanceId,
+            regionId,
+            regionEpoch,
+            entityId,
+            playableStateScope,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            scriptId,
+            eventType,
+            eventSchemaVersion,
+            scriptPatchVersion,
+            scriptEventId,
+            dryRun));
   }
 
   public boolean existsByTenantIdAndScriptIdAndStatusIn(
@@ -323,6 +336,152 @@ public class ScriptWorkItemRepository {
 
   public ScriptWorkItem saveAndFlush(ScriptWorkItem entity) {
     return save(entity);
+  }
+
+  /** Inserts a trigger row without raising a transaction-aborting uniqueness exception. */
+  public IdempotentInsertResult insertIfAbsentByTriggerIdentity(ScriptWorkItem entity) {
+    if (entity.getId() != null) {
+      throw new IllegalArgumentException("A new script work item is required");
+    }
+    for (int attempt = 0; attempt < MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
+      Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
+      if (insertResult.isPresent()) {
+        TriggerIdentityInsertResult result = insertResult.orElseThrow();
+        return new IdempotentInsertResult(result.workItem(), result.inserted());
+      }
+      Optional<ScriptWorkItem> existing =
+          findByTriggerIdentity(
+              entity.getTenantId(),
+              entity.getGameInstanceId(),
+              entity.getRegionId(),
+              entity.getRegionEpoch(),
+              entity.getEntityId(),
+              entity.getPlayableStateScope(),
+              entity.getWorldSlug(),
+              entity.getRealmSlug(),
+              entity.getPointerVersion(),
+              entity.getScriptId(),
+              entity.getEventType(),
+              entity.getEventSchemaVersion(),
+              entity.getScriptPatchVersion(),
+              entity.getScriptEventId(),
+              entity.isDryRun());
+      if (existing.isPresent()) {
+        return new IdempotentInsertResult(existing.orElseThrow(), false);
+      }
+    }
+    throw new IllegalStateException("Trigger identity conflict did not yield a row");
+  }
+
+  private Optional<TriggerIdentityInsertResult> insertTriggerIdentity(ScriptWorkItem entity) {
+    ScriptWorkItemsRecord record = dsl.newRecord(SCRIPT_WORK_ITEMS);
+    populate(record, entity);
+    List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
+    Collections.addAll(returningFields, SCRIPT_WORK_ITEMS.fields());
+    returningFields.add(INSERTED_ROW);
+    // PostgreSQL waits for a concurrent unique-index winner before resolving
+    // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
+    // from the existing row returned by the no-op conflict update, avoiding a
+    // race between DO NOTHING and a separate readback query.
+    return dsl.insertInto(SCRIPT_WORK_ITEMS)
+        .set(record)
+        .onConflict(
+            SCRIPT_WORK_ITEMS.TENANT_ID,
+            SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID,
+            SCRIPT_WORK_ITEMS.REGION_ID,
+            SCRIPT_WORK_ITEMS.REGION_EPOCH,
+            SCRIPT_WORK_ITEMS.ENTITY_ID,
+            SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE,
+            SCRIPT_WORK_ITEMS.WORLD_SLUG,
+            SCRIPT_WORK_ITEMS.REALM_SLUG,
+            SCRIPT_WORK_ITEMS.POINTER_VERSION,
+            SCRIPT_WORK_ITEMS.SCRIPT_ID,
+            SCRIPT_WORK_ITEMS.EVENT_TYPE,
+            SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
+            SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
+            SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID,
+            SCRIPT_WORK_ITEMS.DRY_RUN)
+        .doUpdate()
+        .set(SCRIPT_WORK_ITEMS.ID, SCRIPT_WORK_ITEMS.ID)
+        .returningResult(returningFields)
+        .fetchOptional(
+            returned ->
+                new TriggerIdentityInsertResult(
+                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))));
+  }
+
+  private record TriggerIdentityInsertResult(ScriptWorkItem workItem, boolean inserted) {}
+
+  private Optional<ScriptWorkItem> findByTriggerIdentity(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      Long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String eventType,
+      String eventSchemaVersion,
+      String scriptPatchVersion,
+      String scriptEventId,
+      boolean dryRun) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(
+            triggerIdentityCondition(
+                tenantId,
+                gameInstanceId,
+                regionId,
+                regionEpoch,
+                entityId,
+                playableStateScope,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                scriptId,
+                eventType,
+                eventSchemaVersion,
+                scriptPatchVersion,
+                scriptEventId,
+                dryRun))
+        .fetchOptional(this::toEntity);
+  }
+
+  private Condition triggerIdentityCondition(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      Long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String eventType,
+      String eventSchemaVersion,
+      String scriptPatchVersion,
+      String scriptEventId,
+      boolean dryRun) {
+    return SCRIPT_WORK_ITEMS
+        .TENANT_ID
+        .eq(tenantId)
+        .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+        .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
+        .and(SCRIPT_WORK_ITEMS.REGION_EPOCH.eq(regionEpoch))
+        .and(SCRIPT_WORK_ITEMS.ENTITY_ID.eq(entityId))
+        .and(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
+        .and(SCRIPT_WORK_ITEMS.WORLD_SLUG.eq(worldSlug))
+        .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
+        .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
+        .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
+        .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
+        .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
+        .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+        .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
+        .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
   }
 
   public List<ScriptWorkItem> saveAll(Collection<ScriptWorkItem> entities) {

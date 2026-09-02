@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -12,8 +13,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptSchedulerProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
@@ -43,19 +47,28 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRespon
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
-import org.springframework.dao.DataIntegrityViolationException;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected Spring collaborators are retained internally.")
 public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstanceService {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(ScriptScheduleInstanceServiceImpl.class);
   private static final String UNIT_MILLISECONDS = "MILLISECONDS";
   private static final String UNIT_TICKS = "TICKS";
   private static final String STATUS_READY = "READY";
   private static final String STATUS_PENDING_RUNTIME_PROGRESS = "PENDING_RUNTIME_PROGRESS";
+  private static final String STATUS_FENCED = "FENCED";
+  private static final String ADMISSION_MODE_NORMAL = "NORMAL";
+  private static final String ADMISSION_MODE_PAUSED_FOR_ROLLBACK = "PAUSED_FOR_ROLLBACK";
   private static final String DEFAULT_SCHEMA_VERSION = "v1";
   private static final String SOURCE_SERVICE = "automation-scripting-service";
   private static final boolean SCHEDULER_IS_DRY_RUN = false;
@@ -64,6 +77,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String FINAL_OUTCOME_CANCELED = "canceled";
   private static final String REASON_CATCH_UP_TRUNCATED = "catch_up_truncated";
   private static final String REASON_RUNTIME_SCOPE_CHANGED = "runtime_scope_changed";
+  private static final String REASON_PLAYABLE_STATE_SCOPE_CHANGED = "playable_state_scope_changed";
+  private static final String REASON_SCRIPT_PATCH_MISMATCH = "script_patch_mismatch";
+  private static final String REASON_PLUGIN_BINDING_MISMATCH = "plugin_binding_mismatch";
+  private static final String REASON_MATERIALIZATION_NOT_READY = "materialization_not_ready";
+  private static final String REASON_ROUTING_BUNDLE_CHANGED = "routing_bundle_changed";
+  private static final String REASON_INVALID_CADENCE = "invalid_schedule_cadence";
+  private static final String REASON_DUE_TICK_OVERFLOW = "schedule_due_tick_overflow";
+  private static final String REASON_DUE_TIME_OVERFLOW = "schedule_due_time_overflow";
 
   private final ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
@@ -75,6 +96,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final AutomationQueueService automationQueueService;
   private final AutomationAdmissionStateService automationAdmissionStateService;
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
 
@@ -89,6 +111,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       AutomationQueueService automationQueueService,
       AutomationAdmissionStateService automationAdmissionStateService,
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
       MeterRegistry meterRegistry) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
@@ -101,6 +124,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.automationQueueService = automationQueueService;
     this.automationAdmissionStateService = automationAdmissionStateService;
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
   }
@@ -108,15 +132,37 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   @Override
   @Transactional
   public void reconcileObservedRuntimeState(
-      String tenantId, String gameInstanceId, GameInstanceRuntimeState runtimeState) {
+      String tenantId,
+      String gameInstanceId,
+      GameInstanceRuntimeState runtimeState,
+      Instant nonPinTransitionSeed,
+      String transitionPluginId) {
     requireText(tenantId, "tenant_id");
     requireText(gameInstanceId, "game_instance_id");
+    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    if (runtimeState != null
+        && (!tenantId.equals(runtimeState.getTenantId())
+            || !gameInstanceId.equals(runtimeState.getGameInstanceId()))) {
+      // A runtime response for another scope is not authority for this reconciliation. Preserve
+      // the existing projection until the owner returns an exact-scope response.
+      return;
+    }
     if (runtimeState == null || runtimeState.getPinnedScriptPatchVersion().isBlank()) {
       scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
       return;
     }
+    if (runtimeState.getRegionId().isBlank()
+        || runtimeState.getRegionEpoch() <= 0
+        || !hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())
+        || !RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()) {
+      // Schedule activation is scoped to the authoritative runtime timeline. A partial
+      // Game Session response must not activate rows against an unknown runtime scope or routing
+      // bundle. Keep the prior materialization until complete evidence arrives; deleting it would
+      // also remove schedules owned by unrelated plugins.
+      markRetainedSchedulesPending(tenantId, gameInstanceId);
+      return;
+    }
 
-    long tenantKey = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
     String scriptPatchVersion = runtimeState.getPinnedScriptPatchVersion();
     List<ScriptScheduleDefinition> definitions =
         scheduleDefinitionRepository
@@ -178,6 +224,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             binding,
             runtimeState,
             pinObservedAt,
+            shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
+                ? nonPinTransitionSeed
+                : null,
             now);
         upserts.add(instance);
       }
@@ -202,6 +251,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (!upserts.isEmpty()) {
       scheduleInstanceRepository.saveAll(upserts);
     }
+  }
+
+  private static boolean shouldApplyTransitionSeed(
+      ScriptScheduleDefinition definition, Instant transitionSeed, String transitionPluginId) {
+    return transitionSeed != null
+        && (blankToEmpty(transitionPluginId).isBlank()
+            || blankToEmpty(definition.getPluginId()).equals(blankToEmpty(transitionPluginId)));
   }
 
   @Override
@@ -229,15 +285,47 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli());
+      if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
+        // A pin projection without a complete runtime scope is not authoritative enough to
+        // reconcile or delete schedule rows. The next complete projection will retry it.
+        markRetainedSchedulesPending(tenantId, projection.getGameInstanceId());
+        continue;
+      }
       if (routingBundle.isPresent()) {
         runtimeState.addCurrentAdmissionPointers(
             AdmissionPointerControlPlaneEntry.newBuilder()
                 .setWorldSlug(routingBundle.worldSlug())
                 .setRealmSlug(routingBundle.realmSlug())
+                .setTenantId(runtimeState.getTenantId())
+                .setGameInstanceId(runtimeState.getGameInstanceId())
                 .setPointerVersion(routingBundle.parsedPointerVersion())
+                .setStateScope(
+                    runtimeState
+                        .getPlayableStateScope()
+                        .name()
+                        .replace("PLAYABLE_STATE_SCOPE_", ""))
                 .build());
       }
       reconcileObservedRuntimeState(tenantId, projection.getGameInstanceId(), runtimeState.build());
+    }
+  }
+
+  private void markRetainedSchedulesPending(String tenantId, String gameInstanceId) {
+    List<ScriptScheduleInstance> pending = new ArrayList<>();
+    for (ScriptScheduleInstance instance :
+        safeInstances(
+            scheduleInstanceRepository
+                .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                    tenantId, gameInstanceId))) {
+      if (STATUS_PENDING_RUNTIME_PROGRESS.equals(instance.getMaterializationStatus())
+          || STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+        continue;
+      }
+      instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
+      pending.add(instance);
+    }
+    if (!pending.isEmpty()) {
+      scheduleInstanceRepository.saveAll(pending);
     }
   }
 
@@ -245,6 +333,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   @Transactional
   public RuntimeTickProgressResult observeRuntimeTickProgress(
       RuntimeTickProgressObservation observation) {
+    if (observation == null) {
+      throw new IllegalArgumentException("runtime_tick_progress_observation_required");
+    }
     requireText(observation.tenantId(), "tenant_id");
     requireText(observation.gameInstanceId(), "game_instance_id");
     requireText(observation.regionId(), "region_id");
@@ -259,10 +350,40 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             ? Instant.ofEpochMilli(observation.observedAtMs())
             : Instant.now();
     Instant now = Instant.now();
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        automationAdmissionStateService.getState(
+            observation.tenantId(), observation.gameInstanceId(), observation.regionId());
+    Map<AdmissionStateCacheKey, Optional<AutomationAdmissionStateService.AdmissionStateSummary>>
+        admissionStateCache = new HashMap<>();
+    admissionStateCache.put(
+        new AdmissionStateCacheKey(
+            observation.tenantId(), observation.gameInstanceId(), observation.regionId()),
+        Optional.ofNullable(admissionState));
+    if (!usableObservationAdmissionState(admissionState, observation)) {
+      // Leave both tick and wall-clock due points untouched until a usable admission state is
+      // available.
+      return new RuntimeTickProgressResult(0, 0, 0);
+    }
+    if (ADMISSION_MODE_PAUSED_FOR_ROLLBACK.equals(admissionState.mode())) {
+      // Leave both tick and wall-clock due points untouched. The next observation after a
+      // resume must be able to admit the same candidate under the resumed epoch.
+      return new RuntimeTickProgressResult(0, 0, 0);
+    }
     List<ScriptScheduleInstance> updates = new ArrayList<>();
     int maxFirings = schedulerProperties.getMaxCatchUpFiringsPerObservation();
+    if (maxFirings <= 0) {
+      throw new IllegalArgumentException("max_catch_up_firings_per_observation must be positive");
+    }
+    int perScheduleCandidateLimit;
+    try {
+      perScheduleCandidateLimit = Math.addExact(maxFirings, 1);
+    } catch (ArithmeticException ex) {
+      throw new IllegalArgumentException("max_catch_up_firings_per_observation is too large", ex);
+    }
     List<TimerFiringCandidate> candidates = new ArrayList<>();
     List<TimerFiringCandidate> suppressedCandidates = new ArrayList<>();
+    GetGameInstanceRuntimeStateResponse observedRuntimeState = null;
+    Map<String, Optional<PluginRuntimeState>> pluginStateCache = new HashMap<>();
     List<ScriptScheduleInstance> tickInstances =
         safeInstances(
             scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
@@ -271,10 +392,35 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         safeInstances(
             scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
                 observation.tenantId(), observation.gameInstanceId(), UNIT_MILLISECONDS));
+    List<ScriptScheduleInstance> staleTickInstances =
+        tickInstances.stream()
+            .filter(instance -> isObservationStale(instance, observation))
+            .toList();
+    List<ScriptScheduleInstance> staleWallClockInstances =
+        wallClockInstances.stream()
+            .filter(instance -> isObservationStale(instance, observation))
+            .toList();
+    int totalInstances = tickInstances.size() + wallClockInstances.size();
+    int staleInstances = staleTickInstances.size() + staleWallClockInstances.size();
+    if (staleInstances == totalInstances && staleInstances > 0) {
+      ScriptScheduleInstance firstStale =
+          !staleTickInstances.isEmpty()
+              ? staleTickInstances.getFirst()
+              : staleWallClockInstances.getFirst();
+      throw new IllegalArgumentException(observationStaleReason(firstStale, observation));
+    }
+    tickInstances =
+        tickInstances.stream()
+            .filter(instance -> !isObservationStale(instance, observation))
+            .toList();
+    wallClockInstances =
+        wallClockInstances.stream()
+            .filter(instance -> !isObservationStale(instance, observation))
+            .toList();
     int fired = 0;
     for (ScriptScheduleInstance instance : tickInstances) {
       TickAdvanceResult advance =
-          advanceRuntimeProgress(instance, observation, observedAt, now, maxFirings + 1);
+          advanceRuntimeProgress(instance, observation, observedAt, now, perScheduleCandidateLimit);
       candidates.addAll(
           advance.fireDueTicks().stream()
               .map(dueTick -> TimerFiringCandidate.tick(instance, dueTick))
@@ -288,7 +434,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       WallClockAdvanceResult advance =
           advanceWallClockProgress(instance, observation, observedAt, now);
       if (advance.fireDueAt() != null) {
-        candidates.add(TimerFiringCandidate.wallClock(instance, advance.fireDueAt()));
+        candidates.add(
+            TimerFiringCandidate.wallClock(
+                instance, advance.fireDueAt(), observation.regionId(), observation.regionEpoch()));
       }
       if (advance.suppressedCandidate() != null) {
         suppressedCandidates.add(advance.suppressedCandidate());
@@ -298,6 +446,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     List<TimerFiringCandidate> selectedCandidates = roundRobinCandidates(candidates, maxFirings);
+    if (!selectedCandidates.isEmpty()) {
+      try {
+        observedRuntimeState =
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+                observation.tenantId(), observation.gameInstanceId());
+      } catch (RuntimeException ex) {
+        LOGGER.warn(
+            "Game Session runtime-state lookup failed for tenantId={} gameInstanceId={}; retaining timer progress and due state",
+            observation.tenantId(),
+            observation.gameInstanceId(),
+            ex);
+      }
+    }
     Set<String> selectedIdentities =
         selectedCandidates.stream()
             .map(TimerFiringCandidate::identity)
@@ -307,18 +468,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .filter(candidate -> !selectedIdentities.contains(candidate.identity()))
             .toList();
     recordSkippedCandidates(suppressedCandidates, REASON_RUNTIME_SCOPE_CHANGED, now);
-    recordSkippedCandidates(truncatedCandidates, REASON_CATCH_UP_TRUNCATED, now);
-    List<TimerFiringCandidate> firedCandidates = new ArrayList<>();
+    boolean authorityUnavailable = false;
     for (TimerFiringCandidate candidate : selectedCandidates) {
-      if (emitTimerWorkItem(candidate, now)) {
+      TimerEmissionResult emissionResult =
+          emitTimerWorkItem(
+              candidate, now, observedRuntimeState, pluginStateCache, admissionStateCache);
+      if (emissionResult == TimerEmissionResult.EMITTED) {
         fired++;
-        firedCandidates.add(candidate);
+      }
+      authorityUnavailable |= emissionResult == TimerEmissionResult.AUTHORITY_UNAVAILABLE;
+      if (candidate.wallClock()
+          && candidate.instance().getNextDueAt() == null
+          && updates.stream().noneMatch(instance -> instance == candidate.instance())) {
+        updates.add(candidate.instance());
       }
     }
-    int truncated = Math.max(0, candidates.size() - selectedCandidates.size());
-    if (fired > 0) {
-      incrementTimerMetric("automation_script_timer_fired_total", firedCandidates, null);
+    if (authorityUnavailable || !runtimeAuthorityAvailable(observedRuntimeState)) {
+      truncatedCandidates.forEach(
+          candidate -> restoreDueCandidate(candidate.instance(), candidate));
+    } else {
+      recordSkippedCandidates(truncatedCandidates, REASON_CATCH_UP_TRUNCATED, now);
     }
+    int truncated =
+        authorityUnavailable || !runtimeAuthorityAvailable(observedRuntimeState)
+            ? 0
+            : Math.max(0, candidates.size() - selectedCandidates.size());
     if (!updates.isEmpty()) {
       scheduleInstanceRepository.saveAll(updates);
     }
@@ -407,10 +581,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static boolean shouldMaterialize(
       ScriptScheduleDefinition definition, Map<String, String> activePluginVersions) {
     String pluginId = blankToEmpty(definition.getPluginId());
-    if (pluginId.isBlank()) {
+    String pluginVersionId = blankToEmpty(definition.getPluginVersionId());
+    if (pluginId.isBlank() && pluginVersionId.isBlank()) {
       return true;
     }
-    return blankToEmpty(definition.getPluginVersionId()).equals(activePluginVersions.get(pluginId));
+    if (pluginId.isBlank() || pluginVersionId.isBlank()) {
+      return false;
+    }
+    return pluginVersionId.equals(activePluginVersions.get(pluginId));
   }
 
   private Map<String, List<ScriptEventBinding>> bindingsByScriptEvent(
@@ -446,9 +624,15 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptEventBinding binding,
       GameInstanceRuntimeState runtimeState,
       Instant pinObservedAt,
+      Instant nonPinTransitionSeed,
       Instant now) {
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
+    boolean existingRow = instance.getId() != null;
+    boolean sameRuntimeGeneration =
+        existingRow && sameRuntimeGeneration(instance, definition, runtimeState);
+    boolean sameScheduleConfiguration =
+        existingRow && sameScheduleConfiguration(instance, definition, binding);
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
@@ -481,18 +665,91 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     if (UNIT_MILLISECONDS.equals(definition.getCadenceUnit())) {
       instance.setMaterializationStatus(STATUS_READY);
-      instance.setNextDueAt(pinObservedAt.plusMillis(definition.getCadenceValue()));
+      boolean compatibleExistingRow =
+          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+      if (!compatibleExistingRow) {
+        Instant seed = nonPinTransitionSeed != null ? nonPinTransitionSeed : pinObservedAt;
+        try {
+          instance.setNextDueAt(seed.plusMillis(definition.getCadenceValue()));
+        } catch (DateTimeException | ArithmeticException ex) {
+          throw new IllegalArgumentException(REASON_DUE_TIME_OVERFLOW, ex);
+        }
+        instance.setRuntimeRegionId("");
+        instance.setRuntimeRegionEpoch(null);
+        instance.setLastObservedTickId(null);
+        instance.setLastRuntimeProgressObservedAt(null);
+      }
       instance.setNextDueTickId(null);
-      instance.setRuntimeRegionId("");
-      instance.setRuntimeRegionEpoch(null);
-      instance.setLastObservedTickId(null);
-      instance.setLastRuntimeProgressObservedAt(null);
     } else {
-      instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
-      instance.setNextDueAt(null);
-      instance.setNextDueTickId(null);
+      boolean compatibleExistingRow =
+          nonPinTransitionSeed == null && sameRuntimeGeneration && sameScheduleConfiguration;
+      if (!compatibleExistingRow) {
+        instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
+        instance.setNextDueAt(null);
+        instance.setNextDueTickId(null);
+        instance.setRuntimeRegionId("");
+        instance.setRuntimeRegionEpoch(null);
+        instance.setLastObservedTickId(null);
+        instance.setLastRuntimeProgressObservedAt(null);
+      } else if (hasRetainedMaterializationEvidence(instance)) {
+        instance.setMaterializationStatus(STATUS_READY);
+      }
     }
     instance.setUpdatedAt(now);
+  }
+
+  private static boolean sameRuntimeGeneration(
+      ScriptScheduleInstance instance,
+      ScriptScheduleDefinition definition,
+      GameInstanceRuntimeState runtimeState) {
+    // The durable observed runtime tuple is the generation boundary. A semantics hash is
+    // diagnostic only and cannot infer continuity across a new pin/reset with identical text.
+    return Objects.equals(instance.getScriptPatchVersion(), definition.getScriptPatchVersion())
+        && Objects.equals(
+            blankToEmpty(instance.getObservedRuntimeVersionId()),
+            blankToEmpty(runtimeState.getRuntimeVersionId()))
+        && Objects.equals(
+            blankToEmpty(instance.getLastObservedControlPlaneRequestId()),
+            blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()))
+        && sameRuntimeScope(instance, runtimeState)
+        && !STATUS_FENCED.equals(instance.getMaterializationStatus())
+        && (!STATUS_PENDING_RUNTIME_PROGRESS.equals(instance.getMaterializationStatus())
+            || hasRetainedMaterializationEvidence(instance));
+  }
+
+  private static boolean hasRetainedMaterializationEvidence(ScriptScheduleInstance instance) {
+    if (instance.getNextDueAt() != null || instance.getNextDueTickId() != null) {
+      return true;
+    }
+    return "TIMER".equals(instance.getScheduleKind())
+        && UNIT_MILLISECONDS.equals(instance.getCadenceUnit())
+        && instance.getLastObservedTickId() != null
+        && !blankToEmpty(instance.getRuntimeRegionId()).isBlank()
+        && instance.getRuntimeRegionEpoch() != null
+        && instance.getRuntimeRegionEpoch() > 0;
+  }
+
+  private static boolean sameRuntimeScope(
+      ScriptScheduleInstance instance, GameInstanceRuntimeState runtimeState) {
+    String instanceRegionId = blankToEmpty(instance.getRuntimeRegionId());
+    Long instanceRegionEpoch = instance.getRuntimeRegionEpoch();
+    if (instanceRegionId.isBlank() || instanceRegionEpoch == null || instanceRegionEpoch <= 0) {
+      return true;
+    }
+    return Objects.equals(instanceRegionId, blankToEmpty(runtimeState.getRegionId()))
+        && instanceRegionEpoch == runtimeState.getRegionEpoch();
+  }
+
+  private static boolean sameScheduleConfiguration(
+      ScriptScheduleInstance instance,
+      ScriptScheduleDefinition definition,
+      ScriptEventBinding binding) {
+    return Objects.equals(instance.getScheduleKind(), definition.getScheduleKind())
+        && instance.getCadenceValue() == definition.getCadenceValue()
+        && Objects.equals(instance.getCadenceUnit(), definition.getCadenceUnit())
+        && Objects.equals(instance.getPriorityTag(), definition.getPriorityTag())
+        && instance.getBindingPriority() == binding.getPriority()
+        && instance.isRequiresExclusiveEvent() == binding.isRequiresExclusiveEvent();
   }
 
   private TickAdvanceResult advanceRuntimeProgress(
@@ -510,8 +767,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             && (!observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
                 || instance.getRuntimeRegionEpoch() != observation.regionEpoch());
     Long currentDueTick = instance.getNextDueTickId();
+    if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+      return new TickAdvanceResult(false, List.of(), List.of());
+    }
+    if (!STATUS_READY.equals(instance.getMaterializationStatus())
+        && hasRetainedMaterializationEvidence(instance)) {
+      // A partial reconciliation deliberately retained this exact due occurrence. Runtime
+      // progress cannot prove that the materialization generation is still authoritative; only
+      // a complete reconciliation may restore READY and allow the occurrence to emit.
+      return new TickAdvanceResult(false, List.of(), List.of());
+    }
+    if (!STATUS_READY.equals(instance.getMaterializationStatus())
+        && currentDueTick == null
+        && priorRuntimeKnown) {
+      instance.setRuntimeRegionId(observation.regionId());
+      instance.setRuntimeRegionEpoch(observation.regionEpoch());
+      instance.setLastObservedTickId(observation.tickId());
+      instance.setLastRuntimeProgressObservedAt(observedAt);
+      instance.setUpdatedAt(now);
+      return new TickAdvanceResult(true, List.of(), List.of());
+    }
     List<TimerFiringCandidate> suppressedDueTicks =
-        runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
+        STATUS_READY.equals(instance.getMaterializationStatus())
+                && runtimeScopeChanged
+                && currentDueTick != null
+                && currentDueTick <= observation.tickId()
             ? dueTicks(
                     currentDueTick,
                     observation.tickId(),
@@ -528,7 +808,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 .toList()
             : List.of();
     List<Long> fireDueTicks =
-        !runtimeScopeChanged && currentDueTick != null && currentDueTick <= observation.tickId()
+        STATUS_READY.equals(instance.getMaterializationStatus())
+                && !runtimeScopeChanged
+                && currentDueTick != null
+                && currentDueTick <= observation.tickId()
             ? dueTicks(
                 currentDueTick,
                 observation.tickId(),
@@ -537,7 +820,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             : List.of();
     long nextDueTick =
         runtimeScopeChanged || currentDueTick == null || currentDueTick <= observation.tickId()
-            ? nextFutureDueTick(observation.tickId(), currentDueTick, instance.getCadenceValue())
+            ? nextFutureDueTick(
+                observation.tickId(),
+                runtimeScopeChanged ? null : currentDueTick,
+                instance.getCadenceValue())
             : currentDueTick;
     boolean changed =
         runtimeScopeChanged
@@ -574,8 +860,20 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             && (!observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()))
                 || instance.getRuntimeRegionEpoch() != observation.regionEpoch());
     Instant currentDueAt = instance.getNextDueAt();
+    if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+      return new WallClockAdvanceResult(false, null, null);
+    }
+    if (!STATUS_READY.equals(instance.getMaterializationStatus())
+        && hasRetainedMaterializationEvidence(instance)) {
+      // See the tick path above: keep a retained wall-clock due point pending until complete
+      // materialization evidence arrives.
+      return new WallClockAdvanceResult(false, null, null);
+    }
     TimerFiringCandidate suppressedCandidate =
-        runtimeScopeChanged && currentDueAt != null && !currentDueAt.isAfter(observedAt)
+        STATUS_READY.equals(instance.getMaterializationStatus())
+                && runtimeScopeChanged
+                && currentDueAt != null
+                && !currentDueAt.isAfter(observedAt)
             ? TimerFiringCandidate.suppressedWallClock(
                 instance,
                 currentDueAt,
@@ -583,7 +881,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 instance.getRuntimeRegionEpoch())
             : null;
     Instant fireDueAt =
-        !runtimeScopeChanged
+        STATUS_READY.equals(instance.getMaterializationStatus())
+                && !runtimeScopeChanged
                 && currentDueAt != null
                 && !currentDueAt.isAfter(observedAt)
                 && !blankToEmpty(observation.regionId()).isBlank()
@@ -592,20 +891,26 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             : null;
     boolean changed =
         runtimeScopeChanged
+            || currentDueAt == null
             || instance.getLastObservedTickId() == null
             || instance.getLastObservedTickId() != observation.tickId()
             || !STATUS_READY.equals(instance.getMaterializationStatus());
     if (!changed) {
       return new WallClockAdvanceResult(false, fireDueAt, suppressedCandidate);
     }
-    instance.setMaterializationStatus(STATUS_READY);
+    if (runtimeScopeChanged || currentDueAt == null) {
+      try {
+        instance.setNextDueAt(observedAt.plusMillis(instance.getCadenceValue()));
+      } catch (DateTimeException | ArithmeticException ex) {
+        throw new IllegalArgumentException(REASON_DUE_TIME_OVERFLOW, ex);
+      }
+    }
+    instance.setMaterializationStatus(
+        instance.getNextDueAt() == null ? STATUS_PENDING_RUNTIME_PROGRESS : STATUS_READY);
     instance.setRuntimeRegionId(observation.regionId());
     instance.setRuntimeRegionEpoch(observation.regionEpoch());
     instance.setLastObservedTickId(observation.tickId());
     instance.setLastRuntimeProgressObservedAt(observedAt);
-    if (runtimeScopeChanged && suppressedCandidate != null) {
-      instance.setNextDueAt(null);
-    }
     instance.setUpdatedAt(now);
     return new WallClockAdvanceResult(true, fireDueAt, suppressedCandidate);
   }
@@ -615,9 +920,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (candidates.isEmpty()) {
       return;
     }
-    incrementTimerMetric(metricNameForReason(reason), candidates, reason);
+    List<TimerFiringCandidate> newlyRecorded = new ArrayList<>();
     for (TimerFiringCandidate candidate : candidates) {
-      persistSkippedAudit(candidate, reason, now);
+      if (persistSkippedAudit(candidate, reason, now)) {
+        newlyRecorded.add(candidate);
+      }
+    }
+    if (!newlyRecorded.isEmpty()) {
+      incrementTimerMetricAfterCommit(metricNameForReason(reason), newlyRecorded, reason);
     }
   }
 
@@ -631,19 +941,78 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private void incrementTimerMetric(
       String metricName, List<TimerFiringCandidate> candidates, String reason) {
+    String metricReason = metricReasonFor(metricName, reason);
     for (TimerFiringCandidate candidate : candidates) {
       ScriptScheduleInstance instance = candidate.instance();
       io.micrometer.core.instrument.Counter.Builder builder =
           io.micrometer.core.instrument.Counter.builder(metricName)
-              .tag("eventType", instance.getEventType());
-      if (reason != null) {
-        builder.tag("reason", reason);
-      }
+              .tag("service", SOURCE_SERVICE)
+              .tag("scope", "game_instance")
+              .tag("script_kind", scriptKindFor(instance))
+              .tag("event_class", eventClassFor(instance.getEventType()))
+              .tag("reason", metricReason);
       builder.register(meterRegistry).increment();
     }
   }
 
-  private void persistSkippedAudit(
+  private static String metricReasonFor(String metricName, String reason) {
+    return switch (metricName) {
+      case "automation_script_timer_catchup_truncated_total" -> {
+        if (!REASON_CATCH_UP_TRUNCATED.equals(reason)) {
+          throw new IllegalArgumentException("Unknown timer catch-up reason: " + reason);
+        }
+        yield "resume_window_cap";
+      }
+      case "automation_script_timer_runtime_fence_dropped_total" -> {
+        if (!REASON_RUNTIME_SCOPE_CHANGED.equals(reason)) {
+          throw new IllegalArgumentException("Unknown timer runtime-fence reason: " + reason);
+        }
+        yield REASON_RUNTIME_SCOPE_CHANGED;
+      }
+      default -> throw new IllegalArgumentException("Unknown timer metric: " + metricName);
+    };
+  }
+
+  private static String scriptKindFor(ScriptScheduleInstance instance) {
+    if (!blankToEmpty(instance.getPluginId()).isBlank()) {
+      return "PLUGIN";
+    }
+    if (!blankToEmpty(instance.getScriptId()).isBlank()) {
+      return "SCRIPT";
+    }
+    return "unknown";
+  }
+
+  private static String eventClassFor(String eventType) {
+    return switch (blankToEmpty(eventType)) {
+      case "onCommand" -> "command";
+      case "onSpawn" -> "spawn";
+      case "onEnterRegion" -> "enter_region";
+      case "onLeaveRegion" -> "leave_region";
+      case "onInterval" -> "interval";
+      case "onTimerExpire" -> "timer_expire";
+      case "onLoad" -> "load";
+      default -> "unknown";
+    };
+  }
+
+  private void incrementTimerMetricAfterCommit(
+      String metricName, List<TimerFiringCandidate> candidates, String reason) {
+    Runnable increment = () -> incrementTimerMetric(metricName, candidates, reason);
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      increment.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            increment.run();
+          }
+        });
+  }
+
+  private boolean persistSkippedAudit(
       TimerFiringCandidate candidate, String finalReason, Instant now) {
     ScriptScheduleInstance instance = candidate.instance();
     String entityId = targetEntityId(instance);
@@ -651,25 +1020,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
-    if (eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-            instance.getTenantId(),
-            instance.getGameInstanceId(),
-            candidate.regionId(),
-            candidate.regionEpoch(),
-            entityId,
-            blankToEmpty(instance.getPlayableStateScope()),
-            routingBundle.worldSlug(),
-            routingBundle.realmSlug(),
-            routingBundle.pointerVersion(),
-            instance.getScriptId(),
-            instance.getEventType(),
-            DEFAULT_SCHEMA_VERSION,
-            instance.getScriptPatchVersion(),
-            scriptEventId,
-            SCHEDULER_IS_DRY_RUN)) {
-      return;
-    }
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId(instance.getTenantId());
     audit.setGameInstanceId(instance.getGameInstanceId());
@@ -700,7 +1050,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setFinalReason(finalReason);
     audit.setCreatedAt(now);
     audit.setUpdatedAt(now);
-    eventAuditRepository.save(audit);
+    return eventAuditRepository.insertIfAbsentByHandlerIdentity(audit).inserted();
   }
 
   private List<TimerFiringCandidate> roundRobinCandidates(
@@ -756,45 +1106,68 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static List<Long> dueTicks(
       long firstDueTick, long observedTickId, long cadence, int candidateLimit) {
-    long boundedCadence = Math.max(1L, cadence);
+    requireValidCadence(cadence);
+    if (firstDueTick < 0 || observedTickId < 0 || candidateLimit <= 0) {
+      throw new IllegalArgumentException(REASON_INVALID_CADENCE);
+    }
     List<Long> dueTicks = new ArrayList<>();
     long dueTick = firstDueTick;
     while (dueTick <= observedTickId && dueTicks.size() < candidateLimit) {
       dueTicks.add(dueTick);
-      dueTick += boundedCadence;
+      if (dueTick > Long.MAX_VALUE - cadence) {
+        break;
+      }
+      dueTick += cadence;
     }
     return List.copyOf(dueTicks);
   }
 
-  private boolean emitTimerWorkItem(TimerFiringCandidate candidate, Instant now) {
+  private TimerEmissionResult emitTimerWorkItem(
+      TimerFiringCandidate candidate,
+      Instant now,
+      GetGameInstanceRuntimeStateResponse observedRuntimeState,
+      Map<String, Optional<PluginRuntimeState>> pluginStateCache,
+      Map<AdmissionStateCacheKey, Optional<AutomationAdmissionStateService.AdmissionStateSummary>>
+          admissionStateCache) {
     ScriptScheduleInstance instance = candidate.instance();
     String entityId = targetEntityId(instance);
     String scriptEventId = timerScriptEventId(candidate);
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
-    if (workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-            instance.getTenantId(),
-            instance.getGameInstanceId(),
-            candidate.regionId(),
-            candidate.regionEpoch(),
-            entityId,
-            blankToEmpty(instance.getPlayableStateScope()),
-            routingBundle.worldSlug(),
-            routingBundle.realmSlug(),
-            routingBundle.pointerVersion(),
-            instance.getScriptId(),
-            instance.getEventType(),
-            DEFAULT_SCHEMA_VERSION,
-            instance.getScriptPatchVersion(),
-            scriptEventId,
-            SCHEDULER_IS_DRY_RUN)) {
-      return false;
-    }
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        automationAdmissionStateService.getState(
-            instance.getTenantId(), instance.getGameInstanceId(), candidate.regionId());
+        admissionStateCache
+            .computeIfAbsent(
+                new AdmissionStateCacheKey(
+                    instance.getTenantId(), instance.getGameInstanceId(), candidate.regionId()),
+                region ->
+                    Optional.ofNullable(
+                        automationAdmissionStateService.getState(
+                            instance.getTenantId(),
+                            instance.getGameInstanceId(),
+                            region.regionId())))
+            .orElse(null);
+    if (admissionState == null || !usableAdmissionState(admissionState, instance, candidate)) {
+      restoreDueCandidate(instance, candidate);
+      return TimerEmissionResult.AUTHORITY_UNAVAILABLE;
+    }
+    if (ADMISSION_MODE_PAUSED_FOR_ROLLBACK.equals(admissionState.mode())) {
+      restoreDueCandidate(instance, candidate);
+      return TimerEmissionResult.AUTHORITY_UNAVAILABLE;
+    }
+    MaterializationEligibility eligibility =
+        STATUS_READY.equals(instance.getMaterializationStatus())
+            ? currentMaterializationEligibility(
+                instance, candidate, observedRuntimeState, pluginStateCache)
+            : MaterializationEligibility.proven(REASON_MATERIALIZATION_NOT_READY);
+    if (eligibility.kind() == MaterializationEligibility.Kind.AUTHORITY_UNAVAILABLE) {
+      restoreDueCandidate(instance, candidate);
+      return TimerEmissionResult.AUTHORITY_UNAVAILABLE;
+    }
+    if (eligibility.kind() == MaterializationEligibility.Kind.PROVEN_INELIGIBLE) {
+      fenceIneligibleCandidate(instance, candidate, eligibility.reason(), now);
+      return TimerEmissionResult.NOT_EMITTED;
+    }
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(instance.getTenantId());
     item.setGameInstanceId(instance.getGameInstanceId());
@@ -827,18 +1200,226 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setAdmissionEpoch(admissionState.admissionEpoch());
     item.setCreatedAt(now);
     item.setUpdatedAt(now);
-    try {
-      ScriptWorkItem saved = workItemRepository.saveAndFlush(item);
-      automationQueueService.enqueueWorkItem(saved);
-      persistTimerAudit(candidate, saved, now);
+    ScriptWorkItemRepository.IdempotentInsertResult insertResult =
+        workItemRepository.insertIfAbsentByTriggerIdentity(item);
+    if (!insertResult.inserted()) {
       if (candidate.wallClock()) {
-        instance.setNextDueAt(null);
-        instance.setUpdatedAt(now);
+        settleWallClockCandidate(instance, now);
       }
-      return true;
-    } catch (DataIntegrityViolationException ex) {
-      return false;
+      return TimerEmissionResult.NOT_EMITTED;
     }
+    ScriptWorkItem saved = insertResult.workItem();
+    automationQueueService.enqueueWorkItem(saved);
+    persistTimerAudit(candidate, saved, now);
+    if (candidate.wallClock()) {
+      settleWallClockCandidate(instance, now);
+    }
+    return TimerEmissionResult.EMITTED;
+  }
+
+  private enum TimerEmissionResult {
+    EMITTED,
+    NOT_EMITTED,
+    AUTHORITY_UNAVAILABLE
+  }
+
+  private static boolean runtimeAuthorityAvailable(
+      GetGameInstanceRuntimeStateResponse runtimeResponse) {
+    return runtimeResponse != null
+        && !hasNonBlankError(runtimeResponse)
+        && runtimeResponse.hasRuntimeState();
+  }
+
+  private static boolean hasNonBlankError(GetGameInstanceRuntimeStateResponse runtimeResponse) {
+    return runtimeResponse.hasError() && !runtimeResponse.getError().getCode().isBlank();
+  }
+
+  private MaterializationEligibility currentMaterializationEligibility(
+      ScriptScheduleInstance instance,
+      TimerFiringCandidate candidate,
+      GetGameInstanceRuntimeStateResponse runtimeResponse,
+      Map<String, Optional<PluginRuntimeState>> pluginStateCache) {
+    if (runtimeResponse == null
+        || hasNonBlankError(runtimeResponse)
+        || !runtimeResponse.hasRuntimeState()) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    GameInstanceRuntimeState runtimeState = runtimeResponse.getRuntimeState();
+    if (!Objects.equals(runtimeState.getTenantId(), instance.getTenantId())
+        || !Objects.equals(runtimeState.getGameInstanceId(), instance.getGameInstanceId())
+        || runtimeState.getPinnedScriptPatchVersion().isBlank()) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (!hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (!hasExplicitPlayableStateScope(toPlayableStateScope(instance.getPlayableStateScope()))) {
+      return MaterializationEligibility.proven(REASON_PLAYABLE_STATE_SCOPE_CHANGED);
+    }
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.fromRuntimeState(runtimeState);
+    if (!routingBundle.isPresent()) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (RoutingBundleSupport.hasPartialRouting(
+        instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion())) {
+      return MaterializationEligibility.proven(REASON_ROUTING_BUNDLE_CHANGED);
+    }
+    RoutingBundleSupport.RoutingBundle persistedRoutingBundle;
+    try {
+      persistedRoutingBundle =
+          RoutingBundleSupport.normalize(
+              instance.getWorldSlug(), instance.getRealmSlug(), instance.getPointerVersion());
+    } catch (IllegalArgumentException ex) {
+      return MaterializationEligibility.proven(REASON_ROUTING_BUNDLE_CHANGED);
+    }
+    if (!RoutingBundleSupport.sameRoutingBundle(routingBundle, persistedRoutingBundle)) {
+      return MaterializationEligibility.proven(REASON_ROUTING_BUNDLE_CHANGED);
+    }
+    if (!Objects.equals(
+        runtimeState.getPinnedScriptPatchVersion(), instance.getScriptPatchVersion())) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
+    }
+    if (!Objects.equals(
+        normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
+        blankToEmpty(instance.getPlayableStateScope()))) {
+      return MaterializationEligibility.proven(REASON_PLAYABLE_STATE_SCOPE_CHANGED);
+    }
+    if (!Objects.equals(runtimeState.getRegionId(), candidate.regionId())
+        || runtimeState.getRegionEpoch() != candidate.regionEpoch()) {
+      return MaterializationEligibility.proven(REASON_RUNTIME_SCOPE_CHANGED);
+    }
+    String pluginId = blankToEmpty(instance.getPluginId());
+    String pluginVersionId = blankToEmpty(instance.getPluginVersionId());
+    if (pluginId.isBlank() && pluginVersionId.isBlank()) {
+      return MaterializationEligibility.eligible();
+    }
+    if (pluginId.isBlank() || pluginVersionId.isBlank()) {
+      return MaterializationEligibility.proven(REASON_PLUGIN_BINDING_MISMATCH);
+    }
+    try {
+      var pluginState =
+          pluginStateCache.computeIfAbsent(
+              pluginId,
+              ignored ->
+                  pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+                      instance.getTenantId(), instance.getGameInstanceId(), pluginId));
+      if (pluginState.isEmpty()) {
+        return MaterializationEligibility.proven(REASON_PLUGIN_BINDING_MISMATCH);
+      }
+      PluginRuntimeState state = pluginState.orElseThrow();
+      return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
+              && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
+              && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
+              && AutomationRuntimeScopeSupport.matches(
+                  state,
+                  new AutomationRuntimeScopeSupport.RuntimeScope(
+                      candidate.regionId(), candidate.regionEpoch()))
+          ? MaterializationEligibility.eligible()
+          : MaterializationEligibility.proven(REASON_PLUGIN_BINDING_MISMATCH);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Plugin runtime-state lookup failed for tenantId={} gameInstanceId={} pluginId={}; retaining timer due state",
+          instance.getTenantId(),
+          instance.getGameInstanceId(),
+          pluginId,
+          ex);
+      return MaterializationEligibility.authorityUnavailable();
+    }
+  }
+
+  private record MaterializationEligibility(Kind kind, String reason) {
+    private enum Kind {
+      ELIGIBLE,
+      AUTHORITY_UNAVAILABLE,
+      PROVEN_INELIGIBLE
+    }
+
+    private static MaterializationEligibility eligible() {
+      return new MaterializationEligibility(Kind.ELIGIBLE, "");
+    }
+
+    private static MaterializationEligibility authorityUnavailable() {
+      return new MaterializationEligibility(Kind.AUTHORITY_UNAVAILABLE, "");
+    }
+
+    private static MaterializationEligibility proven(String reason) {
+      return new MaterializationEligibility(Kind.PROVEN_INELIGIBLE, reason);
+    }
+  }
+
+  private record AdmissionStateCacheKey(String tenantId, String gameInstanceId, String regionId) {}
+
+  private static boolean hasExplicitPlayableStateScope(PlayableStateScope scope) {
+    return scope != null
+        && scope != PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED
+        && scope != PlayableStateScope.UNRECOGNIZED;
+  }
+
+  private void fenceIneligibleCandidate(
+      ScriptScheduleInstance instance, TimerFiringCandidate candidate, String reason, Instant now) {
+    LOGGER.warn(
+        "Timer candidate fenced for tenantId={} gameInstanceId={} scriptId={} pluginId={} reason={}",
+        instance.getTenantId(),
+        instance.getGameInstanceId(),
+        instance.getScriptId(),
+        blankToEmpty(instance.getPluginId()),
+        reason);
+    boolean newlyRecorded = persistSkippedAudit(candidate, reason, now);
+    instance.setMaterializationStatus(STATUS_FENCED);
+    instance.setNextDueAt(null);
+    instance.setNextDueTickId(null);
+    instance.setRuntimeRegionId("");
+    instance.setRuntimeRegionEpoch(null);
+    instance.setLastObservedTickId(null);
+    instance.setLastRuntimeProgressObservedAt(null);
+    if (newlyRecorded && REASON_RUNTIME_SCOPE_CHANGED.equals(reason)) {
+      incrementTimerMetricAfterCommit(
+          "automation_script_timer_runtime_fence_dropped_total", List.of(candidate), reason);
+    }
+  }
+
+  private static void settleWallClockCandidate(ScriptScheduleInstance instance, Instant now) {
+    instance.setNextDueAt(null);
+    instance.setUpdatedAt(now);
+  }
+
+  private static void restoreDueCandidate(
+      ScriptScheduleInstance instance, TimerFiringCandidate candidate) {
+    if (!candidate.wallClock()
+        && candidate.dueTickId() != null
+        && (instance.getNextDueTickId() == null
+            || instance.getNextDueTickId() > candidate.dueTickId())) {
+      instance.setNextDueTickId(candidate.dueTickId());
+    }
+  }
+
+  private static boolean usableAdmissionState(
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      ScriptScheduleInstance instance,
+      TimerFiringCandidate candidate) {
+    return admissionState != null
+        && Objects.equals(admissionState.tenantId(), instance.getTenantId())
+        && Objects.equals(admissionState.gameInstanceId(), instance.getGameInstanceId())
+        && Objects.equals(admissionState.regionId(), candidate.regionId())
+        && admissionState.admissionEpoch() > 0
+        && (ADMISSION_MODE_NORMAL.equals(admissionState.mode())
+            || ADMISSION_MODE_PAUSED_FOR_ROLLBACK.equals(admissionState.mode()));
+  }
+
+  private static boolean usableObservationAdmissionState(
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      RuntimeTickProgressObservation observation) {
+    return admissionState != null
+        && Objects.equals(admissionState.tenantId(), observation.tenantId())
+        && Objects.equals(admissionState.gameInstanceId(), observation.gameInstanceId())
+        && Objects.equals(admissionState.regionId(), observation.regionId())
+        && admissionState.admissionEpoch() > 0
+        && (ADMISSION_MODE_NORMAL.equals(admissionState.mode())
+            || ADMISSION_MODE_PAUSED_FOR_ROLLBACK.equals(admissionState.mode()));
   }
 
   private void persistTimerAudit(
@@ -882,15 +1463,63 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static long nextFutureDueTick(long observedTickId, Long currentDueTick, long cadence) {
-    long boundedCadence = Math.max(1L, cadence);
+    requireValidCadence(cadence);
+    if (observedTickId < 0) {
+      throw new IllegalArgumentException(REASON_INVALID_CADENCE);
+    }
     if (currentDueTick == null) {
-      return observedTickId + boundedCadence;
+      try {
+        return Math.addExact(observedTickId, cadence);
+      } catch (ArithmeticException ex) {
+        throw new IllegalArgumentException(REASON_DUE_TICK_OVERFLOW, ex);
+      }
     }
-    long nextDueTick = currentDueTick;
-    while (nextDueTick <= observedTickId) {
-      nextDueTick += boundedCadence;
+    if (currentDueTick < 0) {
+      throw new IllegalArgumentException(REASON_INVALID_CADENCE);
     }
-    return nextDueTick;
+    if (currentDueTick > observedTickId) {
+      return currentDueTick;
+    }
+    try {
+      long elapsed = Math.subtractExact(observedTickId, currentDueTick);
+      long steps = Math.addExact(elapsed / cadence, 1L);
+      long advance = Math.multiplyExact(steps, cadence);
+      return Math.addExact(currentDueTick, advance);
+    } catch (ArithmeticException ex) {
+      throw new IllegalArgumentException(REASON_DUE_TICK_OVERFLOW, ex);
+    }
+  }
+
+  private static void requireValidCadence(long cadence) {
+    if (cadence <= 0) {
+      throw new IllegalArgumentException(REASON_INVALID_CADENCE);
+    }
+  }
+
+  private static boolean isObservationStale(
+      ScriptScheduleInstance instance, RuntimeTickProgressObservation observation) {
+    return observationStaleReason(instance, observation) != null;
+  }
+
+  private static String observationStaleReason(
+      ScriptScheduleInstance instance, RuntimeTickProgressObservation observation) {
+    Long storedEpoch = instance.getRuntimeRegionEpoch();
+    boolean sameRegion = observation.regionId().equals(blankToEmpty(instance.getRuntimeRegionId()));
+    if (sameRegion
+        && storedEpoch != null
+        && storedEpoch > 0
+        && observation.regionEpoch() < storedEpoch) {
+      return "stale_runtime_progress_region_epoch";
+    }
+    Long storedTick = instance.getLastObservedTickId();
+    if (storedTick != null
+        && storedEpoch != null
+        && observation.regionEpoch() == storedEpoch
+        && sameRegion
+        && observation.tickId() < storedTick) {
+      return "stale_runtime_progress_tick";
+    }
+    return null;
   }
 
   private static String targetEntityId(ScriptScheduleInstance instance) {
@@ -1245,14 +1874,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           false);
     }
 
-    private static TimerFiringCandidate wallClock(ScriptScheduleInstance instance, Instant dueAt) {
-      return new TimerFiringCandidate(
-          instance,
-          blankToEmpty(instance.getRuntimeRegionId()),
-          instance.getRuntimeRegionEpoch(),
-          null,
-          dueAt,
-          true);
+    private static TimerFiringCandidate wallClock(
+        ScriptScheduleInstance instance, Instant dueAt, String regionId, long regionEpoch) {
+      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
     }
 
     private static TimerFiringCandidate suppressedTick(
@@ -1280,8 +1904,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance.getPlayableStateScope(),
           regionId,
           String.valueOf(regionEpoch),
+          blankToEmpty(instance.getTargetScopeType()),
+          blankToEmpty(instance.getTargetScopeId()),
           targetEntityId(instance),
           instance.getScriptId(),
+          blankToEmpty(instance.getPluginId()),
+          blankToEmpty(instance.getPluginVersionId()),
           instance.getEventType(),
           DEFAULT_SCHEMA_VERSION,
           instance.getScriptPatchVersion(),

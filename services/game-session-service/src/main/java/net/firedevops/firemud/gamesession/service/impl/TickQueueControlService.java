@@ -334,8 +334,17 @@ public class TickQueueControlService {
 
   String queuePayload(boolean requiresSoloTick, String commandId, String command) {
     String mode = requiresSoloTick ? "S" : "N";
-    String durableCommandId = commandId == null || commandId.isBlank() ? "-" : commandId;
-    return mode + "|" + durableCommandId + "|" + command;
+    if (commandId == null || commandId.isBlank() || "-".equals(commandId)) {
+      throw new IllegalArgumentException("command_id cannot be blank or '-'");
+    }
+    requireQueueEncodingSafe(commandId, "command_id");
+    return mode + "|" + commandId + "|" + command;
+  }
+
+  static void requireQueueEncodingSafe(String value, String fieldName) {
+    if (value != null && value.indexOf('|') >= 0) {
+      throw new IllegalArgumentException(fieldName + " cannot contain '|'");
+    }
   }
 
   String lockKey(Long tenantId, Long sessionId) {
@@ -497,10 +506,10 @@ public class TickQueueControlService {
   private void removePurgedPayloads(
       Long tenantId, Long gameInstanceId, List<GameplayCommand> commands, Logger logger) {
     for (GameplayCommand command : commands) {
-      String payload =
-          queuePayload(
-              command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
       try {
+        String payload =
+            queuePayload(
+                command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
         redisTemplate.opsForList().remove(queueKey(tenantId, gameInstanceId), 0, payload);
         redisTemplate.opsForList().remove(pendingKey(tenantId, gameInstanceId), 0, payload);
       } catch (RuntimeException cleanupFailure) {

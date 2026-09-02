@@ -74,7 +74,10 @@ class AutomationPatchControlPlaneServiceTest {
     return AdmissionPointerControlPlaneEntry.newBuilder()
         .setWorldSlug(worldSlug)
         .setRealmSlug(realmSlug)
+        .setTenantId("1")
+        .setGameInstanceId("game-1")
         .setPointerVersion(pointerVersion)
+        .setStateScope("SHARED")
         .build();
   }
 
@@ -135,6 +138,7 @@ class AutomationPatchControlPlaneServiceTest {
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
                     net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)

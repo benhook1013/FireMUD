@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The static and incremental output-bound contract is target state. Current Automation enforcement includes configurable command-count, per-entity, and ingress-payload byte limits, but generated collections are built before total and per-entity checks; complete serialized-byte enforcement, shared versioned/digested component-cost metadata, pre-construction metering, and atomic handler-output persistence are not implemented or claimed. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
+The static and incremental output-bound contract is target state. Current Automation enforcement includes configurable command-count, per-entity, and ingress-payload byte limits, with command-count and per-entity ceilings enforced incrementally while expanding the legacy emitted-command output. Complete serialized-byte enforcement, shared versioned/digested component-cost metadata, artifact-cost validation, and atomic handler-output persistence are not implemented or claimed. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 ## Canonical Design
 
@@ -71,7 +71,7 @@ For one handler run, generated output is persisted atomically: either the comple
 
 Outcome ownership follows the stage at which the violation occurs:
 
-- a pre-handler envelope failure, such as an oversized ingress payload detected before handler resolution, remains a structured event-ingress admission outcome; and
+- a pre-handler envelope failure, such as an oversized ingress payload detected before handler resolution, uses canonical non-OK gRPC `INVALID_ARGUMENT` under the [gRPC outcome classification](../system-architecture-grpc.md#outcome-and-transport-classification), not an emitted-output admission outcome or ingress-audit/metric record; and
 - a generated-output violation discovered while evaluating a resolved handler is a handler-scoped `DSL_EVAL` non-success outcome with a bounded reason such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, `work_item_size_exceeded`, or the applicable declared-cap violation.
 
 A handler-scoped generated-output failure does not retroactively change a successful event-scope ingress result or another independently resolved handler's outcome.
@@ -102,7 +102,7 @@ Implement one shared versioned and digested component-cost registry; the exact `
 
 Prove matching and mismatched metadata versions and digests; missing metadata; static and data-dependent components; mutually exclusive and co-executing branches; nested bounded loops; bulk actions; exact-limit acceptance and one-over-limit rejection for command count, per-entity count, bytes, and declared caps; rejection before oversized allocation or serialization; complete persistence after success; zero generated-command persistence after any budget or persistence failure; crash and retry around atomic persistence; pre-handler envelope failure as an ingress outcome; generated-output failure as a handler `DSL_EVAL` outcome; and independence of other resolved handlers.
 
-The current Automation implementation provides partial evidence through configurable command-count, per-entity, and ingress-payload byte limits plus bounded outcomes. It currently constructs the generated command collection before total and per-entity checks, does not enforce a complete generated-output serialized-byte budget, and hands commands off sequentially rather than atomically as one handler output set. The shared versioned and digested component-cost metadata, Game Design worst-case analyzer, artifact cost pinning, Automation metadata revalidation, incremental pre-construction meter, data-dependent cap enforcement, atomic output persistence, and focused proof are not implemented or claimed by this decision.
+The current Automation implementation provides partial evidence through configurable command-count, per-entity, and ingress-payload byte limits plus bounded outcomes. It enforces command-count and per-entity ceilings incrementally while expanding the legacy emitted-command output, but does not enforce a complete generated-output serialized-byte budget and hands commands off sequentially rather than atomically as one handler output set. The shared versioned and digested component-cost metadata, Game Design worst-case analyzer, artifact cost pinning, Automation metadata revalidation, incremental serialized-byte meter, data-dependent cap enforcement, atomic output persistence, and focused proof are not implemented or claimed by this decision.
 
 ### Supplemental clarification (2026-08-13)
 
