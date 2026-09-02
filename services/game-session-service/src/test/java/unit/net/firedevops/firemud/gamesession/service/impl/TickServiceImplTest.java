@@ -2369,17 +2369,14 @@ class TickStageScriptTest {
 
   private void enqueueRaw(byte[] entry) {
     redisTemplate.execute(
-        (RedisCallback<Long>)
-            connection ->
-                connection.rPush(serializedKey(QUEUE_KEY), entry));
+        (RedisCallback<Long>) connection -> connection.rPush(serializedKey(QUEUE_KEY), entry));
   }
 
   private List<byte[]> rawValues(String key) {
     List<byte[]> values =
         redisTemplate.execute(
             (RedisCallback<List<byte[]>>)
-                connection ->
-                    connection.lRange(serializedKey(key), 0, -1));
+                connection -> connection.lRange(serializedKey(key), 0, -1));
     return values == null ? List.of() : values;
   }
 
