@@ -117,6 +117,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
 
+  // Runtime target 2 belongs to the sandbox route in this fixture.
+  private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
+
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -1288,7 +1291,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver(
-            "2", firstPartyClaims("sandbox", "production", "1", "1", "mismatch"))) {
+            "2", firstPartyClaims("demo", "production", "1", "1", "mismatch"))) {
+      bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1307,23 +1311,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketFirstPartyLoginRejectsStalePointerAfterCutover() throws Exception {
-    bumpProductionAdmissionPointer(2L, true);
+    bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
 
-    List<String> payloads;
+    GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver(
             "2", firstPartyClaims("demo", "production", "1", "1", "stale-login"))) {
-      client.send("LOGIN");
-      client.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      payloads = client.responses();
+      closeEvent = client.awaitClosed();
     }
 
-    JsonNode loginFailure = json(payloads.getFirst());
-    GameplayStructuredCommandAssertions.requireStructuredCommand(
-        loginFailure, "LOGIN", "login", "META", "SESSION");
-    assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
-    assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(closeEvent.statusCode()).isEqualTo(1013);
+    assertThat(closeEvent.reason()).isEqualTo("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE");
   }
 
   @Test
@@ -1343,30 +1341,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
           payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
     }
 
-    bumpProductionAdmissionPointer(2L, true);
+    bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
 
-    List<String> payloads;
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver reconnecting =
         openFirstPartyDriver(
             "2", firstPartyClaims("demo", "production", "1", "1", "resume-after-cutover"))) {
-      reconnecting.send("LOGIN");
-      reconnecting.awaitMatching(
-          payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
       closeEvent = reconnecting.awaitClosed();
-      payloads = reconnecting.responses();
     }
 
-    JsonNode loginFailure =
-        payloads.stream()
-            .filter(payload -> isStructuredCommand(payload, "LOGIN"))
-            .findFirst()
-            .map(GameSessionWebSocketHandlerIntegrationTest::json)
-            .orElseThrow();
-    assertThat(loginFailure.path("accepted").asBoolean()).isFalse();
-    assertThat(loginFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-    assertThat(closeEvent.statusCode()).isEqualTo(1008);
-    assertThat(closeEvent.reason()).isEqualTo("policy_violation");
+    assertThat(closeEvent.statusCode()).isEqualTo(1013);
+    assertThat(closeEvent.reason()).isEqualTo("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE");
   }
 
   @Test
@@ -1451,7 +1436,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      bumpProductionAdmissionPointer(2L, true);
+      bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, true);
       client.send("PLAY demo");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
