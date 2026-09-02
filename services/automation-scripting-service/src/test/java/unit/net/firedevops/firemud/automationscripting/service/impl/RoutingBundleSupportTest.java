@@ -1,7 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
@@ -163,6 +162,48 @@ class RoutingBundleSupportTest {
   }
 
   @Test
+  void fromRuntimeStateNormalizesFullPlayableScopeEnumToAuthorityShortName() {
+    GameInstanceRuntimeState runtimeState =
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .addCurrentAdmissionPointers(
+                AdmissionPointerControlPlaneEntry.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setPointerVersion(7L)
+                    .setStateScope("playable_state_scope_shared")
+                    .build())
+            .build();
+
+    assertThat(RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()).isTrue();
+  }
+
+  @Test
+  void fromRuntimeStateRejectsUnsupportedPlayableScopeValue() {
+    GameInstanceRuntimeState runtimeState =
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .addCurrentAdmissionPointers(
+                AdmissionPointerControlPlaneEntry.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setPointerVersion(7L)
+                    .setStateScope("PLAYABLE_STATE_SCOPE_OTHER")
+                    .build())
+            .build();
+
+    assertThat(RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()).isFalse();
+  }
+
+  @Test
   void fromRuntimeStateFailsClosedWhenPointerVersionIsNonPositive() {
     GameInstanceRuntimeState runtimeState =
         GameInstanceRuntimeState.newBuilder()
@@ -191,20 +232,53 @@ class RoutingBundleSupportTest {
         RoutingBundleSupport.normalize("demo", "production", "017");
 
     assertThat(RoutingBundleSupport.sameRoutingBundle(current, persisted)).isTrue();
+    assertThat(current.worldSlug()).isEqualTo("demo");
+    assertThat(current.realmSlug()).isEqualTo("production");
     assertThat(persisted.pointerVersion()).isEqualTo("017");
   }
 
   @Test
-  void normalizeRejectsMalformedPointerVersionText() {
-    assertThatThrownBy(() -> RoutingBundleSupport.normalize("demo", "production", "bad-pointer"))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("pointerVersion must be numeric");
+  void normalizeFailsClosedForMalformedPointerVersionText() {
+    assertThat(RoutingBundleSupport.normalize("Demo", "Production", "bad-pointer").isPresent())
+        .isFalse();
   }
 
   @Test
-  void normalizeRejectsNonPositivePointerVersionText() {
-    assertThatThrownBy(() -> RoutingBundleSupport.normalize("demo", "production", "0"))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("pointerVersion must be positive");
+  void normalizeFailsClosedForNonPositivePointerVersionText() {
+    assertThat(RoutingBundleSupport.normalize("Demo", "Production", "0").isPresent()).isFalse();
+  }
+
+  @Test
+  void normalizeRuntimePointerUsesLowercaseSlugs() {
+    RoutingBundleSupport.RoutingBundle bundle =
+        RoutingBundleSupport.normalize("DEMO", "PRODUCTION", 17L);
+
+    assertThat(bundle.worldSlug()).isEqualTo("demo");
+    assertThat(bundle.realmSlug()).isEqualTo("production");
+  }
+
+  @Test
+  void normalizeFailsClosedForMalformedSlugsInBothOverloads() {
+    for (String malformedSlug :
+        new String[] {"demo_world", "demo world", "demo/world", "demo-", "démo"}) {
+      assertThat(RoutingBundleSupport.normalize(malformedSlug, "production", 17L).isPresent())
+          .isFalse();
+      assertThat(RoutingBundleSupport.normalize("demo", malformedSlug, 17L).isPresent()).isFalse();
+      assertThat(RoutingBundleSupport.normalize(malformedSlug, "production", "17").isPresent())
+          .isFalse();
+      assertThat(RoutingBundleSupport.normalize("demo", malformedSlug, "17").isPresent()).isFalse();
+    }
+  }
+
+  @Test
+  void normalizeFailsClosedForOverlengthSlugsInBothOverloads() {
+    String overlengthSlug = "a".repeat(121);
+
+    assertThat(RoutingBundleSupport.normalize(overlengthSlug, "production", 17L).isPresent())
+        .isFalse();
+    assertThat(RoutingBundleSupport.normalize("demo", overlengthSlug, 17L).isPresent()).isFalse();
+    assertThat(RoutingBundleSupport.normalize(overlengthSlug, "production", "17").isPresent())
+        .isFalse();
+    assertThat(RoutingBundleSupport.normalize("demo", overlengthSlug, "17").isPresent()).isFalse();
   }
 }

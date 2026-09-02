@@ -166,7 +166,7 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void readExecutablePendingEntriesDropsMissingAcceptedAndTerminalCommands() {
+  void readPendingEntriesForReplayDropsMissingAcceptedAndTerminalCommands() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(
             List.of(
@@ -184,15 +184,17 @@ class TickStagingServiceTest {
             List.of("cmd-staged", "cmd-accepted", "cmd-terminal", "cmd-missing")))
         .thenReturn(List.of(staged, accepted, terminal));
 
-    List<TickQueuedCommandEnvelope> executable = service.readExecutablePendingEntries(1L, 2L);
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
 
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
     assertEquals(
         List.of("cmd-staged"),
-        executable.stream().map(TickQueuedCommandEnvelope::commandId).toList());
+        result.entries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsCrossTenantResidue() {
+  void readPendingEntriesForReplayDropsCrossTenantResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-cross-tenant|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-tenant");
@@ -200,11 +202,15 @@ class TickStagingServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-tenant")))
         .thenReturn(List.of(command));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsCrossGameInstanceResidue() {
+  void readPendingEntriesForReplayDropsCrossGameInstanceResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-cross-game|look"));
     GameplayCommand command = gameplayCommand("cmd-cross-game");
@@ -212,11 +218,15 @@ class TickStagingServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-cross-game")))
         .thenReturn(List.of(command));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
   }
 
   @Test
-  void readExecutablePendingEntriesDropsStaleRegionAndEpochResidue() {
+  void readPendingEntriesForReplayDropsStaleRegionAndEpochResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-stale-region|look", "N|cmd-stale-epoch|look"));
     GameplayCommand staleRegion = gameplayCommand("cmd-stale-region");
@@ -227,7 +237,11 @@ class TickStagingServiceTest {
             List.of("cmd-stale-region", "cmd-stale-epoch")))
         .thenReturn(List.of(staleRegion, staleEpoch));
 
-    assertTrue(service.readExecutablePendingEntries(1L, 2L).isEmpty());
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.ORPHANED_OR_STALE, result.status());
+    assertTrue(result.entries().isEmpty());
   }
 
   @Test
@@ -246,7 +260,7 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void readPendingEntriesForReplayMarksMixedExecutableAndStaleEvidenceUnresolved() {
+  void readPendingEntriesForReplayReportsMixedExecutableAndStaleEvidence() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-staged|look", "N|cmd-stale|wave"));
     GameplayCommand staged = gameplayCommand("cmd-staged");

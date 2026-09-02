@@ -333,8 +333,10 @@ Operators diagnosing stalled regions, replay storms, or ledger backlogs should u
 
 Replay fairness is part of the operational contract, not just an implementation detail:
 
-- Dashboards and alerts should show bounded scope-class rollups where `tick_effects_pending_total{scope_class} > 0` but `tick_effects_replay_batches_total{scope_class}` is not increasing over the same interval; exact affected regions require authoritative runtime-health/control-plane lookup.
-- Sustained `tick_effects_replay_scan_lag_ms{scope_class}` growth for a scope-class rollup should be treated as replay-controller starvation, even if a hot region is still making progress; it does not identify an individual region.
+When these metric-family signatures are used as executable selectors, every `scope_class` matcher must be the anchored bounded selector `scope_class=~"^(region|game_instance|tenant|cluster)$"`; brace forms without a matcher are notation only and must not be copied into unrestricted PromQL. Exact scope still comes from authoritative runtime-health/control-plane records.
+
+- Dashboards and alerts should show bounded scope-class rollups where `tick_effects_pending_total{scope_class=~"^(region|game_instance|tenant|cluster)$"} > 0` but `tick_effects_replay_batches_total{scope_class=~"^(region|game_instance|tenant|cluster)$"}` is not increasing over the same interval; exact affected regions require authoritative runtime-health/control-plane lookup.
+- Sustained `tick_effects_replay_scan_lag_ms{scope_class=~"^(region|game_instance|tenant|cluster)$"}` growth for a scope-class rollup should be treated as replay-controller starvation, even if a hot region is still making progress; it does not identify an individual region.
 
 ### Ledger Replay Controller
 

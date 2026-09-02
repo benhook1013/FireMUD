@@ -43,6 +43,7 @@ import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
@@ -85,6 +86,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String REASON_INVALID_CADENCE = "invalid_schedule_cadence";
   private static final String REASON_DUE_TICK_OVERFLOW = "schedule_due_tick_overflow";
   private static final String REASON_DUE_TIME_OVERFLOW = "schedule_due_time_overflow";
+  private static final String METRIC_TIMER_CATCHUP_TRUNCATED =
+      "automation_script_timer_catchup_truncated_total";
+  private static final String METRIC_TIMER_RUNTIME_FENCE_DROPPED =
+      "automation_script_timer_runtime_fence_dropped_total";
 
   private final ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
   private final ScriptScheduleInstanceRepository scheduleInstanceRepository;
@@ -216,18 +221,25 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         desiredKeys.add(key);
         ScriptScheduleInstance instance =
             existingByKey.getOrDefault(key, new ScriptScheduleInstance());
-        populateInstance(
-            instance,
-            tenantId,
-            gameInstanceId,
-            definition,
-            binding,
-            runtimeState,
-            pinObservedAt,
-            shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
-                ? nonPinTransitionSeed
-                : null,
-            now);
+        try {
+          populateInstance(
+              instance,
+              tenantId,
+              gameInstanceId,
+              definition,
+              binding,
+              runtimeState,
+              pinObservedAt,
+              shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
+                  ? nonPinTransitionSeed
+                  : null,
+              now);
+        } catch (IllegalArgumentException ex) {
+          if (!REASON_DUE_TIME_OVERFLOW.equals(ex.getMessage())) {
+            throw ex;
+          }
+          fenceMaterialization(instance, now);
+        }
         upserts.add(instance);
       }
     }
@@ -419,8 +431,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .toList();
     int fired = 0;
     for (ScriptScheduleInstance instance : tickInstances) {
-      TickAdvanceResult advance =
-          advanceRuntimeProgress(instance, observation, observedAt, now, perScheduleCandidateLimit);
+      TickAdvanceResult advance;
+      try {
+        advance =
+            advanceRuntimeProgress(
+                instance, observation, observedAt, now, perScheduleCandidateLimit);
+      } catch (IllegalArgumentException ex) {
+        if (!REASON_DUE_TICK_OVERFLOW.equals(ex.getMessage())) {
+          throw ex;
+        }
+        fenceOverflow(
+            instance,
+            TimerFiringCandidate.tick(
+                instance,
+                instance.getNextDueTickId() == null
+                    ? observation.tickId()
+                    : instance.getNextDueTickId(),
+                observation.regionId(),
+                observation.regionEpoch()),
+            REASON_DUE_TICK_OVERFLOW,
+            now);
+        updates.add(instance);
+        continue;
+      }
       candidates.addAll(
           advance.fireDueTicks().stream()
               .map(dueTick -> TimerFiringCandidate.tick(instance, dueTick))
@@ -431,8 +464,25 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     for (ScriptScheduleInstance instance : wallClockInstances) {
-      WallClockAdvanceResult advance =
-          advanceWallClockProgress(instance, observation, observedAt, now);
+      WallClockAdvanceResult advance;
+      try {
+        advance = advanceWallClockProgress(instance, observation, observedAt, now);
+      } catch (IllegalArgumentException ex) {
+        if (!REASON_DUE_TIME_OVERFLOW.equals(ex.getMessage())) {
+          throw ex;
+        }
+        fenceOverflow(
+            instance,
+            TimerFiringCandidate.wallClock(
+                instance,
+                instance.getNextDueAt() == null ? observedAt : instance.getNextDueAt(),
+                observation.regionId(),
+                observation.regionEpoch()),
+            REASON_DUE_TIME_OVERFLOW,
+            now);
+        updates.add(instance);
+        continue;
+      }
       if (advance.fireDueAt() != null) {
         candidates.add(
             TimerFiringCandidate.wallClock(
@@ -933,8 +983,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private String metricNameForReason(String reason) {
     return switch (reason) {
-      case REASON_CATCH_UP_TRUNCATED -> "automation_script_timer_catchup_truncated_total";
-      case REASON_RUNTIME_SCOPE_CHANGED -> "automation_script_timer_runtime_fence_dropped_total";
+      case REASON_CATCH_UP_TRUNCATED -> METRIC_TIMER_CATCHUP_TRUNCATED;
+      case REASON_RUNTIME_SCOPE_CHANGED, REASON_PLAYABLE_STATE_SCOPE_CHANGED ->
+          METRIC_TIMER_RUNTIME_FENCE_DROPPED;
       default -> throw new IllegalArgumentException("Unknown timer skip reason: " + reason);
     };
   }
@@ -957,18 +1008,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String metricReasonFor(String metricName, String reason) {
     return switch (metricName) {
-      case "automation_script_timer_catchup_truncated_total" -> {
+      case METRIC_TIMER_CATCHUP_TRUNCATED -> {
         if (!REASON_CATCH_UP_TRUNCATED.equals(reason)) {
           throw new IllegalArgumentException("Unknown timer catch-up reason: " + reason);
         }
         yield "resume_window_cap";
       }
-      case "automation_script_timer_runtime_fence_dropped_total" -> {
-        if (!REASON_RUNTIME_SCOPE_CHANGED.equals(reason)) {
-          throw new IllegalArgumentException("Unknown timer runtime-fence reason: " + reason);
-        }
-        yield REASON_RUNTIME_SCOPE_CHANGED;
-      }
+      case METRIC_TIMER_RUNTIME_FENCE_DROPPED ->
+          switch (reason) {
+            case REASON_RUNTIME_SCOPE_CHANGED, REASON_PLAYABLE_STATE_SCOPE_CHANGED -> reason;
+            default ->
+                throw new IllegalArgumentException("Unknown timer runtime-fence reason: " + reason);
+          };
       default -> throw new IllegalArgumentException("Unknown timer metric: " + metricName);
     };
   }
@@ -998,16 +1049,19 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private void incrementTimerMetricAfterCommit(
       String metricName, List<TimerFiringCandidate> candidates, String reason) {
-    Runnable increment = () -> incrementTimerMetric(metricName, candidates, reason);
+    runAfterCommit(() -> incrementTimerMetric(metricName, candidates, reason));
+  }
+
+  private static void runAfterCommit(Runnable action) {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      increment.run();
+      action.run();
       return;
     }
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            increment.run();
+            action.run();
           }
         });
   }
@@ -1209,8 +1263,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return TimerEmissionResult.NOT_EMITTED;
     }
     ScriptWorkItem saved = insertResult.workItem();
-    automationQueueService.enqueueWorkItem(saved);
     persistTimerAudit(candidate, saved, now);
+    runAfterCommit(() -> automationQueueService.enqueueWorkItem(saved));
     if (candidate.wallClock()) {
       settleWallClockCandidate(instance, now);
     }
@@ -1376,10 +1430,31 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setRuntimeRegionEpoch(null);
     instance.setLastObservedTickId(null);
     instance.setLastRuntimeProgressObservedAt(null);
-    if (newlyRecorded && REASON_RUNTIME_SCOPE_CHANGED.equals(reason)) {
-      incrementTimerMetricAfterCommit(
-          "automation_script_timer_runtime_fence_dropped_total", List.of(candidate), reason);
+    instance.setUpdatedAt(now);
+    if (newlyRecorded && isRuntimeFenceMetricReason(reason)) {
+      incrementTimerMetricAfterCommit(metricNameForReason(reason), List.of(candidate), reason);
     }
+  }
+
+  private static boolean isRuntimeFenceMetricReason(String reason) {
+    return REASON_RUNTIME_SCOPE_CHANGED.equals(reason)
+        || REASON_PLAYABLE_STATE_SCOPE_CHANGED.equals(reason);
+  }
+
+  private void fenceOverflow(
+      ScriptScheduleInstance instance, TimerFiringCandidate candidate, String reason, Instant now) {
+    fenceIneligibleCandidate(instance, candidate, reason, now);
+  }
+
+  private static void fenceMaterialization(ScriptScheduleInstance instance, Instant now) {
+    instance.setMaterializationStatus(STATUS_FENCED);
+    instance.setNextDueAt(null);
+    instance.setNextDueTickId(null);
+    instance.setRuntimeRegionId("");
+    instance.setRuntimeRegionEpoch(null);
+    instance.setLastObservedTickId(null);
+    instance.setLastRuntimeProgressObservedAt(null);
+    instance.setUpdatedAt(now);
   }
 
   private static void settleWallClockCandidate(ScriptScheduleInstance instance, Instant now) {
@@ -1609,8 +1684,25 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private ScriptWorkItemService.ScriptPatchPublicationLink publicationLink(
       String tenantId, String scriptPatchVersion) {
-    GetPublishedScriptPatchVersionResponse response =
-        gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    GetPublishedScriptPatchVersionResponse response;
+    try {
+      response =
+          gameDesignControlPlaneClient.getPublishedScriptPatchVersion(tenantId, scriptPatchVersion);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Game Design script-patch publication lookup failed for tenantId={} scriptPatchVersion={}",
+          tenantId,
+          scriptPatchVersion,
+          ex);
+      return unavailableScriptPatchPublication(scriptPatchVersion);
+    }
+    if (response == null) {
+      LOGGER.warn(
+          "Game Design script-patch publication lookup returned no response for tenantId={} scriptPatchVersion={}",
+          tenantId,
+          scriptPatchVersion);
+      return unavailableScriptPatchPublication(scriptPatchVersion);
+    }
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return new ScriptWorkItemService.ScriptPatchPublicationLink(
           blankToEmpty(scriptPatchVersion),
@@ -1636,17 +1728,27 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (blankToEmpty(pluginId).isBlank() || blankToEmpty(pluginVersionId).isBlank()) {
       return null;
     }
-    var response =
-        gameDesignControlPlaneClient.getPublishedPluginVersion(tenantId, pluginId, pluginVersionId);
-    if (response == null) {
-      return new PluginRuntimeStateService.PluginPublicationLink(
+    GetPublishedPluginVersionResponse response;
+    try {
+      response =
+          gameDesignControlPlaneClient.getPublishedPluginVersion(
+              tenantId, pluginId, pluginVersionId);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Game Design plugin publication lookup failed for tenantId={} pluginId={} pluginVersionId={}",
+          tenantId,
+          pluginId,
           pluginVersionId,
-          0L,
-          VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
-          "",
-          0L,
-          "GAME_DESIGN_UNAVAILABLE",
-          "Game Design service unavailable");
+          ex);
+      return unavailablePluginPublication(pluginVersionId);
+    }
+    if (response == null) {
+      LOGGER.warn(
+          "Game Design plugin publication lookup returned no response for tenantId={} pluginId={} pluginVersionId={}",
+          tenantId,
+          pluginId,
+          pluginVersionId);
+      return unavailablePluginPublication(pluginVersionId);
     }
     if (response.hasError() && !response.getError().getCode().isBlank()) {
       return new PluginRuntimeStateService.PluginPublicationLink(
@@ -1666,6 +1768,30 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         response.getPluginVersion().getLastChangedAtMs(),
         "",
         "");
+  }
+
+  private static ScriptWorkItemService.ScriptPatchPublicationLink unavailableScriptPatchPublication(
+      String scriptPatchVersion) {
+    return new ScriptWorkItemService.ScriptPatchPublicationLink(
+        blankToEmpty(scriptPatchVersion),
+        0L,
+        0L,
+        VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+        0L,
+        "GAME_DESIGN_UNAVAILABLE",
+        "Game Design service unavailable");
+  }
+
+  private static PluginRuntimeStateService.PluginPublicationLink unavailablePluginPublication(
+      String pluginVersionId) {
+    return new PluginRuntimeStateService.PluginPublicationLink(
+        pluginVersionId,
+        0L,
+        VersionLifecycleState.VERSION_LIFECYCLE_STATE_UNSPECIFIED,
+        "",
+        0L,
+        "GAME_DESIGN_UNAVAILABLE",
+        "Game Design service unavailable");
   }
 
   private static TimerAuditEventSummary toTimerAuditSummary(ScriptEventAudit audit) {
@@ -1872,6 +1998,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           dueTickId,
           null,
           false);
+    }
+
+    private static TimerFiringCandidate tick(
+        ScriptScheduleInstance instance, long dueTickId, String regionId, long regionEpoch) {
+      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
     }
 
     private static TimerFiringCandidate wallClock(

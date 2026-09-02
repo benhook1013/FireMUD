@@ -499,7 +499,7 @@ class TickServiceImplTest {
   }
 
   @Test
-  void processTickStopsAfterLeaseReplacementInsideStageScript() {
+  void processTickStopsAfterLeaseLossInsideStageScript() {
     RedisScript<Long> stageMarker = mock(RedisScript.class);
     RedisScript<Long> commitMarker = mock(RedisScript.class);
     RedisScript<Long> rollbackMarker = mock(RedisScript.class);
@@ -525,10 +525,11 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(commitMarker));
     org.junit.jupiter.api.Assertions.assertFalse(invokedScripts.contains(rollbackMarker));
     verify(runtimeRegionStatusRepository, never()).advanceLastCommittedTickId(any());
+    verify(conflictTracker).recordConflict("session:1:2");
   }
 
   @Test
-  void processTickStopsAfterLeaseReplacementBeforeCommitScript() {
+  void processTickStopsAfterLeaseLossBeforeCommitScript() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);
     RedisScript<Long> commitMarker = mock(RedisScript.class);

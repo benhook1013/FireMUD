@@ -44,6 +44,60 @@ public class ScriptEventAuditRepository {
     this.dsl = dsl;
   }
 
+  private static Condition handlerIdentityCondition(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      Long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String eventType,
+      String eventSchemaVersion,
+      String scriptPatchVersion,
+      String scriptEventId,
+      boolean dryRun) {
+    return SCRIPT_EVENT_AUDIT
+        .TENANT_ID
+        .eq(tenantId)
+        .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
+        .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(regionId))
+        .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(regionEpoch))
+        .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entityId))
+        .and(SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
+        .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(worldSlug))
+        .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
+        .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
+        .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
+        .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
+        .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
+        .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+        .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
+        .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
+  }
+
+  private static Condition handlerIdentityCondition(ScriptEventAudit entity) {
+    return handlerIdentityCondition(
+        entity.getTenantId(),
+        entity.getGameInstanceId(),
+        entity.getRegionId(),
+        entity.getRegionEpoch(),
+        entity.getEntityId(),
+        entity.getPlayableStateScope(),
+        entity.getWorldSlug(),
+        entity.getRealmSlug(),
+        entity.getPointerVersion(),
+        entity.getScriptId(),
+        entity.getEventType(),
+        entity.getEventSchemaVersion(),
+        entity.getScriptPatchVersion(),
+        entity.getScriptEventId(),
+        entity.isDryRun());
+  }
+
   public boolean
       existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
           String tenantId,
@@ -63,23 +117,22 @@ public class ScriptEventAuditRepository {
           boolean dryRun) {
     return dsl.fetchExists(
         SCRIPT_EVENT_AUDIT,
-        SCRIPT_EVENT_AUDIT
-            .TENANT_ID
-            .eq(tenantId)
-            .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-            .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(regionId))
-            .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(regionEpoch))
-            .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entityId))
-            .and(SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
-            .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(worldSlug))
-            .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
-            .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
-            .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
-            .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
-            .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
-            .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-            .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
-            .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun)));
+        handlerIdentityCondition(
+            tenantId,
+            gameInstanceId,
+            regionId,
+            regionEpoch,
+            entityId,
+            playableStateScope,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            scriptId,
+            eventType,
+            eventSchemaVersion,
+            scriptPatchVersion,
+            scriptEventId,
+            dryRun));
   }
 
   /** Inserts a timer audit without raising a transaction-aborting uniqueness exception. */
@@ -95,30 +148,7 @@ public class ScriptEventAuditRepository {
       }
       Optional<ScriptEventAudit> existing =
           dsl.selectFrom(SCRIPT_EVENT_AUDIT)
-              .where(
-                  SCRIPT_EVENT_AUDIT
-                      .TENANT_ID
-                      .eq(entity.getTenantId())
-                      .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()))
-                      .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(entity.getRegionId()))
-                      .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(entity.getRegionEpoch()))
-                      .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entity.getEntityId()))
-                      .and(
-                          SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(
-                              entity.getPlayableStateScope()))
-                      .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(entity.getWorldSlug()))
-                      .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(entity.getRealmSlug()))
-                      .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(entity.getPointerVersion()))
-                      .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(entity.getScriptId()))
-                      .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
-                      .and(
-                          SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(
-                              entity.getEventSchemaVersion()))
-                      .and(
-                          SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(
-                              entity.getScriptPatchVersion()))
-                      .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
-                      .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(entity.isDryRun())))
+              .where(handlerIdentityCondition(entity))
               .fetchOptional(this::toEntity);
       if (existing.isPresent()) {
         return new IdempotentInsertResult(existing.orElseThrow(), false);

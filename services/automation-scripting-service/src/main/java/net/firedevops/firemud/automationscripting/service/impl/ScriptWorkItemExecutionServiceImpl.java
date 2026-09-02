@@ -358,20 +358,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
 
-    if (commands.size() > outputProperties.getMaxCommandsPerRun()) {
-      deadLetter(workItem, STAGE_DSL_EVAL, OUTCOME_SANDBOX_ERROR, "command_count_exceeded", now);
-      return false;
-    }
-    if (exceedsPerEntityCommandLimit(commands)) {
-      deadLetter(
-          workItem,
-          STAGE_DSL_EVAL,
-          OUTCOME_SANDBOX_ERROR,
-          "per_entity_command_limit_exceeded",
-          now);
-      return false;
-    }
-
     if (commands.isEmpty() || workItem.isDryRun()) {
       markTerminalSuccess(
           workItem,
@@ -798,18 +784,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
   }
 
-  private boolean exceedsPerEntityCommandLimit(
-      List<ScriptGameplayCommandHandoffService.EmittedCommand> commands) {
-    Map<String, Integer> counts = new LinkedHashMap<>();
-    for (ScriptGameplayCommandHandoffService.EmittedCommand command : commands) {
-      int count = counts.merge(command.targetEntityId(), 1, Integer::sum);
-      if (count > outputProperties.getMaxCommandsPerEntityPerTrigger()) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private static String render(String template, Map<String, String> variables) {
     String rendered = template;
     for (Map.Entry<String, String> entry : variables.entrySet()) {
@@ -873,7 +847,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private void recordTerminalHandoffOutcome(
       ScriptWorkItem workItem, ScriptGameplayCommandHandoffService.HandoffResult result) {
     Instant now = Instant.now();
-    if (isRollbackFence(result)) {
+    if (ScriptHandoffOutcomeSupport.isRollbackFence(result)) {
       cancel(
           workItem,
           ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
@@ -906,11 +880,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         ScriptHandoffOutcomeSupport.OUTCOME_INFRASTRUCTURE_ERROR,
         ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result),
         now);
-  }
-
-  private static boolean isRollbackFence(ScriptGameplayCommandHandoffService.HandoffResult result) {
-    return "rollback_epoch_advanced".equalsIgnoreCase(result.outcome())
-        || "rollback_epoch_advanced".equalsIgnoreCase(result.errorCode());
   }
 
   private static long parseTenantId(ScriptWorkItem workItem) {

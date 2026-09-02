@@ -82,6 +82,8 @@ The completed decision-family imports consolidated related normative duplication
 
 The selective ADR-family imports are complete. The next alignment phase is the planned whole-corpus authority pass: preserve one canonical owner for each contract, retain useful local consequences and explanatory context, and remove only competing normative authority. During PR review, follow the linked [PR lifecycle](../../developer-workflows/pr-lifecycle.md); its canonical taper rule governs when additional review cycles may stop, subject to any explicit faster boundary chosen by the human.
 
+Keep the authority pass focused on design review. When a review unit exposes an unambiguous, bounded implementation or proof correction, prefer landing that correction with its focused tests in a precursor implementation PR before publishing the affected corpus PR. If the implementation is broad, decision-sensitive, or cannot be completed safely within that boundary, retain an explicit tracker gap for the later implementation phase instead. Do not mix code into a corpus PR merely to avoid recording truthful current status, and do not repeatedly reshuffle an already-reviewed hybrid PR solely to optimize reviewer attention.
+
 ## Authority Boundaries
 
 - Product documents define product requirements and observable product behavior; the [product requirements overview](../../product/requirements.md) is the canonical product scope summary.

@@ -1173,6 +1173,16 @@ for fixture_text in (
         raise SystemExit(
             f"bare reset upgrade fixture was not recognized: {fixture_text!r}"
         )
+# A canonical reset-first upgrade must remain a negative fixture for the bare
+# reset detector: its hyphenated serialized token is not the internal `reset`
+# value that the detector is intended to reject.
+for fixture_text in (
+    "upgrade the serialized compatibility class to `reset-first`",
+):
+    if serialized_bare_reset_upgrade_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized reset-first upgrade was incorrectly rejected: {fixture_text!r}"
+        )
 for path in [
     "design/architecture/system-architecture-redis-operations.md",
     "design/architecture/system-architecture-redis-incident-runbook.md",
@@ -1682,7 +1692,7 @@ if len(dsl_eval_rows) != 1:
 for required_clause in (
     "A resolved handler uses `completed_no_commands` when it validly emits no commands, or its applicable handler failure outcome",
     "`readiness_success` is reserved for the tenant-readiness patch-level owner/projection and is never a resolved-handler `finalOutcome`",
-    "`dry_run_completed` is permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
+    "`dry_run_completed` is a legacy-only outcome, permitted only when `executionSurface=LEGACY_TRIGGER_DRY_RUN`",
 ):
     if required_clause not in dsl_eval_rows[0]:
         raise SystemExit(
@@ -1750,7 +1760,7 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
-        "`finalOutcome=dry_run_completed` maps to metric `result=dry_run_success`",
+        "For the current legacy materialized dry-run handler only, `finalOutcome=dry_run_completed` with `executionSurface=LEGACY_TRIGGER_DRY_RUN` maps to metric `result=dry_run_success`",
         "For every classified non-success Table 2 outcome, metric `result` uses that same canonical outcome value",
     ],
 )

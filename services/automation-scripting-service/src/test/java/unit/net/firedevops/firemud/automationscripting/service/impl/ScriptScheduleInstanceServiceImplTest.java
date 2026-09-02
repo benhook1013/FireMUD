@@ -1388,7 +1388,7 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void observeRuntimeTickProgressRejectsLongMaxFutureTickInsteadOfWrapping() {
+  void observeRuntimeTickProgressFencesDueTickOverflowAndContinuesWithLaterInstances() {
     ScriptScheduleInstance nullDue =
         tickSchedule("guard-1", "npc-guard", "guard.null-due.v1", 1L, 0L);
     nullDue.setNextDueTickId(null);
@@ -1396,48 +1396,131 @@ class ScriptScheduleInstanceServiceImplTest {
     nullDue.setRuntimeRegionId("");
     nullDue.setRuntimeRegionEpoch(null);
     nullDue.setMaterializationStatus("PENDING_RUNTIME_PROGRESS");
+    ScriptScheduleInstance later = wallClockTimerInstance();
+    later.setScheduleDefinitionId("guard.later.expire.v1");
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(nullDue));
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
-        .thenReturn(List.of());
+        .thenReturn(List.of(later));
 
-    assertThatThrownBy(
-            () ->
-                service.observeRuntimeTickProgress(
-                    new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
-                        "1", "game-1", "region-1", 12L, Long.MAX_VALUE, 6_000L)))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("schedule_due_tick_overflow");
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, Long.MAX_VALUE, 6_000L));
 
-    verify(scheduleInstanceRepository, never()).saveAll(any());
-    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
-    verifyNoInteractions(automationQueueService, eventAuditRepository);
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(nullDue.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(later.getNextDueAt()).isNull();
+    verify(scheduleInstanceRepository).saveAll(any());
+    verify(workItemRepository).insertIfAbsentByTriggerIdentity(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("schedule_due_tick_overflow");
+    assertThat(auditCaptor.getValue().getRegionId()).isEqualTo("region-1");
+    assertThat(auditCaptor.getValue().getRegionEpoch()).isEqualTo(12L);
+    assertThat(meterRegistry.find("automation_script_timer_runtime_fence_dropped_total").counter())
+        .isNull();
   }
 
   @Test
-  void observeRuntimeTickProgressRejectsOverflowAdjacentFutureTickInsteadOfWrapping() {
+  void observeRuntimeTickProgressFencesAdjacentDueTickOverflowAndContinuesWithLaterInstances() {
     ScriptScheduleInstance adjacentOverflow =
         tickSchedule("guard-2", "npc-scout", "guard.adjacent.v1", 2L, Long.MAX_VALUE - 1L);
+    ScriptScheduleInstance later = wallClockTimerInstance();
+    later.setScheduleDefinitionId("guard.later.expire.v1");
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(adjacentOverflow));
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(later));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(
+            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                "1", "game-1", "region-1", 12L, Long.MAX_VALUE, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(adjacentOverflow.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(later.getNextDueAt()).isNull();
+    verify(scheduleInstanceRepository).saveAll(any());
+    verify(workItemRepository).insertIfAbsentByTriggerIdentity(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("schedule_due_tick_overflow");
+    assertThat(auditCaptor.getValue().getRegionId()).isEqualTo("region-1");
+    assertThat(auditCaptor.getValue().getRegionEpoch()).isEqualTo(12L);
+    assertThat(meterRegistry.find("automation_script_timer_runtime_fence_dropped_total").counter())
+        .isNull();
+  }
+
+  @Test
+  void reconcileObservedRuntimeStateFencesDueTimeOverflowAndContinuesWithLaterSchedules() {
+    ScriptScheduleDefinition overflow = pluginDefinition("plugin-1", "plugin-v1");
+    overflow.setEventType("onTimerExpire");
+    overflow.setScheduleKind("TIMER");
+    overflow.setCadenceUnit("MILLISECONDS");
+    overflow.setCadenceValue(Long.MAX_VALUE);
+    ScriptScheduleDefinition later = millisecondsDefinition();
+    later.setScheduleDefinitionId("guard.later.expire.v1");
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(overflow, later));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
         .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of(enabledPluginRuntimeState("plugin-1", "plugin-v1")));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(
+            List.of(
+                binding("plugin-town-crier", "onTimerExpire", "GLOBAL", "", 1, false),
+                binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 2, false)));
 
-    assertThatThrownBy(
-            () ->
-                service.observeRuntimeTickProgress(
-                    new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
-                        "1", "game-1", "region-1", 12L, Long.MAX_VALUE, 6_000L)))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("schedule_due_tick_overflow");
+    service.reconcileObservedRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPatchPinnedAtMs(1_000L)
+            .setRegionId("region-1")
+            .setRegionEpoch(12L)
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
+            .build(),
+        Instant.MAX,
+        "plugin-1");
 
-    verify(scheduleInstanceRepository, never()).saveAll(any());
-    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
-    verifyNoInteractions(automationQueueService, eventAuditRepository);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
+    verify(scheduleInstanceRepository).saveAll(captor.capture());
+    assertThat(captor.getValue())
+        .filteredOn(
+            instance ->
+                instance.getScheduleDefinitionId().equals(overflow.getScheduleDefinitionId()))
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getMaterializationStatus()).isEqualTo("FENCED");
+              assertThat(instance.getNextDueAt()).isNull();
+            });
+    assertThat(captor.getValue())
+        .filteredOn(
+            instance -> instance.getScheduleDefinitionId().equals(later.getScheduleDefinitionId()))
+        .singleElement()
+        .satisfies(
+            instance -> {
+              assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
+              assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
+            });
   }
 
   @Test
@@ -1628,6 +1711,8 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
     assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("routing_bundle_changed");
+    assertThat(meterRegistry.find("automation_script_timer_runtime_fence_dropped_total").counter())
+        .isNull();
   }
 
   @Test
@@ -1693,47 +1778,57 @@ class ScriptScheduleInstanceServiceImplTest {
             "1", "game-1", "MILLISECONDS"))
         .thenReturn(List.of(timerInstance));
 
-    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
-        service.observeRuntimeTickProgress(
-            new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
-                "1", "game-1", "region-1", 12L, 131L, 6_000L));
+    TransactionSynchronizationManager.initSynchronization();
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result;
+    try {
+      result =
+          service.observeRuntimeTickProgress(
+              new ScriptScheduleInstanceService.RuntimeTickProgressObservation(
+                  "1", "game-1", "region-1", 12L, 131L, 6_000L));
 
-    assertThat(result.updatedScheduleCount()).isEqualTo(1);
-    assertThat(result.firedScheduleCount()).isEqualTo(1);
-    assertThat(result.truncatedFiringCount()).isZero();
-    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository).insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
-    ScriptWorkItem workItem = workItemCaptor.getValue();
-    assertThat(workItem.getRegionId()).isEqualTo("region-1");
-    assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
-    assertThat(workItem.getWorldSlug()).isEqualTo("demo");
-    assertThat(workItem.getRealmSlug()).isEqualTo("production");
-    assertThat(workItem.getPointerVersion()).isEqualTo("17");
-    assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
-    assertThat(workItem.getPriorityTag()).isEqualTo("normal");
-    assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
-    assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
-    assertThat(workItem.getSourceOrdinal()).isEqualTo(5_000L);
-    assertThat(workItem.getSourceDueAtMs()).isEqualTo(5_000L);
-    assertThat(workItem.getSourceDueTickId()).isNull();
-    assertThat(workItem.getPayloadJson())
-        .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
-        .contains("\"dueAt\":5000");
-    assertThat(workItem.getReadSnapshotToken()).startsWith("automation:onTimerExpire:");
-    verify(automationQueueService).enqueueWorkItem(workItem);
-    @SuppressWarnings("unchecked")
-    ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
-        ArgumentCaptor.forClass(List.class);
-    verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
-    assertThat(scheduleCaptor.getValue())
-        .singleElement()
-        .satisfies(
-            instance -> {
-              assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
-              assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
-              assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
-              assertThat(instance.getNextDueAt()).isNull();
-            });
+      assertThat(result.updatedScheduleCount()).isEqualTo(1);
+      assertThat(result.firedScheduleCount()).isEqualTo(1);
+      assertThat(result.truncatedFiringCount()).isZero();
+      ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+      verify(workItemRepository).insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+      ScriptWorkItem workItem = workItemCaptor.getValue();
+      assertThat(workItem.getRegionId()).isEqualTo("region-1");
+      assertThat(workItem.getRegionEpoch()).isEqualTo(12L);
+      assertThat(workItem.getWorldSlug()).isEqualTo("demo");
+      assertThat(workItem.getRealmSlug()).isEqualTo("production");
+      assertThat(workItem.getPointerVersion()).isEqualTo("17");
+      assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
+      assertThat(workItem.getPriorityTag()).isEqualTo("normal");
+      assertThat(workItem.getSourceKind()).isEqualTo("SCHEDULE_TIMER");
+      assertThat(workItem.getSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
+      assertThat(workItem.getSourceOrdinal()).isEqualTo(5_000L);
+      assertThat(workItem.getSourceDueAtMs()).isEqualTo(5_000L);
+      assertThat(workItem.getSourceDueTickId()).isNull();
+      assertThat(workItem.getPayloadJson())
+          .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
+          .contains("\"dueAt\":5000");
+      assertThat(workItem.getReadSnapshotToken()).startsWith("automation:onTimerExpire:");
+      verify(eventAuditRepository).save(any());
+      verify(automationQueueService, never()).enqueueWorkItem(any());
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+      verify(automationQueueService).enqueueWorkItem(workItem);
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
+          ArgumentCaptor.forClass(List.class);
+      verify(scheduleInstanceRepository).saveAll(scheduleCaptor.capture());
+      assertThat(scheduleCaptor.getValue())
+          .singleElement()
+          .satisfies(
+              instance -> {
+                assertThat(instance.getRuntimeRegionId()).isEqualTo("region-1");
+                assertThat(instance.getRuntimeRegionEpoch()).isEqualTo(12L);
+                assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
+                assertThat(instance.getNextDueAt()).isNull();
+              });
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -1996,6 +2091,17 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
     assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("playable_state_scope_changed");
+    assertThat(
+            meterRegistry
+                .get("automation_script_timer_runtime_fence_dropped_total")
+                .tag("service", "automation-scripting-service")
+                .tag("scope", "game_instance")
+                .tag("script_kind", "SCRIPT")
+                .tag("event_class", "timer_expire")
+                .tag("reason", "playable_state_scope_changed")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
@@ -2039,6 +2145,17 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
     assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("playable_state_scope_changed");
+    assertThat(
+            meterRegistry
+                .get("automation_script_timer_runtime_fence_dropped_total")
+                .tag("service", "automation-scripting-service")
+                .tag("scope", "game_instance")
+                .tag("script_kind", "SCRIPT")
+                .tag("event_class", "timer_expire")
+                .tag("reason", "playable_state_scope_changed")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
@@ -2335,8 +2452,9 @@ class ScriptScheduleInstanceServiceImplTest {
 
       assertThat(meterRegistry.find("automation_script_timer_catchup_truncated_total").counter())
           .isNull();
-      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
-      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(2);
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
       assertThat(
               meterRegistry
                   .get("automation_script_timer_catchup_truncated_total")
@@ -2362,6 +2480,7 @@ class ScriptScheduleInstanceServiceImplTest {
 
       assertThat(meterRegistry.find("automation_script_timer_catchup_truncated_total").counter())
           .isNull();
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(2);
       TransactionSynchronizationManager.getSynchronizations()
           .forEach(
               synchronization ->
@@ -2383,7 +2502,10 @@ class ScriptScheduleInstanceServiceImplTest {
     try {
       service.observeRuntimeTickProgress(observation(130L, 6_000L));
 
-      assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
+      verify(automationQueueService, never()).enqueueWorkItem(any());
+      TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+      verify(automationQueueService).enqueueWorkItem(any());
       assertThat(meterRegistry.find("automation_script_timer_catchup_truncated_total").counter())
           .isNull();
     } finally {
@@ -2399,7 +2521,7 @@ class ScriptScheduleInstanceServiceImplTest {
       service.observeRuntimeTickProgress(observation(131L, 6_000L));
 
       assertThat(meterRegistry.find("automation_script_timer_fired_total").counter()).isNull();
-      assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -2416,8 +2538,9 @@ class ScriptScheduleInstanceServiceImplTest {
       assertThatThrownBy(() -> service.observeRuntimeTickProgress(observation(131L, 6_000L)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("schedule settlement failed");
-      assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
+      assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
       assertThat(meterRegistry.find("automation_script_timer_fired_total").counter()).isNull();
+      verify(automationQueueService, never()).enqueueWorkItem(any());
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -2537,6 +2660,35 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.pluginId()).isEqualTo("plugin-1");
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
               assertThat(summary.publication().versionId()).isEqualTo(17L);
+            });
+  }
+
+  @Test
+  void listInstancesLogsAndContainsPublicationLookupFailures() {
+    ScriptScheduleInstance instance = wallClockTimerInstance();
+    instance.setPluginId("plugin-1");
+    instance.setPluginVersionId("plugin-v1");
+    instance.setUpdatedAt(Instant.ofEpochMilli(1236L));
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1", "patch-1"))
+        .thenReturn(List.of(instance));
+    when(gameDesignControlPlaneClient.getPublishedScriptPatchVersion("1", "patch-1"))
+        .thenThrow(new IllegalStateException("script publication lookup failed"));
+    when(gameDesignControlPlaneClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenThrow(new IllegalStateException("plugin publication lookup failed"));
+
+    List<ScriptScheduleInstanceService.ScheduleInstanceSummary> result =
+        service.listInstances("1", "game-1", "patch-1", 25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("GAME_DESIGN_UNAVAILABLE");
+              assertThat(summary.pluginPublication().lookupErrorCode())
+                  .isEqualTo("GAME_DESIGN_UNAVAILABLE");
             });
   }
 

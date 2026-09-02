@@ -579,6 +579,22 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsPreReadReuseWhenAnyImmutableAdmissionFieldChanges() {
+    for (AdmissionRequest changed : changedAdmissionRequests()) {
+      assertPreReadReuseConflict(changed);
+    }
+  }
+
+  @Test
+  void rejectsPreReadReuseWhenScriptPatchVersionChanges() {
+    assertPreReadReuseConflict(changedPatchVersionRequest());
+  }
+
+  @Test
+  void rejectsPreReadReuseWhenDueTickChanges() {
+    assertPreReadReuseConflict(changedDueTickRequest());
+  }
+
+  private void assertPreReadReuseConflict(AdmissionRequest changed) {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -599,20 +615,18 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.of(existing));
 
-    for (AdmissionRequest changed : changedAdmissionRequests()) {
-      AdmissionResult result =
-          AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
-              changed,
-              gameInstanceRepository,
-              gameplayCommandRepository,
-              runtimeRegionStatusRepository,
-              tickService);
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            changed,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
 
-      assertFalse(result.accepted());
-      assertEquals("REJECTED", result.admissionOutcome());
-      assertEquals("auto-existing", result.commandId());
-      assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
-    }
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
+    assertEquals("auto-existing", result.commandId());
+    assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
 
     verify(gameplayCommandRepository, org.mockito.Mockito.never())
         .insertIfAbsentByIdempotencyIdentity(any());
@@ -1077,60 +1091,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.automationDispatchId(),
           base.automationWorkItemId(),
           base.scriptId(),
-          "patch-2",
-          base.pluginId(),
-          base.pluginVersionId(),
-          base.playableStateScope(),
-          base.worldSlug(),
-          base.realmSlug(),
-          base.pointerVersion(),
-          base.originSourceKind(),
-          base.originSourceState(),
-          base.originSourceOrdinal(),
-          base.originSourceDueTickId(),
-          base.originSourceDueAtMs(),
-          base.targetEntityId(),
-          base.remoteCoordinatorId(),
-          base.remoteFollowupId(),
-          base.command(),
-          base.requiresSoloTick(),
-          base.dueTickId()),
-      new AdmissionRequest(
-          base.tenantId(),
-          base.gameInstanceId(),
-          base.regionId(),
-          base.regionEpoch(),
-          base.sourceType(),
-          base.automationDispatchId(),
-          base.automationWorkItemId(),
-          base.scriptId(),
-          base.scriptPatchVersion(),
-          base.pluginId(),
-          base.pluginVersionId(),
-          base.playableStateScope(),
-          base.worldSlug(),
-          base.realmSlug(),
-          base.pointerVersion(),
-          base.originSourceKind(),
-          base.originSourceState(),
-          base.originSourceOrdinal(),
-          base.originSourceDueTickId(),
-          base.originSourceDueAtMs(),
-          base.targetEntityId(),
-          base.remoteCoordinatorId(),
-          base.remoteFollowupId(),
-          base.command(),
-          base.requiresSoloTick(),
-          99L),
-      new AdmissionRequest(
-          base.tenantId(),
-          base.gameInstanceId(),
-          base.regionId(),
-          base.regionEpoch(),
-          base.sourceType(),
-          base.automationDispatchId(),
-          base.automationWorkItemId(),
-          base.scriptId(),
           base.scriptPatchVersion(),
           base.pluginId(),
           base.pluginVersionId(),
@@ -1150,6 +1110,47 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.requiresSoloTick(),
           base.dueTickId())
     };
+  }
+
+  private static AdmissionRequest changedPatchVersionRequest() {
+    AdmissionRequest base = automationRequest();
+    return admissionRequestWithImmutableFields(base, "patch-2", base.dueTickId());
+  }
+
+  private static AdmissionRequest changedDueTickRequest() {
+    AdmissionRequest base = automationRequest();
+    return admissionRequestWithImmutableFields(base, base.scriptPatchVersion(), 99L);
+  }
+
+  private static AdmissionRequest admissionRequestWithImmutableFields(
+      AdmissionRequest base, String scriptPatchVersion, Long dueTickId) {
+    return new AdmissionRequest(
+        base.tenantId(),
+        base.gameInstanceId(),
+        base.regionId(),
+        base.regionEpoch(),
+        base.sourceType(),
+        base.automationDispatchId(),
+        base.automationWorkItemId(),
+        base.scriptId(),
+        scriptPatchVersion,
+        base.pluginId(),
+        base.pluginVersionId(),
+        base.playableStateScope(),
+        base.worldSlug(),
+        base.realmSlug(),
+        base.pointerVersion(),
+        base.originSourceKind(),
+        base.originSourceState(),
+        base.originSourceOrdinal(),
+        base.originSourceDueTickId(),
+        base.originSourceDueAtMs(),
+        base.targetEntityId(),
+        base.remoteCoordinatorId(),
+        base.remoteFollowupId(),
+        base.command(),
+        base.requiresSoloTick(),
+        dueTickId);
   }
 
   private static void populateAdmissionFields(GameplayCommand command, AdmissionRequest request) {
@@ -1300,6 +1301,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("demo", followup.getWorldSlug());
     assertEquals("production", followup.getRealmSlug());
     assertEquals(Long.valueOf(17L), followup.getPointerVersion());
+    verify(pointerAuthority).listByRuntimeTarget(1L, 9L);
   }
 
   @Test
@@ -1334,6 +1336,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("demo", followup.getWorldSlug());
     assertEquals("production", followup.getRealmSlug());
     assertEquals(Long.valueOf(17L), followup.getPointerVersion());
+    verify(pointerAuthority).listByRuntimeTarget(1L, 9L);
   }
 
   @Test
@@ -1413,7 +1416,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @ParameterizedTest
-  @MethodSource("invalidTargetPointers")
+  @MethodSource("temporarilyUnavailableTargetPointers")
   void remoteGameplayRetriesForInvalidTargetPointerAuthority(
       List<GameplayAdmissionPointerSnapshot> pointers) {
     usePointerAuthority();
@@ -1433,6 +1436,29 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("tb-1", followup.getClaimedTickBatchId());
     verify(remoteFollowupRuntimeService, org.mockito.Mockito.never())
         .recordResult(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void remoteGameplayAbandonsWhenTargetPointerBelongsToDifferentRuntimeTarget() {
+    usePointerAuthority();
+    TickEffect effect = commandEffect("mismatched-pointer-followup");
+    RemoteFollowup followup =
+        commandFollowup("mismatched-pointer-followup", "enqueue_gameplay_command");
+    RemoteCommandCoordinator coordinator = commandCoordinator("mismatched-pointer-followup");
+    configureTargetAdmission(followup, coordinator, "gameplay");
+    when(pointerAuthority.listByRuntimeTarget(1L, 9L))
+        .thenReturn(
+            List.of(
+                targetPointerForGameInstance("target-world", "target-realm", 23L, 128L, "SHARED")));
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.failureCode());
+    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
+    verify(gameplayCommandRepository, org.mockito.Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
@@ -1489,7 +1515,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     verify(pointerAuthority).listByRuntimeTarget(1L, 9L);
   }
 
-  static Stream<List<GameplayAdmissionPointerSnapshot>> invalidTargetPointers() {
+  static Stream<List<GameplayAdmissionPointerSnapshot>> temporarilyUnavailableTargetPointers() {
     return Stream.of(
         List.of(),
         List.of(
@@ -1508,20 +1534,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 true,
                 false,
                 "",
-                "NONE")),
-        List.of(
-            new GameplayAdmissionPointerSnapshot(
-                "target-world",
-                "Target world",
-                "target-realm",
-                "Target realm",
-                1L,
-                128L,
-                23L,
-                true,
-                true,
-                false,
-                "SHARED",
                 "NONE")));
   }
 
@@ -1601,13 +1613,22 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static GameplayAdmissionPointerSnapshot targetPointer(
       String worldSlug, String realmSlug, long pointerVersion, String stateScope) {
+    return targetPointerForGameInstance(worldSlug, realmSlug, pointerVersion, 9L, stateScope);
+  }
+
+  private static GameplayAdmissionPointerSnapshot targetPointerForGameInstance(
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      long gameInstanceId,
+      String stateScope) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
         realmSlug,
         realmSlug,
         1L,
-        9L,
+        gameInstanceId,
         pointerVersion,
         true,
         true,

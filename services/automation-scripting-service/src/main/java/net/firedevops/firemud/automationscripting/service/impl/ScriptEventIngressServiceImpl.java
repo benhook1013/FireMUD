@@ -391,8 +391,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         || request.getPointerVersion().isBlank()) {
       return;
     }
-    RoutingBundleSupport.normalize(
-        request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
+    RoutingBundleSupport.RoutingBundle routingBundle =
+        RoutingBundleSupport.normalize(
+            request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
+    if (!routingBundle.isPresent()) {
+      RequestIdValidation.requirePositiveLong(request.getPointerVersion(), "pointerVersion");
+      throw new IllegalArgumentException("routing bundle is invalid");
+    }
   }
 
   private TriggerAdmission validatePinnedPatch(TriggerScriptEventRequest request) {

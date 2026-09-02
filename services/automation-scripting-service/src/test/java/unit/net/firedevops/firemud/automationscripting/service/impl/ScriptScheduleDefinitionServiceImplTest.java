@@ -71,7 +71,6 @@ class ScriptScheduleDefinitionServiceImplTest {
 
     service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard"));
 
-    @SuppressWarnings("unchecked")
     var captor = org.mockito.ArgumentCaptor.forClass(List.class);
     verify(repository).saveAll(captor.capture());
     @SuppressWarnings("unchecked")
@@ -120,9 +119,9 @@ class ScriptScheduleDefinitionServiceImplTest {
 
     service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("npc-guard"));
 
-    @SuppressWarnings("unchecked")
     var captor = org.mockito.ArgumentCaptor.forClass(List.class);
     verify(repository).saveAll(captor.capture());
+    @SuppressWarnings("unchecked")
     List<ScriptScheduleDefinition> saved = captor.getValue();
     assertThat(saved)
         .singleElement()
@@ -174,7 +173,6 @@ class ScriptScheduleDefinitionServiceImplTest {
 
     service.refreshPatchSchedules("1", "patch-1", List.of(script), List.of("plugin-town-crier"));
 
-    @SuppressWarnings("unchecked")
     var captor = org.mockito.ArgumentCaptor.forClass(List.class);
     verify(repository).saveAll(captor.capture());
     @SuppressWarnings("unchecked")

@@ -60,10 +60,10 @@ final class AutomationGameplayCommandAdmissionSupport {
     return admitFresh(
         request,
         requestedCommand,
-        gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
         gameplayAdmissionPointerAuthorityService,
+        null,
         tickService);
   }
 
@@ -127,23 +127,24 @@ final class AutomationGameplayCommandAdmissionSupport {
     return admitFresh(
         targetRequest,
         acceptedAutomationCommand(targetRequest),
-        gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
         gameplayAdmissionPointerAuthorityService,
+        currentPointers,
         tickService);
   }
 
   private static AdmissionResult admitFresh(
       AdmissionRequest request,
       GameplayCommand requestedCommand,
-      GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers,
       TickService tickService) {
     Optional<AdmissionResult> pointerRejected =
-        rejectIfCurrentPointerAuthorityMismatch(request, gameplayAdmissionPointerAuthorityService);
+        rejectIfCurrentPointerAuthorityMismatch(
+            request, gameplayAdmissionPointerAuthorityService, preReadCurrentPointers);
     if (pointerRejected.isPresent()) {
       return pointerRejected.orElseThrow();
     }
@@ -408,7 +409,8 @@ final class AutomationGameplayCommandAdmissionSupport {
 
   private static Optional<AdmissionResult> rejectIfCurrentPointerAuthorityMismatch(
       AdmissionRequest request,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers) {
     GameplayAdmissionPointerSnapshots.RoutingBundle requestedRoutingBundle =
         GameplayAdmissionPointerSnapshots.normalizeRoutingBundle(
             request.worldSlug(), request.realmSlug(), request.pointerVersion());
@@ -417,12 +419,16 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
 
     final List<GameplayAdmissionPointerSnapshot> currentPointers;
-    try {
-      currentPointers =
-          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-              request.tenantId(), request.gameInstanceId());
-    } catch (RuntimeException ex) {
-      return Optional.of(temporaryPointerAuthorityUnavailable(true));
+    if (preReadCurrentPointers != null) {
+      currentPointers = preReadCurrentPointers;
+    } else {
+      try {
+        currentPointers =
+            gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
+                request.tenantId(), request.gameInstanceId());
+      } catch (RuntimeException ex) {
+        return Optional.of(temporaryPointerAuthorityUnavailable(true));
+      }
     }
     if (currentPointers == null
         || currentPointers.size() != 1

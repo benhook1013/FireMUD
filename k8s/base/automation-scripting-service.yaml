@@ -6,6 +6,8 @@ metadata:
   name: automation-scripting-service
 spec:
   replicas: 2
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: automation-scripting-service

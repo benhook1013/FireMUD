@@ -15,15 +15,14 @@ final class ScriptHandoffOutcomeSupport {
   static final String REASON_REMOTE_RESPONSE_INVALID = "remote_response_invalid";
   static final String REASON_RUNTIME_PAUSED = "runtime_paused";
   static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED = "runtime_region_scope_advanced";
-  static final String REASON_CANCELED_UNKNOWN = "canceled_unknown_reason";
   static final String REASON_IDEMPOTENCY_CONFLICT = "idempotency_conflict";
   static final String ERROR_REMOTE_RESPONSE_INVALID = "REMOTE_RESPONSE_INVALID";
 
   private ScriptHandoffOutcomeSupport() {}
 
   static boolean isRuntimeScopeFence(HandoffResult result) {
-    String code = normalize(result.errorCode()).toUpperCase(Locale.ROOT);
-    String outcome = normalize(result.outcome()).toUpperCase(Locale.ROOT);
+    String code = normalizeToken(result.errorCode());
+    String outcome = normalizeToken(result.outcome());
     return "STALE_TIMELINE".equals(code)
         || "RUNTIME_SCOPE_CHANGED".equals(code)
         || "RUNTIME_REGION_SCOPE_ADVANCED".equals(code)
@@ -33,13 +32,18 @@ final class ScriptHandoffOutcomeSupport {
   }
 
   static boolean isAdmissionPause(HandoffResult result) {
-    return "RUNTIME_PAUSED".equals(normalize(result.errorCode()).toUpperCase(Locale.ROOT))
-        || "RUNTIME_PAUSED".equals(normalize(result.outcome()).toUpperCase(Locale.ROOT));
+    return "RUNTIME_PAUSED".equals(normalizeToken(result.errorCode()))
+        || "RUNTIME_PAUSED".equals(normalizeToken(result.outcome()));
+  }
+
+  static boolean isRollbackFence(HandoffResult result) {
+    return REASON_ROLLBACK_EPOCH_ADVANCED.equalsIgnoreCase(normalizeToken(result.errorCode()))
+        || REASON_ROLLBACK_EPOCH_ADVANCED.equalsIgnoreCase(normalizeToken(result.outcome()));
   }
 
   static boolean isRetryable(HandoffResult result) {
-    String code = normalize(result.errorCode()).toUpperCase(Locale.ROOT);
-    String outcome = normalize(result.outcome()).toUpperCase(Locale.ROOT);
+    String code = normalizeToken(result.errorCode());
+    String outcome = normalizeToken(result.outcome());
     if (isRuntimeScopeFence(result)
         || isAdmissionPause(result)
         || "ROLLBACK_EPOCH_ADVANCED".equals(code)
@@ -59,9 +63,9 @@ final class ScriptHandoffOutcomeSupport {
   }
 
   static String canonicalInfrastructureReason(HandoffResult result) {
-    String code = normalize(result.errorCode()).trim().toUpperCase(Locale.ROOT);
+    String code = normalizeToken(result.errorCode());
     if (code.isBlank()) {
-      code = normalize(result.outcome()).trim().toUpperCase(Locale.ROOT);
+      code = normalizeToken(result.outcome());
     }
     return switch (code) {
       case "GAME_SESSION_UNAVAILABLE", "UNAVAILABLE", "AUTHORITY_UNAVAILABLE", "REMOTE_REJECTED" ->
@@ -69,7 +73,7 @@ final class ScriptHandoffOutcomeSupport {
       case "IDEMPOTENCY_CONFLICT" -> REASON_IDEMPOTENCY_CONFLICT;
       case "ROLLBACK_EPOCH_ADVANCED" -> REASON_ROLLBACK_EPOCH_ADVANCED;
       case "STALE_TIMELINE", "RUNTIME_SCOPE_CHANGED" -> REASON_RUNTIME_SCOPE_CHANGED;
-      case "RUNTIME_REGION_SCOPE_ADVANCED" -> REASON_RUNTIME_REGION_SCOPE_ADVANCED;
+      case "RUNTIME_REGION_SCOPE_ADVANCED" -> REASON_RUNTIME_SCOPE_CHANGED;
       case "INVALID_ARGUMENT" -> REASON_INVALID_ARGUMENT;
       case "REMOTE_RESPONSE_INVALID" -> REASON_REMOTE_RESPONSE_INVALID;
       case "RUNTIME_PAUSED" -> REASON_RUNTIME_PAUSED;
@@ -79,19 +83,25 @@ final class ScriptHandoffOutcomeSupport {
   }
 
   static String canonicalHandoffReason(String reason, String outcome) {
-    String normalized = normalize(reason).trim().toUpperCase(Locale.ROOT);
-    if (OUTCOME_CANCELED.equals(outcome)) {
-      return switch (normalized) {
-        case "ROLLBACK_EPOCH_ADVANCED" -> REASON_ROLLBACK_EPOCH_ADVANCED;
-        case "RUNTIME_SCOPE_CHANGED", "RUNTIME_REGION_SCOPE_ADVANCED", "STALE_TIMELINE" ->
-            REASON_RUNTIME_SCOPE_CHANGED;
-        default -> REASON_CANCELED_UNKNOWN;
-      };
-    }
-    return canonicalInfrastructureReason(new HandoffResult(false, outcome, "", "", "", normalized));
+    String normalizedReason = normalizeToken(reason);
+    String normalizedOutcome = normalizeToken(outcome);
+    String canonicalToken = normalizedReason.isBlank() ? normalizedOutcome : normalizedReason;
+    return switch (canonicalToken) {
+      case "RUNTIME_PAUSED" -> REASON_RUNTIME_PAUSED;
+      case "ROLLBACK_EPOCH_ADVANCED" -> REASON_ROLLBACK_EPOCH_ADVANCED;
+      case "RUNTIME_SCOPE_CHANGED", "RUNTIME_REGION_SCOPE_ADVANCED", "STALE_TIMELINE" ->
+          REASON_RUNTIME_SCOPE_CHANGED;
+      default ->
+          canonicalInfrastructureReason(
+              new HandoffResult(false, normalizedOutcome, "", "", "", normalizedReason));
+    };
   }
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizeToken(String value) {
+    return normalize(value).trim().replace('-', '_').toUpperCase(Locale.ROOT);
   }
 }

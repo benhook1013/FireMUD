@@ -34,7 +34,7 @@ Defining additional Redis users, ACL variations, or ad-hoc tools is considered *
 
 In target state, these rules keep the script registry's invariants and hash-tag discipline meaningful by ensuring that every coordination mutation follows exactly one supported path: the owning service's owner-local path for an owner-exclusive mutation, or the shared-foundation path only for a mutation genuinely executed by multiple independently deployed callers. Current unreconciled direct usages remain implementation drift and do not establish that guarantee.
 
-Lease mutations that use Lua have an additional non-bypassable owner-helper gate: the helper must verify the registered lease-key binding, caller principal, and script digest/version before invoking the script, and reject missing, stale, or mismatched registration. Redis ACLs do not enforce script-digest registration; no direct `EVAL`/`EVALSHA` path may bypass this check.
+Every lease-script mutation is non-bypassable: no caller may invoke an owner lease script through raw `EVAL`/`EVALSHA` or an alternate helper path. The owner helper must reject a missing, stale, or mismatched lease-key binding, caller principal, or script digest/version before invoking the script. The normative registration, digest/version, owner, and compare-and-set mechanism is defined by [Redis Operations](./system-architecture-redis-operations.md); Redis ACLs are not a substitute and cannot authorize a bypass.
 
 ## Ops User vs Application User
 

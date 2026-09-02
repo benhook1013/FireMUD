@@ -196,10 +196,6 @@ final class TickStagingService {
     return new PendingEntriesReadResult(status, List.copyOf(executable));
   }
 
-  List<TickQueuedCommandEnvelope> readExecutablePendingEntries(Long tenantId, Long queueTargetId) {
-    return readPendingEntriesForReplay(tenantId, queueTargetId).entries();
-  }
-
   enum PendingEntriesReadStatus {
     EMPTY,
     EXECUTABLE,

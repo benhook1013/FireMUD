@@ -127,11 +127,18 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
-  void unknownCanceledReasonUsesDistinctBoundedFallback() {
+  void emittedCancellationOutcomesMapToCanonicalReasons() {
+    assertThat(
+            ScriptHandoffOutcomeSupport.canonicalHandoffReason("runtime_paused", "runtime_paused"))
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED);
     assertThat(
             ScriptHandoffOutcomeSupport.canonicalHandoffReason(
-                "operator supplied cancellation detail", "canceled"))
-        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_CANCELED_UNKNOWN);
+                "rollback_epoch_advanced", "rollback_epoch_advanced"))
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED);
+    assertThat(
+            ScriptHandoffOutcomeSupport.canonicalHandoffReason(
+                "runtime-region-scope-advanced", "runtime-region-scope-advanced"))
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
   }
 
   @Test
@@ -141,6 +148,15 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 new ScriptGameplayCommandHandoffService.HandoffResult(
                     false, "infrastructure_error", "", "", "", "ROLLBACK_EPOCH_ADVANCED")))
         .isEqualTo(ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED);
+  }
+
+  @Test
+  void runtimeRegionScopeAdvanceUsesRuntimeScopeCancellationReason() {
+    assertThat(
+            ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(
+                new ScriptGameplayCommandHandoffService.HandoffResult(
+                    false, "runtime-region-scope-advanced", "", "", "", "")))
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
   }
 
   @Test
@@ -433,6 +449,64 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     service.handoff(
         item,
         emittedCommand("say hello after fanout", "target-entity-3", "7", "region-1", 12L, 35L, 2));
+    verify(gameSessionClient, Mockito.times(2)).getGameInstanceRuntimeState("1", "7", "region-1");
+    verify(admissionService, Mockito.times(2)).getState("1", "7", "region-1");
+  }
+
+  @Test
+  void fanoutExceptionCleanupAllowsLaterHandoffToRereadAuthority() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenThrow(new IllegalStateException("queue unavailable"))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("auto-2")
+                .build());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L))
+                .build());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AutomationAdmissionStateService admissionService = admissionStateService();
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionService,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+    ScriptWorkItem item = workItem();
+
+    service.beginAggregateFanout(item);
+    try {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  service.handoff(
+                      item,
+                      emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("queue unavailable");
+    } finally {
+      service.endAggregateFanout(item);
+    }
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            item,
+            emittedCommand("say hello again", "target-entity-2", "7", "region-1", 12L, 35L, 1));
+
+    assertThat(result.accepted()).isTrue();
     verify(gameSessionClient, Mockito.times(2)).getGameInstanceRuntimeState("1", "7", "region-1");
     verify(admissionService, Mockito.times(2)).getState("1", "7", "region-1");
   }
@@ -851,7 +925,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getHandoffOutcome())
         .isEqualTo("runtime_region_scope_advanced");
     assertThat(handoffCaptor.getValue().getHandoffReason())
-        .isEqualTo("runtime_region_scope_advanced");
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
   }
 
   @Test

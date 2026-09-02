@@ -10,6 +10,8 @@ The target automation handoff also requires the complete Trigger Identity, inclu
 
 Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
 
+Account-owned auth, authority-generation, and connect-token projections remain reset-sensitive rather than fully reset-tolerant. The current live `session:auth:account:*` and `session:auth:tenant:*` projections, and target-only `session:auth:token:*` and `session:auth:generation:*` projections, are preserved by region/tenant resets; cluster or cold-start loss requires Account-owned repair and exact readback. The unversioned legacy connect-token map remains preserve/readback-only through its TTL/retry horizon, while target versioned exact-result projections require their owner repair contract. Their region/tenant-preserve versus cluster/cold-start repair consequences are canonical in the [Redis Reset & Recovery reset matrix](./system-architecture-redis-reset-and-recovery.md#global-index-family-recovery-consequence); this usage document records ownership and profile wiring only and does not redefine that matrix. Current reset/reopen remains blocked until Account-owned repair, exact projection readback, and the matrix's applicable evidence gates are implemented and proved.
+
 ---
 
 ## Table of Contents

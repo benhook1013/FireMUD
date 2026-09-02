@@ -460,14 +460,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private static void validateSourceRoutingPayload(RemoteFollowup followup, JsonNode root) {
-    String worldSlug = authoritativeText(followup.getWorldSlug(), root, "worldSlug");
-    String realmSlug = authoritativeText(followup.getRealmSlug(), root, "realmSlug");
-    Long pointerVersion = authoritativeLong(followup.getPointerVersion(), root, "pointerVersion");
-    GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
-        worldSlug,
-        realmSlug,
-        pointerVersion,
-        "world_slug, realm_slug, and pointer_version must be provided together");
+    sourceRoutingBundle(followup, root);
   }
 
   private static PayloadExecution retryablePayloadExecution(
