@@ -14,6 +14,8 @@ Profile-aware asynchronous log-queryability emit-and-query automation is also ta
 
 The target-state `PlayerFlowCanary*` alert family is also not currently installed. The shared PrometheusRule and current profile overlays withhold it until a deployment-owned `playerFlowCanary=advertised` applicability/expected-series gate and safe advertised-to-omitted transition cleanup exist; the alert snippets below remain reference fixtures for that future boundary.
 
+The target-state `tick_execution_safety_ratio_p99{scope_class,tick_mode}` recording is also currently unavailable because the live Game Session producer does not emit the required bounded mode-aware families. Until that producer and label proof exists, absent or stale ratio series are `unknown` and cannot authorize a pause, reset, degradation, or resume decision; use authoritative runtime-health/control-plane evidence instead.
+
 ## Objectives
 
 - Preserve player-facing operation using authoritative systems (services, PostgreSQL, coordination rules) even when observability backends are impaired.
@@ -89,7 +91,7 @@ For an `independent-required` profile, use the [player-experience direct externa
 2. Verify that scrape targets return to `UP` and series timestamps advance.
 3. Confirm a known “heartbeat” metric updates (for example a service uptime gauge).
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
-5. Confirm the cadence-derived compatibility diagnostics `redis_coordination_tail_loss_budget_ms` and `redis_coordination_tail_loss_slo_breached` plus the short-window and 1-day entry-path availability rules are evaluating again. Do not treat the compatibility pair as measured-SLO proof. When implemented, verify the target measured `redis_unreplicated_write_window_slo_ms` and `redis_unreplicated_write_window_slo_breached{scope}` series separately.
+5. Do not expect the target-only, currently unavailable cadence-derived compatibility diagnostics `redis_coordination_tail_loss_budget_ms` and `redis_coordination_tail_loss_slo_breached` to provide recovery evidence. When the measured Redis producer is implemented and proved, query the canonical bounded-scope `redis_unreplicated_write_window_ms{scope}` exposure together with its configured `redis_unreplicated_write_window_slo_ms{scope}` target and compare them on the same `scope`; do not infer measured-SLO status from the unavailable compatibility pair. Also verify the short-window and 1-day entry-path availability rules where their producers are deployed.
 6. For a profile declaring independent monitoring `independent-required`, confirm the independent deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
    - Verify that `observability_deadman_heartbeat_timestamp_seconds{source=...}` (or the documented equivalent external signal) advances again as diagnostic/raw evidence, and when `prometheusMirrors=published` verify that `observability_deadman_stale{profile="independent-required"}` reflects the external monitor's current profile-aware decision.
    - Verify the profile's configured heartbeat interval, stale threshold, probe cadence, and derived maximum detection budget against the retained external-monitor evidence. Profiles declaring independent monitoring `independent-omitted` retain their documented degraded-detection posture instead.
@@ -111,7 +113,7 @@ For an `independent-required` profile, use the [player-experience direct externa
 
 ### Alertmanager unavailable diagnostics
 
-- If Prometheus remains reachable, query a small, explicitly supported set of canonical recording-rule values for operator diagnosis. Label every result with `observed_at` and freshness, apply the configured diagnostic freshness budget, and change stale values to `unknown`.
+- If Prometheus remains reachable, query a small, explicitly supported set of canonical metric-family and recording-rule values for operator diagnosis. Label every result with `observed_at` and freshness, apply the configured diagnostic freshness budget, and change stale values to `unknown`.
 - Diagnostic values are not routed alerts, do not carry Alertmanager grouping, inhibition, silence, notification, or duplicate-suppression semantics, and must never be merged into a second active-alert list or used as readiness/recovery authority.
 - For player triage, inspect login success ratio, command p99 latency, entry-path availability, and chat delivery latency so edge and chat incidents are not hidden when Alertmanager is unavailable. Use the installed backup recording rules (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, and `backup_artifact_restore_unreadable`) as diagnostic evidence only.
 - Inspect source-absence and convergence-coverage metrics as evidence pointers, but do not treat a diagnostic snapshot as the readiness decision. Readiness remains determined by the owning backup/recovery evidence and durable controller state; Prometheus never becomes recovery authority.
@@ -170,19 +172,19 @@ Implementation status: Steps 3–5 below are target-state-only and are not curre
 ### Grafana operator diagnostics
 
 - If Prometheus is reachable, query it directly for a small set of critical “is it healthy?” diagnostics. Each result is a bounded, freshness-labelled snapshot rather than routed alert state; stale values become `unknown` and do not authorize readiness or recovery:
-  - login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions),
-  - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`) broken down by the bounded core-command label set (`move`, `look`, `combat`),
+  - target-state login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions), only when the selected deployment has an installed/proved producer; otherwise these series are unavailable and absence is `unknown`,
+  - target-state command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`) broken down by the bounded core-command label set (`move`, `look`, `combat`), only when the selected deployment has an installed/proved producer; otherwise these series are unavailable and absence is `unknown`,
   - synthetic player-flow canaries (`playerflow_canary_success{flow="login",path=...,target=...,profile=...}`, `playerflow_canary_success{flow="command",path=...,target=...,profile=...}`, `playerflow_canary_latency_ms{flow="command",path=...,target=...,profile=...}`, `playerflow_canary_last_run_timestamp_seconds{flow=...,path=...,target=...,profile=...}`, and `playerflow_canary_freshness_budget_seconds{profile=...}`) only when the profile advertises the canary capability and the path is in its complete `exposedPublicPlayerPaths` set; before consuming success or latency, compare each matching last-run age with the same profile budget. `PlayerFlowCanaryEvidenceStale` marks that evidence as unknown/degraded, not as a player-flow failure. Omitted capability or non-exposed paths are `not_applicable`, while missing or unavailable advertised evidence is also `unknown`/degraded,
-  - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
+  - target-state entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context), only when the selected deployment has an installed/proved producer; otherwise these series are unavailable and absence is `unknown`,
   - for profiles declaring independent monitoring `independent-required`, public gameplay entry-path blackbox reachability (`entrypath_blackbox_probe_success{path=...,target=...}` or the environment-equivalent external probe metric) for each path in `exposedPublicPlayerPaths`, so total edge failures that never reached Gateway/TCP Proxy are still visible; non-exposed paths are `not_applicable`. Preserve per-path and per-target identity before any aggregation. This independent deadman/blackbox requirement is separate from optional player-flow canary capability,
   - target-state `WebSocketEntryPathBlackboxMetricsAbsent` and `TelnetEntryPathBlackboxMetricsAbsent` only when the selected profile explicitly advertises `prometheusMirrors=published` (or a documented equivalent mirror contract) and its deployment-owned expected-series configuration marks that path exposed; no-series is then a P1 unknown/degraded evidence signal, not an observed path-outage result. When the mirror contract or expected-series advertisement is absent, the path is `not_applicable` for this local condition. Restore the external monitor or mirror and verify the authoritative off-cluster evidence before treating an advertised path as healthy,
-  - chat latency (`chat_delivery_latency_ms_p99_5m`),
+  - target-state chat latency (`chat_delivery_latency_ms_p99_5m`), only when the selected deployment has an installed/proved producer; otherwise this series is unavailable and absence is `unknown`,
   - installed backup diagnostic recording rules (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_pipeline_recent_restore_drill_slo_breached`, `backup_artifact_lineage_invalid`, `backup_artifact_restore_unreadable`),
   - target-state recovery-controller recordings (`recovery_participant_convergence_blocked`, `recovery_environment_convergence_blocked`, `recovery_participant_convergence_coverage_missing`, `recovery_participant_convergence_source_missing`) only after the durable controller and exporter are implemented and proved; until then, their absence is `unknown` and operators use the owning recovery-evidence path,
   - the five backup source-absence alerts (`BackupLastSuccessMetricsAbsent`, `BackupVerificationLastSuccessMetricsAbsent`, `BackupRestoreDrillLastSuccessMetricsAbsent`, `BackupArtifactLineageMetricsAbsent`, `BackupArtifactRestoreReadabilityMetricsAbsent`), which diagnose missing evidence; the owning backup/readiness control blocks on authoritative evidence state rather than alert state, and missing or unavailable diagnostics are `unknown`,
   - target-state `RecoveryParticipantConvergenceCoverageMissing` and `RecoveryParticipantConvergenceMetricsAbsent`, which diagnose affected-environment coverage and global monitoring gaps without replacing or mutating durable controller state; the recovery controller owns any readiness block, and missing or unavailable diagnostics are `unknown`, so operators follow the owning recovery-evidence path,
-  - tick safety ratio (`tick_execution_safety_ratio_p99`),
-  - coordination tail-loss (`redis_coordination_tail_loss_ms`, `redis_coordination_tail_loss_budget_ms`, and `redis_coordination_tail_loss_slo_breached`).
+  - target-state mode-aware tick safety ratio (`tick_execution_safety_ratio_p99{scope_class,tick_mode}`) only after the required producer and bounded-label proof exists; until then, the recording is unavailable and absent or stale series are `unknown`,
+  - target-only cadence-derived coordination tail-loss compatibility diagnostics (`redis_coordination_tail_loss_budget_ms` and `redis_coordination_tail_loss_slo_breached`) are currently unavailable and must not be treated as evidence. For a deployment with a proved measured Redis producer, use `redis_unreplicated_write_window_ms{scope}` and compare it with `redis_unreplicated_write_window_slo_ms{scope}` for the same bounded deployment scope; exact replica/candidate diagnosis remains in control-plane and structured-log evidence.
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident. These diagnostics never become a second Alertmanager authority, replace owner evidence, or establish, clear, or mutate readiness and recovery state; the owning authority or control plane makes those decisions.
 
 ## Jaeger / OpenTelemetry Collector Down
@@ -220,42 +222,44 @@ Implementation status: Steps 3–5 below are target-state-only and are not curre
 
 ## Diagnostic Query Cheat Sheet
 
-When Grafana is unavailable but Prometheus is healthy, operators should start with the canonical recording-rule names already referenced in this runbook.
+When Grafana is unavailable but Prometheus is healthy, operators should start with the canonical metric-family and recording-rule names already referenced in this runbook.
 
-Recording rules:
+Metric families and recording rules:
 
-- `login_success_ratio_gateway_15m`
-- `login_success_ratio_tcpproxy_15m`
-- `command_latency_ms_p99_gateway_5m`
-- `command_latency_ms_p99_tcpproxy_5m`
-- `entrypath_availability_gateway_5m`
-- `entrypath_availability_tcpproxy_5m`
-- `entrypath_availability_gateway_1d`
-- `entrypath_availability_tcpproxy_1d`
-- `chat_delivery_latency_ms_p99_5m`
-- `tick_execution_safety_ratio_p99`
-- `redis_coordination_tail_loss_budget_ms`
-- `redis_coordination_tail_loss_slo_breached`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `login_success_ratio_gateway_15m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `login_success_ratio_tcpproxy_15m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `command_latency_ms_p99_gateway_5m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `command_latency_ms_p99_tcpproxy_5m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `entrypath_availability_gateway_5m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `entrypath_availability_tcpproxy_5m`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `entrypath_availability_gateway_1d`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `entrypath_availability_tcpproxy_1d`
+- target-state, currently unavailable unless an installed/proved producer is advertised: `chat_delivery_latency_ms_p99_5m`
+- target-state `tick_execution_safety_ratio_p99{scope_class,tick_mode}` (currently unavailable; absent or stale series are `unknown`)
+- target-only, currently unavailable `redis_coordination_tail_loss_budget_ms`
+- target-only, currently unavailable `redis_coordination_tail_loss_slo_breached`
+- measured Redis exposure `redis_unreplicated_write_window_ms{scope}` and configured target `redis_unreplicated_write_window_slo_ms{scope}` (only when the bounded-scope producer and its proof are deployed; compare directly on the same `scope`)
 - `backup_pipeline_recent_backup_slo_breached`
 - `backup_pipeline_recent_verification_slo_breached`
 - `backup_pipeline_recent_restore_drill_slo_breached`
 - `backup_artifact_lineage_invalid`
 - `backup_artifact_restore_unreadable`
-- `recovery_participant_convergence_blocked`
-- `recovery_environment_convergence_blocked`
-- `recovery_participant_convergence_coverage_missing`
-- `recovery_participant_convergence_source_missing`
-- `tick_effects_pending_oldest_age_seconds`
-- `tick_effects_replay_convergence_budget_seconds`
-- `tick_effects_replay_slo_breached`
-- `tick_effects_replay_starved`
+- target-state, currently unavailable recovery recordings (absence is `unknown`, not recovery evidence): `recovery_participant_convergence_blocked`
+- target-state, currently unavailable recovery recordings (absence is `unknown`, not recovery evidence): `recovery_environment_convergence_blocked`
+- target-state, currently unavailable recovery recordings (absence is `unknown`, not recovery evidence): `recovery_participant_convergence_coverage_missing`
+- target-state, currently unavailable recovery recordings (absence is `unknown`, not recovery evidence): `recovery_participant_convergence_source_missing`
+- target-state, currently unavailable replay recordings (absence is `unknown`, not recovery evidence): `tick_effects_pending_oldest_age_seconds`
+- target-state, currently unavailable replay recordings (absence is `unknown`, not recovery evidence): `tick_effects_replay_convergence_budget_seconds`
+- target-state, currently unavailable replay recordings (absence is `unknown`, not recovery evidence): `tick_effects_replay_slo_breached`
+- target-state, currently unavailable replay recordings (absence is `unknown`, not recovery evidence): `tick_effects_replay_starved`
 
 Alert names:
 
 The following are canonical alert names. Use them when checking alert state in Prometheus or Alertmanager, not when querying for the underlying time-series values:
 
-- `TickEffectsReplaySloBreached`
-- `TickEffectsReplayStarved`
+- target-state, currently unavailable alert: `TickEffectsReplaySloBreached` (absence is `unknown`, not recovery evidence)
+- target-state, currently unavailable alert: `TickEffectsReplayStarved` (absence is `unknown`, not recovery evidence)
+- target-state, currently unavailable supplemental alert: `TickReplayScanLagHigh` (absence is `unknown`, not recovery evidence; it does not replace either canonical replay alert)
 - `BackupLastSuccessMetricsAbsent`
 - `BackupVerificationLastSuccessMetricsAbsent`
 - `BackupRestoreDrillLastSuccessMetricsAbsent`

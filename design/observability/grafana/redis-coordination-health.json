@@ -6,10 +6,10 @@
   "panels": [
     {
       "type": "graph",
-      "title": "Coordination Tail-Loss (ms)",
+      "title": "Coordination Tail-Loss Compatibility Diagnostic (ms)",
       "targets": [
         {
-          "expr": "redis_coordination_tail_loss_ms",
+          "expr": "redis_coordination_tail_loss_ms{scope=~\".+\"}",
           "legendFormat": "{{scope}}",
           "refId": "A"
         }

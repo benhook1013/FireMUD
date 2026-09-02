@@ -2,15 +2,21 @@
 
 This document summarizes the canonical Redis-related metrics, alerting surfaces, and size/complexity budgets referenced across the Redis architecture, incident runbooks, and service designs.
 
+Implementation status: the canonical mode-aware tick execution/TTL/ratio families and replay age/budget/SLO families below are target-only and currently unavailable. Live Game Session records `game_session_tick_duration_ms` without the required `scope_class`/`tick_mode` labels (both labels are required, and each label's value must come from its documented bounded vocabulary), and does not emit the replay ledger families; their recording rules and dashboards are templates until the producer and label contracts are implemented and proved. The cadence-derived Redis compatibility budget is also target-only because no checked-in deployment metrics producer currently emits `tick_interval_ms`.
+
 ## Coordination Redis Core Metrics
+
+The following Lua families are target-only and currently unavailable: `redis_lua_script_load_failures_total`, `redis_lua_script_missing_for_region_total`, `redis_lua_script_runtime_ms_p99{scope}`, and `redis_coordination_oom_errors_total`. Their reference alerts remain in the Grafana snippets only and are not installed in the shared PrometheusRule until an owning producer and bounded-label proof exist. `tick_interval_ms{scope,scope_class}` is also target-only and currently unavailable because no checked-in deployment metrics producer emits it; its proposed owner is the deployment configuration/metrics surface, and it is not consumed by the installed shared PrometheusRule until that producer contract is implemented and proved.
 
 - `redis_aof_current_size_bytes`
 - `redis_coordination_aof_growth_bytes_total`
 - `redis_coordinator_restart_duration_seconds`
-- `redis_coordination_tail_loss_ms{scope}` (current compatibility exposure series)
+- `redis_coordination_tail_loss_ms{scope}` (bounded compatibility exposure diagnostic when a deployment producer exists; `scope` is a bounded Redis deployment bucket; never the measured-SLO authority)
 - `redis_unreplicated_write_window_ms{scope}` (target measured exposure, pre-aggregated as the worst eligible candidate within the bounded deployment/environment/ruleset scope)
+- `redis_unreplicated_write_window_slo_ms{scope}` (configured measured-exposure target for the same bounded deployment/environment/ruleset scope; not an individual replica or shard target)
 - `redis_unreplicated_write_window_slo_breached{scope}` (target measured-SLO breach series)
-- `redis_coordination_tail_loss_slo_breached{scope}` (current compatibility alias/rule derived from the tick-based exposure budget, not the target measured-SLO breach)
+- `redis_coordination_tail_loss_budget_ms{scope}` (target-only compatibility recording template; when implemented, one bounded scalar per Coordination Redis deployment/environment/ruleset scope equal to the maximum `clamp_min(2 * tick_interval_ms, 2000)` across that scope's `tick_interval_ms{scope,scope_class}` series; no current checked-in rule emits it)
+- `redis_coordination_tail_loss_slo_breached{scope}` (target-only compatibility recording template comparing each bounded exposure scope with that scalar budget, not the target measured-SLO breach; no current checked-in rule emits it)
 - `redis_replication_lag_ms{redis_role,scope}`
 - `redis_replication_offset_lag_bytes{redis_role,scope}`
 - `coordination_maintenance_active{scope_type,scope_bucket,operation}`
@@ -23,7 +29,7 @@ This document summarizes the canonical Redis-related metrics, alerting surfaces,
   - `redis_tick_timers_over_budget_total`
   - `redis_session_payload_oversized_total`
 
-For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The target measured-SLO breach series is distinct from the current `redis_coordination_tail_loss_slo_breached{scope}` compatibility alias/rule, which derives from the tick-based exposure budget.
+For measured exposure, replication-lag, replication-offset, and dashboard-comparison metrics, bounded `scope` consistently identifies one Coordination Redis deployment together with its canonical environment class and active configuration/ruleset. `redis_unreplicated_write_window_ms{scope}` and the exported replication metrics are pre-aggregated worst-eligible-candidate values within that scope. Because no replica identity label is exported, these metrics do not identify individual candidates or replicas; exact candidate and node IDs remain control-plane and structured-log evidence. The target compatibility budget, once its deployment input producer exists, is deployment-scoped: `redis_coordination_tail_loss_budget_ms{scope}` would be the maximum cadence-derived budget across the matching `tick_interval_ms{scope,scope_class}` classes for each bounded deployment/environment/ruleset scope. `redis_coordination_tail_loss_slo_breached{scope}` would join on that same `scope`; `scope` and `scope_class` are not aliases. Neither compatibility recording is currently emitted by checked-in Prometheus rules. The target measured-SLO breach series is distinct from these compatibility templates, which are derived from the tick-based exposure budget.
 
 ## Session Schema and Cleanup Metrics
 
@@ -34,21 +40,27 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 
 ## Coordination and Tick Metrics
 
-- `tick_interval_ms{scope}`
-- `tick_execution_time_ms_bucket{scope,le}`
-- `tick_execution_time_ms_p95{scope}`
-- `tick_execution_time_ms_p99{scope}`
-- `tick_lock_ttl_ms{scope}`
-- `tick_status{scope,status}`
-- `current_tick_state{scope,state}`
-- `current_tick_terminal_at_ms{scope}`
-- `tick_retry_queue_depth{scope}`
-- `tick_command_queue_depth{scope}`
-- `tick_current_id{scope}`
-- `tick_pending_oldest_id{scope}`
-- `tick_durable_commit_total{scope}`
-- `tick_coordination_cleared_total{scope}`
-- `tick_cleanup_lag_ms{scope}`
+- `tick_interval_ms{scope,scope_class}` (target-only deployment-configuration compatibility input; currently unavailable until its producer is implemented and proved)
+- `tick_execution_time_ms_bucket{scope_class,tick_mode,le}`
+- `tick_execution_time_ms_p95{scope_class,tick_mode}`
+- `tick_execution_time_ms_p99{scope_class,tick_mode}`
+- `tick_lock_ttl_ms{scope_class}`
+- `solo_lock_ttl_ms{scope_class}`
+- `tick_execution_safety_ratio_p99{scope_class,tick_mode}`
+- `tick_status{scope_class,status}`
+- `current_tick_state{scope_class,state}`
+- `current_tick_terminal_at_ms{scope_class}` (bounded diagnostic rollup: the maximum non-null terminal timestamp among contributing scopes)
+- `tick_retry_queue_depth{scope_class}`
+- `tick_command_queue_depth{scope_class}`
+- `tick_current_id{scope_class}` (bounded diagnostic rollup: the maximum current tick ID only when all contributing records share one validated `regionEpoch`)
+- `tick_pending_oldest_id{scope_class}` (bounded diagnostic rollup: the minimum pending tick ID only when all contributing records share one validated `regionEpoch`; omit when no pending ID exists)
+- `tick_durable_commit_total{scope_class}`
+- `tick_coordination_cleared_total{scope_class}`
+- `tick_cleanup_lag_ms{scope_class}`
+
+`scope_class` is the required label for bounded operational rollups of the tick metric families above. Its value is one of `region`, `game_instance`, `tenant`, or `cluster`, identifying the aggregation class rather than an individual runtime scope. Every related tick metric must use the same mapping for a deployment: a region-level rollup is labelled `region`, a game-instance rollup `game_instance`, a tenant rollup `tenant`, and a deployment-wide rollup `cluster`. The label never contains a tenant, game-instance, playable-state, or region identifier, and exact diagnosis remains on control-plane/runtime-health records and structured logs. The identity-like tick metadata rollups above are diagnostics only: `current_tick_terminal_at_ms` uses the maximum non-null timestamp, while `tick_current_id` and `tick_pending_oldest_id` are emitted only for a contribution set with one validated `regionEpoch` and use maximum and minimum numeric ID respectively; omit a value when that precondition is not met. None of these class-level summaries identifies an exact scope or authorizes a mutation; the Game Session owner record remains authoritative. `tick_mode` is a second bounded label on execution-time samples and is exactly `normal` or `solo`; it never contains a command, actor, or runtime identity. The target-only compatibility input `tick_interval_ms{scope,scope_class}`, once its producer exists, is the one additional-scope exception: its bounded `scope` identifies the Coordination Redis deployment/environment/ruleset used by the compatibility recording rule, not an individual runtime scope. Target mode-aware execution, TTL, and ratio families remain class/mode-labelled only.
+
+Recording rules must preserve both bounded labels through aggregation (for example, `sum by (scope_class, tick_mode, le)` for the execution histogram). The brace forms below are metric-family signatures (non-executable notation): normal samples use `tick_lock_ttl_ms{scope_class}` and solo-budget samples use `solo_lock_ttl_ms{scope_class}`; because those TTL families do not carry `tick_mode`, mode-aware ratios must materialize the branch's constant mode with `label_replace` and match with `on (scope_class, tick_mode)`, rather than blend normal and solo samples. For example, normal uses `tick_execution_time_ms_p99{scope_class,tick_mode="normal"} / on (scope_class,tick_mode) label_replace(tick_lock_ttl_ms{scope_class},"tick_mode","normal","scope_class",".*")`, while solo uses the corresponding `solo` form. Producers and dashboards must not add the Redis-exposure `scope` label to target mode-aware tick families or infer an individual region from a class-level series; only the compatibility cadence input carries the deployment-scoped `scope` described above.
 
 ### Remote Follow-Up Drainage
 
@@ -58,21 +70,21 @@ For measured exposure, replication-lag, replication-offset, and dashboard-compar
 
 ### Tick Effect Ledger
 
-- `tick_effects_pending_total{scope}`
-- `tick_effects_applied_total{scope}`
-- `tick_effects_abandoned_total{scope,reason}`
-- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope}`
-- `tick_effects_pending_oldest_age_seconds{scope}`
-- `tick_effects_replay_convergence_budget_seconds{scope}`
-- `tick_effects_replay_slo_breached{scope}`
-- `tick_effects_replay_scan_lag_ms{scope}`
-- `tick_effects_replay_batches_total{scope}`
-- `tick_effects_replay_starved{scope}`
+- `tick_effects_pending_total{scope_class}`
+- `tick_effects_applied_total{scope_class}`
+- `tick_effects_abandoned_total{scope_class,reason}`
+- `tick_effects_pending_oldest_scheduled_timestamp_seconds{scope_class}`
+- `tick_effects_pending_oldest_age_seconds{scope_class}`
+- `tick_effects_replay_convergence_budget_seconds{scope_class}`
+- `tick_effects_replay_slo_breached{scope_class}`
+- `tick_effects_replay_scan_lag_ms{scope_class}`
+- `tick_effects_replay_batches_total{scope_class}`
+- `tick_effects_replay_starved{scope_class}`
 
 ### Service-Level Replay Metrics
 
-- `gamesession_tick_replayed_total{scope}`
-- `gamesession_tick_executed_total{scope}`
+- `gamesession_tick_replayed_total{scope_class}`
+- `gamesession_tick_executed_total{scope_class}`
 
 ### Dual-Leader and Reset Metrics
 
