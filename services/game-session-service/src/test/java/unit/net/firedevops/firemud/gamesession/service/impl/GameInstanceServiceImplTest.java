@@ -250,6 +250,14 @@ class GameInstanceServiceImplTest {
     verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
     verify(worldManagementClient)
         .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+    ArgumentCaptor<GameInstance> savedInstances = ArgumentCaptor.forClass(GameInstance.class);
+    verify(repository, times(4)).save(savedInstances.capture());
+    assertEquals(
+        1,
+        savedInstances.getAllValues().stream()
+            .filter(instance -> Long.valueOf(7L).equals(instance.getId()))
+            .filter(instance -> "STOPPED".equals(instance.getStatus()))
+            .count());
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("RUNNING", store.get(dto.id()).getStatus());
   }

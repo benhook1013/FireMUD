@@ -262,10 +262,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private GameInstanceDto finalizeStartedSession(StartSessionStage stage) {
-    GameInstanceDto existingRunningState = stage.existingRunningState();
-    if (existingRunningState != null) {
-      markSessionStopped(existingRunningState.id());
-    }
     GameInstance instance =
         repository
             .findById(stage.startingState().id())

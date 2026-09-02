@@ -188,7 +188,7 @@ Abuse defense follows a layered ownership model:
 - **Credential/login abuse controls (Account Service)**:
   - Applies one policy across password and verified-email-code login over REST, gRPC, Telnet, and WebSocket-derived paths using trusted server-derived source context.
   - Uses graduated source/account-candidate throttles and stable retry outcomes. Ordinary failed attempts never place an account into durable `security_locked`, because that would let an attacker lock a victim by username.
-  - Reserves `security_locked` for a compromise assessment supported by verified or high-confidence evidence, explicit security policy, or audited operator action, with revocation and recovery. Public failure behavior avoids account enumeration.
+  - Reserves `security_locked` for a policy-driven compromise assessment only when Account has evaluated verified or high-confidence evidence after sufficient identity proof, or for a separately audited operator break-glass action; either basis triggers revocation and recovery, while failed-attempt thresholds remain temporary throttles. Public failure behavior avoids account enumeration.
   - Fails new credential-bearing authentication closed when shared abuse enforcement is unavailable in a player-facing environment; existing authenticated sessions continue under their normal authority.
 - **Post-auth gameplay abuse controls (Game Session Service)**:
   - Enforces ordinary per-session command budgets with a local token bucket on the current session front end rather than a Redis operation per command.
