@@ -12,7 +12,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -32,9 +34,13 @@ import org.slf4j.MDC;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -2158,9 +2164,10 @@ class TickServiceImplTest {
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class TickStageScriptTest {
-  private static final String QUEUE_KEY = "tick-stage:queue";
-  private static final String PENDING_KEY = "tick-stage:pending";
-  private static final String LEASE_KEY = "tick-stage:lease";
+  private static final String QUEUE_KEY = "gamesession:tick:queue:42:9001";
+  private static final String PENDING_KEY = "gamesession:tick:pending:42:9001";
+  private static final String LEASE_KEY = "gamesession:tick:lock:42:9001";
+  private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
   private static final String LEASE_TOKEN = "lease-token";
   private static final RedisScript<Long> TICK_STAGE_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_stage.lua"), Long.class);
@@ -2170,7 +2177,9 @@ class TickStageScriptTest {
       new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
 
   private LettuceConnectionFactory connectionFactory;
-  private StringRedisTemplate redisTemplate;
+  private RedisTemplate<String, Object> redisTemplate;
+  private StringRedisTemplate lockRedisTemplate;
+  private RedisTemplate<String, Object> scriptRedisTemplate;
 
   @BeforeEach
   void setUpRedis() {
@@ -2178,10 +2187,20 @@ class TickStageScriptTest {
         new LettuceConnectionFactory(
             new RedisStandaloneConfiguration(redis.getHost(), redis.getMappedPort(6379)));
     connectionFactory.afterPropertiesSet();
-    redisTemplate = new StringRedisTemplate(connectionFactory);
+    redisTemplate = new RedisTemplate<>();
+    redisTemplate.setConnectionFactory(connectionFactory);
     redisTemplate.afterPropertiesSet();
+    lockRedisTemplate = new StringRedisTemplate(connectionFactory);
+    lockRedisTemplate.afterPropertiesSet();
+    scriptRedisTemplate = new RedisTemplate<>();
+    scriptRedisTemplate.setConnectionFactory(connectionFactory);
+    scriptRedisTemplate.setKeySerializer(
+        new ProductionScriptKeySerializer(redisTemplate.getKeySerializer()));
+    scriptRedisTemplate.setValueSerializer(redisTemplate.getValueSerializer());
+    scriptRedisTemplate.afterPropertiesSet();
     redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, LEASE_KEY));
-    redisTemplate.opsForValue().set(LEASE_KEY, LEASE_TOKEN);
+    lockRedisTemplate.delete(LEASE_KEY);
+    lockRedisTemplate.opsForValue().set(LEASE_KEY, LEASE_TOKEN);
   }
 
   @AfterEach
@@ -2253,6 +2272,56 @@ class TickStageScriptTest {
   }
 
   @Test
+  void stagesLegacyRawUtf8EntriesAndPreservesTheirBytes() {
+    byte[] rawEntry = "N|legacy-id|look café".getBytes(StandardCharsets.UTF_8);
+    enqueueRaw(rawEntry);
+
+    assertThat(execute(LEASE_TOKEN, "1", "N")).isEqualTo(1L);
+    assertThat(rawValues(QUEUE_KEY)).isEmpty();
+    assertThat(rawValues(PENDING_KEY)).hasSize(1);
+    assertThat(rawValues(PENDING_KEY).get(0)).containsExactly(rawEntry);
+  }
+
+  @Test
+  void stagesProductionJdkLongStringAndPreservesItsSerializedBytes() {
+    String entry = "N|long-id|" + "é".repeat(33_000) + "x".repeat(33_000);
+    byte[] serializedEntry = serializeValue(entry);
+
+    assertThat(serializedEntry).isNotNull();
+    assertThat(serializedEntry[4]).isEqualTo((byte) 0x7c);
+    enqueue(entry);
+
+    assertThat(execute(LEASE_TOKEN, "1", "N")).isEqualTo(1L);
+    assertThat(rawValues(QUEUE_KEY)).isEmpty();
+    assertThat(rawValues(PENDING_KEY)).hasSize(1);
+    assertThat(rawValues(PENDING_KEY).get(0)).containsExactly(serializedEntry);
+    assertThat(values(PENDING_KEY)).containsExactly(entry);
+  }
+
+  @Test
+  void rejectsMalformedSerializedStringEnvelopesAtomically() {
+    byte[] payload = "N|malformed-id|look".getBytes(StandardCharsets.UTF_8);
+    List<byte[]> malformedEntries =
+        List.of(
+            new byte[] {(byte) 0xac, (byte) 0xed, 0, 5, 0x74, 0},
+            serializedEnvelope(0x74, 0, payload),
+            new byte[] {(byte) 0xac, (byte) 0xed, 0, 5, 0x7c, 0, 0},
+            serializedEnvelope(0x7c, 100, payload));
+
+    for (byte[] malformedEntry : malformedEntries) {
+      enqueueRaw(malformedEntry);
+      redisTemplate.opsForList().rightPush(PENDING_KEY, "already-pending");
+      List<byte[]> queueBefore = rawValues(QUEUE_KEY);
+      List<byte[]> pendingBefore = rawValues(PENDING_KEY);
+
+      assertThat(execute(LEASE_TOKEN, "50", "N")).isEqualTo(-2L);
+      assertThat(rawValues(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+      assertThat(rawValues(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
+      redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY));
+    }
+  }
+
+  @Test
   void returnsZeroWhenHeadIsOppositeModeWithoutMutatingEitherList() {
     enqueue("S|solo-one|attack");
     redisTemplate.opsForList().rightPush(PENDING_KEY, "already-pending");
@@ -2298,15 +2367,88 @@ class TickStageScriptTest {
     redisTemplate.opsForList().rightPush(QUEUE_KEY, entry);
   }
 
-  private List<String> values(String key) {
-    List<String> values = redisTemplate.opsForList().range(key, 0, -1);
+  private void enqueueRaw(byte[] entry) {
+    redisTemplate.execute(
+        (RedisCallback<Long>)
+            connection ->
+                connection.rPush(serializedKey(QUEUE_KEY), entry));
+  }
+
+  private List<byte[]> rawValues(String key) {
+    List<byte[]> values =
+        redisTemplate.execute(
+            (RedisCallback<List<byte[]>>)
+                connection ->
+                    connection.lRange(serializedKey(key), 0, -1));
     return values == null ? List.of() : values;
+  }
+
+  @SuppressWarnings("unchecked")
+  private byte[] serializedKey(String key) {
+    return ((RedisSerializer<Object>) redisTemplate.getKeySerializer()).serialize(key);
+  }
+
+  @SuppressWarnings("unchecked")
+  private byte[] serializeValue(Object value) {
+    return ((RedisSerializer<Object>) redisTemplate.getValueSerializer()).serialize(value);
+  }
+
+  private static byte[] serializedEnvelope(int typeCode, long payloadLength, byte[] payload) {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    output.write(0xac);
+    output.write(0xed);
+    output.write(0);
+    output.write(5);
+    output.write(typeCode);
+    if (typeCode == 0x74) {
+      output.write((int) ((payloadLength >>> 8) & 0xff));
+      output.write((int) (payloadLength & 0xff));
+    } else {
+      for (int shift = 56; shift >= 0; shift -= 8) {
+        output.write((int) ((payloadLength >>> shift) & 0xff));
+      }
+    }
+    output.writeBytes(payload);
+    return output.toByteArray();
+  }
+
+  private List<String> values(String key) {
+    List<Object> values = redisTemplate.opsForList().range(key, 0, -1);
+    return values == null ? List.of() : values.stream().map(Object::toString).toList();
   }
 
   private long execute(String leaseToken, String max, String mode) {
     Long result =
-        redisTemplate.execute(
-            TICK_STAGE_SCRIPT, List.of(QUEUE_KEY, PENDING_KEY, LEASE_KEY), leaseToken, max, mode);
+        scriptRedisTemplate.execute(
+            TICK_STAGE_SCRIPT,
+            new StringRedisSerializer(),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(QUEUE_KEY, PENDING_KEY, LEASE_KEY),
+            leaseToken,
+            max,
+            mode);
     return result == null ? Long.MIN_VALUE : result;
+  }
+
+  private static final class ProductionScriptKeySerializer implements RedisSerializer<Object> {
+    private final RedisSerializer<Object> queueKeySerializer;
+
+    @SuppressWarnings("unchecked")
+    private ProductionScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
+      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
+    }
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
+        return new StringRedisSerializer().serialize((String) value);
+      }
+      return queueKeySerializer.serialize(value);
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return queueKeySerializer.deserialize(bytes);
+    }
   }
 }
