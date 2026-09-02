@@ -241,7 +241,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
-  void matchesCurrentRuntimeTargetRejectsBlankPlayableStateScope() {
+  void matchesCurrentRuntimeTargetRejectsBlankRequestedPlayableStateScope() {
     GameplayAdmissionPointerSnapshot pointer =
         new GameplayAdmissionPointerSnapshot(
             "demo",
@@ -358,8 +358,7 @@ class GameplayAdmissionPointerSnapshotsTest {
     SessionContext existing = bootstrapShell(22L, 1L, "demo", "production", 7L, "SHARED");
     SessionContext incoming = bootstrapShell(22L, 1L, "demo", "production", 7L, "ISOLATED");
 
-    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming))
-        .isFalse();
+    assertThat(GameplayAdmissionPointerSnapshots.sameBootstrapRoute(existing, incoming)).isFalse();
   }
 
   @Test

@@ -32,8 +32,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
@@ -194,14 +192,19 @@ public class ScriptGameplayCommandHandoffServiceImpl
       cancelForAdmissionPause(
           workItem, command, dispatchId, now, deferAggregateTerminalization(workItem));
       return new HandoffResult(
-          false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED, "", "", "", "RUNTIME_PAUSED");
+          false,
+          ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
+          "",
+          "",
+          "",
+          ScriptHandoffOutcomeSupport.ERROR_RUNTIME_PAUSED);
     }
     if (ScriptHandoffOutcomeSupport.REASON_AUTHORITY_UNAVAILABLE.equals(admissionFenceReason)) {
       Instant now = Instant.now();
       HandoffResult result =
           new HandoffResult(
               false,
-              "REMOTE_REJECTED",
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
               "",
               "",
               "",
@@ -233,21 +236,34 @@ public class ScriptGameplayCommandHandoffServiceImpl
       Instant now = Instant.now();
       String errorCode =
           runtimeScopeStatus == RuntimeRegionScopeStatus.UNAVAILABLE
-              ? "AUTHORITY_UNAVAILABLE"
-              : "REMOTE_RESPONSE_INVALID";
+              ? ScriptHandoffOutcomeSupport.ERROR_AUTHORITY_UNAVAILABLE
+              : ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID;
       String message =
           runtimeScopeStatus == RuntimeRegionScopeStatus.UNAVAILABLE
               ? "runtime owner authority unavailable"
               : "runtime owner response incomplete";
       HandoffResult result =
-          new HandoffResult(false, "REMOTE_REJECTED", "", "", "", errorCode, message);
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+              "",
+              "",
+              "",
+              errorCode,
+              message);
       applyOutcome(workItem, command, dispatchId, result, now);
       return result;
     }
     if (remoteHandoff && !hasRepresentableDeadline(workItem, command)) {
       Instant now = Instant.now();
       HandoffResult result =
-          new HandoffResult(false, "REMOTE_REJECTED", "", "", "", "INVALID_ARGUMENT");
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+              "",
+              "",
+              "",
+              ScriptHandoffOutcomeSupport.ERROR_INVALID_ARGUMENT);
       applyOutcome(workItem, command, dispatchId, result, now);
       return result;
     }
@@ -271,7 +287,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         result =
             new HandoffResult(
                 false,
-                "REMOTE_REJECTED",
+                ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
                 "",
                 "",
                 "",
@@ -323,7 +339,13 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (normalize(response.getCommandId()).isBlank()
         || hasNonBlankErrorMetadata
         || !coherentOutcome) {
-      return new HandoffResult(false, "REMOTE_REJECTED", "", "", "", "REMOTE_RESPONSE_INVALID");
+      return new HandoffResult(
+          false,
+          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+          "",
+          "",
+          "",
+          ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID);
     }
     return new HandoffResult(true, admissionOutcome, response.getCommandId(), "", "", "");
   }
@@ -334,7 +356,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (remoteResponse.hasError()) {
       return new HandoffResult(
           false,
-          "REMOTE_REJECTED",
+          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
           "",
           remoteCoordinatorId,
           remoteFollowupId,
@@ -347,7 +369,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
             && !remoteFollowupId.isBlank();
     return new HandoffResult(
         hasDurableIds,
-        hasDurableIds ? "REMOTE_SCHEDULED" : "REMOTE_REJECTED",
+        hasDurableIds
+            ? ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED
+            : ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
         "",
         remoteCoordinatorId,
         remoteFollowupId,
@@ -401,7 +425,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
       boolean deferAggregateTerminalization) {
     HandoffResult result =
         new HandoffResult(
-            false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED, "", "", "", "RUNTIME_PAUSED");
+            false,
+            ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
+            "",
+            "",
+            "",
+            ScriptHandoffOutcomeSupport.ERROR_RUNTIME_PAUSED);
     appendHandoffEvent(workItem, command, dispatchId, result, now);
     if (deferAggregateTerminalization) {
       return;
@@ -646,6 +675,20 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
+    if (ScriptHandoffOutcomeSupport.isAdmissionPause(result)) {
+      workItem.setStatus(STATUS_CANCELED);
+      workItem.setCancelReason(ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED);
+      workItem.setUpdatedAt(now);
+      workItemRepository.save(workItem);
+      rolloutProjectionService.refreshForWorkItem(workItem);
+      updateAudit(
+          workItem,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+          ScriptHandoffOutcomeSupport.OUTCOME_CANCELED,
+          ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED,
+          now);
+      return;
+    }
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);
@@ -665,36 +708,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    runAfterCommit(() -> publishRetryPointer(workItem));
-  }
-
-  private static void runAfterCommit(Runnable action) {
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      action.run();
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            action.run();
-          }
-        });
-  }
-
-  private void publishRetryPointer(ScriptWorkItem workItem) {
-    if (automationQueueService == null) {
-      return;
-    }
-    try {
-      automationQueueService.enqueueWorkItem(workItem);
-    } catch (RuntimeException ex) {
-      // PostgreSQL remains authoritative; the scheduled rebuild can republish this derived pointer.
-      LOGGER.warn(
-          "Automation queue pointer publication failed for retryable work item {}; durable pending state remains rebuildable",
-          workItem.getId(),
-          ex);
-    }
+    AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, workItem, LOGGER);
   }
 
   private boolean deferAggregateTerminalization(ScriptWorkItem workItem) {

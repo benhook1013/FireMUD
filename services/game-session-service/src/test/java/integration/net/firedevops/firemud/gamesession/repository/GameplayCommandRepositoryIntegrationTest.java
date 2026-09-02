@@ -85,6 +85,16 @@ class GameplayCommandRepositoryIntegrationTest {
                 .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq("demo")))
         .execute();
 
+    GameplayCommand retry = automationCommand("routed-current", "dispatch-routed-current");
+    retry.setPlayableStateScope("SHARED");
+    retry.setWorldSlug("demo");
+    retry.setRealmSlug("production");
+    retry.setPointerVersion(17L);
+    GameplayCommandRepository.IdempotentInsertResult replay =
+        repository.insertIfAbsentByIdempotencyIdentity(retry);
+    assertThat(replay.inserted()).isFalse();
+    assertThat(replay.command().getCommandId()).isEqualTo("routed-current");
+
     GameplayCommand stale = automationCommand("routed-stale", "dispatch-routed-stale");
     stale.setPlayableStateScope("SHARED");
     stale.setWorldSlug("demo");

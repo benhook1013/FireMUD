@@ -182,8 +182,18 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
     TriggerAdmission admission = validate(request, schemaVersion, sourceService, definition);
     if (admission.admitted()) {
-      admission =
-          admissionWithHandlers(request, schemaVersion, definition, sourceService, tenantKey);
+      AdmissionStateValidation stateValidation = validateAdmissionState(request);
+      admission = stateValidation.admission();
+      if (admission.admitted()) {
+        admission =
+            admissionWithHandlers(
+                request,
+                schemaVersion,
+                definition,
+                sourceService,
+                tenantKey,
+                stateValidation.state());
+      }
     }
     HandlerScopeValues requestScopeValues = requestScopeValues(request);
     ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
@@ -283,10 +293,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     TriggerAdmission dryRunAdmission = validateDryRunBudget(request);
     if (dryRunAdmission != null) {
       return dryRunAdmission;
-    }
-    TriggerAdmission stateAdmission = validateAdmissionState(request);
-    if (stateAdmission != null) {
-      return stateAdmission;
     }
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
   }
@@ -483,21 +489,23 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
   }
 
-  private TriggerAdmission validateAdmissionState(TriggerScriptEventRequest request) {
+  private AdmissionStateValidation validateAdmissionState(TriggerScriptEventRequest request) {
     if (request.getGameInstanceId().isBlank()) {
-      return null;
+      return AdmissionStateValidation.admitted(null);
     }
     AutomationAdmissionStateService.AdmissionStateSummary state =
         automationAdmissionStateService.getState(
             request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
     if (state == null || !isUsableAdmissionMode(state.mode())) {
-      return new TriggerAdmission(
-          false, OUTCOME_VERSION_UNAVAILABLE, "admission_state_unavailable", 0);
+      return AdmissionStateValidation.rejected(
+          new TriggerAdmission(
+              false, OUTCOME_VERSION_UNAVAILABLE, "admission_state_unavailable", 0));
     }
     if ("PAUSED_FOR_ROLLBACK".equals(state.mode())) {
-      return new TriggerAdmission(false, OUTCOME_BACKPRESSURE_ROLLBACK, "rollback_paused", 0);
+      return AdmissionStateValidation.rejected(
+          new TriggerAdmission(false, OUTCOME_BACKPRESSURE_ROLLBACK, "rollback_paused", 0));
     }
-    return null;
+    return AdmissionStateValidation.admitted(state);
   }
 
   private static boolean isUsableAdmissionMode(String mode) {
@@ -524,9 +532,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
       String sourceService,
-      long tenantKey) {
+      long tenantKey,
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
     if (isOnLoadRequest(request)) {
-      return admissionWithOnLoadHandler(request, schemaVersion, definition, sourceService);
+      return admissionWithOnLoadHandler(
+          request, schemaVersion, definition, sourceService, admissionState);
     }
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
     List<ScriptEventBinding> scopedBindings =
@@ -585,7 +595,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
     }
     handlers.forEach(
-        handler -> admitHandler(request, schemaVersion, definition, handler, sourceService));
+        handler ->
+            admitHandler(
+                request, schemaVersion, definition, handler, sourceService, admissionState));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
@@ -620,8 +632,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         hasUnresolvedPluginOwner = true;
         continue;
       }
-      if (!returnedScriptIds.add(definition.getName())
-          && scriptIds.contains(definition.getName())) {
+      if (!returnedScriptIds.add(definition.getName())) {
         hasUnresolvedPluginOwner = true;
       }
       PluginOwnerResolutionResult result = resolvePluginOwner(definition, owningEventType);
@@ -684,13 +695,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerScriptEventRequest request,
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
-      String sourceService) {
+      String sourceService,
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
     if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
         || workItemExistsForScript(request, schemaVersion, scriptId)) {
       return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
     }
-    persistWorkItemForScript(request, schemaVersion, definition, scriptId, "", sourceService);
+    persistWorkItemForScript(
+        request, schemaVersion, definition, scriptId, "", sourceService, admissionState);
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
   }
 
@@ -699,7 +712,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
       ResolvedHandler handler,
-      String sourceService) {
+      String sourceService,
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
     if (handlerAuditExists(request, schemaVersion, handler.binding())) {
       return;
     }
@@ -726,7 +740,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         handler.binding().getPriorityTag(),
         handler.pluginOwner(),
         sourceService,
-        requestScopeValues(request));
+        requestScopeValues(request),
+        admissionState);
   }
 
   private void persistWorkItem(
@@ -737,13 +752,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String priorityTag,
       PluginOwner pluginOwner,
       String sourceService,
-      HandlerScopeValues scopeValues) {
-    Long admissionEpoch =
-        request.getGameInstanceId().isBlank()
-            ? 0L
-            : automationAdmissionStateService
-                .getState(request.getTenantId(), request.getGameInstanceId(), request.getRegionId())
-                .admissionEpoch();
+      HandlerScopeValues scopeValues,
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
+    Long admissionEpoch = admissionState == null ? 0L : admissionState.admissionEpoch();
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(request.getTenantId());
     item.setGameInstanceId(normalize(request.getGameInstanceId()));
@@ -795,7 +806,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventRegistryService.EventDefinition definition,
       String scriptId,
       String priorityTag,
-      String sourceService) {
+      String sourceService,
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
     persistWorkItem(
         request,
         schemaVersion,
@@ -804,7 +816,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         priorityTag,
         null,
         sourceService,
-        requestScopeValues(request));
+        requestScopeValues(request),
+        admissionState);
   }
 
   private void persistHandlerAudit(
@@ -1157,6 +1170,20 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String worldSlug,
       String realmSlug,
       String pointerVersion) {}
+
+  private record AdmissionStateValidation(
+      TriggerAdmission admission, AutomationAdmissionStateService.AdmissionStateSummary state) {
+    private static AdmissionStateValidation admitted(
+        AutomationAdmissionStateService.AdmissionStateSummary state) {
+      return new AdmissionStateValidation(
+          new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0),
+          state);
+    }
+
+    private static AdmissionStateValidation rejected(TriggerAdmission admission) {
+      return new AdmissionStateValidation(admission, null);
+    }
+  }
 
   private record PluginOwner(String pluginId, String pluginVersionId) {}
 

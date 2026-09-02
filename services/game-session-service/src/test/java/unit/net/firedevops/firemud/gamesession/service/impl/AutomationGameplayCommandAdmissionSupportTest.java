@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -592,7 +593,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
   void reusesDuplicateWhenPlayableStateScopeOnlyDiffersByCaseAndWhitespace() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
-    RuntimeRegionStatusRepository runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
     GameInstance instance = new GameInstance();
@@ -604,10 +606,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
     existing.setPlayableStateScope(" shared ");
     existing.setCommandId("auto-existing");
     existing.setExecutionOutcome("STAGED");
-    when(
-            gameplayCommandRepository
-                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-                    1L, 2L, "region-alpha", 7L, "dispatch-1"))
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
         .thenReturn(Optional.of(existing));
 
     AdmissionResult result =
@@ -1402,7 +1403,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void remoteAutomationUsesCurrentTargetPointerAndPreservesOriginRoute() {
+  void remoteAutomationRejectsStaleTargetRoutingInsteadOfReplacingIt() {
     usePointerAuthority();
     TickEffect effect = commandEffect("automation-followup");
     RemoteFollowup followup = commandFollowup("automation-followup", "enqueue_automation_command");
@@ -1423,13 +1424,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
-    assertEquals("APPLIED", result.effectStatus());
-    org.mockito.ArgumentCaptor<GameplayCommand> captor =
-        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(captor.capture());
-    assertEquals("target-world", captor.getValue().getWorldSlug());
-    assertEquals("target-realm", captor.getValue().getRealmSlug());
-    assertEquals(Long.valueOf(23L), captor.getValue().getPointerVersion());
+    assertEquals("ABANDONED", result.effectStatus());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
     assertEquals("demo", followup.getWorldSlug());
     assertEquals("production", followup.getRealmSlug());
     assertEquals(Long.valueOf(17L), followup.getPointerVersion());
@@ -1437,7 +1433,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void remoteGameplayUsesCurrentTargetPointerAndPreservesOriginRoute() {
+  void remoteGameplayRejectsStaleTargetRoutingInsteadOfReplacingIt() {
     usePointerAuthority();
     TickEffect effect = commandEffect("gameplay-followup");
     RemoteFollowup followup = commandFollowup("gameplay-followup", "enqueue_gameplay_command");
@@ -1458,13 +1454,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
-    assertEquals("APPLIED", result.effectStatus());
-    org.mockito.ArgumentCaptor<GameplayCommand> captor =
-        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
-    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(captor.capture());
-    assertEquals("target-world", captor.getValue().getWorldSlug());
-    assertEquals("target-realm", captor.getValue().getRealmSlug());
-    assertEquals(Long.valueOf(23L), captor.getValue().getPointerVersion());
+    assertEquals("ABANDONED", result.effectStatus());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
     assertEquals("demo", followup.getWorldSlug());
     assertEquals("production", followup.getRealmSlug());
     assertEquals(Long.valueOf(17L), followup.getPointerVersion());

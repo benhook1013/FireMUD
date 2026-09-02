@@ -54,7 +54,7 @@ class ScriptEventIngressServiceImplTest {
     when(service.getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
+                "1", "game-1", "region-1", "NORMAL", 42L, "", "", "", 100L));
     return service;
   }
 
@@ -396,6 +396,7 @@ class ScriptEventIngressServiceImplTest {
     assertThat(workItemCaptor.getValue().getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(workItemCaptor.getValue().getPriorityTag()).isEqualTo("high");
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("PENDING_EVALUATION");
+    assertThat(workItemCaptor.getValue().getAdmissionEpoch()).isEqualTo(42L);
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
         ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).save(eventAuditCaptor.capture());

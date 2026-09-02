@@ -337,6 +337,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         continue;
       }
       instance.setMaterializationStatus(STATUS_PENDING_RUNTIME_PROGRESS);
+      instance.setUpdatedAt(Instant.now());
       pending.add(instance);
     }
     if (!pending.isEmpty()) {

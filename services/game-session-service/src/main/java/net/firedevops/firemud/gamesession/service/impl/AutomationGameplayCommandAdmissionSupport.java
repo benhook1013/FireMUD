@@ -83,7 +83,11 @@ final class AutomationGameplayCommandAdmissionSupport {
           null,
           tickService);
     }
-    validate(request);
+    // Remote admission receives routing fields from an upstream retry payload.  The
+    // pointer authority below is the source of truth for those fields, so validate
+    // the request's non-routing identity first and validate the authoritative request
+    // after routing has been supplied.
+    validate(request, false);
     GameInstance instance =
         gameInstanceRepository
             .findById(request.gameInstanceId())
@@ -117,6 +121,35 @@ final class AutomationGameplayCommandAdmissionSupport {
         || targetPointer.gameInstanceId() != request.gameInstanceId()) {
       return permanentPointerAuthorityMismatch();
     }
+    // A retry may omit routing entirely, but a supplied routing bundle is an
+    // assertion from the original caller and must not be silently replaced by
+    // the current pointer.  This preserves stale world/realm/version rejection.
+    try {
+      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope(),
+          "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
+    } catch (IllegalArgumentException ex) {
+      return permanentPointerAuthorityMismatch();
+    }
+    if ((request.worldSlug() != null && !request.worldSlug().isBlank())
+        || (request.realmSlug() != null && !request.realmSlug().isBlank())
+        || (request.pointerVersion() != null && request.pointerVersion() > 0L)
+        || (request.playableStateScope() != null && !request.playableStateScope().isBlank())) {
+      // requireCompleteOrAbsentRoutingBundle above guarantees this is a complete bundle.
+      if (!GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+          currentPointers,
+          request.tenantId(),
+          request.gameInstanceId(),
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope())) {
+        return permanentPointerAuthorityMismatch();
+      }
+    }
     AdmissionRequest targetRequest =
         withRouting(
             request,
@@ -124,6 +157,7 @@ final class AutomationGameplayCommandAdmissionSupport {
             targetPointer.worldSlug(),
             targetPointer.realmSlug(),
             targetPointer.pointerVersion());
+    validate(targetRequest, true);
     return admitFresh(
         targetRequest,
         acceptedAutomationCommand(targetRequest),
@@ -307,7 +341,9 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static String normalizePlayableStateScope(String value) {
-    return value == null || value.isBlank() ? null : value.trim().toUpperCase(java.util.Locale.ROOT);
+    return value == null || value.isBlank()
+        ? null
+        : value.trim().toUpperCase(java.util.Locale.ROOT);
   }
 
   private static boolean sameRoutingSlug(String left, String right) {
@@ -334,6 +370,10 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static void validate(AdmissionRequest request) {
+    validate(request, true);
+  }
+
+  private static void validate(AdmissionRequest request, boolean requireRoutingBundle) {
     ControlPlaneRequestParser.requirePositive(request.tenantId(), "tenant_id");
     ControlPlaneRequestParser.requirePositive(request.gameInstanceId(), "game_instance_id");
     requireText(request.regionId(), "region_id is required");
@@ -352,12 +392,14 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
     requireText(request.targetEntityId(), "target_entity_id is required");
     requireText(request.command(), "command is required");
-    GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
-        request.worldSlug(),
-        request.realmSlug(),
-        request.pointerVersion(),
-        request.playableStateScope(),
-        "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
+    if (requireRoutingBundle) {
+      GameplayAdmissionPointerSnapshots.requireCompleteOrAbsentRoutingBundle(
+          request.worldSlug(),
+          request.realmSlug(),
+          request.pointerVersion(),
+          request.playableStateScope(),
+          "world_slug, realm_slug, pointer_version, and playable_state_scope must be provided together");
+    }
   }
 
   private static Optional<GameplayCommand> findExistingCommand(

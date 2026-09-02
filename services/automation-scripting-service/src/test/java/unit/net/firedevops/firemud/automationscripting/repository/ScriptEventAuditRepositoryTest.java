@@ -26,6 +26,35 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
+  void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, false);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByHandlerIdentity(auditEntity(now));
+
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(11L);
+  }
+
+  @Test
   void insertIfAbsentByHandlerIdentityReturnsInsertedRowAndUsesFullIdentityConflictTarget() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(7L, now, now);
@@ -230,7 +259,7 @@ class ScriptEventAuditRepositoryTest {
     record.setPlayableStateScope("SHARED");
     record.setWorldSlug("world-1");
     record.setRealmSlug("realm-1");
-    record.setPointerVersion("pointer-1");
+    record.setPointerVersion("1");
     record.setScriptId("script-1");
     record.setEventType("onTimerExpire");
     record.setEventSchemaVersion("v1");
@@ -260,7 +289,7 @@ class ScriptEventAuditRepositoryTest {
     audit.setPlayableStateScope("SHARED");
     audit.setWorldSlug("world-1");
     audit.setRealmSlug("realm-1");
-    audit.setPointerVersion("pointer-1");
+    audit.setPointerVersion("1");
     audit.setScriptId("script-1");
     audit.setEventType("onTimerExpire");
     audit.setEventSchemaVersion("v1");

@@ -15,7 +15,6 @@ import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayCommandRecord;
-import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -442,11 +441,15 @@ public class GameplayCommandRepository {
                 DSL.upper(DSL.trim(pointer.STATE_SCOPE))
                     .eq(entity.getPlayableStateScope().trim().toUpperCase(java.util.Locale.ROOT)));
     Condition targetMatch =
-        pointer.TENANT_ID
+        pointer
+            .TENANT_ID
             .eq(entity.getTenantId())
             .and(pointer.GAME_INSTANCE_ID.eq(entity.getGameInstanceId()));
     Select<Record> source =
-        dsl.select(values).from(pointer).where(pointerMatch.and(exactlyOne(targetMatch)));
+        dsl.select(values)
+            .from(pointer)
+            .where(pointerMatch.and(exactlyOne(targetMatch)))
+            .forUpdate();
     if (hasText(entity.getRemoteFollowupId())) {
       return dsl.insertInto(GAMEPLAY_COMMAND)
           .columns(fields)

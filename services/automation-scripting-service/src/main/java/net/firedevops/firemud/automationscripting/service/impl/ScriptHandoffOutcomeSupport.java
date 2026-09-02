@@ -8,6 +8,12 @@ final class ScriptHandoffOutcomeSupport {
   static final String STAGE_TICK_HANDOFF = "TICK_HANDOFF";
   static final String OUTCOME_CANCELED = "canceled";
   static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
+  static final String OUTCOME_REMOTE_REJECTED = "REMOTE_REJECTED";
+  static final String OUTCOME_REMOTE_SCHEDULED = "REMOTE_SCHEDULED";
+  static final String ERROR_AUTHORITY_UNAVAILABLE = "AUTHORITY_UNAVAILABLE";
+  static final String ERROR_INVALID_ARGUMENT = "INVALID_ARGUMENT";
+  static final String ERROR_RUNTIME_PAUSED = "RUNTIME_PAUSED";
+  static final String ERROR_REMOTE_RESPONSE_INVALID = "REMOTE_RESPONSE_INVALID";
   static final String REASON_ROLLBACK_EPOCH_ADVANCED = "rollback_epoch_advanced";
   static final String REASON_RUNTIME_SCOPE_CHANGED = "runtime_scope_changed";
   static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
@@ -16,7 +22,6 @@ final class ScriptHandoffOutcomeSupport {
   static final String REASON_RUNTIME_PAUSED = "runtime_paused";
   static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED = "runtime_region_scope_advanced";
   static final String REASON_IDEMPOTENCY_CONFLICT = "idempotency_conflict";
-  static final String ERROR_REMOTE_RESPONSE_INVALID = "REMOTE_RESPONSE_INVALID";
 
   private ScriptHandoffOutcomeSupport() {}
 

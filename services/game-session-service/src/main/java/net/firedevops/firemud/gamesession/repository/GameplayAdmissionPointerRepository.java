@@ -13,7 +13,8 @@ import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionP
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.jooq.exception.DataAccessException;
+import org.jooq.SQLDialect;
+import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -81,7 +82,7 @@ public class GameplayAdmissionPointerRepository {
       populate(record, entity);
       try {
         record.store();
-      } catch (DataAccessException ex) {
+      } catch (IntegrityConstraintViolationException ex) {
         throw new IllegalStateException(
             "Admission pointer creation conflicted with another committed pointer", ex);
       }
@@ -91,14 +92,14 @@ public class GameplayAdmissionPointerRepository {
       throw new IllegalArgumentException("Existing admission pointer must advance its version");
     }
     GameplayAdmissionPointer current =
-        findById(entity.getId())
+        findByIdForUpdate(entity.getId())
             .orElseThrow(
                 () ->
                     new AdmissionPointerVersionMismatchException(
                         "Admission pointer no longer exists: id=" + entity.getId()));
     lockRuntimeTargets(current, entity);
     current =
-        findById(entity.getId())
+        findByIdForUpdate(entity.getId())
             .orElseThrow(
                 () ->
                     new AdmissionPointerVersionMismatchException(
@@ -165,6 +166,13 @@ public class GameplayAdmissionPointerRepository {
         .fetchOptional(this::toEntity);
   }
 
+  private Optional<GameplayAdmissionPointer> findByIdForUpdate(Long id) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
   private long countByRuntimeTarget(Long tenantId, Long gameInstanceId) {
     return dsl.fetchCount(
         dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
@@ -198,8 +206,12 @@ public class GameplayAdmissionPointerRepository {
   }
 
   private void lockRuntimeTarget(String lockKey) {
-    dsl.fetch(
-        "select pg_advisory_xact_lock(hashtextextended(cast(? as text), 0))", lockKey);
+    // The test profile uses H2, which does not implement PostgreSQL advisory locks.
+    // Production remains protected by the transaction-scoped PostgreSQL lock.
+    if (dsl.dialect().family() != SQLDialect.POSTGRES) {
+      return;
+    }
+    dsl.fetch("select pg_advisory_xact_lock(hashtextextended(cast(? as text), 0))", lockKey);
   }
 
   private static String runtimeTargetLockKey(Long tenantId, Long gameInstanceId) {

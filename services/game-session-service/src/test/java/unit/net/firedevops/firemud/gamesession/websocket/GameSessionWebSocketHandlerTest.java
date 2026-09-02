@@ -436,23 +436,8 @@ class GameSessionWebSocketHandlerTest {
         .save(
             eq(
                 new SessionContext(
-                    41L,
-                    22L,
-                    0L,
-                    null,
-                    0L,
-                    null,
-                    0L,
-                    null,
-                    null,
-                    null,
-                    7L,
-                    null,
-                    null,
-                    0L,
-                    null,
-                    null,
-                    null)));
+                    41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, null, null, 0L, null,
+                    null, null)));
   }
 
   @Test
@@ -542,7 +527,7 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void afterConnectionEstablishedPreservesGenericBootstrapRoutingWhenRuntimeAuthorityIsAbsent() {
+  void afterConnectionEstablishedClearsGenericBootstrapRoutingWhenRuntimeAuthorityIsAbsent() {
     when(session.getAttributes())
         .thenReturn(
             Map.of(
@@ -1118,7 +1103,7 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void handleMessageRepairsPartialGenericBootstrapRoutingBeforeInterpretingWhenMissing()
+  void handleMessageClearsPartialGenericBootstrapRoutingWhenRuntimeAuthorityIsAbsent()
       throws Exception {
     when(session.getAttributes())
         .thenReturn(

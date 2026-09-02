@@ -1,7 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
-import java.util.Locale;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import org.springframework.util.StringUtils;
@@ -244,8 +244,7 @@ public final class GameplayAdmissionPointerSnapshots {
                 sameRoutingIdentity(pointer.worldSlug(), pointer.realmSlug(), worldSlug, realmSlug))
         .filter(pointer -> pointer.pointerVersion() == pointerVersion)
         .filter(
-            pointer ->
-                normalizedPlayableStateScope.equals(normalizeScope(pointer.stateScope())))
+            pointer -> normalizedPlayableStateScope.equals(normalizeScope(pointer.stateScope())))
         .isPresent();
   }
 

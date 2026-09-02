@@ -411,36 +411,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItem.setUpdatedAt(Instant.now());
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
-    runAfterCommit(() -> publishRetryPointer(workItem));
-  }
-
-  private static void runAfterCommit(Runnable action) {
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      action.run();
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            action.run();
-          }
-        });
-  }
-
-  private void publishRetryPointer(ScriptWorkItem workItem) {
-    if (automationQueueService == null) {
-      return;
-    }
-    try {
-      automationQueueService.enqueueWorkItem(workItem);
-    } catch (RuntimeException ex) {
-      // PostgreSQL remains authoritative; the scheduled rebuild can republish this derived pointer.
-      LOGGER.warn(
-          "Automation queue pointer publication failed for retryable work item {}; durable pending state remains rebuildable",
-          workItem.getId(),
-          ex);
-    }
+    AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, workItem, LOGGER);
   }
 
   private static long requireWorkItemId(ScriptWorkItem workItem) {

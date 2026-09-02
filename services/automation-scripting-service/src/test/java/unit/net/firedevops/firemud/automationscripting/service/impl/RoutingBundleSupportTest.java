@@ -245,6 +245,13 @@ class RoutingBundleSupportTest {
   }
 
   @Test
+  void normalizeFailsClosedForPointerVersionTextOverflow() {
+    assertThat(
+            RoutingBundleSupport.normalize("Demo", "Production", "9223372036854775808").isPresent())
+        .isFalse();
+  }
+
+  @Test
   void normalizeFailsClosedForNonPositivePointerVersionText() {
     assertThat(RoutingBundleSupport.normalize("Demo", "Production", "0").isPresent()).isFalse();
   }

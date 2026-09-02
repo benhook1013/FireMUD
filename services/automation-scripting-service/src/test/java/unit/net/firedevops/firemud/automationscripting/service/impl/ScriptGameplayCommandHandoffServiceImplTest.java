@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -40,6 +41,16 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class ScriptGameplayCommandHandoffServiceImplTest {
+  @Test
+  void beginAggregateFanoutRequiresExistingTransaction() throws NoSuchMethodException {
+    Method method =
+        ScriptGameplayCommandHandoffServiceImpl.class.getMethod(
+            "beginAggregateFanout", ScriptWorkItem.class);
+    assertThat(method.getAnnotation(Transactional.class)).isNotNull();
+    assertThat(method.getAnnotation(Transactional.class).propagation())
+        .isEqualTo(org.springframework.transaction.annotation.Propagation.MANDATORY);
+  }
+
   @Test
   void locksAdmissionScopeBeforeFenceReadAndRemoteAdmissionInsideTransactionalBoundary()
       throws NoSuchMethodException {
@@ -712,7 +723,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
-  void pausedGameSessionOutcomeUsesInfrastructureTaxonomy() {
+  void pausedGameSessionOutcomeCancelsWithRuntimePausedTaxonomy() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
@@ -749,7 +760,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("RUNTIME_PAUSED");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
-    assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");
+    assertThat(audit.getFinalOutcome()).isEqualTo("canceled");
     assertThat(audit.getFinalReason()).isEqualTo("runtime_paused");
   }
 

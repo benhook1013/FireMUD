@@ -3028,6 +3028,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("RETRY_QUEUED", responseRef.get().getAdmissionOutcome());
     assertEquals("AUTH_UNAVAILABLE", responseRef.get().getError().getCode());
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
     Mockito.verifyNoInteractions(tickService);
   }
 
@@ -3102,6 +3104,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("RETRY_QUEUED", responseRef.get().getAdmissionOutcome());
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", responseRef.get().getError().getCode());
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
     Mockito.verifyNoInteractions(tickService);
   }
 
@@ -3163,6 +3167,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", responseRef.get().getError().getCode());
     Mockito.verify(commandRepository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(commandRepository, Mockito.never())
+        .insertIfAbsentByIdempotencyIdentity(Mockito.any(GameplayCommand.class));
     Mockito.verifyNoInteractions(tickService);
   }
 
