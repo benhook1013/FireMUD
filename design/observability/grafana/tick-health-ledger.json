@@ -11,7 +11,7 @@
       "description": "Target-only status signal. Enable only when the selected profile advertises tick-status telemetry and fresh expected-series proof exists; absent, stale, or unproved series are unknown/unavailable, never healthy. The bounded class signal does not identify individual regions.",
       "targets": [
         {
-          "expr": "tick_status{scope_class=~\"region|game_instance|tenant|cluster\"} == 1",
+          "expr": "tick_status{scope_class=~\"^(region|game_instance|tenant|cluster)$\"} == 1",
           "legendFormat": "scope bucket {{scope_class}} = {{status}}",
           "refId": "A"
         }
@@ -24,7 +24,7 @@
       "description": "Target-only mode-aware ratio. Enable only after profile capability and fresh complete execution/TTL series proof; missing, stale, or unproved data is unknown/unavailable, never healthy.",
       "targets": [
         {
-          "expr": "(tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"normal\"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) or (tick_execution_time_ms_p99{scope_class=~\"region|game_instance|tenant|cluster\",tick_mode=\"solo\"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"region|game_instance|tenant|cluster\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))",
+          "expr": "(tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"normal\"} / on (scope_class, tick_mode) label_replace(tick_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"normal\", \"scope_class\", \".*\")) or (tick_execution_time_ms_p99{scope_class=~\"^(region|game_instance|tenant|cluster)$\",tick_mode=\"solo\"} / on (scope_class, tick_mode) label_replace(solo_lock_ttl_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}, \"tick_mode\", \"solo\", \"scope_class\", \".*\"))",
           "legendFormat": "scope bucket {{scope_class}} ({{tick_mode}})",
           "refId": "A"
         }
@@ -37,12 +37,12 @@
       "description": "Target-only queue-depth diagnostics. Enable only after the selected profile advertises these queue families and fresh expected-series proof exists; absent, stale, or unproved data is unknown/unavailable, never an empty healthy queue.",
       "targets": [
         {
-          "expr": "tick_retry_queue_depth{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_retry_queue_depth{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "retry (scope bucket {{scope_class}})",
           "refId": "A"
         },
         {
-          "expr": "tick_command_queue_depth{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_command_queue_depth{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "command (scope bucket {{scope_class}})",
           "refId": "B"
         }
@@ -55,17 +55,17 @@
       "description": "Target-only ledger diagnostics. Enable only after the selected profile advertises ledger telemetry and fresh expected-series proof exists; missing, stale, or unproved data is unknown/unavailable, never evidence of an empty ledger.",
       "targets": [
         {
-          "expr": "tick_effects_pending_total{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_effects_pending_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "pending (scope bucket {{scope_class}})",
           "refId": "A"
         },
         {
-          "expr": "tick_effects_applied_total{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_effects_applied_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "applied (scope bucket {{scope_class}})",
           "refId": "B"
         },
         {
-          "expr": "sum by (scope_class) (tick_effects_abandoned_total{scope_class=~\"region|game_instance|tenant|cluster\"})",
+          "expr": "sum by (scope_class) (tick_effects_abandoned_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"})",
           "legendFormat": "abandoned (scope bucket {{scope_class}})",
           "refId": "C"
         }
@@ -78,7 +78,7 @@
       "description": "Bounded presence/status signal only: this query shows whether a non-RUNNING class-level status series is present. It does not count individual regions, tenants, or game instances; resolve exact impact from control-plane/runtime-health evidence. Missing, stale, or unproved data is unknown/unavailable.",
       "targets": [
         {
-          "expr": "sum by (scope_class, status) (tick_status{scope_class=~\"region|game_instance|tenant|cluster\",status!=\"RUNNING\"} == 1)",
+          "expr": "sum by (scope_class, status) (tick_status{scope_class=~\"^(region|game_instance|tenant|cluster)$\",status!=\"RUNNING\"} == 1)",
           "legendFormat": "scope bucket {{scope_class}} = {{status}} (presence)",
           "refId": "A"
         }
@@ -91,12 +91,12 @@
       "description": "Target-only durable-commit/coordination-cleared diagnostics. Enable only after profile capability and fresh expected-series proof; absent, stale, or unproved data is unknown/unavailable, never proof of convergence.",
       "targets": [
         {
-          "expr": "rate(tick_durable_commit_total{scope_class=~\"region|game_instance|tenant|cluster\"}[5m])",
+          "expr": "rate(tick_durable_commit_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}[5m])",
           "legendFormat": "durable (scope bucket {{scope_class}})",
           "refId": "A"
         },
         {
-          "expr": "rate(tick_coordination_cleared_total{scope_class=~\"region|game_instance|tenant|cluster\"}[5m])",
+          "expr": "rate(tick_coordination_cleared_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}[5m])",
           "legendFormat": "cleared (scope bucket {{scope_class}})",
           "refId": "B"
         }
@@ -109,7 +109,7 @@
       "description": "Target-only cleanup-lag diagnostic. Enable only after profile capability and fresh expected-series proof; absent, stale, or unproved data is unknown/unavailable, never proof of zero lag.",
       "targets": [
         {
-          "expr": "tick_cleanup_lag_ms{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_cleanup_lag_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "scope bucket {{scope_class}}",
           "refId": "A"
         }
@@ -122,7 +122,7 @@
       "description": "Target-only replay-batch progress diagnostic. Enable only after profile capability and fresh expected-series proof; absent, stale, or unproved data is unknown/unavailable, never proof of no replay backlog.",
       "targets": [
         {
-          "expr": "rate(tick_effects_replay_batches_total{scope_class=~\"region|game_instance|tenant|cluster\"}[5m])",
+          "expr": "rate(tick_effects_replay_batches_total{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}[5m])",
           "legendFormat": "replay batches/sec (scope bucket {{scope_class}})",
           "refId": "A"
         }
@@ -135,7 +135,7 @@
       "description": "Target-only replay-starvation diagnostic. Enable only after profile capability and fresh expected-series proof; absent, stale, or unproved data is unknown/unavailable, never proof that replay is healthy.",
       "targets": [
         {
-          "expr": "tick_effects_replay_starved{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_effects_replay_starved{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "starved (scope bucket {{scope_class}})",
           "refId": "A"
         }
@@ -148,7 +148,7 @@
       "description": "Target-only replay scan-lag diagnostic. Enable only after profile capability and fresh expected-series proof; absent, stale, or unproved data is unknown/unavailable, never proof of low scan lag.",
       "targets": [
         {
-          "expr": "tick_effects_replay_scan_lag_ms{scope_class=~\"region|game_instance|tenant|cluster\"}",
+          "expr": "tick_effects_replay_scan_lag_ms{scope_class=~\"^(region|game_instance|tenant|cluster)$\"}",
           "legendFormat": "scan lag (scope bucket {{scope_class}})",
           "refId": "A"
         }

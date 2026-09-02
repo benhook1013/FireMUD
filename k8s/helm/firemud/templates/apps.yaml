@@ -10,10 +10,6 @@ metadata:
 {{ include "firemud.commonLabels" $ | indent 4 }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
-  {{ if eq $service.name "automation-scripting-service" }}
-  strategy:
-    type: Recreate
-  {{ end }}
   selector:
     matchLabels:
       app: {{ $service.name }}

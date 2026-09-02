@@ -208,7 +208,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
               "",
               "",
               "",
-              "AUTHORITY_UNAVAILABLE",
+              ScriptHandoffOutcomeSupport.ERROR_AUTHORITY_UNAVAILABLE,
               "automation admission state unavailable");
       applyOutcome(workItem, command, dispatchId, result, now);
       return result;
@@ -311,7 +311,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
     }
     if (command.targetRegionEpoch() == null || command.targetRegionEpoch() <= 0) {
       return new ScopeValidationResult(
-          "INVALID_ARGUMENT", "target_region_epoch must be positive for remote handoff");
+          ScriptHandoffOutcomeSupport.ERROR_INVALID_ARGUMENT,
+          "target_region_epoch must be positive for remote handoff");
     }
     return null;
   }

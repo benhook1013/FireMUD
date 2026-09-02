@@ -153,7 +153,7 @@ SERVICE_SCOPED_ALERT_CONTRACTS = {
         "tcp-proxy-service",
     ),
 }
-TICK_SCOPE_CLASS_MATCHER = 'scope_class=~"region|game_instance|tenant|cluster"'
+TICK_SCOPE_CLASS_MATCHER = 'scope_class=~"^(region|game_instance|tenant|cluster)$"'
 _TICK_SCOPE_LABEL, _TICK_SCOPE_CLASS_REGEX = TICK_SCOPE_CLASS_MATCHER.split("=~", 1)
 TICK_SCOPE_CLASS_MATCHER_RE = re.compile(
     rf'(?:^|,)\s*{re.escape(_TICK_SCOPE_LABEL)}\s*=\s*~\s*'

@@ -432,7 +432,7 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void pendingReplayPreservesSoloModeFromDurableCommandTruth() {
+  void pendingReplayCreatesSoloBatchWhenNoStagedBatchExists() {
     GameplayCommand command = gameplayCommand("cmd-solo-replay");
     command.setRequiresSoloTick(true);
     command.setCommandText("generate");

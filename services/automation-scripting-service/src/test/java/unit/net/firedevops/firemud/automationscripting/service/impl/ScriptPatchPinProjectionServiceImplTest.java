@@ -260,6 +260,56 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void rejectsMismatchedRuntimeScopeBeforeRefreshingExistingProjection() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("patch-4");
+    existing.setLastObservedControlPlaneRequestId("req-4");
+    existing.setObservedAt(Instant.ofEpochMilli(400L));
+    existing.setProjectionRefreshedAt(Instant.now().minusSeconds(30));
+    existing.setRuntimeRegionId("region-4");
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    Mockito.when(
+            gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-4"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("other-tenant")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("attacker-patch")
+                        .build())
+                .build());
+
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.summary()).isEmpty();
+    assertThat(lookup.errorCode()).isEqualTo("RUNTIME_SCOPE_MISMATCH");
+    verify(repository, Mockito.never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
   void ignoresMismatchedRuntimeScopeBeforeObservingProjection() {
     ScriptPatchPinProjectionRepository repository =
         Mockito.mock(ScriptPatchPinProjectionRepository.class);
