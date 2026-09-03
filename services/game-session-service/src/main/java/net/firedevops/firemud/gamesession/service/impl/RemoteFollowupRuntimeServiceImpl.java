@@ -50,6 +50,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   static final String FOLLOWUP_ABANDONED = "ABANDONED";
 
   static final String RESULT_APPLIED = "APPLIED";
+  private static final String SCOPE_INVALID_FAILURE_CODE = "REMOTE_FOLLOWUP_SCOPE_INVALID";
+  private static final String EMPTY_RESULT_PAYLOAD_JSON = "{}";
   static final String LATE_RESULT_REQUIRES_RECONCILIATION = "late_result_requires_reconciliation";
   static final String COMMAND_PENDING_REMOTE = "PENDING_REMOTE";
   private static final String PAYLOAD_KIND_ENQUEUE_AUTOMATION_COMMAND =
@@ -139,7 +141,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
           "remote coordinator and followup must be present together");
     }
     if (existingCoordinator.isPresent()) {
-      boolean coordinatorTerminal = isTerminalCoordinatorState(existingCoordinator.get().getState());
+      boolean coordinatorTerminal =
+          isTerminalCoordinatorState(existingCoordinator.get().getState());
       boolean followupTerminal = isTerminalFollowupStatus(existingFollowup.get().getStatus());
       if (coordinatorTerminal != followupTerminal) {
         throw new IllegalArgumentException(
@@ -249,14 +252,68 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         remoteFollowupRepository
             .findByTenantIdAndFollowupId(tenantId, followupId)
             .orElseThrow(() -> new IllegalArgumentException("remote followup not found"));
+    Instant now = Instant.now(clock);
+    String normalizedFailureMessage = truncate(failureMessage);
+    if (SCOPE_INVALID_FAILURE_CODE.equals(failureCode)) {
+      RemoteCommandCoordinator coordinator =
+          remoteCommandCoordinatorRepository
+              .findByTenantIdAndFollowupId(tenantId, followupId)
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "cannot persist scope-invalid remote result without its coordinator"));
+      if (!hasCompleteRuntimeScope(coordinator)) {
+        throw new IllegalStateException(
+            "cannot persist scope-invalid remote result with incomplete coordinator scope");
+      }
+      persistScopeInvalidResult(coordinator, followup, tenantId, normalizedFailureMessage, now);
+    }
     followup.setStatus(FOLLOWUP_ABANDONED);
     followup.setClaimedTickBatchId(null);
     followup.setQueueSourceKind(FOLLOWUP_QUEUE_SOURCE_KIND);
     followup.setQueueSourceState(FOLLOWUP_QUEUE_SOURCE_STATE_ABANDONED);
     followup.setFailureCode(failureCode);
-    followup.setFailureMessage(truncate(failureMessage));
-    followup.setUpdatedAt(Instant.now(clock));
+    followup.setFailureMessage(normalizedFailureMessage);
+    followup.setUpdatedAt(now);
     remoteFollowupRepository.save(followup);
+  }
+
+  private void persistScopeInvalidResult(
+      RemoteCommandCoordinator coordinator,
+      RemoteFollowup followup,
+      long tenantId,
+      String failureMessage,
+      Instant observedAt) {
+    ResultRequest request =
+        new ResultRequest(
+            tenantId,
+            durableResultId(followup),
+            coordinator.getCoordinatorId(),
+            followup.getFollowupId(),
+            coordinator.getOriginGameInstanceId(),
+            coordinator.getOriginRegionId(),
+            coordinator.getOriginRegionEpoch(),
+            coordinator.getTargetGameInstanceId(),
+            coordinator.getTargetRegionId(),
+            coordinator.getTargetRegionEpoch(),
+            FOLLOWUP_ABANDONED,
+            EMPTY_RESULT_PAYLOAD_JSON,
+            null,
+            SCOPE_INVALID_FAILURE_CODE,
+            failureMessage);
+    RemoteFollowupResult result =
+        remoteFollowupResultRepository
+            .findByTenantIdAndResultId(tenantId, request.resultId())
+            .orElseGet(RemoteFollowupResult::new);
+    if (result.getId() != null) {
+      validateExistingResult(result, request);
+      if (!EMPTY_RESULT_PAYLOAD_JSON.equals(result.getResultPayloadJson())) {
+        throw new IllegalArgumentException("result_id already records a different remote outcome");
+      }
+      return;
+    }
+    populateResult(result, request, coordinator, followup, observedAt);
+    remoteFollowupResultRepository.save(result);
   }
 
   @Override
@@ -723,6 +780,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static boolean isTerminalFollowupStatus(String status) {
     return FOLLOWUP_APPLIED.equals(status) || FOLLOWUP_ABANDONED.equals(status);
+  }
+
+  private static String durableResultId(RemoteFollowup followup) {
+    return "remote-result:" + followup.getFollowupId();
   }
 
   private static boolean isValidNonterminalPair(String coordinatorState, String followupStatus) {

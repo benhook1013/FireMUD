@@ -2576,6 +2576,193 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals("missing", followup.getFailureMessage());
   }
 
+  @Test
+  void abandonScopeInvalidFollowupPersistsCoordinatorScopedFailureResult() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    RemoteFollowup followup = followup();
+    followup.setStatus(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+    followup.setClaimedTickBatchId("tb-1");
+    followup.setTargetRegionEpoch(9L);
+    followup.setWorldSlug("conflicting-world");
+    followup.setRealmSlug("conflicting-realm");
+    followup.setPointerVersion(99L);
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(resultRepository.findByTenantIdAndResultId(1L, "remote-result:followup-1"))
+        .thenReturn(Optional.empty());
+
+    service.abandonFollowup(
+        1L,
+        "followup-1",
+        "REMOTE_FOLLOWUP_SCOPE_INVALID",
+        "Remote followup execution scope does not match its coordinator");
+
+    verify(resultRepository)
+        .save(
+            argThat(
+                result ->
+                    "remote-result:followup-1".equals(result.getResultId())
+                        && "coord-1".equals(result.getCoordinatorId())
+                        && "followup-1".equals(result.getFollowupId())
+                        && Long.valueOf(7L).equals(result.getOriginGameInstanceId())
+                        && "region-a".equals(result.getOriginRegionId())
+                        && Long.valueOf(4L).equals(result.getOriginRegionEpoch())
+                        && Long.valueOf(8L).equals(result.getTargetGameInstanceId())
+                        && "region-b".equals(result.getTargetRegionId())
+                        && Long.valueOf(8L).equals(result.getTargetRegionEpoch())
+                        && "ABANDONED".equals(result.getOutcome())
+                        && "{}".equals(result.getResultPayloadJson())
+                        && "REMOTE_FOLLOWUP_SCOPE_INVALID".equals(result.getResultErrorCode())
+                        && "Remote followup execution scope does not match its coordinator"
+                            .equals(result.getResultMessage())
+                        && "SHARED".equals(result.getPlayableStateScope())
+                        && "demo".equals(result.getWorldSlug())
+                        && "production".equals(result.getRealmSlug())
+                        && Long.valueOf(17L).equals(result.getPointerVersion())));
+    verify(coordinatorRepository, never()).save(any());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, followup.getStatus());
+    assertEquals(null, followup.getClaimedTickBatchId());
+    assertEquals("REMOTE_FOLLOWUP_SCOPE_INVALID", followup.getFailureCode());
+  }
+
+  @Test
+  void abandonScopeInvalidFollowupReplaysExactResultWithoutOverwrite() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    RemoteFollowup followup = followup();
+    RemoteFollowupResult existing = result(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    existing.setId(99L);
+    existing.setResultId("remote-result:followup-1");
+    existing.setResultPayloadJson("{}");
+    existing.setResultErrorCode("REMOTE_FOLLOWUP_SCOPE_INVALID");
+    existing.setResultMessage("scope mismatch");
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(resultRepository.findByTenantIdAndResultId(1L, "remote-result:followup-1"))
+        .thenReturn(Optional.of(existing));
+
+    service.abandonFollowup(1L, "followup-1", "REMOTE_FOLLOWUP_SCOPE_INVALID", "scope mismatch");
+
+    verify(resultRepository, never()).save(any());
+    verify(coordinatorRepository, never()).save(any());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, followup.getStatus());
+  }
+
+  @Test
+  void abandonScopeInvalidFollowupRejectsConflictingExistingResult() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    RemoteFollowup followup = followup();
+    RemoteFollowupResult existing = result(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED);
+    existing.setId(99L);
+    existing.setResultId("remote-result:followup-1");
+    existing.setResultPayloadJson("{}");
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(resultRepository.findByTenantIdAndResultId(1L, "remote-result:followup-1"))
+        .thenReturn(Optional.of(existing));
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.abandonFollowup(
+                    1L, "followup-1", "REMOTE_FOLLOWUP_SCOPE_INVALID", "scope mismatch"));
+
+    assertEquals("result_id already records a different remote outcome", exception.getMessage());
+    verify(resultRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+    verify(coordinatorRepository, never()).save(any());
+  }
+
+  @Test
+  void abandonScopeInvalidFollowupRejectsMissingCoordinatorWithoutMutation() {
+    RemoteFollowup followup = followup();
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.empty());
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.abandonFollowup(
+                    1L, "followup-1", "REMOTE_FOLLOWUP_SCOPE_INVALID", "scope mismatch"));
+
+    assertEquals(
+        "cannot persist scope-invalid remote result without its coordinator",
+        exception.getMessage());
+    verify(resultRepository, never()).findByTenantIdAndResultId(any(), any());
+    verify(resultRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
+  void abandonScopeInvalidFollowupRejectsIncompleteCoordinatorWithoutMutation() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setTargetRegionId(null);
+    RemoteFollowup followup = followup();
+    when(followupRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(followup));
+    when(coordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.abandonFollowup(
+                    1L, "followup-1", "REMOTE_FOLLOWUP_SCOPE_INVALID", "scope mismatch"));
+
+    assertEquals(
+        "cannot persist scope-invalid remote result with incomplete coordinator scope",
+        exception.getMessage());
+    verify(resultRepository, never()).findByTenantIdAndResultId(any(), any());
+    verify(resultRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+  }
+
+  @Test
+  void reconcileResultsConvergesScopeInvalidResultAndMirrorsOriginCommand() {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    coordinator.setGameplayResult("PENDING");
+    RemoteFollowupResult result = result(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    result.setResultId("remote-result:followup-1");
+    result.setResultPayloadJson("{}");
+    result.setResultErrorCode("REMOTE_FOLLOWUP_SCOPE_INVALID");
+    result.setResultMessage("scope mismatch");
+    GameplayCommand originCommand = gameplayCommand();
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE))
+        .thenReturn(List.of(coordinator));
+    when(coordinatorRepository.findByTenantIdAndOriginRegionIdAndStateOrderByUpdatedAtDesc(
+            1L, "region-a", RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED))
+        .thenReturn(List.of());
+    when(resultRepository.findLatestForCoordinator(coordinator)).thenReturn(Optional.of(result));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(originCommand));
+
+    int reconciled = service.reconcileResults(1L, "region-a", 4L);
+
+    assertEquals(1, reconciled);
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED, coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, coordinator.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", coordinator.getGameplayResult());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, originCommand.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", originCommand.getGameplayResult());
+    assertEquals("REMOTE_FOLLOWUP_SCOPE_INVALID", originCommand.getFailureCode());
+    assertEquals("scope mismatch", originCommand.getFailureMessage());
+  }
+
   private void assertTargetCandidateRejectedDuringReconciliation(GameplayCommand candidate) {
     RemoteCommandCoordinator coordinator = coordinator();
     coordinator.setTargetGameInstanceId(9L);
