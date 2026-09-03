@@ -3160,6 +3160,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandPersistsDispatchAndStagesTickCommand() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3229,6 +3230,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandAllowsImmediateHandoffWithoutDueTick() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3272,6 +3274,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandDerivesCharacterIdFromNumericTargetEntity() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3315,6 +3318,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsUnreadable() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3365,6 +3369,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsAmbiguous() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3441,6 +3446,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsMovedPointerAuthorityTarget() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3504,6 +3510,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsStaleRuntimeEpochBeforeTickQueue() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3547,6 +3554,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsMismatchedRuntimeRegionBeforeTickQueue() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3592,6 +3600,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsPausedRuntimeOwnershipBeforeTickQueue() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3635,6 +3644,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsPartialRoutingBundle() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3685,6 +3695,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsMalformedPointerVersion() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3727,6 +3738,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsNonPositivePointerVersion() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3769,6 +3781,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandRejectsMissingRegionOwnershipEvenWhenInstanceRowExists() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -3821,6 +3834,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandPrefersRegionScopedOwnershipAuthority() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -4133,6 +4147,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void enqueueAutomationCommandReturnsDuplicateNoopForExistingDispatch() {
+    setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
@@ -6374,6 +6389,75 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
     Mockito.verifyNoInteractions(runtimeService);
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsNonAutomationInternalCallerBeforeDispatch() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    assertEquals(
+        "EnqueueAutomationCommandIfAbsent requires automation-scripting-service as an internal"
+            + " service caller",
+        responseRef.get().getError().getMessage());
+    Mockito.verifyNoInteractions(commandRepository, tickService);
+  }
+
+  @Test
+  void enqueueAutomationCommandRejectsUnauthenticatedCallerBeforeDispatch() {
+    SessionContext.clear();
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(commandRepository, tickService);
   }
 
   @Test

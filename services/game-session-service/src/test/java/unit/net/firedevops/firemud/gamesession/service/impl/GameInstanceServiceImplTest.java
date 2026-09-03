@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -258,7 +259,8 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(2L, 7L);
     verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
     verify(worldManagementClient)
-        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+        .terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), anyString(), eq("session replacement requested"));
     ArgumentCaptor<GameInstance> savedInstances = ArgumentCaptor.forClass(GameInstance.class);
     verify(repository, times(4)).save(savedInstances.capture());
     assertEquals(
@@ -290,7 +292,8 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(1L, 10L);
     verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
     verify(worldManagementClient)
-        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+        .terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), anyString(), eq("session stop requested"));
     assertEquals("STOPPED", dto.status());
     assertEquals("STOPPED", store.get(10L).getStatus());
   }

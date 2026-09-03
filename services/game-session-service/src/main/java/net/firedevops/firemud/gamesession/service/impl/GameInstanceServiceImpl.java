@@ -156,7 +156,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         terminateWorldInstance(
             existingRunningState,
             existingWorldLifecycleEpoch,
-            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID());
+            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID(),
+            "session replacement requested");
         oldWorldTerminationCompleted = true;
         inTransaction(
             () -> {
@@ -201,7 +202,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       sessionStateService.deleteState(runningState.tenantId(), runningState.id());
       long worldLifecycleEpoch = readWorldInstanceLifecycleEpoch(runningState);
       worldTerminationRequested = true;
-      terminateWorldInstance(runningState, worldLifecycleEpoch, "session-stop-" + UUID.randomUUID());
+      terminateWorldInstance(
+          runningState,
+          worldLifecycleEpoch,
+          "session-stop-" + UUID.randomUUID(),
+          "session stop requested");
       worldTerminationCompleted = true;
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
@@ -724,7 +729,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void terminateWorldInstance(
-      GameInstanceDto runningState, long lifecycleEpoch, String terminationRequestId) {
+      GameInstanceDto runningState,
+      long lifecycleEpoch,
+      String terminationRequestId,
+      String terminationReason) {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world termination authority unavailable");
     }
@@ -734,7 +742,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             runningState.id(),
             lifecycleEpoch,
             terminationRequestId,
-            "session stop requested");
+            terminationReason);
     if (terminateResponse.hasError()) {
       throw new IllegalArgumentException(
           terminateResponse.getError().getCode()

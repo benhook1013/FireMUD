@@ -123,12 +123,11 @@ public final class GameSessionControlPlaneGrpcService
     AdminRoleGuard.requireAdminRole();
   }
 
-  private static void requireAutomationScriptingInternalService() {
+  private static void requireAutomationScriptingInternalService(String operation) {
     if (!SessionContext.isInternalService()
         || !AUTOMATION_SCRIPTING_SERVICE.equals(SessionContext.getServiceName())) {
       throw new AdminAuthorizationException(
-          "ScheduleRemoteFollowup requires automation-scripting-service as an internal service"
-              + " caller");
+          operation + " requires automation-scripting-service as an internal service caller");
     }
   }
 
@@ -460,7 +459,7 @@ public final class GameSessionControlPlaneGrpcService
       ScheduleRemoteFollowupRequest request,
       StreamObserver<ScheduleRemoteFollowupResponse> responseObserver) {
     try {
-      requireAutomationScriptingInternalService();
+      requireAutomationScriptingInternalService("ScheduleRemoteFollowup");
       responseObserver.onNext(
           remoteControlPlaneService.scheduleRemoteFollowup(
               parseTenantId(request.getTenantId()), request));
@@ -1008,8 +1007,18 @@ public final class GameSessionControlPlaneGrpcService
       EnqueueAutomationCommandIfAbsentRequest request,
       StreamObserver<EnqueueAutomationCommandIfAbsentResponse> responseObserver) {
     try {
+      requireAutomationScriptingInternalService("EnqueueAutomationCommandIfAbsent");
       EnqueueAutomationCommandIfAbsentResponse response =
           commandControlPlaneService.enqueueAutomationCommandIfAbsent(request);
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      EnqueueAutomationCommandIfAbsentResponse response =
+          EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+              .setAccepted(false)
+              .setAdmissionOutcome("REJECTED")
+              .setError(authorizationError("EnqueueAutomationCommandIfAbsent", ex))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

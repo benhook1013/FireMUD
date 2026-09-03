@@ -236,7 +236,7 @@ If a workflow needs restart-safe continuation, durable waits/timers, or operator
 
 ### Mandatory Workflow Adopter Classification
 
-Before implementation, every new workflow or tick-adjacent continuation must record its classification and owner in the adopting service document or tracker. The adopter must state the selected substrate, the local idempotency/reconciliation boundary, the negative cases that keep the work out of the other substrates, and focused proof for the relevant failure and retry behavior:
+Before implementation, every new workflow or tick-adjacent continuation must record its classification and owner in the adopting service's canonical architecture document or an accepted ADR. That owner record must state the selected substrate, the local idempotency/reconciliation boundary, the negative cases that keep the work out of the other substrates, and focused proof obligations for the relevant failure and retry behavior; implementation trackers may record status and proof only:
 
 | Work shape | Canonical placement | Minimum adopter proof |
 | --- | --- | --- |
@@ -300,7 +300,7 @@ FireMUD uses a **shared short synchronous saga orchestration library**, not a se
   - Centralized in the **common-saga** library located under
     `services/common-saga`
   - The engine and its shared Flyway migrations live in `services/common-saga/src/main/resources/db/migration/saga`
-  - A service may expose the shared migration location only after an owning service document or tracker explicitly classifies a concrete workflow as a short-Saga adopter and records its owner, local retry/compensation boundary, and focused proof obligations. Select and report that proof through the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); execution results belong in PR/CI evidence or the owning implementation tracker, not this normative contract. No finite repository-wide adopter registry is currently established from accepted workflow ownership and canonical service documents; broad current service-convention wiring is implementation drift, not an adopter allowlist. Service-local ownership remains governed by [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
+  - A service may expose the shared migration location only after the canonical adopter record required by [Mandatory Workflow Adopter Classification](#mandatory-workflow-adopter-classification) identifies a concrete workflow as a short-Saga adopter. Select and report that proof through the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); execution results belong in PR/CI evidence or the owning implementation tracker, not this normative contract. No finite repository-wide adopter registry is currently established from accepted workflow ownership and canonical service documents; broad current service-convention wiring is implementation drift, not an adopter allowlist. Service-local ownership remains governed by [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
   - Hosts define short, synchronous compensation-aware flows declaratively using the fluent API
   - Saga execution is initiated by services that can own synchronous retry/failure handling, but **coordination logic lives in the library**
   
@@ -397,7 +397,7 @@ This is a target-state branch illustration, not current implementation or proof.
 
 This design centralizes logic, improves visibility, and avoids coupling orchestration directly into gameplay services.
 The `common-saga` module provides a `SagaBuilder` class implementing this pattern. See [Shared Libraries Overview](./system-architecture-shared-libraries.md) for additional details.
-A concrete adopter's owning service document or tracker must record that classification before it exposes the library's accompanying Flyway migrations at `classpath:db/migration/saga`; module or convention inclusion alone does not establish Saga adoption. See [Mandatory Workflow Adopter Classification](#mandatory-workflow-adopter-classification) and [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
+A concrete adopter must satisfy [Mandatory Workflow Adopter Classification](#mandatory-workflow-adopter-classification) in its canonical owning-service architecture document or an accepted ADR before it exposes the library's accompanying Flyway migrations at `classpath:db/migration/saga`; module or convention inclusion alone does not establish Saga adoption. See [ADR 0080](./decisions/adr-0080-service-owned-schemas-with-adopter-local-shared-migrations.md).
 Example saga flows are documented in [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md)
 and in the Logging & Admin Service README.
 

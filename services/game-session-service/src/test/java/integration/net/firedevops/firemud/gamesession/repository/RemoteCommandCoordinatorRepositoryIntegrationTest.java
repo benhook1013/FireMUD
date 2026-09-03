@@ -238,6 +238,33 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     wrongOriginCoordinator.setLateResultPolicy("wrong-policy");
     coordinatorRepository.save(wrongOriginCoordinator);
 
+    RemoteCommandCoordinator wrongTargetGameInstance = remoteCoordinator(observedAt.plusSeconds(2));
+    wrongTargetGameInstance.setCoordinatorId("coord-wrong-target-game-instance");
+    wrongTargetGameInstance.setCommandId("cmd-wrong-target-game-instance");
+    wrongTargetGameInstance.setTargetGameInstanceId(8L);
+    wrongTargetGameInstance.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetGameInstance.setOriginDeadlineTickId(88L);
+    wrongTargetGameInstance.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetGameInstance);
+
+    RemoteCommandCoordinator wrongTargetRegion = remoteCoordinator(observedAt.plusSeconds(3));
+    wrongTargetRegion.setCoordinatorId("coord-wrong-target-region");
+    wrongTargetRegion.setCommandId("cmd-wrong-target-region");
+    wrongTargetRegion.setTargetRegionId("region-other");
+    wrongTargetRegion.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetRegion.setOriginDeadlineTickId(88L);
+    wrongTargetRegion.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetRegion);
+
+    RemoteCommandCoordinator wrongTargetEpoch = remoteCoordinator(observedAt.plusSeconds(4));
+    wrongTargetEpoch.setCoordinatorId("coord-wrong-target-epoch");
+    wrongTargetEpoch.setCommandId("cmd-wrong-target-epoch");
+    wrongTargetEpoch.setTargetRegionEpoch(99L);
+    wrongTargetEpoch.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetEpoch.setOriginDeadlineTickId(88L);
+    wrongTargetEpoch.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetEpoch);
+
     insertGameplayCommand("origin-exact-target", 1L, 9L, "region-target", 4L, "STAGED", "rf-1");
     RemoteFollowupResult exactResult =
         remoteResult("result-exact", observedAt, "REMOTE_APPLIED", "EXACT");
@@ -258,6 +285,8 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     assertThat(findFollowupsByTargetOutcome("STAGED", "wrong-policy")).isEmpty();
     assertThat(findFollowupsByTargetOutcome("STAGED", 99L, 0L, "")).isEmpty();
     assertThat(findFollowupsByTargetOutcome("STAGED", 0L, 999L, "")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", 77L, 88L, "")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", "wrong-target-policy")).isEmpty();
     assertThat(findFollowupsByTargetOutcome("STAGED", "exact-policy"))
         .extracting(RemoteFollowup::getFollowupId)
         .containsExactly("rf-1");

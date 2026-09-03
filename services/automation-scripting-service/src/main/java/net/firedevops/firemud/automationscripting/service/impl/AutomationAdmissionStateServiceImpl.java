@@ -37,19 +37,21 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
   @Override
   @Transactional
   public AdmissionStateSummary getState(String tenantId, String gameInstanceId, String regionId) {
-    String requiredTenantId = requireText(tenantId, "tenant_id");
-    String requiredGameInstanceId = requireText(gameInstanceId, "game_instance_id");
+    String normalizedTenantId = requireNormalizedScopeText(tenantId, "tenant_id");
+    String normalizedGameInstanceId =
+        requireNormalizedScopeText(gameInstanceId, "game_instance_id");
     // The first read may create the regional row. It must take the same instance-wide lock as
     // setMode so a concurrent mode mutation cannot be lost while both callers observe no row.
-    lockMutationScope(dsl, requiredTenantId, requiredGameInstanceId);
-    return toSummary(findOrCreate(requiredTenantId, requiredGameInstanceId, regionId));
+    lockMutationScope(dsl, normalizedTenantId, normalizedGameInstanceId);
+    return toSummary(findOrCreate(normalizedTenantId, normalizedGameInstanceId, regionId));
   }
 
   @Override
   @Transactional
   public AdmissionStateSummary setMode(SetAdmissionModeCommand command) {
-    String tenantId = requireText(command.tenantId(), "tenant_id");
-    String gameInstanceId = requireText(command.gameInstanceId(), "game_instance_id");
+    String tenantId = requireNormalizedScopeText(command.tenantId(), "tenant_id");
+    String gameInstanceId =
+        requireNormalizedScopeText(command.gameInstanceId(), "game_instance_id");
     String regionId = normalize(command.regionId());
     String mode = normalizeMode(command.mode());
     lockMutationScope(dsl, tenantId, gameInstanceId);
@@ -122,6 +124,14 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
       throw new IllegalArgumentException(fieldName + " is required");
     }
     return value;
+  }
+
+  private static String requireNormalizedScopeText(String value, String fieldName) {
+    String normalized = value == null ? "" : value.strip();
+    if (normalized.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " is required");
+    }
+    return normalized;
   }
 
   private static String normalize(String value) {

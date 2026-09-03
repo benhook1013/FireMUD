@@ -555,7 +555,8 @@ class RemoteFollowupRuntimeServiceImplTest {
   void scheduleFollowupAllowsRetryWhenLegacyStoredPartialRoutingBundleCollapsesToEmpty() {
     RemoteCommandCoordinator existingCoordinator = coordinator();
     existingCoordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE);
-    existingCoordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
+    existingCoordinator.setExecutionOutcome(
+        RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE);
     existingCoordinator.setGameplayResult("PENDING");
     existingCoordinator.setPointerVersion(null);
     RemoteFollowup existingFollowup = followup();
@@ -666,16 +667,14 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_PENDING_REMOTE, coordinator.getState());
     assertEquals(
-        RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE,
-        coordinator.getExecutionOutcome());
+        RemoteFollowupRuntimeServiceImpl.COMMAND_PENDING_REMOTE, coordinator.getExecutionOutcome());
     assertEquals("PENDING", coordinator.getGameplayResult());
     assertEquals(NOW.minusSeconds(1), coordinator.getUpdatedAt());
     assertEquals(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED, followup.getStatus());
     assertEquals("claimed-batch", followup.getClaimedTickBatchId());
     assertEquals(Long.valueOf(7L), followup.getClaimOrdinal());
     assertEquals(
-        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND,
-        followup.getQueueSourceKind());
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND, followup.getQueueSourceKind());
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED,
         followup.getQueueSourceState());
@@ -685,6 +684,78 @@ class RemoteFollowupRuntimeServiceImplTest {
     assertEquals("RETRYABLE_FAILURE", followup.getFailureCode());
     assertEquals("retry evidence", followup.getFailureMessage());
     assertEquals(NOW.minusSeconds(2), followup.getCreatedAt());
+    assertEquals(NOW.minusSeconds(1), followup.getUpdatedAt());
+    verify(coordinatorRepository, never()).save(any());
+    verify(followupRepository, never()).save(any());
+    verify(resultRepository, never()).save(any());
+    verify(gameplayCommandRepository, never()).save(any());
+    verifyNoInteractions(valueOperations);
+    assertEquals(
+        scheduledBefore,
+        meterRegistry.get("gamesession_remote_followup_scheduled_total").counter().count());
+  }
+
+  @Test
+  void scheduleFollowupReplaysTimedOutCoordinatorWithScheduledFollowupWithoutMutation() {
+    assertTimedOutCoordinatorRetryWithoutMutation(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
+  }
+
+  @Test
+  void scheduleFollowupReplaysTimedOutCoordinatorWithClaimedFollowupWithoutMutation() {
+    assertTimedOutCoordinatorRetryWithoutMutation(RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED);
+  }
+
+  private void assertTimedOutCoordinatorRetryWithoutMutation(String followupStatus) {
+    RemoteCommandCoordinator coordinator = coordinator();
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+    coordinator.setGameplayResult("TIMEOUT");
+    coordinator.setUpdatedAt(NOW.minusSeconds(1));
+    RemoteFollowup followup = followup();
+    followup.setStatus(followupStatus);
+    followup.setTargetEntityId("entity-9");
+    followup.setPayloadJson(
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
+    followup.setUpdatedAt(NOW.minusSeconds(1));
+    if (RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED.equals(followupStatus)) {
+      followup.setClaimedTickBatchId("claimed-batch");
+      followup.setClaimOrdinal(7L);
+      followup.setQueueSourceKind(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_KIND);
+      followup.setQueueSourceState(
+          RemoteFollowupRuntimeServiceImpl.FOLLOWUP_QUEUE_SOURCE_STATE_CLAIMED);
+      followup.setQueueSourceOrdinal(88L);
+      followup.setQueueSourceDueTickId(22L);
+      followup.setQueueSourceDueAtMs(1700L);
+    }
+    when(coordinatorRepository.findByTenantIdAndCommandId(1L, "cmd-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(followupRepository
+            .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
+                1L, 8L, "region-b", 8L, "effect-1"))
+        .thenReturn(Optional.of(followup));
+    when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
+    double scheduledBefore =
+        meterRegistry.get("gamesession_remote_followup_scheduled_total").counter().count();
+
+    RemoteFollowupRuntimeService.ScheduleOutcome outcome =
+        service.scheduleFollowup(scheduleRequest());
+
+    assertFalse(outcome.coordinatorCreated());
+    assertFalse(outcome.followupCreated());
+    assertEquals("coord-1", outcome.coordinatorId());
+    assertEquals("followup-1", outcome.followupId());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
+        coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, coordinator.getExecutionOutcome());
+    assertEquals("TIMEOUT", coordinator.getGameplayResult());
+    assertEquals(NOW.minusSeconds(1), coordinator.getUpdatedAt());
+    assertEquals(followupStatus, followup.getStatus());
     assertEquals(NOW.minusSeconds(1), followup.getUpdatedAt());
     verify(coordinatorRepository, never()).save(any());
     verify(followupRepository, never()).save(any());
@@ -721,7 +792,8 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
-        assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
 
     assertEquals(
         "remote coordinator and followup states must form a valid nonterminal pair",
@@ -846,7 +918,8 @@ class RemoteFollowupRuntimeServiceImplTest {
 
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_APPLIED, coordinator.getState());
-    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
     assertEquals("APPLIED", coordinator.getGameplayResult());
     assertEquals(NOW.minusSeconds(1), coordinator.getUpdatedAt());
     verify(coordinatorRepository, never()).save(any());
@@ -858,12 +931,18 @@ class RemoteFollowupRuntimeServiceImplTest {
   @Test
   void scheduleFollowupRejectsTerminalCoordinatorWithNonterminalFollowupBeforeMutation() {
     RemoteCommandCoordinator coordinator = coordinator();
-    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED);
+    coordinator.setState(RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED);
     coordinator.setExecutionOutcome(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
-    coordinator.setGameplayResult("TIMEOUT");
+    coordinator.setGameplayResult("ABANDONED");
     coordinator.setUpdatedAt(NOW.minusSeconds(1));
     RemoteFollowup followup = followup();
     followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED);
+    followup.setTargetEntityId("entity-9");
+    followup.setPayloadJson(
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}");
+    followup.setPayloadKind("enqueue_automation_command");
+    followup.setRequestedCommand("LOOK");
+    followup.setRequiresSoloTick(true);
     followup.setClaimedTickBatchId("pending-batch");
     followup.setClaimOrdinal(13L);
     followup.setQueueSourceState("pending-queue-state");
@@ -876,13 +955,16 @@ class RemoteFollowupRuntimeServiceImplTest {
         .thenReturn(Optional.of(followup));
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
 
-    assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+    assertEquals("remote coordinator and followup terminal states must match", ex.getMessage());
 
     assertEquals(
-        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_TIMEOUT_ABANDONED,
-        coordinator.getState());
-    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, coordinator.getExecutionOutcome());
-    assertEquals("TIMEOUT", coordinator.getGameplayResult());
+        RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED, coordinator.getState());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, coordinator.getExecutionOutcome());
+    assertEquals("ABANDONED", coordinator.getGameplayResult());
     assertEquals(NOW.minusSeconds(1), coordinator.getUpdatedAt());
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_SCHEDULED, followup.getStatus());
     assertEquals("pending-batch", followup.getClaimedTickBatchId());
@@ -926,7 +1008,8 @@ class RemoteFollowupRuntimeServiceImplTest {
 
     assertEquals(
         RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_APPLIED, coordinator.getState());
-    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
+    assertEquals(
+        RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED, coordinator.getExecutionOutcome());
     assertEquals("APPLIED", coordinator.getGameplayResult());
     assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, followup.getStatus());
     assertEquals("terminal-batch", followup.getClaimedTickBatchId());
@@ -958,10 +1041,12 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.empty());
 
     IllegalArgumentException ex =
-        assertThrows(IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
+        assertThrows(
+            IllegalArgumentException.class, () -> service.scheduleFollowup(scheduleRequest()));
 
     assertEquals(
-        "effect_key already maps to a different command_id on the target timeline", ex.getMessage());
+        "effect_key already maps to a different command_id on the target timeline",
+        ex.getMessage());
     verify(coordinatorRepository, never()).save(any());
     verify(followupRepository, never()).save(any());
     verify(gameplayCommandRepository, never()).save(any());

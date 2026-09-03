@@ -144,6 +144,14 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       boolean coordinatorTerminal =
           isTerminalCoordinatorState(existingCoordinator.get().getState());
       boolean followupTerminal = isTerminalFollowupStatus(existingFollowup.get().getStatus());
+      if (isRetryableTimeoutPair(
+          existingCoordinator.get().getState(), existingFollowup.get().getStatus())) {
+        return new ScheduleOutcome(
+            existingCoordinator.get().getCoordinatorId(),
+            existingFollowup.get().getFollowupId(),
+            false,
+            false);
+      }
       if (coordinatorTerminal != followupTerminal) {
         throw new IllegalArgumentException(
             "remote coordinator and followup terminal states must match");
@@ -356,14 +364,15 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     for (RemoteCommandCoordinator coordinator : pending) {
       if (!hasCompleteRuntimeScope(coordinator)) {
         logger.warn(
-            "Skipping remote timeout reconciliation for coordinator {} with incomplete runtime scope",
+            "Skipping remote timeout reconciliation for coordinator {} with incomplete runtime"
+                + " scope",
             coordinator == null ? null : coordinator.getCoordinatorId());
         continue;
       }
       if (!hasCompleteOriginDeadline(coordinator)) {
         logger.warn(
-            "Skipping remote timeout reconciliation for coordinator {} with incomplete origin deadline"
-                + " regionEpoch={} tickId={}",
+            "Skipping remote timeout reconciliation for coordinator {} with incomplete origin"
+                + " deadline regionEpoch={} tickId={}",
             coordinator.getCoordinatorId(),
             coordinator.getOriginDeadlineRegionEpoch(),
             coordinator.getOriginDeadlineTickId());
@@ -390,7 +399,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     for (RemoteCommandCoordinator coordinator : coordinators) {
       if (!hasCompleteRuntimeScope(coordinator)) {
         logger.warn(
-            "Skipping pending remote reconciliation for coordinator {} with incomplete runtime scope",
+            "Skipping pending remote reconciliation for coordinator {} with incomplete runtime"
+                + " scope",
             coordinator == null ? null : coordinator.getCoordinatorId());
         continue;
       }
@@ -425,7 +435,8 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     for (RemoteCommandCoordinator coordinator : coordinators) {
       if (!hasCompleteRuntimeScope(coordinator)) {
         logger.warn(
-            "Skipping late remote result reconciliation for coordinator {} with incomplete runtime scope",
+            "Skipping late remote result reconciliation for coordinator {} with incomplete runtime"
+                + " scope",
             coordinator == null ? null : coordinator.getCoordinatorId());
         continue;
       }
@@ -788,6 +799,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static boolean isValidNonterminalPair(String coordinatorState, String followupStatus) {
     return COORDINATOR_PENDING_REMOTE.equals(coordinatorState)
+        && (FOLLOWUP_SCHEDULED.equals(followupStatus)
+            || RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED.equals(followupStatus));
+  }
+
+  private static boolean isRetryableTimeoutPair(String coordinatorState, String followupStatus) {
+    return COORDINATOR_REMOTE_TIMEOUT_ABANDONED.equals(coordinatorState)
         && (FOLLOWUP_SCHEDULED.equals(followupStatus)
             || RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED.equals(followupStatus));
   }

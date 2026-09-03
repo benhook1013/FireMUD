@@ -263,17 +263,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Transactional(readOnly = true)
   public AutomationDrainStatusSummary getAutomationDrainStatus(
       String tenantId, String gameInstanceId, String regionId) {
-    requireText(tenantId, "tenant_id");
+    String normalizedTenantId = normalizeRegionId(tenantId);
+    requireText(normalizedTenantId, "tenant_id");
     String normalizedGameInstanceId = normalizeRegionId(gameInstanceId);
     requireText(normalizedGameInstanceId, "game_instance_id");
     String normalizedRegionId = normalizeRegionId(regionId);
     Instant now = Instant.now();
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
         automationAdmissionStateService.getState(
-            tenantId, normalizedGameInstanceId, normalizedRegionId);
+            normalizedTenantId, normalizedGameInstanceId, normalizedRegionId);
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-            tenantId, normalizedGameInstanceId, normalizedRegionId, DRAIN_RELEVANT_STATUSES);
+            normalizedTenantId,
+            normalizedGameInstanceId,
+            normalizedRegionId,
+            DRAIN_RELEVANT_STATUSES);
     List<ScriptWorkItem> countedWorkItems =
         "PAUSED_FOR_ROLLBACK".equals(admissionState.mode())
             ? scopedWorkItems.stream()
@@ -299,7 +303,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .filter(item -> STATUS_PENDING_EVALUATION.equals(item.getStatus()))
             .count();
     return new AutomationDrainStatusSummary(
-        tenantId,
+        normalizedTenantId,
         normalizedGameInstanceId,
         normalizedRegionId,
         admissionState.mode(),
