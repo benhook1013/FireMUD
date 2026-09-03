@@ -300,7 +300,7 @@ The `/auth/login` REST endpoint and the gRPC `Authenticate` method currently exp
 
 - `AUTH_INVALID_CREDENTIALS` - wrong username or unsupported/invalid login secret
 - `AUTH_RETRY_LATER` - a graduated credential-abuse throttle rejected the attempt; bounded retry metadata is supplied without confirming account existence
-- `AUTH_ACCOUNT_LOCKED` - durable account-security policy denies authentication after sufficient identity proof; arbitrary failed attempts must not use this as an account-existence oracle
+- `AUTH_ACCOUNT_LOCKED` - an active durable Account security lock denies authentication; its public outcome is disclosed only after sufficient identity proof or through the recovery path. The lock may be entered from verified or high-confidence compromise evidence, explicit Account security policy, or audited operator action; arbitrary failed attempts must not use this as an account-existence oracle
 - `AUTH_ABUSE_CONTROL_UNAVAILABLE` - shared credential-abuse enforcement is unavailable, so new player-facing authentication fails closed and may be retried
 - `AUTH_UNAVAILABLE` - the required authentication authority is unreachable or times out before authentication can complete; reachable stale, regressed, malformed, or mismatched authority evidence is a denial/revocation, not an availability result
 

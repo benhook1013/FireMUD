@@ -1108,13 +1108,18 @@ require_contains(
 )
 
 serialized_replay_first_pattern = re.compile(
-    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_.-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*replay\s*_\s*first\b",
     re.IGNORECASE,
 )
 serialized_bare_reset_pattern = re.compile(
-    r"[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"(?<![A-Za-z0-9_.-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
     r"[`'\" ]*reset[`'\" ]*(?![-_A-Za-z0-9])",
+    re.IGNORECASE,
+)
+serialized_reset_first_pattern = re.compile(
+    r"(?<![A-Za-z0-9_.-])[`'\" ]*compatibilityClass[`'\" ]*\s*(?:[=:]|\bis\b)\s*"
+    r"[`'\" ]*reset\s*_\s*first\b",
     re.IGNORECASE,
 )
 serialized_bare_reset_upgrade_pattern = re.compile(
@@ -1146,6 +1151,18 @@ for fixture_text in (
             f"canonical serialized replay-first token was incorrectly rejected: {fixture_text!r}"
         )
 for fixture_text in (
+    "myCompatibilityClass=replay_first",
+    '"myCompatibilityClass": "replay_first"',
+    "my-compatibilityClass=replay_first",
+    '"my-compatibilityClass": "replay_first"',
+    "config.compatibilityClass=replay_first",
+    '"config.compatibilityClass": "replay_first"',
+):
+    if serialized_replay_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"embedded replay_first field was incorrectly recognized: {fixture_text!r}"
+        )
+for fixture_text in (
     "compatibilityClass=reset",
     '"compatibilityClass": "reset"',
     "`compatibilityClass` is `reset`",
@@ -1161,6 +1178,51 @@ for fixture_text in (
     if serialized_bare_reset_pattern.search(fixture_text) is not None:
         raise SystemExit(
             f"canonical serialized reset-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "myCompatibilityClass=reset",
+    '"myCompatibilityClass": "reset"',
+    "my-compatibilityClass=reset",
+    '"my-compatibilityClass": "reset"',
+    "config.compatibilityClass=reset",
+    '"config.compatibilityClass": "reset"',
+):
+    if serialized_bare_reset_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"embedded bare reset field was incorrectly recognized: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset_first",
+    "compatibilityClass = reset _ first",
+    'compatibilityClass: "reset_first"',
+    '"compatibilityClass": "reset_first"',
+    "'compatibilityClass' : 'reset_first'",
+    "`compatibilityClass` is `reset_first`",
+):
+    if serialized_reset_first_pattern.search(fixture_text) is None:
+        raise SystemExit(
+            f"serialized reset_first fixture was not rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "compatibilityClass=reset-first",
+    '"compatibilityClass": "reset-first"',
+    "`compatibilityClass` is `reset-first`",
+):
+    if serialized_reset_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"canonical serialized reset-first token was incorrectly rejected: {fixture_text!r}"
+        )
+for fixture_text in (
+    "myCompatibilityClass=reset_first",
+    '"myCompatibilityClass": "reset_first"',
+    "my-compatibilityClass=reset_first",
+    '"my-compatibilityClass": "reset_first"',
+    "config.compatibilityClass=reset_first",
+    '"config.compatibilityClass": "reset_first"',
+):
+    if serialized_reset_first_pattern.search(fixture_text) is not None:
+        raise SystemExit(
+            f"unrelated serialized field identifier was incorrectly rejected: {fixture_text!r}"
         )
 for fixture_text in (
     "upgrade the class to `reset`",
@@ -1197,13 +1259,19 @@ for path in [
         raise SystemExit(
             f"{path}: bare reset must not be used as serialized compatibilityClass"
         )
+    if serialized_reset_first_pattern.search(serialized_text):
+        raise SystemExit(
+            f"{path}: reset_first must not be used as serialized compatibilityClass"
+        )
     if serialized_bare_reset_upgrade_pattern.search(serialized_text):
         raise SystemExit(
             f"{path}: bare reset upgrade must distinguish internal and serialized classes"
         )
 
 
-def extract_unique_markdown_section(text, heading, source_label):
+def extract_unique_markdown_section(
+    text, heading, source_label, include_fenced_content=True
+):
     heading_pattern = re.compile(
         rf"^[ ]{{0,3}}##[ \t]+{re.escape(heading)}(?:[ \t]+#+)?[ \t]*(?:\r?\n)?$"
     )
@@ -1215,7 +1283,7 @@ def extract_unique_markdown_section(text, heading, source_label):
 
     for line_number, line in iter_visible_markdown_lines(
         text,
-        include_fenced_content=True,
+        include_fenced_content=include_fenced_content,
         source_label=source_label,
     ):
         is_heading = not in_fenced_block and level_two_heading.match(line)
@@ -1245,8 +1313,12 @@ def extract_unique_markdown_section(text, heading, source_label):
     return sections[0].replace(html_comment_boundary, "")
 
 
-def require_section_contains_text(text, heading, snippets, source_label):
-    section = extract_unique_markdown_section(text, heading, source_label)
+def require_section_contains_text(
+    text, heading, snippets, source_label, include_fenced_content=True
+):
+    section = extract_unique_markdown_section(
+        text, heading, source_label, include_fenced_content=include_fenced_content
+    )
     missing = [snippet for snippet in snippets if snippet not in section]
     if missing:
         raise SystemExit(
@@ -1256,7 +1328,13 @@ def require_section_contains_text(text, heading, snippets, source_label):
 
 def require_section_contains(path, heading, snippets):
     text = (root / path).read_text(encoding="utf-8")
-    require_section_contains_text(text, heading, snippets, path)
+    require_section_contains_text(
+        text,
+        heading,
+        snippets,
+        path,
+        include_fenced_content=False,
+    )
 
 
 fenced_heading_fixture = (
@@ -1729,8 +1807,9 @@ if "`automation_script_triggers_dropped_total`" in catch_up_rows[0]:
     raise SystemExit(
         "system-architecture-scripting-normative-contract-tables.md: catch-up cluster denial uses ingress-drop metric"
     )
-require_contains(
+require_section_contains(
     "design/architecture/system-architecture-scripting-control-plane-api.md",
+    "Control Plane APIs (Normative)",
     [
         "bounded immutable `lastResetReason`",
         "bounded immutable `resetReason`",
@@ -1739,6 +1818,51 @@ require_contains(
         "`resetReason` is absent from lifecycle and trip rows",
         "persisted non-identity `playableStateNamespaceId` evidence",
         "`currentRuntimePlayableStateNamespaceId`",
+        "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted or blank `regionId` selects the exact empty/unscoped row and never a wildcard",
+        "For both this mutation and `GetAutomationDrainStatus`, `tenantId` and `gameInstanceId` are required nonblank after normalization",
+        "Normalization is deterministic and applied once at the API boundary",
+        "The bounded outcome vocabulary is `APPLIED` (the mode changed) or `ALREADY_APPLIED`",
+        "only those outcomes are successful acknowledgements",
+        "`statePresent=false`, `admissionMode=NORMAL`, `admissionEpoch=0`",
+        "never aggregates or matches regional rows",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-operations.md",
+    [
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime owner inventory",
+        "omitted or blank `regionId` selects only the durable empty/unscoped row and never aggregates regional rows",
+        "durable successful Set acknowledgement (`APPLIED` or `ALREADY_APPLIED`)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-rollout-and-rollback.md",
+    [
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
+        "Each Set must return and durably persist a successful `APPLIED` or `ALREADY_APPLIED` request-result acknowledgment",
+        "for every exact enumerated scope",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "may be applied as an initial emergency fence",
+        "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
+        "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
+        "live per-scope `SetAutomationAdmissionMode`/`GetAutomationDrainStatus` surfaces are not a recovery authorization",
+        "do not yet provide a durable request-result acknowledgement or matching readback identity",
+        "deployment-wide Automation containment only with explicit impact approval",
+        "durable request-result/fingerprint/acknowledgement readback before recovery proceeds",
+    ],
+)
+require_contains(
+    "design/operations/deployments/production/recovery/README.md",
+    [
+        "not a current recovery authorization",
+        "does not yet provide a durable request-result acknowledgement",
+        "deployment-wide Automation containment only with explicit impact approval",
+        "complete affected-scope enumeration from the durable PostgreSQL/runtime inventory",
+        "distinct durable deployment/owner acknowledgement plus authoritative readback",
     ],
 )
 require_absent(

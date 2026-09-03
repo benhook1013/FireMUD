@@ -187,8 +187,8 @@ Abuse defense follows a layered ownership model:
   - No credential decisions or durable account-state mutations.
 - **Credential/login abuse controls (Account Service)**:
   - Applies one policy across password and verified-email-code login over REST, gRPC, Telnet, and WebSocket-derived paths using trusted server-derived source context.
-  - Uses graduated source/account-candidate throttles and stable retry outcomes. Ordinary failed attempts never place an account into durable `security_locked`, because that would let an attacker lock a victim by username.
-  - Reserves `security_locked` for verified or high-confidence compromise, explicit security policy, or audited operator action, with revocation and recovery. Public failure behavior avoids account enumeration.
+  - Uses graduated source/account-candidate throttles and stable retry outcomes. Ordinary failed attempts and other attacker-controlled signals never authorize durable `security_locked`, because that would let an attacker lock a victim by username; they may produce only bounded temporary throttles or rejections.
+  - Durable `security_locked` is reserved for a compromise assessment supported by verified or high-confidence evidence, an explicit Account security policy, or an audited operator action. Entering that state advances Account authority generation, revokes ordinary account/bootstrap authority, and follows the Account-owned recovery lifecycle; failed-attempt thresholds remain temporary throttles or rejections. Public `AUTH_ACCOUNT_LOCKED` is disclosed only after sufficient identity proof or through the recovery path, so failure behavior remains non-enumerating.
   - Fails new credential-bearing authentication closed when shared abuse enforcement is unavailable in a player-facing environment; existing authenticated sessions continue under their normal authority.
 - **Post-auth gameplay abuse controls (Game Session Service)**:
   - Enforces ordinary per-session command budgets with a local token bucket on the current session front end rather than a Redis operation per command.
@@ -258,7 +258,7 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 | TLS Termination | Browser `https://`/`wss://` terminates at the Internet-facing load balancer; player-facing Telnet TLS terminates at the dedicated Telnet edge proxy or TCP Proxy Service |
 | Internal Encryption | Per-workload mTLS identities delivered via dedicated Kubernetes Secrets; shared CA trust and server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
-| Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces graduated credential/login throttles and high-confidence security locks; Game Session enforces local fast-path post-auth gameplay command limits |
+| Brute-Force Defense | Layered model: Gateway/TCP Proxy enforce edge transport throttles; Account Service enforces graduated credential/login throttles and Account-owned security locks; Game Session enforces local fast-path post-auth gameplay command limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
 | Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Player-facing deployments require Telnet-over-TLS or the web client and do not expose public plaintext ingress. |
 | Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |

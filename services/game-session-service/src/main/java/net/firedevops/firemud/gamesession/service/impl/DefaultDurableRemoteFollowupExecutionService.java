@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.MissingNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.util.Locale;
+import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
@@ -138,6 +139,19 @@ public final class DefaultDurableRemoteFollowupExecutionService
           "Durable remote followup execution could not load the linked coordinator");
     }
 
+    ExecutionScope executionScope;
+    try {
+      executionScope = validateExecutionScope(coordinator, followup);
+    } catch (IllegalArgumentException ex) {
+      remoteFollowupRuntimeService.abandonFollowup(
+          followup.getTenantId(),
+          followup.getFollowupId(),
+          "REMOTE_FOLLOWUP_SCOPE_INVALID",
+          ex.getMessage());
+      return new DurableRemoteFollowupExecutionResult(
+          "ABANDONED", "REMOTE_FOLLOWUP_SCOPE_INVALID", ex.getMessage());
+    }
+
     PayloadExecution payloadExecution = executePayload(coordinator, followup);
     if ("RETRY_QUEUED".equals(payloadExecution.effectStatus())) {
       retryFollowup(
@@ -156,10 +170,12 @@ public final class DefaultDurableRemoteFollowupExecutionService
             durableResultId(followup),
             coordinator.getCoordinatorId(),
             followup.getFollowupId(),
-            coordinator.getOriginRegionId(),
-            coordinator.getOriginRegionEpoch(),
-            followup.getTargetRegionId(),
-            followup.getTargetRegionEpoch(),
+            executionScope.originGameInstanceId(),
+            executionScope.originRegionId(),
+            executionScope.originRegionEpoch(),
+            executionScope.targetGameInstanceId(),
+            executionScope.targetRegionId(),
+            executionScope.targetRegionEpoch(),
             payloadExecution.outcome(),
             payloadExecution.resultPayloadJson(),
             payloadExecution.resultCommandId(),
@@ -169,6 +185,58 @@ public final class DefaultDurableRemoteFollowupExecutionService
         payloadExecution.effectStatus(),
         payloadExecution.failureCode(),
         payloadExecution.failureMessage());
+  }
+
+  private static ExecutionScope validateExecutionScope(
+      RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
+    Long coordinatorOriginRegionEpoch = coordinator.getOriginRegionEpoch();
+    Long coordinatorTargetRegionEpoch = coordinator.getTargetRegionEpoch();
+    Long followupOriginRegionEpoch = followup.getOriginRegionEpoch();
+    Long followupTargetRegionEpoch = followup.getTargetRegionEpoch();
+    if (coordinator.getOriginGameInstanceId() == null
+        || coordinator.getTargetGameInstanceId() == null
+        || followup.getOriginGameInstanceId() == null
+        || followup.getTargetGameInstanceId() == null
+        || coordinator.getOriginGameInstanceId() <= 0L
+        || coordinator.getTargetGameInstanceId() <= 0L
+        || followup.getOriginGameInstanceId() <= 0L
+        || followup.getTargetGameInstanceId() <= 0L
+        || coordinator.getOriginRegionId() == null
+        || coordinator.getOriginRegionId().isBlank()
+        || coordinator.getTargetRegionId() == null
+        || coordinator.getTargetRegionId().isBlank()
+        || followup.getOriginRegionId() == null
+        || followup.getOriginRegionId().isBlank()
+        || followup.getTargetRegionId() == null
+        || followup.getTargetRegionId().isBlank()
+        || coordinatorOriginRegionEpoch == null
+        || coordinatorTargetRegionEpoch == null
+        || followupOriginRegionEpoch == null
+        || followupTargetRegionEpoch == null
+        || coordinatorOriginRegionEpoch <= 0L
+        || coordinatorTargetRegionEpoch <= 0L
+        || followupOriginRegionEpoch <= 0L
+        || followupTargetRegionEpoch <= 0L) {
+      throw new IllegalArgumentException(
+          "Remote followup execution requires a complete origin and target scope");
+    }
+    if (!Objects.equals(coordinator.getOriginGameInstanceId(), followup.getOriginGameInstanceId())
+        || !Objects.equals(coordinator.getOriginRegionId(), followup.getOriginRegionId())
+        || !Objects.equals(coordinatorOriginRegionEpoch, followupOriginRegionEpoch)
+        || !Objects.equals(
+            coordinator.getTargetGameInstanceId(), followup.getTargetGameInstanceId())
+        || !Objects.equals(coordinator.getTargetRegionId(), followup.getTargetRegionId())
+        || !Objects.equals(coordinatorTargetRegionEpoch, followupTargetRegionEpoch)) {
+      throw new IllegalArgumentException(
+          "Remote followup execution scope does not match its coordinator");
+    }
+    return new ExecutionScope(
+        coordinator.getOriginGameInstanceId(),
+        coordinator.getOriginRegionId(),
+        coordinatorOriginRegionEpoch,
+        coordinator.getTargetGameInstanceId(),
+        coordinator.getTargetRegionId(),
+        coordinatorTargetRegionEpoch);
   }
 
   private static String durableResultId(RemoteFollowup followup) {
@@ -887,6 +955,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
       String resultCommandId,
       String resultErrorCode,
       String resultMessage) {}
+
+  private record ExecutionScope(
+      long originGameInstanceId,
+      String originRegionId,
+      long originRegionEpoch,
+      long targetGameInstanceId,
+      String targetRegionId,
+      long targetRegionEpoch) {}
 
   private record TargetPointerResolution(
       GameplayAdmissionPointerSnapshot pointer, String errorCode, String errorMessage) {

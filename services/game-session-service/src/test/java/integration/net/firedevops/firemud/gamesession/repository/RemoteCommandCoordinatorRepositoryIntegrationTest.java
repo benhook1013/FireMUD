@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
@@ -57,24 +58,622 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE remote_followup_result, remote_followup, remote_command_coordinator RESTART IDENTITY CASCADE");
+        "TRUNCATE TABLE gameplay_command, runtime_region_status, remote_followup_result,"
+            + " remote_followup, remote_command_coordinator RESTART IDENTITY CASCADE");
   }
 
   @Test
   void findForControlPlaneUsesIdTieBreakForLatestResultFilters() {
     Instant sharedObservedAt = Instant.parse("2026-06-25T12:00:00Z");
 
-    coordinatorRepository.save(remoteCoordinator(sharedObservedAt));
+    RemoteCommandCoordinator exactCoordinator = remoteCoordinator(sharedObservedAt);
+    coordinatorRepository.save(exactCoordinator);
     followupRepository.save(remoteFollowup(sharedObservedAt));
     resultRepository.save(
         remoteResult("result-older", sharedObservedAt, "REMOTE_APPLIED", "RATE_LIMIT"));
     resultRepository.save(
         remoteResult("result-newer", sharedObservedAt, "REMOTE_REJECTED", "INVALID_TARGET"));
+    RemoteFollowupResult wrongScope =
+        remoteResult("result-wrong-scope", sharedObservedAt.plusSeconds(1), "WRONG_SCOPE", "BAD");
+    wrongScope.setTargetGameInstanceId(7L);
+    wrongScope.setTargetRegionId("region-other");
+    wrongScope.setTargetRegionEpoch(99L);
+    resultRepository.save(wrongScope);
+    RemoteFollowupResult wrongOrigin =
+        remoteResult("result-wrong-origin", sharedObservedAt.plusSeconds(2), "WRONG_ORIGIN", "BAD");
+    wrongOrigin.setOriginGameInstanceId(6L);
+    wrongOrigin.setOriginRegionId("region-other");
+    wrongOrigin.setOriginRegionEpoch(99L);
+    resultRepository.save(wrongOrigin);
+    RemoteFollowupResult wrongFollowup =
+        remoteResult(
+            "result-wrong-followup", sharedObservedAt.plusSeconds(3), "WRONG_FOLLOWUP", "BAD");
+    wrongFollowup.setFollowupId("other-followup");
+    resultRepository.save(wrongFollowup);
 
     assertThat(findForLatestResult("REMOTE_APPLIED", "RATE_LIMIT")).isEmpty();
     assertThat(findForLatestResult("REMOTE_REJECTED", "INVALID_TARGET"))
         .extracting(RemoteCommandCoordinator::getCoordinatorId)
         .containsExactly("coord-1");
+    assertThat(findForLatestResult("WRONG_SCOPE", "BAD")).isEmpty();
+    assertThat(findForLatestResult("WRONG_ORIGIN", "BAD")).isEmpty();
+    assertThat(findForLatestResult("WRONG_FOLLOWUP", "BAD")).isEmpty();
+    assertThat(resultRepository.findLatestForCoordinator(exactCoordinator))
+        .get()
+        .extracting(RemoteFollowupResult::getResultId)
+        .isEqualTo("result-newer");
+    assertThat(resultRepository.findForCoordinatorScopes(List.of(exactCoordinator)))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-older", "result-newer");
+  }
+
+  @Test
+  void controlPlaneListJoinsRequireCompleteTargetScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+    coordinatorRepository.save(remoteCoordinator(observedAt));
+    followupRepository.save(remoteFollowup(observedAt));
+    resultRepository.save(
+        remoteResult("result-1", observedAt, "REMOTE_REJECTED", "INVALID_TARGET"));
+
+    insertGameplayCommand(
+        "same-tenant-wrong-instance", 1L, 7L, "region-target", 4L, "APPLIED", "rf-1");
+    insertGameplayCommand(
+        "same-tenant-wrong-region", 1L, 9L, "region-other", 4L, "APPLIED", "rf-1");
+    insertGameplayCommand(
+        "same-tenant-wrong-epoch", 1L, 9L, "region-target", 99L, "APPLIED", "rf-1");
+    insertGameplayCommand("exact-target", 1L, 9L, "region-target", 4L, "STAGED", "rf-1");
+    insertGameplayCommand(
+        "same-target-wrong-followup", 1L, 9L, "region-target", 4L, "APPLIED", "other-followup");
+    insertGameplayCommand("foreign-target", 2L, 9L, "region-target", 4L, "APPLIED", null);
+    dsl.execute(
+        "UPDATE remote_followup_result SET result_command_id = ? WHERE result_id = ?",
+        "same-target-wrong-followup",
+        "result-1");
+
+    assertThat(findCoordinatorsByTargetOutcome("APPLIED")).isEmpty();
+    assertThat(findCoordinatorsByTargetOutcome("STAGED"))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByTargetOutcome("APPLIED")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED"))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCommandOutcome("APPLIED")).isEmpty();
+
+    dsl.execute(
+        "UPDATE remote_followup_result SET result_command_id = ? WHERE result_id = ?",
+        "foreign-target",
+        "result-1");
+    assertThat(findResultsByCommandOutcome("APPLIED")).isEmpty();
+
+    dsl.execute(
+        "UPDATE remote_followup_result SET result_command_id = ? WHERE result_id = ?",
+        "exact-target",
+        "result-1");
+    assertThat(findResultsByCommandOutcome("STAGED"))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-1");
+  }
+
+  @Test
+  void followupControlPlaneListUsesCurrentTargetScopeForStaleFollowup() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+    coordinatorRepository.save(remoteCoordinator(observedAt));
+    followupRepository.save(remoteFollowup(observedAt));
+    resultRepository.save(
+        remoteResult("result-current-target-scope", observedAt, "REMOTE_APPLIED", "EXACT"));
+    insertRuntimeRegionStatus(1L, 9L, "region-target", 4L);
+
+    assertThat(findCoordinatorsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCurrentTarget("region-target", 4L, 9L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-target-scope");
+
+    dsl.execute(
+        "UPDATE runtime_region_status SET region_id = ?, region_epoch = ?"
+            + " WHERE tenant_id = ? AND game_instance_id = ?",
+        "region-sibling",
+        99L,
+        1L,
+        9L);
+
+    assertThat(findCoordinatorsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
+    assertThat(findFollowupsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
+    assertThat(findResultsByCurrentTarget("region-target", 4L, 9L)).isEmpty();
+    assertThat(findCoordinatorsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCurrentTarget("region-sibling", 99L, 9L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-target-scope");
+  }
+
+  @Test
+  void controlPlaneListJoinsRequireExactCurrentOriginRegionScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+    coordinatorRepository.save(remoteCoordinator(observedAt));
+    followupRepository.save(remoteFollowup(observedAt));
+    resultRepository.save(
+        remoteResult("result-current-origin-scope", observedAt, "REMOTE_APPLIED", "EXACT"));
+    insertRuntimeRegionStatus(1L, 7L, "region-origin", 3L);
+
+    assertThat(findCoordinatorsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCurrentOrigin("region-origin", 3L, 7L))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-current-origin-scope");
+    assertThat(findCoordinatorsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+    assertThat(findFollowupsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+    assertThat(findResultsByCurrentOrigin("region-sibling", 99L, 7L)).isEmpty();
+  }
+
+  @Test
+  void controlPlaneQueriesRequireCompleteOriginScope() {
+    Instant observedAt = Instant.parse("2026-06-25T12:00:00Z");
+    RemoteCommandCoordinator exactCoordinator = remoteCoordinator(observedAt);
+    exactCoordinator.setLateResultPolicy("exact-policy");
+    coordinatorRepository.save(exactCoordinator);
+    followupRepository.save(remoteFollowup(observedAt));
+
+    RemoteCommandCoordinator wrongOriginCoordinator = remoteCoordinator(observedAt.plusSeconds(1));
+    wrongOriginCoordinator.setCoordinatorId("coord-wrong-origin");
+    wrongOriginCoordinator.setCommandId("cmd-wrong-origin");
+    wrongOriginCoordinator.setOriginGameInstanceId(6L);
+    wrongOriginCoordinator.setOriginRegionId("region-other");
+    wrongOriginCoordinator.setOriginRegionEpoch(99L);
+    wrongOriginCoordinator.setOriginDeadlineRegionEpoch(99L);
+    wrongOriginCoordinator.setOriginDeadlineTickId(999L);
+    wrongOriginCoordinator.setLateResultPolicy("wrong-policy");
+    coordinatorRepository.save(wrongOriginCoordinator);
+
+    RemoteCommandCoordinator wrongTargetGameInstance = remoteCoordinator(observedAt.plusSeconds(2));
+    wrongTargetGameInstance.setCoordinatorId("coord-wrong-target-game-instance");
+    wrongTargetGameInstance.setCommandId("cmd-wrong-target-game-instance");
+    wrongTargetGameInstance.setTargetGameInstanceId(8L);
+    wrongTargetGameInstance.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetGameInstance.setOriginDeadlineTickId(88L);
+    wrongTargetGameInstance.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetGameInstance);
+
+    RemoteCommandCoordinator wrongTargetRegion = remoteCoordinator(observedAt.plusSeconds(3));
+    wrongTargetRegion.setCoordinatorId("coord-wrong-target-region");
+    wrongTargetRegion.setCommandId("cmd-wrong-target-region");
+    wrongTargetRegion.setTargetRegionId("region-other");
+    wrongTargetRegion.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetRegion.setOriginDeadlineTickId(88L);
+    wrongTargetRegion.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetRegion);
+
+    RemoteCommandCoordinator wrongTargetEpoch = remoteCoordinator(observedAt.plusSeconds(4));
+    wrongTargetEpoch.setCoordinatorId("coord-wrong-target-epoch");
+    wrongTargetEpoch.setCommandId("cmd-wrong-target-epoch");
+    wrongTargetEpoch.setTargetRegionEpoch(99L);
+    wrongTargetEpoch.setOriginDeadlineRegionEpoch(77L);
+    wrongTargetEpoch.setOriginDeadlineTickId(88L);
+    wrongTargetEpoch.setLateResultPolicy("wrong-target-policy");
+    coordinatorRepository.save(wrongTargetEpoch);
+
+    insertGameplayCommand("origin-exact-target", 1L, 9L, "region-target", 4L, "STAGED", "rf-1");
+    RemoteFollowupResult exactResult =
+        remoteResult("result-exact", observedAt, "REMOTE_APPLIED", "EXACT");
+    exactResult.setResultCommandId("origin-exact-target");
+    resultRepository.save(exactResult);
+    RemoteFollowupResult wrongOriginResult =
+        remoteResult("result-wrong-origin", observedAt.plusSeconds(1), "REMOTE_APPLIED", "WRONG");
+    wrongOriginResult.setCoordinatorId("coord-wrong-origin");
+    wrongOriginResult.setOriginGameInstanceId(6L);
+    wrongOriginResult.setOriginRegionId("region-other");
+    wrongOriginResult.setOriginRegionEpoch(99L);
+    wrongOriginResult.setResultCommandId("origin-exact-target");
+    resultRepository.save(wrongOriginResult);
+
+    assertThat(findCoordinatorsByTargetOutcome("STAGED", "SCHEDULED"))
+        .extracting(RemoteCommandCoordinator::getCoordinatorId)
+        .containsExactly("coord-1");
+    assertThat(findFollowupsByTargetOutcome("STAGED", "wrong-policy")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", 99L, 0L, "")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", 0L, 999L, "")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", 77L, 88L, "")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", "wrong-target-policy")).isEmpty();
+    assertThat(findFollowupsByTargetOutcome("STAGED", "exact-policy"))
+        .extracting(RemoteFollowup::getFollowupId)
+        .containsExactly("rf-1");
+    assertThat(findResultsByCommandOutcome("STAGED", "effect-1", "wrong-policy")).isEmpty();
+    assertThat(findResultsByCommandOutcome("STAGED", "effect-1", "exact-policy"))
+        .extracting(RemoteFollowupResult::getResultId)
+        .containsExactly("result-exact");
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByTargetOutcome(
+      String targetCommandExecutionOutcome) {
+    return findCoordinatorsByTargetOutcome(targetCommandExecutionOutcome, "");
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByTargetOutcome(
+      String targetCommandExecutionOutcome, String followupStatus) {
+    return findCoordinatorsByTargetOutcome(
+        targetCommandExecutionOutcome, followupStatus, "", 0L, null, "", 0L, null);
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findCoordinatorsByTargetOutcome(
+        "",
+        "",
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
+        null);
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByCurrentTarget(
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return findCoordinatorsByTargetOutcome(
+        "",
+        "",
+        "",
+        0L,
+        null,
+        currentTargetRuntimeRegionId,
+        currentTargetRuntimeRegionEpoch,
+        currentTargetRuntimeGameInstanceId);
+  }
+
+  private java.util.List<RemoteCommandCoordinator> findCoordinatorsByTargetOutcome(
+      String targetCommandExecutionOutcome,
+      String followupStatus,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return coordinatorRepository.findForControlPlane(
+        1L, // tenantId
+        null, // originGameInstanceId
+        "", // originRegionId
+        0L, // originRegionEpoch
+        null, // targetGameInstanceId
+        "", // targetRegionId
+        0L, // targetRegionEpoch
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
+        currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
+        currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
+        currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId
+        "", // state
+        "", // followupId
+        "", // scriptId
+        "", // pluginId
+        "", // scriptPatchVersion
+        "", // pluginVersionId
+        "", // playableStateScope
+        "", // worldSlug
+        "", // realmSlug
+        null, // pointerVersion
+        "", // targetEntityId
+        "", // claimTargetAggregate
+        "", // effectKey
+        "", // payloadKind
+        "", // originSourceKind
+        "", // originSourceState
+        "", // automationWorkItemId
+        "", // eventType
+        "", // scriptEventId
+        "", // lateResultPolicy
+        "", // executionOutcome
+        "", // gameplayResult
+        followupStatus, // followupStatus
+        "", // followupClaimedTickBatchId
+        null, // followupRequiresSoloTick
+        "", // followupQueueSourceKind
+        "", // followupQueueSourceState
+        0L, // followupQueueSourceOrdinal
+        0L, // followupQueueSourceDueTickId
+        0L, // followupQueueSourceDueAtMs
+        "", // automationDispatchId
+        "", // commandId
+        "", // targetCommandId
+        targetCommandExecutionOutcome, // targetCommandExecutionOutcome
+        "", // targetCommandGameplayResult
+        "", // latestResultOutcome
+        "", // latestResultErrorCode
+        PageRequest.of(0, 20));
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(
+      String targetCommandExecutionOutcome) {
+    return findFollowupsByTargetOutcome(targetCommandExecutionOutcome, 0L, 0L, "");
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(
+      String targetCommandExecutionOutcome, String lateResultPolicy) {
+    return findFollowupsByTargetOutcome(targetCommandExecutionOutcome, 0L, 0L, lateResultPolicy);
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByCurrentTarget(
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return findFollowupsByTargetOutcome(
+        "",
+        0L,
+        0L,
+        "",
+        "",
+        0L,
+        null,
+        currentTargetRuntimeRegionId,
+        currentTargetRuntimeRegionEpoch,
+        currentTargetRuntimeGameInstanceId);
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(
+      String targetCommandExecutionOutcome,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId,
+      String lateResultPolicy) {
+    return findFollowupsByTargetOutcome(
+        targetCommandExecutionOutcome,
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
+        lateResultPolicy,
+        "",
+        0L,
+        null,
+        "",
+        0L,
+        null);
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findFollowupsByTargetOutcome(
+        "",
+        0L,
+        0L,
+        "",
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
+        null);
+  }
+
+  private java.util.List<RemoteFollowup> findFollowupsByTargetOutcome(
+      String targetCommandExecutionOutcome,
+      long originDeadlineRegionEpoch,
+      long originDeadlineTickId,
+      String lateResultPolicy,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return followupRepository.findForControlPlane(
+        1L, // tenantId
+        "", // targetRegionId
+        "", // status
+        null, // originGameInstanceId
+        "", // originRegionId
+        0L, // originRegionEpoch
+        null, // targetGameInstanceId
+        0L, // targetRegionEpoch
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
+        currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
+        currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
+        currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId
+        "", // followupId
+        "", // scriptId
+        "", // pluginId
+        "", // scriptPatchVersion
+        "", // pluginVersionId
+        "", // playableStateScope
+        "", // worldSlug
+        "", // realmSlug
+        null, // pointerVersion
+        "", // payloadKind
+        "", // originSourceKind
+        "", // originSourceState
+        "", // automationWorkItemId
+        "", // targetEntityId
+        "", // claimTargetAggregate
+        "", // effectKey
+        "", // failureCode
+        null, // requiresSoloTick
+        "", // claimedTickBatchId
+        "", // queueSourceKind
+        "", // queueSourceState
+        0L, // queueSourceOrdinal
+        0L, // queueSourceDueTickId
+        0L, // queueSourceDueAtMs
+        "", // requestedCommand
+        "", // eventType
+        "", // scriptEventId
+        originDeadlineRegionEpoch,
+        originDeadlineTickId,
+        lateResultPolicy,
+        "", // automationDispatchId
+        "", // commandId
+        "", // targetCommandId
+        targetCommandExecutionOutcome, // targetCommandExecutionOutcome
+        "", // targetCommandGameplayResult
+        PageRequest.of(0, 20));
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCommandOutcome(
+      String resultCommandExecutionOutcome) {
+    return findResultsByCommandOutcome(resultCommandExecutionOutcome, "", "");
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCommandOutcome(
+      String resultCommandExecutionOutcome, String effectKey, String lateResultPolicy) {
+    return findResultsByCommandOutcome(
+        resultCommandExecutionOutcome, effectKey, lateResultPolicy, "", 0L, null, "", 0L, null);
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCurrentOrigin(
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId) {
+    return findResultsByCommandOutcome(
+        "",
+        "",
+        "",
+        currentOriginRuntimeRegionId,
+        currentOriginRuntimeRegionEpoch,
+        currentOriginRuntimeGameInstanceId,
+        "",
+        0L,
+        null);
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCurrentTarget(
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return findResultsByCommandOutcome(
+        "",
+        "",
+        "",
+        "",
+        0L,
+        null,
+        currentTargetRuntimeRegionId,
+        currentTargetRuntimeRegionEpoch,
+        currentTargetRuntimeGameInstanceId);
+  }
+
+  private java.util.List<RemoteFollowupResult> findResultsByCommandOutcome(
+      String resultCommandExecutionOutcome,
+      String effectKey,
+      String lateResultPolicy,
+      String currentOriginRuntimeRegionId,
+      long currentOriginRuntimeRegionEpoch,
+      Long currentOriginRuntimeGameInstanceId,
+      String currentTargetRuntimeRegionId,
+      long currentTargetRuntimeRegionEpoch,
+      Long currentTargetRuntimeGameInstanceId) {
+    return resultRepository.findForControlPlane(
+        1L, // tenantId
+        "", // coordinatorId
+        "", // followupId
+        null, // originGameInstanceId
+        "", // originRegionId
+        0L, // originRegionEpoch
+        null, // targetGameInstanceId
+        "", // targetRegionId
+        0L, // targetRegionEpoch
+        currentOriginRuntimeRegionId, // currentOriginRuntimeRegionId
+        currentOriginRuntimeRegionEpoch, // currentOriginRuntimeRegionEpoch
+        currentOriginRuntimeGameInstanceId, // currentOriginRuntimeGameInstanceId
+        currentTargetRuntimeRegionId, // currentTargetRuntimeRegionId
+        currentTargetRuntimeRegionEpoch, // currentTargetRuntimeRegionEpoch
+        currentTargetRuntimeGameInstanceId, // currentTargetRuntimeGameInstanceId
+        "", // outcome
+        "", // scriptId
+        "", // pluginId
+        "", // scriptPatchVersion
+        "", // pluginVersionId
+        "", // playableStateScope
+        "", // worldSlug
+        "", // realmSlug
+        null, // pointerVersion
+        "", // resultErrorCode
+        "", // automationWorkItemId
+        "", // resultCommandId
+        resultCommandExecutionOutcome, // resultCommandExecutionOutcome
+        "", // resultCommandGameplayResult
+        "", // targetEntityId
+        "", // claimTargetAggregate
+        effectKey, // effectKey
+        "", // failureCode
+        "", // payloadKind
+        "", // originSourceKind
+        "", // originSourceState
+        "", // eventType
+        "", // scriptEventId
+        "", // resultMessage
+        null, // requiresSoloTick
+        "", // queueSourceKind
+        "", // queueSourceState
+        0L, // queueSourceOrdinal
+        0L, // queueSourceDueTickId
+        0L, // queueSourceDueAtMs
+        lateResultPolicy, // lateResultPolicy
+        "", // claimedTickBatchId
+        "", // automationDispatchId
+        "", // commandId
+        PageRequest.of(0, 20));
+  }
+
+  private void insertGameplayCommand(
+      String commandId,
+      long tenantId,
+      long gameInstanceId,
+      String regionId,
+      long regionEpoch,
+      String executionOutcome,
+      String remoteFollowupId) {
+    dsl.execute(
+        """
+        INSERT INTO gameplay_command
+            (command_id, tenant_id, game_instance_id, session_id, command_name,
+             sanitized_command_text, requires_solo_tick, execution_outcome,
+             gameplay_result, accepted_at, attempt_count, enqueue_seq, region_id,
+             region_epoch, remote_followup_id)
+        VALUES (?, ?, ?, 0, 'LOOK', 'LOOK', false, ?, 'PENDING',
+                TIMESTAMP '2026-06-25 12:00:00', 0,
+                nextval('gameplay_command_enqueue_seq_seq'), ?, ?, ?)
+        """,
+        commandId,
+        tenantId,
+        gameInstanceId,
+        executionOutcome,
+        regionId,
+        regionEpoch,
+        remoteFollowupId);
+  }
+
+  private void insertRuntimeRegionStatus(
+      long tenantId, long gameInstanceId, String regionId, long regionEpoch) {
+    dsl.execute(
+        """
+        INSERT INTO runtime_region_status
+            (tenant_id, game_instance_id, region_epoch, executor_fence, owner_service,
+             owner_instance_id, paused, updated_at, last_committed_tick_id, region_id)
+        VALUES (?, ?, ?, 'fence-sibling', 'game-session-service', 'runtime-sibling', false,
+                TIMESTAMP '2026-06-25 12:00:00', 0, ?)
+        """,
+        tenantId,
+        gameInstanceId,
+        regionEpoch,
+        regionId);
   }
 
   private java.util.List<RemoteCommandCoordinator> findForLatestResult(

@@ -25,7 +25,7 @@ Distinct-instance remote follow-up has bounded durable coordinator/follow-up per
 ## Packet 4 Status and Proof Gaps
 
 - `GR-1.1` / `GR-1.4`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) adds the runtime local consequence that admission and reconnects must use the active playable-state namespace and `playableStateScope`/instance fence. Existing pointer, handoff, drain, and route-swap gaps remain; current Game Session evidence does not prove replacement-state migration or cleanup.
-- `AR-3.1`: [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) keeps the durable lifecycle row/epoch authoritative while Temporal coordinates. Current workflow/lifecycle evidence remains partial and does not prove owner acknowledgement aggregation or `TERMINATED` cleanup completion.
+- `AR-3.1`: Current Game Session lifecycle uses staged local state and separate runtime mutation/finalization transactions; focused failure-path proof exists, but stable lifecycle-operation identity, durable lifecycle readback/reconciliation, owner-acknowledgement aggregation, and `TERMINATED` cleanup completion remain unimplemented or unproved. [ADR 0123](../../architecture/decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md) remains the canonical owner for the database-authoritative lifecycle and Temporal-coordination contract; this tracker records only Game Session implementation consequences.
 
 These links add decision provenance only; they do not upgrade any Game Session implementation or verification state.
 

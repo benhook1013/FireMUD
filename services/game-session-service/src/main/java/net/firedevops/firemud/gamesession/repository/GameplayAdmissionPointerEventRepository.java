@@ -31,7 +31,9 @@ public class GameplayAdmissionPointerEventRepository {
                 .WORLD_SLUG
                 .eq(worldSlug)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc())
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
+            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
@@ -45,7 +47,9 @@ public class GameplayAdmissionPointerEventRepository {
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc())
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
+            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 

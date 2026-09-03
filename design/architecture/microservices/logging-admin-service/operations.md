@@ -19,4 +19,4 @@ This document collects Logging & Admin operational behavior, readiness expectati
 ## Operator Workflows
 
 - Tick and coordination remediation actions must be issued through Game Session-owned control-plane APIs and documented runbooks; Logging & Admin records the operator action and resulting audit trail but does not mutate runtime coordination state itself.
-- Saga inspection is supported through `/sagas` and `/sagas/{id}/steps`, backed by the shared saga tables.
+- Saga inspection is supported through `/sagas` and `/sagas/{id}/steps`, backed by the shared saga tables in the Logging & Admin service schema. These current routes inspect Logging & Admin-local Saga rows only; they do not provide platform-wide adopter aggregation. Unknown Saga instances return not-found, while a known instance with no steps returns an empty list. If the conditional Saga/database beans are unavailable, the routes fail closed with `503 SAGA_DASHBOARD_UNAVAILABLE`.

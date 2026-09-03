@@ -1671,6 +1671,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
     RemoteFollowup followup = new RemoteFollowup();
     followup.setFollowupId(followupId);
     followup.setTenantId(1L);
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("region-origin");
+    followup.setOriginRegionEpoch(4L);
     followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-target");
     followup.setTargetRegionEpoch(8L);
@@ -1693,8 +1696,12 @@ class AutomationGameplayCommandAdmissionSupportTest {
     coordinator.setCoordinatorId("coord-" + followupId);
     coordinator.setTenantId(1L);
     coordinator.setFollowupId(followupId);
+    coordinator.setOriginGameInstanceId(7L);
     coordinator.setOriginRegionId("region-origin");
     coordinator.setOriginRegionEpoch(4L);
+    coordinator.setTargetGameInstanceId(9L);
+    coordinator.setTargetRegionId("region-target");
+    coordinator.setTargetRegionEpoch(8L);
     coordinator.setAutomationDispatchId("dispatch-1");
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");

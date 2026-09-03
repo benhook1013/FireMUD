@@ -67,6 +67,19 @@ class GameSessionGrpcAuthInterceptorTest {
   }
 
   @Test
+  void rejectsMissingTokenForAutomationHandoff() {
+    TestServerCall call =
+        new TestServerCall(
+            GameSessionControlPlaneServiceGrpc.getEnqueueAutomationCommandIfAbsentMethod()
+                .getFullMethodName());
+    Metadata headers = new Metadata();
+
+    interceptor.interceptCall(call, headers, (c, h) -> new ServerCall.Listener<>() {});
+
+    assertEquals(Status.UNAUTHENTICATED.getCode(), call.status.getCode());
+  }
+
+  @Test
   void allowsValidTokenForMutableMethods() {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("player")));
     TestServerCall call =

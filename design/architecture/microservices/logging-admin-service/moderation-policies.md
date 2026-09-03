@@ -16,7 +16,7 @@ FireMUD's fixed safety vocabulary has exactly these five categories. The `/moder
 
 | Category | Purpose | Enforcement owner | Scope and effect |
 | --- | --- | --- | --- |
-| `account_security_lock` | Protective response to verified or high-confidence compromise | Account Service | Global account subject; revokes ordinary account/bootstrap authority and clears only through Account security recovery |
+| `account_security_lock` | Protective response to a compromise assessment supported by verified or high-confidence evidence | Account Service | Global account subject; revokes ordinary account/bootstrap authority and clears only through Account security recovery |
 | `platform_access_ban` | Punitive denial of ordinary platform access | Account Service | Global account subject across tenants; survives credential reset/security recovery and changes only through a later authorized revision |
 | `gameplay_ban` | Punitive denial of gameplay | Game Session Service | Exact tenant or exact tenant-and-realm scope; fences `PLAY`, new gameplay command admission, and covered active bindings |
 | `chat_mute` | Restriction on sending communication | Social & Groups Service | Exact tenant, tenant-and-realm, or tenant/realm/channel scope; blocks sending while ordinary receipt remains available |

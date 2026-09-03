@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -13,10 +15,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
@@ -31,6 +36,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
   private GameInstanceRepository repository;
@@ -79,7 +85,130 @@ class GameInstanceServiceImplTest {
 
     assertEquals("RUNNING", dto.status());
     verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(2)).saveState(states.capture());
+    assertEquals("STARTING", states.getAllValues().get(0).status());
+    assertEquals("RUNNING", states.getAllValues().get(1).status());
+  }
+
+  @Test
+  void startSessionDoesNotCompensateWhenStartedMetricFails() {
+    MeterRegistry failingMeterRegistry = mock(MeterRegistry.class);
+    when(failingMeterRegistry.counter("game_sessions_started_total"))
+        .thenThrow(new IllegalStateException("metrics unavailable"));
+    service =
+        new GameInstanceServiceImpl(
+            repository,
+            mapper,
+            stateService,
+            gameDesignClient,
+            null,
+            worldManagementClient,
+            null,
+            null,
+            failingMeterRegistry,
+            immediateTransactionOperations());
+
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-metric-failure", 42L);
+
+    GameInstanceDto dto = service.startSession(request);
+
+    assertEquals("RUNNING", dto.status());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(stateService, never()).deleteState(1L, 10L);
+  }
+
+  @Test
+  void startSessionQuarantinesOwnerWhenWorldActivationFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-failure", 42L);
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_ACTIVATION_FAILED")
+                        .setMessage("activation failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService).saveState(states.capture());
+    assertEquals("STARTING", states.getValue().status());
+    verify(stateService, never()).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+    verify(repository, never()).deleteById(10L);
+    assertEquals("STARTING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void startSessionQuarantinesOwnerAfterAmbiguousWorldActivationResponse() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-activation-timeout", 42L);
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenThrow(new IllegalStateException("activation response timed out"));
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
     verify(stateService).saveState(any(GameInstanceDto.class));
+    verify(stateService, never()).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+    verify(repository, never()).deleteById(10L);
+    assertEquals("STARTING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void startSessionQuarantinesOwnerWhenRuntimeStateSaveFailsAfterActivation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-runtime-save-failure", 42L);
+    AtomicInteger saveCount = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (saveCount.incrementAndGet() == 2) {
+                throw new IllegalStateException("redis down");
+              }
+              return null;
+            })
+        .when(stateService)
+        .saveState(any(GameInstanceDto.class));
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(3)).saveState(states.capture());
+    assertEquals(
+        List.of("STARTING", "RUNNING", "STARTING"),
+        states.getAllValues().stream().map(GameInstanceDto::status).toList());
+    verify(stateService, never()).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+    verify(repository, never()).deleteById(10L);
+    assertEquals("STARTING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void startSessionQuarantinesOwnerWhenLocalFinalizationFailsAfterActivation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-finalization-failure", 42L);
+    doThrow(new IllegalStateException("local finalization failed"))
+        .when(mapper)
+        .toDto(any(GameInstance.class));
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    verify(worldManagementClient).activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(3)).saveState(states.capture());
+    assertEquals(
+        List.of("STARTING", "RUNNING", "STARTING"),
+        states.getAllValues().stream().map(GameInstanceDto::status).toList());
+    verify(stateService, never()).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+    verify(repository, never()).deleteById(10L);
+    assertEquals("STARTING", store.get(10L).getStatus());
   }
 
   @Test
@@ -126,11 +255,20 @@ class GameInstanceServiceImplTest {
     GameInstanceDto dto = service.startSession(request, true);
 
     verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
-    verify(stateService).saveState(any(GameInstanceDto.class));
+    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
     verify(stateService).deleteState(2L, 7L);
     verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
     verify(worldManagementClient)
-        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+        .terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), anyString(), eq("session replacement requested"));
+    ArgumentCaptor<GameInstance> savedInstances = ArgumentCaptor.forClass(GameInstance.class);
+    verify(repository, times(4)).save(savedInstances.capture());
+    assertEquals(
+        1,
+        savedInstances.getAllValues().stream()
+            .filter(instance -> Long.valueOf(7L).equals(instance.getId()))
+            .filter(instance -> "STOPPED".equals(instance.getStatus()))
+            .count());
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("RUNNING", store.get(dto.id()).getStatus());
   }
@@ -142,7 +280,7 @@ class GameInstanceServiceImplTest {
     service.startSession(request, false);
 
     verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
-    verify(stateService).saveState(any(GameInstanceDto.class));
+    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
   }
 
   @Test
@@ -154,8 +292,31 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(1L, 10L);
     verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
     verify(worldManagementClient)
-        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+        .terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), anyString(), eq("session stop requested"));
     assertEquals("STOPPED", dto.status());
+    assertEquals("STOPPED", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    AtomicInteger mapperCalls = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (mapperCalls.getAndIncrement() == 0) {
+                throw new IllegalStateException("local finalization failed");
+              }
+              return configureMappedDto(invocation.getArgument(0));
+            })
+        .when(mapper)
+        .toDto(any(GameInstance.class));
+
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    verify(worldManagementClient)
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), any(), any());
+    verify(mapper, times(2)).toDto(any(GameInstance.class));
     assertEquals("STOPPED", store.get(10L).getStatus());
   }
 
@@ -177,18 +338,32 @@ class GameInstanceServiceImplTest {
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
-    doThrow(new IllegalStateException("redis down")).when(stateService).saveState(any());
+    AtomicInteger saveCount = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              if (saveCount.incrementAndGet() == 1) {
+                throw new IllegalStateException("redis down");
+              }
+              return null;
+            })
+        .when(stateService)
+        .saveState(any());
 
     assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
     verify(stateService, never()).deleteState(2L, 7L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(2)).saveState(states.capture());
+    assertEquals(10L, states.getAllValues().get(0).id());
+    assertEquals(7L, states.getAllValues().get(1).id());
+    assertEquals("RUNNING", states.getAllValues().get(1).status());
     verify(worldManagementClient, never()).getWorldInstanceLifecycle(anyLong(), anyLong());
   }
 
   @Test
-  void startSessionWithReplacementRestoresExistingRunningStateWhenTerminationFails() {
+  void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationFails() {
     StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
@@ -207,9 +382,74 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
 
     assertEquals(1, store.size());
+    assertEquals("STOPPING", store.get(7L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService).deleteState(2L, 10L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(1)).saveState(states.capture());
+    assertEquals(10L, states.getValue().id());
+  }
+
+  @Test
+  void startSessionWithReplacementRestoresExistingStateWhenWorldLifecyclePreflightFails() {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+
+    assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
     verify(stateService).deleteState(2L, 7L);
-    verify(stateService, times(2)).saveState(any(GameInstanceDto.class));
+    verify(stateService).deleteState(2L, 10L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(2)).saveState(states.capture());
+    assertEquals(10L, states.getAllValues().get(0).id());
+    assertEquals(7L, states.getAllValues().get(1).id());
+    assertEquals("RUNNING", states.getAllValues().get(1).status());
+    verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+    verify(worldManagementClient)
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), anyString());
+    verify(repository).deleteById(10L);
+  }
+
+  @Test
+  void startSessionDoesNotResurrectReplacedSessionWhenActivationFails() {
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-activation-failure", 42L);
+    persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_ACTIVATION_FAILED")
+                        .setMessage("activation failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    assertEquals("STARTING", store.get(10L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService, times(1)).saveState(any(GameInstanceDto.class));
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+    verify(repository, never()).deleteById(10L);
   }
 
   @Test
@@ -226,7 +466,7 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
-  void stopSessionLeavesStoppingRowWhenWorldTerminationFails() {
+  void stopSessionLeavesStoppingStateWhenWorldTerminationFailsAfterRequest() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), any(), any()))
@@ -242,8 +482,34 @@ class GameInstanceServiceImplTest {
     assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
 
     verify(stateService).deleteState(1L, 10L);
-    verify(stateService, never()).saveState(any());
+    verify(stateService, never()).saveState(any(GameInstanceDto.class));
     assertEquals("STOPPING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionRestoresExistingStateWhenWorldLifecyclePreflightFails() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
+
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService).saveState(states.capture());
+    assertEquals(10L, states.getValue().id());
+    assertEquals("RUNNING", states.getValue().status());
+    verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
 
   private void configureRepositoryPersistence() {
@@ -290,23 +556,23 @@ class GameInstanceServiceImplTest {
 
   private void configureMapper() {
     when(mapper.toDto(any(GameInstance.class)))
-        .thenAnswer(
-            invocation -> {
-              GameInstance entity = invocation.getArgument(0);
-              return new GameInstanceDto(
-                  entity.getId(),
-                  entity.getTenantId(),
-                  entity.getRuntimeVersion(),
-                  entity.getScriptPatchVersion(),
-                  entity.getGameTemplateId(),
-                  entity.getLaunchDescriptorId(),
-                  entity.getVersionId(),
-                  entity.getReleaseBundleId(),
-                  entity.getVersionStateEpoch(),
-                  entity.getGenerationConfigRevision(),
-                  entity.getOwnerAccountId(),
-                  entity.getStatus());
-            });
+        .thenAnswer(invocation -> configureMappedDto(invocation.getArgument(0)));
+  }
+
+  private GameInstanceDto configureMappedDto(GameInstance entity) {
+    return new GameInstanceDto(
+        entity.getId(),
+        entity.getTenantId(),
+        entity.getRuntimeVersion(),
+        entity.getScriptPatchVersion(),
+        entity.getGameTemplateId(),
+        entity.getLaunchDescriptorId(),
+        entity.getVersionId(),
+        entity.getReleaseBundleId(),
+        entity.getVersionStateEpoch(),
+        entity.getGenerationConfigRevision(),
+        entity.getOwnerAccountId(),
+        entity.getStatus());
   }
 
   private void configureLaunchPreflight() {

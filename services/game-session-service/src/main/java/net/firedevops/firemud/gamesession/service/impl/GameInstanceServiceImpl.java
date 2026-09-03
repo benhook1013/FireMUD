@@ -134,10 +134,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         inTransaction(
             () -> stageStartSession(request, resolvedLaunchDescriptor, replaceExistingFirst),
             "stage session start");
-    GameInstanceDto runtimeState = withStatus(stage.startingState(), STATUS_RUNNING);
+    GameInstanceDto runtimeState = withStatus(stage.startingState(), STATUS_STARTING);
     boolean newStateSaved = false;
-    boolean oldStateDeleted = false;
+    boolean oldWorldTerminationRequested = false;
+    boolean oldWorldTerminationCompleted = false;
+    boolean oldSessionStopped = false;
+    boolean worldActivationMayHaveCommitted = false;
     PreparedWorldInstance preparedWorldInstance = null;
+    GameInstanceDto finalized;
     try {
       validateStartDependencies();
       preparedWorldInstance =
@@ -147,35 +151,66 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceDto existingRunningState = stage.existingRunningState();
       if (existingRunningState != null) {
         sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
-        oldStateDeleted = true;
+        long existingWorldLifecycleEpoch = readWorldInstanceLifecycleEpoch(existingRunningState);
+        oldWorldTerminationRequested = true;
         terminateWorldInstance(
             existingRunningState,
-            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID());
+            existingWorldLifecycleEpoch,
+            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID(),
+            "session replacement requested");
+        oldWorldTerminationCompleted = true;
+        inTransaction(
+            () -> {
+              markSessionStopped(existingRunningState.id());
+              return null;
+            },
+            "finalize replaced session stop");
+        oldSessionStopped = true;
       }
-      GameInstanceDto finalized =
-          inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
+      worldActivationMayHaveCommitted = true;
       activatePreparedWorldInstance(preparedWorldInstance);
-      meterRegistry.counter("game_sessions_started_total").increment();
-      return finalized;
+      runtimeState = withStatus(stage.startingState(), STATUS_RUNNING);
+      sessionStateService.saveState(runtimeState);
+      finalized = inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
     } catch (RuntimeException ex) {
       compensateStartFailure(
-          stage, runtimeState, newStateSaved, oldStateDeleted, preparedWorldInstance);
+          stage,
+          runtimeState,
+          newStateSaved,
+          oldWorldTerminationRequested,
+          oldWorldTerminationCompleted,
+          oldSessionStopped,
+          worldActivationMayHaveCommitted,
+          preparedWorldInstance);
       throw ex;
     }
+    try {
+      meterRegistry.counter("game_sessions_started_total").increment();
+    } catch (RuntimeException metricFailure) {
+      logger.warn("Failed to record started game session metric", metricFailure);
+    }
+    return finalized;
   }
 
   @Override
   @Timed(value = "gamesession.stop")
   public GameInstanceDto stopSession(long sessionId) {
     GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
-    boolean stateDeleted = false;
+    boolean worldTerminationRequested = false;
+    boolean worldTerminationCompleted = false;
     try {
       sessionStateService.deleteState(runningState.tenantId(), runningState.id());
-      stateDeleted = true;
-      terminateWorldInstance(runningState, "session-stop-" + UUID.randomUUID());
+      long worldLifecycleEpoch = readWorldInstanceLifecycleEpoch(runningState);
+      worldTerminationRequested = true;
+      terminateWorldInstance(
+          runningState,
+          worldLifecycleEpoch,
+          "session-stop-" + UUID.randomUUID(),
+          "session stop requested");
+      worldTerminationCompleted = true;
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
-      compensateStopFailure(runningState, stateDeleted);
+      compensateStopFailure(runningState, worldTerminationRequested, worldTerminationCompleted);
       throw ex;
     }
   }
@@ -235,21 +270,21 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private GameInstanceDto finalizeStartedSession(StartSessionStage stage) {
-    GameInstanceDto existingRunningState = stage.existingRunningState();
-    if (existingRunningState != null) {
-      GameInstance existingRunning =
-          repository
-              .findById(existingRunningState.id())
-              .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-      existingRunning.setStatus(STATUS_STOPPED);
-      repository.save(existingRunning);
-    }
     GameInstance instance =
         repository
             .findById(stage.startingState().id())
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     instance.setStatus(STATUS_RUNNING);
     return mapper.toDto(repository.save(instance));
+  }
+
+  private void markSessionStopped(long sessionId) {
+    GameInstance existingRunning =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    existingRunning.setStatus(STATUS_STOPPED);
+    repository.save(existingRunning);
   }
 
   private GameInstanceDto stageStopSession(long sessionId) {
@@ -313,20 +348,21 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       StartSessionStage stage,
       GameInstanceDto runtimeState,
       boolean newStateSaved,
-      boolean oldStateDeleted,
+      boolean oldWorldTerminationRequested,
+      boolean oldWorldTerminationCompleted,
+      boolean oldSessionStopped,
+      boolean worldActivationMayHaveCommitted,
       @Nullable PreparedWorldInstance preparedWorldInstance) {
-    if (newStateSaved) {
+    if (newStateSaved && !worldActivationMayHaveCommitted) {
       runRollbackSafely(
           "delete failed started session state",
           () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));
     }
-    if (oldStateDeleted && stage.existingRunningState() != null) {
-      runRollbackSafely(
-          "restore replaced session state",
-          () -> sessionStateService.saveState(stage.existingRunningState()));
-    }
     GameInstanceDto existingRunningState = stage.existingRunningState();
-    if (existingRunningState != null) {
+    if (existingRunningState != null && !oldWorldTerminationRequested) {
+      runRollbackSafely(
+          "restore replaced session runtime state",
+          () -> sessionStateService.saveState(existingRunningState));
       runRollbackSafely(
           "restore replaced session row",
           () ->
@@ -341,26 +377,85 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   },
                   "restore replaced session row"));
     }
-    if (preparedWorldInstance != null && worldManagementClient != null) {
+    if (!worldActivationMayHaveCommitted
+        && preparedWorldInstance != null
+        && worldManagementClient != null) {
       runRollbackSafely(
           "fail prepared world instance",
           () ->
               failPreparedWorldInstance(
                   preparedWorldInstance, "session start failed before admission opened"));
     }
-    runRollbackSafely(
-        "delete failed starting session row",
-        () ->
-            inTransaction(
-                () -> {
-                  repository.deleteById(stage.startingState().id());
-                  return null;
-                },
-                "delete failed starting session row"));
+    if (worldActivationMayHaveCommitted) {
+      logger.warn(
+          "Quarantining session {} in STARTING after World activation may have committed",
+          stage.startingState().id());
+      if (STATUS_RUNNING.equals(runtimeState.status())) {
+        runRollbackSafely(
+            "restore quarantined starting session runtime state",
+            () ->
+                sessionStateService.saveState(withStatus(stage.startingState(), STATUS_STARTING)));
+      }
+      runRollbackSafely(
+          "retain quarantined starting session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    GameInstance starting =
+                        repository
+                            .findById(stage.startingState().id())
+                            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+                    starting.setStatus(STATUS_STARTING);
+                    repository.save(starting);
+                    return null;
+                  },
+                  "retain quarantined starting session row"));
+    } else {
+      runRollbackSafely(
+          "delete failed starting session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    repository.deleteById(stage.startingState().id());
+                    return null;
+                  },
+                  "delete failed starting session row"));
+    }
+    if (oldWorldTerminationCompleted && !oldSessionStopped && existingRunningState != null) {
+      runRollbackSafely(
+          "finalize terminated replaced session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    markSessionStopped(existingRunningState.id());
+                    return null;
+                  },
+                  "finalize terminated replaced session row"));
+    } else if (oldWorldTerminationRequested
+        && !oldWorldTerminationCompleted
+        && !oldSessionStopped
+        && existingRunningState != null) {
+      logger.warn(
+          "Leaving replaced session {} STOPPING after ambiguous World termination",
+          existingRunningState.id());
+    }
   }
 
-  private void compensateStopFailure(GameInstanceDto runningState, boolean stateDeleted) {
-    if (!stateDeleted) {
+  private void compensateStopFailure(
+      GameInstanceDto runningState,
+      boolean worldTerminationRequested,
+      boolean worldTerminationCompleted) {
+    if (worldTerminationCompleted) {
+      runRollbackSafely(
+          "finalize terminated session row",
+          () ->
+              inTransaction(
+                  () -> {
+                    finalizeStoppedSession(runningState.id());
+                    return null;
+                  },
+                  "finalize terminated session row"));
+    } else if (!worldTerminationRequested) {
       runRollbackSafely(
           "restore stopped session runtime state",
           () -> sessionStateService.saveState(runningState));
@@ -377,6 +472,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                     return null;
                   },
                   "restore stopping session row"));
+    } else {
+      logger.warn(
+          "Leaving session {} STOPPING with runtime state absent after ambiguous World termination",
+          runningState.id());
     }
   }
 
@@ -614,7 +713,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void terminateWorldInstance(GameInstanceDto runningState, String terminationRequestId) {
+  private long readWorldInstanceLifecycleEpoch(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world termination authority unavailable");
     }
@@ -626,14 +725,24 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               + ": "
               + lifecycleResponse.getError().getMessage());
     }
-    var lifecycle = lifecycleResponse.getWorldInstance();
+    return lifecycleResponse.getWorldInstance().getLifecycleEpoch();
+  }
+
+  private void terminateWorldInstance(
+      GameInstanceDto runningState,
+      long lifecycleEpoch,
+      String terminationRequestId,
+      String terminationReason) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException("world termination authority unavailable");
+    }
     var terminateResponse =
         worldManagementClient.terminateWorldInstance(
             runningState.tenantId(),
             runningState.id(),
-            lifecycle.getLifecycleEpoch(),
+            lifecycleEpoch,
             terminationRequestId,
-            "session stop requested");
+            terminationReason);
     if (terminateResponse.hasError()) {
       throw new IllegalArgumentException(
           terminateResponse.getError().getCode()

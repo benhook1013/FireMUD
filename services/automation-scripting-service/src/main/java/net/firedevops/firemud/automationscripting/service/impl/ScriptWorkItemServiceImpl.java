@@ -93,20 +93,23 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
+    String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
-                command.tenantId(), command.scriptPatchVersion(), CANCELABLE_STATUSES)
+                normalizedTenantId, command.scriptPatchVersion(), CANCELABLE_STATUSES)
             .stream()
             .filter(
                 item ->
-                    command.gameInstanceId().isBlank()
-                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+                    normalizedGameInstanceId.isBlank()
+                        || item.getGameInstanceId().equals(normalizedGameInstanceId))
             .filter(
                 item ->
-                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+                    normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
             .toList();
     return cancelCandidates(candidates, command.reason());
   }
@@ -114,24 +117,27 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.pluginVersionId(), "plugin_version_id");
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
+    String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
-                command.tenantId(),
+                normalizedTenantId,
                 command.pluginId(),
                 command.pluginVersionId(),
                 CANCELABLE_STATUSES)
             .stream()
             .filter(
                 item ->
-                    command.gameInstanceId().isBlank()
-                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+                    normalizedGameInstanceId.isBlank()
+                        || item.getGameInstanceId().equals(normalizedGameInstanceId))
             .filter(
                 item ->
-                    command.regionId().isBlank() || item.getRegionId().equals(command.regionId()))
+                    normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
             .toList();
     return cancelCandidates(candidates, command.reason());
   }
@@ -259,14 +265,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Transactional(readOnly = true)
   public AutomationDrainStatusSummary getAutomationDrainStatus(
       String tenantId, String gameInstanceId, String regionId) {
-    requireText(tenantId, "tenant_id");
-    requireText(gameInstanceId, "game_instance_id");
+    String normalizedTenantId = normalizeRegionId(tenantId);
+    requireText(normalizedTenantId, "tenant_id");
+    String normalizedGameInstanceId = normalizeRegionId(gameInstanceId);
+    requireText(normalizedGameInstanceId, "game_instance_id");
+    String normalizedRegionId = normalizeRegionId(regionId);
     Instant now = Instant.now();
     AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        automationAdmissionStateService.getState(tenantId, gameInstanceId, regionId);
+        automationAdmissionStateService.getState(
+            normalizedTenantId, normalizedGameInstanceId, normalizedRegionId);
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
-            tenantId, gameInstanceId, blankToEmpty(regionId), DRAIN_RELEVANT_STATUSES);
+            normalizedTenantId,
+            normalizedGameInstanceId,
+            normalizedRegionId,
+            DRAIN_RELEVANT_STATUSES);
     List<ScriptWorkItem> countedWorkItems =
         "PAUSED_FOR_ROLLBACK".equals(admissionState.mode())
             ? scopedWorkItems.stream()
@@ -292,9 +305,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .filter(item -> STATUS_PENDING_EVALUATION.equals(item.getStatus()))
             .count();
     return new AutomationDrainStatusSummary(
-        tenantId,
-        gameInstanceId,
-        blankToEmpty(regionId),
+        normalizedTenantId,
+        normalizedGameInstanceId,
+        normalizedRegionId,
         admissionState.mode(),
         admissionState.admissionEpoch(),
         activeExecutionCount,
@@ -452,11 +465,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public ReplayResult replayDeadLetters(ReplayDeadLettersCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     int boundedLimit = Math.min(Math.max(command.limit() <= 0 ? 50 : command.limit(), 1), 100);
     Instant now = Instant.now();
     String reason = normalizeReplayReason(command.reason());
-    List<ScriptWorkItem> candidates = selectReplayCandidates(command, boundedLimit);
+    List<ScriptWorkItem> candidates =
+        selectReplayCandidates(command, normalizedTenantId, boundedLimit);
     long replayed = 0L;
     long rejected = 0L;
     for (ScriptWorkItem item : candidates) {
@@ -654,6 +669,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     return value == null ? "" : value;
   }
 
+  private static String normalizeRegionId(String value) {
+    return value == null || value.isBlank() ? "" : value.strip();
+  }
+
   private record PublicationMetadata(
       long baseVersionId, String abilitySchemaDigest, ScriptPatchPublicationLink publication) {
     private PublicationMetadata {
@@ -750,33 +769,32 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
-      ReplayDeadLettersCommand command, int boundedLimit) {
+      ReplayDeadLettersCommand command, String normalizedTenantId, int boundedLimit) {
     if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
       return command.workItemIds().stream()
           .limit(boundedLimit)
           .map(ScriptWorkItemServiceImpl::parseWorkItemId)
           .map(workItemRepository::findById)
           .flatMap(Optional::stream)
-          .filter(item -> command.tenantId().equals(item.getTenantId()))
+          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
           .filter(item -> STATUS_DEAD_LETTERED.equals(item.getStatus()))
           .filter(item -> matchesReplayFilters(item, command))
           .toList();
     }
     return workItemRepository
         .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            command.tenantId(), STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
+            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
         .stream()
         .filter(item -> matchesReplayFilters(item, command))
         .toList();
   }
 
   private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
-    return (command.gameInstanceId() == null
-            || command.gameInstanceId().isBlank()
-            || item.getGameInstanceId().equals(command.gameInstanceId()))
-        && (command.regionId() == null
-            || command.regionId().isBlank()
-            || item.getRegionId().equals(command.regionId()))
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
+    String normalizedRegionId = normalizeRegionId(command.regionId());
+    return (normalizedGameInstanceId.isBlank()
+            || item.getGameInstanceId().equals(normalizedGameInstanceId))
+        && (normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
         && (command.scriptPatchVersion() == null
             || command.scriptPatchVersion().isBlank()
             || item.getScriptPatchVersion().equals(command.scriptPatchVersion()))
