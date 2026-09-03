@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageRequest;
@@ -144,8 +145,10 @@ class ScriptWorkItemServiceImplTest {
         readinessProjectionService);
   }
 
-  @Test
-  void cancelsPendingPatchWorkAndUpdatesAuditOutcome() {
+  @ParameterizedTest
+  @ValueSource(strings = {"game-1", " game-1 ", " "})
+  @NullAndEmptySource
+  void cancelsPendingPatchWorkAndUpdatesAuditOutcome(String gameInstanceId) {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(42L);
     item.setTenantId("1");
@@ -176,7 +179,7 @@ class ScriptWorkItemServiceImplTest {
     long canceled =
         service.cancelPendingForPatch(
             new ScriptWorkItemService.CancelPendingForPatchCommand(
-                "1", "patch-1", "game-1", " region-1 ", "req-1", "admin", "rollback"));
+                "1", "patch-1", gameInstanceId, " region-1 ", "req-1", "admin", "rollback"));
 
     assertThat(canceled).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("CANCELED");
@@ -229,8 +232,10 @@ class ScriptWorkItemServiceImplTest {
     verify(readinessProjectionService).refreshFromOnLoadWorkItems("1", "patch-1");
   }
 
-  @Test
-  void cancelsPendingPluginVersionWorkAndUpdatesAuditOutcome() {
+  @ParameterizedTest
+  @ValueSource(strings = {"game-1", " game-1 ", " "})
+  @NullAndEmptySource
+  void cancelsPendingPluginVersionWorkAndUpdatesAuditOutcome(String gameInstanceId) {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setId(43L);
     item.setTenantId("1");
@@ -264,7 +269,7 @@ class ScriptWorkItemServiceImplTest {
     long canceled =
         service.cancelPendingForPluginVersion(
             new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
-                "1", "plugin-1", "plugin-v1", "game-1", " region-1 ", "req-1", "admin", ""));
+                "1", "plugin-1", "plugin-v1", gameInstanceId, " region-1 ", "req-1", "admin", ""));
 
     assertThat(canceled).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("CANCELED");
@@ -1306,8 +1311,10 @@ class ScriptWorkItemServiceImplTest {
     assertThat(events.get(0).pointerVersion()).isBlank();
   }
 
-  @Test
-  void replaysEligibleDeadLetteredWorkItem() {
+  @ParameterizedTest
+  @ValueSource(strings = {"game-1", " game-1 ", " "})
+  @NullAndEmptySource
+  void replaysEligibleDeadLetteredWorkItem(String gameInstanceId) {
     ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     item.setId(77L);
     item.setTenantId("1");
@@ -1375,7 +1382,7 @@ class ScriptWorkItemServiceImplTest {
         service.replayDeadLetters(
             new ScriptWorkItemService.ReplayDeadLettersCommand(
                 "1",
-                "game-1",
+                gameInstanceId,
                 " region-1 ",
                 List.of("77"),
                 "patch-1",

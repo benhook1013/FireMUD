@@ -95,6 +95,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
     String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
@@ -103,8 +104,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .stream()
             .filter(
                 item ->
-                    command.gameInstanceId().isBlank()
-                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+                    normalizedGameInstanceId.isBlank()
+                        || item.getGameInstanceId().equals(normalizedGameInstanceId))
             .filter(
                 item ->
                     normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
@@ -118,6 +119,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(command.tenantId(), "tenant_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.pluginVersionId(), "plugin_version_id");
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
     String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
@@ -129,8 +131,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .stream()
             .filter(
                 item ->
-                    command.gameInstanceId().isBlank()
-                        || item.getGameInstanceId().equals(command.gameInstanceId()))
+                    normalizedGameInstanceId.isBlank()
+                        || item.getGameInstanceId().equals(normalizedGameInstanceId))
             .filter(
                 item ->
                     normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
@@ -778,10 +780,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
+    String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
     String normalizedRegionId = normalizeRegionId(command.regionId());
-    return (command.gameInstanceId() == null
-            || command.gameInstanceId().isBlank()
-            || item.getGameInstanceId().equals(command.gameInstanceId()))
+    return (normalizedGameInstanceId.isBlank()
+            || item.getGameInstanceId().equals(normalizedGameInstanceId))
         && (normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
         && (command.scriptPatchVersion() == null
             || command.scriptPatchVersion().isBlank()

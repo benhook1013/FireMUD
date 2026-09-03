@@ -1819,6 +1819,7 @@ require_section_contains(
         "persisted non-identity `playableStateNamespaceId` evidence",
         "`currentRuntimePlayableStateNamespaceId`",
         "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted or blank `regionId` selects the exact empty/unscoped row and never a wildcard",
+        "For both this mutation and `GetAutomationDrainStatus`, `tenantId` and `gameInstanceId` are required nonblank after normalization",
         "Normalization is deterministic and applied once at the API boundary",
         "The bounded outcome vocabulary is `APPLIED` (the mode changed) or `ALREADY_APPLIED`",
         "only those outcomes are successful acknowledgements",

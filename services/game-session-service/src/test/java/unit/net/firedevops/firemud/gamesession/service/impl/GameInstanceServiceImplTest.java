@@ -388,6 +388,42 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionWithReplacementRestoresExistingStateWhenWorldLifecyclePreflightFails() {
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+
+    assertEquals(1, store.size());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService).deleteState(2L, 10L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService, times(2)).saveState(states.capture());
+    assertEquals(10L, states.getAllValues().get(0).id());
+    assertEquals(7L, states.getAllValues().get(1).id());
+    assertEquals("RUNNING", states.getAllValues().get(1).status());
+    verify(worldManagementClient).getWorldInstanceLifecycle(2L, 7L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+    verify(worldManagementClient)
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), anyString());
+    verify(repository).deleteById(10L);
+  }
+
+  @Test
   void startSessionDoesNotResurrectReplacedSessionWhenActivationFails() {
     StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-activation-failure", 42L);
     persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
@@ -445,6 +481,33 @@ class GameInstanceServiceImplTest {
     verify(stateService).deleteState(1L, 10L);
     verify(stateService, never()).saveState(any(GameInstanceDto.class));
     assertEquals("STOPPING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionRestoresExistingStateWhenWorldLifecyclePreflightFails() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
+
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService).saveState(states.capture());
+    assertEquals(10L, states.getValue().id());
+    assertEquals("RUNNING", states.getValue().status());
+    verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
 
   private void configureRepositoryPersistence() {

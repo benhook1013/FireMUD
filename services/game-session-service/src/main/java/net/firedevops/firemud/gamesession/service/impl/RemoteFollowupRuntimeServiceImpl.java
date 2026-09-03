@@ -157,6 +157,16 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             false,
             false);
       }
+      if (!isValidNonterminalPair(
+          existingCoordinator.get().getState(), existingFollowup.get().getStatus())) {
+        throw new IllegalArgumentException(
+            "remote coordinator and followup states must form a valid nonterminal pair");
+      }
+      return new ScheduleOutcome(
+          existingCoordinator.get().getCoordinatorId(),
+          existingFollowup.get().getFollowupId(),
+          false,
+          false);
     }
 
     RemoteCommandCoordinator coordinator =
@@ -713,6 +723,12 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static boolean isTerminalFollowupStatus(String status) {
     return FOLLOWUP_APPLIED.equals(status) || FOLLOWUP_ABANDONED.equals(status);
+  }
+
+  private static boolean isValidNonterminalPair(String coordinatorState, String followupStatus) {
+    return COORDINATOR_PENDING_REMOTE.equals(coordinatorState)
+        && (FOLLOWUP_SCHEDULED.equals(followupStatus)
+            || RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED.equals(followupStatus));
   }
 
   private static boolean isValidTerminalPair(String coordinatorState, String followupStatus) {

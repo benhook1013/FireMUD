@@ -151,9 +151,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceDto existingRunningState = stage.existingRunningState();
       if (existingRunningState != null) {
         sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
+        long existingWorldLifecycleEpoch = readWorldInstanceLifecycleEpoch(existingRunningState);
         oldWorldTerminationRequested = true;
         terminateWorldInstance(
             existingRunningState,
+            existingWorldLifecycleEpoch,
             "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID());
         oldWorldTerminationCompleted = true;
         inTransaction(
@@ -197,8 +199,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     boolean worldTerminationCompleted = false;
     try {
       sessionStateService.deleteState(runningState.tenantId(), runningState.id());
+      long worldLifecycleEpoch = readWorldInstanceLifecycleEpoch(runningState);
       worldTerminationRequested = true;
-      terminateWorldInstance(runningState, "session-stop-" + UUID.randomUUID());
+      terminateWorldInstance(runningState, worldLifecycleEpoch, "session-stop-" + UUID.randomUUID());
       worldTerminationCompleted = true;
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
@@ -705,7 +708,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void terminateWorldInstance(GameInstanceDto runningState, String terminationRequestId) {
+  private long readWorldInstanceLifecycleEpoch(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world termination authority unavailable");
     }
@@ -717,12 +720,19 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               + ": "
               + lifecycleResponse.getError().getMessage());
     }
-    var lifecycle = lifecycleResponse.getWorldInstance();
+    return lifecycleResponse.getWorldInstance().getLifecycleEpoch();
+  }
+
+  private void terminateWorldInstance(
+      GameInstanceDto runningState, long lifecycleEpoch, String terminationRequestId) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException("world termination authority unavailable");
+    }
     var terminateResponse =
         worldManagementClient.terminateWorldInstance(
             runningState.tenantId(),
             runningState.id(),
-            lifecycle.getLifecycleEpoch(),
+            lifecycleEpoch,
             terminationRequestId,
             "session stop requested");
     if (terminateResponse.hasError()) {
