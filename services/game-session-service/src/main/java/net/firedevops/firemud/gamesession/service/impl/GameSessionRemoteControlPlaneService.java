@@ -1821,10 +1821,10 @@ final class GameSessionRemoteControlPlaneService {
         || followup == null
         || followup.getFollowupId() == null
         || followup.getFollowupId().isBlank()
-        || followup.getTargetGameInstanceId() == null
-        || followup.getTargetRegionId() == null
-        || followup.getTargetRegionId().isBlank()
-        || followup.getTargetRegionEpoch() <= 0) {
+        || !hasCompleteRuntimeScope(
+            followup.getTargetGameInstanceId(),
+            followup.getTargetRegionId(),
+            followup.getTargetRegionEpoch())) {
       return null;
     }
     return gameplayCommandRepository

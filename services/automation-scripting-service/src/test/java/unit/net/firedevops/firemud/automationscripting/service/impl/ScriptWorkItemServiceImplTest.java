@@ -180,7 +180,7 @@ class ScriptWorkItemServiceImplTest {
     long canceled =
         service.cancelPendingForPatch(
             new ScriptWorkItemService.CancelPendingForPatchCommand(
-                "1", "patch-1", gameInstanceId, " region-1 ", "req-1", "admin", "rollback"));
+                " 1 ", "patch-1", gameInstanceId, " region-1 ", "req-1", "admin", "rollback"));
 
     assertThat(canceled).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("CANCELED");
@@ -270,7 +270,14 @@ class ScriptWorkItemServiceImplTest {
     long canceled =
         service.cancelPendingForPluginVersion(
             new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
-                "1", "plugin-1", "plugin-v1", gameInstanceId, " region-1 ", "req-1", "admin", ""));
+                " 1 ",
+                "plugin-1",
+                "plugin-v1",
+                gameInstanceId,
+                " region-1 ",
+                "req-1",
+                "admin",
+                ""));
 
     assertThat(canceled).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("CANCELED");

@@ -93,14 +93,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public long cancelPendingForPatch(CancelPendingForPatchCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     requireText(command.scriptPatchVersion(), "script_patch_version");
     String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
     String normalizedRegionId = normalizeRegionId(command.regionId());
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndScriptPatchVersionAndStatusInOrderByCreatedAtAscIdAsc(
-                command.tenantId(), command.scriptPatchVersion(), CANCELABLE_STATUSES)
+                normalizedTenantId, command.scriptPatchVersion(), CANCELABLE_STATUSES)
             .stream()
             .filter(
                 item ->
@@ -116,7 +117,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public long cancelPendingForPluginVersion(CancelPendingForPluginVersionCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     requireText(command.pluginId(), "plugin_id");
     requireText(command.pluginVersionId(), "plugin_version_id");
     String normalizedGameInstanceId = normalizeRegionId(command.gameInstanceId());
@@ -124,7 +126,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     List<ScriptWorkItem> candidates =
         workItemRepository
             .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
-                command.tenantId(),
+                normalizedTenantId,
                 command.pluginId(),
                 command.pluginVersionId(),
                 CANCELABLE_STATUSES)

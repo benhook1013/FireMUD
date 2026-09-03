@@ -4783,6 +4783,34 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getRemoteFollowupDoesNotLinkTargetCommandForZeroTargetRegionEpoch() {
+    GetRemoteFollowupResponse response = projectRemoteFollowupWithTargetScope(9L, 0L);
+
+    assertEquals("", response.getFollowup().getTargetCommandId());
+  }
+
+  @Test
+  void getRemoteFollowupDoesNotLinkTargetCommandForNegativeTargetRegionEpoch() {
+    GetRemoteFollowupResponse response = projectRemoteFollowupWithTargetScope(9L, -1L);
+
+    assertEquals("", response.getFollowup().getTargetCommandId());
+  }
+
+  @Test
+  void getRemoteFollowupDoesNotLinkTargetCommandForZeroTargetGameInstanceId() {
+    GetRemoteFollowupResponse response = projectRemoteFollowupWithTargetScope(0L, 4L);
+
+    assertEquals("", response.getFollowup().getTargetCommandId());
+  }
+
+  @Test
+  void getRemoteFollowupDoesNotLinkTargetCommandForNegativeTargetGameInstanceId() {
+    GetRemoteFollowupResponse response = projectRemoteFollowupWithTargetScope(-1L, 4L);
+
+    assertEquals("", response.getFollowup().getTargetCommandId());
+  }
+
+  @Test
   void getRemoteFollowupRejectsNonAdminCaller() {
     RemoteFollowupRepository repository = Mockito.mock(RemoteFollowupRepository.class);
     SessionContext.setContext("1", List.of(), Map.of());
@@ -7953,6 +7981,50 @@ class GameSessionControlPlaneGrpcServiceTest {
             responseRef.set(value);
           }
         });
+    return responseRef.get();
+  }
+
+  private static GetRemoteFollowupResponse projectRemoteFollowupWithTargetScope(
+      long targetGameInstanceId, long targetRegionEpoch) {
+    RemoteFollowup followup = new RemoteFollowup();
+    followup.setFollowupId("rf-invalid-epoch");
+    followup.setTenantId(1L);
+    followup.setOriginGameInstanceId(7L);
+    followup.setOriginRegionId("region-a");
+    followup.setOriginRegionEpoch(3L);
+    followup.setTargetGameInstanceId(targetGameInstanceId);
+    followup.setTargetRegionId("region-b");
+    followup.setTargetRegionEpoch(targetRegionEpoch);
+    followup.setDueTickId(55L);
+    followup.setStatus("SCHEDULED");
+
+    RemoteFollowupRepository followupRepository = Mockito.mock(RemoteFollowupRepository.class);
+    Mockito.when(followupRepository.findByTenantIdAndFollowupId(1L, "rf-invalid-epoch"))
+        .thenReturn(Optional.of(followup));
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        remoteControlPlaneService(
+            followupRepository,
+            Mockito.mock(RemoteCommandCoordinatorRepository.class),
+            null,
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            null,
+            gameDesignClient());
+    AtomicReference<GetRemoteFollowupResponse> responseRef = new AtomicReference<>();
+    service.getRemoteFollowup(
+        GetRemoteFollowupRequest.newBuilder()
+            .setTenantId("1")
+            .setFollowupId("rf-invalid-epoch")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetRemoteFollowupResponse value) {
+            responseRef.set(value);
+          }
+        });
+    Mockito.verifyNoInteractions(commandRepository);
     return responseRef.get();
   }
 

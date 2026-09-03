@@ -358,20 +358,7 @@ public class RemoteFollowupRepository {
                 selectOne()
                     .from(coordinator)
                     .where(
-                        coordinator
-                            .TENANT_ID
-                            .eq(followup.TENANT_ID)
-                            .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
-                            .and(
-                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
-                                    followup.ORIGIN_GAME_INSTANCE_ID))
-                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
-                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
-                            .and(
-                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
-                                    followup.TARGET_GAME_INSTANCE_ID))
-                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
-                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
+                        exactCoordinatorScope(coordinator, followup)
                             .and(
                                 coordinator.ORIGIN_DEADLINE_REGION_EPOCH.eq(
                                     originDeadlineRegionEpoch)))));
@@ -383,20 +370,7 @@ public class RemoteFollowupRepository {
                 selectOne()
                     .from(coordinator)
                     .where(
-                        coordinator
-                            .TENANT_ID
-                            .eq(followup.TENANT_ID)
-                            .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
-                            .and(
-                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
-                                    followup.TARGET_GAME_INSTANCE_ID))
-                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
-                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
-                            .and(
-                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
-                                    followup.ORIGIN_GAME_INSTANCE_ID))
-                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
-                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
+                        exactCoordinatorScope(coordinator, followup)
                             .and(coordinator.ORIGIN_DEADLINE_TICK_ID.eq(originDeadlineTickId)))));
     addIfNotBlank(
         conditions,
@@ -406,20 +380,7 @@ public class RemoteFollowupRepository {
                 selectOne()
                     .from(coordinator)
                     .where(
-                        coordinator
-                            .TENANT_ID
-                            .eq(followup.TENANT_ID)
-                            .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
-                            .and(
-                                coordinator.TARGET_GAME_INSTANCE_ID.eq(
-                                    followup.TARGET_GAME_INSTANCE_ID))
-                            .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
-                            .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH))
-                            .and(
-                                coordinator.ORIGIN_GAME_INSTANCE_ID.eq(
-                                    followup.ORIGIN_GAME_INSTANCE_ID))
-                            .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
-                            .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
+                        exactCoordinatorScope(coordinator, followup)
                             .and(coordinator.LATE_RESULT_POLICY.eq(lateResultPolicy)))));
 
     return baseControlPlaneQuery(followup, currentOrigin, currentTarget, targetCommand)
@@ -539,6 +500,21 @@ public class RemoteFollowupRepository {
     return dsl.selectFrom(REMOTE_FOLLOWUP)
         .where(REMOTE_FOLLOWUP.ID.eq(id))
         .fetchOptional(this::toEntity);
+  }
+
+  private static Condition exactCoordinatorScope(
+      net.firedevops.firemud.gamesession.jooq.tables.RemoteCommandCoordinator coordinator,
+      net.firedevops.firemud.gamesession.jooq.tables.RemoteFollowup followup) {
+    return coordinator
+        .TENANT_ID
+        .eq(followup.TENANT_ID)
+        .and(coordinator.FOLLOWUP_ID.eq(followup.FOLLOWUP_ID))
+        .and(coordinator.ORIGIN_GAME_INSTANCE_ID.eq(followup.ORIGIN_GAME_INSTANCE_ID))
+        .and(coordinator.ORIGIN_REGION_ID.eq(followup.ORIGIN_REGION_ID))
+        .and(coordinator.ORIGIN_REGION_EPOCH.eq(followup.ORIGIN_REGION_EPOCH))
+        .and(coordinator.TARGET_GAME_INSTANCE_ID.eq(followup.TARGET_GAME_INSTANCE_ID))
+        .and(coordinator.TARGET_REGION_ID.eq(followup.TARGET_REGION_ID))
+        .and(coordinator.TARGET_REGION_EPOCH.eq(followup.TARGET_REGION_EPOCH));
   }
 
   private void populate(RemoteFollowupRecord record, RemoteFollowup entity) {
