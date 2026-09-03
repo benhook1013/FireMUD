@@ -1586,6 +1586,10 @@ paths:
                       $ref: '#/components/schemas/SagaInstanceDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Missing, malformed, invalid, or expired bearer token
+        '403':
+          description: Authenticated caller lacks a required privileged role
         '503':
           description: Saga dashboard unavailable because its conditional database/Saga beans are absent
           content:
@@ -1619,6 +1623,10 @@ paths:
                       $ref: '#/components/schemas/SagaStepDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Missing, malformed, invalid, or expired bearer token
+        '403':
+          description: Authenticated caller lacks a required privileged role
         '400':
           description: The saga instance ID must be a positive integer
           content:
