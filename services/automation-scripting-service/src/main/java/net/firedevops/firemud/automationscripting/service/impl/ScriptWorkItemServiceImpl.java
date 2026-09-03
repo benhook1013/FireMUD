@@ -465,11 +465,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional
   public ReplayResult replayDeadLetters(ReplayDeadLettersCommand command) {
-    requireText(command.tenantId(), "tenant_id");
+    String normalizedTenantId = normalizeRegionId(command.tenantId());
+    requireText(normalizedTenantId, "tenant_id");
     int boundedLimit = Math.min(Math.max(command.limit() <= 0 ? 50 : command.limit(), 1), 100);
     Instant now = Instant.now();
     String reason = normalizeReplayReason(command.reason());
-    List<ScriptWorkItem> candidates = selectReplayCandidates(command, boundedLimit);
+    List<ScriptWorkItem> candidates =
+        selectReplayCandidates(command, normalizedTenantId, boundedLimit);
     long replayed = 0L;
     long rejected = 0L;
     for (ScriptWorkItem item : candidates) {
@@ -767,21 +769,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
-      ReplayDeadLettersCommand command, int boundedLimit) {
+      ReplayDeadLettersCommand command, String normalizedTenantId, int boundedLimit) {
     if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
       return command.workItemIds().stream()
           .limit(boundedLimit)
           .map(ScriptWorkItemServiceImpl::parseWorkItemId)
           .map(workItemRepository::findById)
           .flatMap(Optional::stream)
-          .filter(item -> command.tenantId().equals(item.getTenantId()))
+          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
           .filter(item -> STATUS_DEAD_LETTERED.equals(item.getStatus()))
           .filter(item -> matchesReplayFilters(item, command))
           .toList();
     }
     return workItemRepository
         .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            command.tenantId(), STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
+            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
         .stream()
         .filter(item -> matchesReplayFilters(item, command))
         .toList();

@@ -6489,6 +6489,38 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void enqueueAutomationCommandRejectsPlatformAdminBearerCallerBeforeDispatch() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(commandRepository, tickService);
+  }
+
+  @Test
   void scheduleRemoteFollowupRejectsPartialRoutingBundle() {
     RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
     setAutomationScriptingInternalContext();

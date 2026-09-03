@@ -392,14 +392,14 @@ class GameInstanceServiceImplTest {
 
   @Test
   void startSessionWithReplacementRestoresExistingStateWhenWorldLifecyclePreflightFails() {
-    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", 42L);
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-world-preflight-failure", 42L);
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
     when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
         .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
-                .newBuilder()
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                         .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
@@ -491,8 +491,7 @@ class GameInstanceServiceImplTest {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse
-                .newBuilder()
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                         .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
