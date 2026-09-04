@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
+import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -708,7 +713,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
-  void executeAbandonsLegacyRemoteTriggerWithoutDurablePinTuple() {
+  void executeTriggersScriptEventForSupportedPayloadKind() {
     TickEffect effect = new TickEffect();
     effect.setTickBatchId("tb-1");
     effect.setEffectKey("followup-1");
@@ -745,36 +750,90 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
-    GameplayAdmissionPointerAuthorityService pointerAuthority =
-        mock(GameplayAdmissionPointerAuthorityService.class);
-    service =
-        new DefaultDurableRemoteFollowupExecutionService(
-            remoteFollowupRepository,
-            remoteCommandCoordinatorRepository,
-            gameInstanceRepository,
-            gameplayCommandRepository,
-            runtimeRegionStatusRepository,
-            tickService,
-            remoteFollowupRuntimeService,
-            automationScriptingClient,
-            pointerAuthority);
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmitted(true)
+                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
+                .setAdmissionReason("admitted_for_handler_resolution")
+                .setResolvedHandlerCount(2)
+                .build());
+
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
-    assertEquals("ABANDONED", result.effectStatus());
-    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    assertEquals(
-        "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available",
-        result.failureMessage());
-    verifyNoInteractions(automationScriptingClient);
+    assertEquals("APPLIED", result.effectStatus());
+    ArgumentCaptor<TriggerScriptEventRequest> triggerCaptor =
+        ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
+    org.mockito.Mockito.verify(automationScriptingClient)
+        .triggerScriptEvent(triggerCaptor.capture());
+    TriggerScriptEventRequest request = triggerCaptor.getValue();
+    assertEquals("1", request.getTenantId());
+    assertEquals("9", request.getGameInstanceId());
+    assertEquals("region-b", request.getRegionId());
+    assertEquals(8L, request.getRegionEpoch());
+    assertEquals("321", request.getEntityId());
+    assertEquals("script-1", request.getScriptId());
+    assertEquals("patch-1", request.getScriptPatchVersion());
+    assertEquals("onEnterRegion", request.getEventType());
+    assertEquals("remote-enter-1", request.getScriptEventId());
+    assertEquals("v1", request.getEventSchemaVersion());
+    assertTrue(request.getIsDryRun());
+    assertEquals("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}", request.getPayloadJson());
+    assertEquals("demo", request.getWorldSlug());
+    assertEquals("production", request.getRealmSlug());
+    assertEquals("17", request.getPointerVersion());
+    assertEquals(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, request.getPlayableStateScope());
+    assertEquals("game-session:onEnterRegion:9:8:remote-enter-1", request.getReadSnapshotToken());
+    assertEquals(55L, request.getDueTickId());
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
     assertEquals("remote-result:followup-1", requestCaptor.getValue().resultId());
     assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
     assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
-    assertEquals("ABANDONED", requestCaptor.getValue().outcome());
-    verifyNoInteractions(pointerAuthority);
+    assertEquals("APPLIED", requestCaptor.getValue().outcome());
+  }
+
+  @Test
+  void executeRetriesScriptEventWhenAutomationAuthorityIsUnavailable() {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmissionOutcome(
+                    TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE)
+                .setAdmissionReason("pin_state_unavailable")
+                .build());
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("RETRY_QUEUED", result.effectStatus());
+    assertEquals("PIN_STATE_UNAVAILABLE", result.failureCode());
+    verify(remoteFollowupRepository).save(followup);
+    verify(remoteFollowupRuntimeService, never()).recordResult(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void executePropagatesUnexpectedRuntimeExceptionFromTriggerExecution() {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new RuntimeException("transport unavailable"));
+
+    assertThrows(RuntimeException.class, () -> service.execute(effect));
+    verify(remoteFollowupRepository, never()).save(followup);
+    verify(remoteFollowupRuntimeService, never()).recordResult(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
@@ -859,6 +918,31 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
     verify(gameplayCommandRepository, never())
         .insertIfAbsentByIdempotencyIdentity(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void executeAbandonsTriggerScriptEventWhenVersionMismatchIsReported() {
+    TickEffect effect = triggerScriptEventEffect();
+    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
+    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
+    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
+    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
+        .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmissionOutcome(
+                    TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE)
+                .setAdmissionReason("runtime_region_scope_advanced")
+                .build());
+
+    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
+        service.execute(effect);
+
+    assertEquals("ABANDONED", result.effectStatus());
+    assertEquals("RUNTIME_REGION_SCOPE_ADVANCED", result.failureCode());
+    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
+    verify(remoteFollowupRepository, never()).save(followup);
   }
 
   @Test
@@ -1143,6 +1227,15 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
+    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            TriggerScriptEventResponse.newBuilder()
+                .setAdmitted(true)
+                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
+                .setAdmissionReason("admitted_for_handler_resolution")
+                .setResolvedHandlerCount(2)
+                .build());
+
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
