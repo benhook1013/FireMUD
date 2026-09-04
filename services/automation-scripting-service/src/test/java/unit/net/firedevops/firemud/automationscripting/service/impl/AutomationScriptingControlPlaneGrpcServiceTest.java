@@ -859,7 +859,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "1",
                         "game-1",
                         "patch-2",
-                        2L,
                         "req-22",
                         222L,
                         230L,
@@ -889,7 +888,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getObservedPinnedScriptPatchVersion()).isEqualTo("patch-2");
-    assertThat(ref.get().getObservedScriptPinEpoch()).isEqualTo(2L);
     assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("req-22");
     assertThat(ref.get().getObservedAtMs()).isEqualTo(222L);
     assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
@@ -1391,8 +1389,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "plugin-v1",
                     "onCommand",
                     "patch-1",
-                    2L,
-                    "request-1",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
@@ -1461,9 +1457,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(ref.get().getDeadLetters(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getDeadLetters(0).getPluginVersionId()).isEqualTo("plugin-v1");
-    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isEqualTo(2L);
-    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId())
-        .isEqualTo("request-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionEpoch()).isEqualTo(99L);
@@ -1507,8 +1500,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
-                    2L,
-                    "request-1",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
