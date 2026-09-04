@@ -841,6 +841,8 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())

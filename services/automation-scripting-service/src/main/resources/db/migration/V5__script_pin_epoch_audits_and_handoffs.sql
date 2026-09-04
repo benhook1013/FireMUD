@@ -202,3 +202,19 @@ ALTER TABLE script_event_audit
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
+
+-- Every instance-scoped handoff retains the source owner's exact observed pin tuple.
+-- Zero/blank remains an explicit fail-closed legacy sentinel until a pinned work item is observed.
+ALTER TABLE script_handoff_events
+    ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE script_handoff_events
+    ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
+
+ALTER TABLE script_handoff_events
+    ADD CONSTRAINT ck_script_handoff_events_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
+    );

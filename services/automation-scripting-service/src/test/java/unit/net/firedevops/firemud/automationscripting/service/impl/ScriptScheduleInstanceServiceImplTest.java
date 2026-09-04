@@ -1673,6 +1673,7 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getScriptEventId())
         .isEqualTo("timer-3a3785d37e3a1ed97f9544cfbac1f585e88eff4079f80548da929f725ad5");
     assertThat(workItem.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(workItem.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -1682,6 +1683,8 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(auditCaptor.getValue().getScriptPinEpoch())
         .isEqualTo(workItem.getScriptPinEpoch())
         .isPositive();
+    assertThat(auditCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo(workItem.getScriptPinControlPlaneRequestId());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
         ArgumentCaptor.forClass(List.class);

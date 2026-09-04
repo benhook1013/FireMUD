@@ -284,6 +284,8 @@ public interface ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptId,
       String pluginId,
       String pluginVersionId,

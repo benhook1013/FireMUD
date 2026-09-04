@@ -852,6 +852,8 @@ message ScriptHandoffEventEntry {
   string current_target_runtime_realm_slug = 46;
   string current_target_runtime_pointer_version = 47;
   bool is_target_routing_bundle_stale = 48;
+  int64 script_pin_epoch = 49;
+  string script_pin_control_plane_request_id = 50;
 }
 
 message ListScriptHandoffEventsResponse {

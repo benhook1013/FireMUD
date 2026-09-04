@@ -31,7 +31,12 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit",
-            ") WHERE script_pin_epoch IS NULL;")
+            ") WHERE script_pin_epoch IS NULL;",
+            "ALTER TABLE script_handoff_events",
+            "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;",
+            "ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);",
+            "ck_script_handoff_events_pin_tuple",
+            "script_pin_control_plane_request_id")
         .doesNotContain("ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE");
 
     int unpinnedStart =
