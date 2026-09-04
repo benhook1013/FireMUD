@@ -68,6 +68,15 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
               "RUNTIME_SCOPE_MISMATCH",
               "GetAutomationPinConvergence failed: runtime_scope_mismatch");
         }
+        if (!hasPositiveScriptPinEpoch(runtimeState)) {
+          if (existing.isPresent()) {
+            return new PinConvergenceLookup(Optional.of(toSummary(existing.get(), now)), "", "");
+          }
+          return new PinConvergenceLookup(
+              Optional.empty(),
+              "GAME_SESSION_UNAVAILABLE",
+              "GetAutomationPinConvergence failed: pin_state_unavailable");
+        }
         ScriptPatchPinProjection refreshed =
             saveObservation(
                 existing.orElseGet(ScriptPatchPinProjection::new),
@@ -103,6 +112,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     if (!runtimeStateMatchesScope(tenantId, gameInstanceId, runtimeState)) {
       return;
     }
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return;
+    }
     Optional<ScriptPatchPinProjection> existing =
         repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     saveObservation(
@@ -122,17 +134,25 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         && gameInstanceId.equals(runtimeState.getGameInstanceId());
   }
 
+  private static boolean hasPositiveScriptPinEpoch(GameInstanceRuntimeState runtimeState) {
+    return runtimeState != null && runtimeState.getScriptPinEpoch() > 0;
+  }
+
   private ScriptPatchPinProjection saveObservation(
       ScriptPatchPinProjection projection,
       String tenantId,
       String gameInstanceId,
       GameInstanceRuntimeState runtimeState,
       Instant now) {
+    if (!hasPositiveScriptPinEpoch(runtimeState)) {
+      return projection;
+    }
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.fromRuntimeState(runtimeState);
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
+    projection.setScriptPinEpoch(runtimeState.getScriptPinEpoch());
     projection.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
     projection.setWorldSlug(routingBundle.worldSlug());

@@ -13,6 +13,7 @@ public class ScriptPatchPinProjection {
   private String worldSlug = "";
   private String realmSlug = "";
   private String pointerVersion = "";
+  private long scriptPinEpoch;
   private String runtimeRegionId = "";
   private long runtimeRegionEpoch;
   private String lastObservedControlPlaneRequestId = "";
