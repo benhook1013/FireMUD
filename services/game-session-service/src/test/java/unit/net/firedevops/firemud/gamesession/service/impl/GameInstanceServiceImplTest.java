@@ -669,6 +669,38 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionWithReplacementDoesNotRestoreAlreadyTerminatedExistingSessionOnFailure() {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-terminated-replacement-failure", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_ACTIVATION_FAILED")
+                        .setMessage("activation failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService, never()).saveState(argThat(state -> state.id() == 7L));
+  }
+
+  @Test
   void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationIsInProgress() {
     StartSessionRequest request =
         new StartSessionRequest(2L, 3L, "cp-terminating-replacement", 42L);

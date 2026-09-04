@@ -61,6 +61,56 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void rejectsEpochValueOnExpectUnpinnedBeforeOwnerReads() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    SetPinnedScriptPatchVersionRequest request =
+        setRequest("request-1").toBuilder()
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                    .setScriptPinEpoch(7L)
+                    .build())
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                newService(repository, tickService, gameDesign, automation)
+                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .withMessage("expected_current_pin script_pin_epoch must be absent for EXPECT_UNPINNED");
+    verifyNoInteractions(repository, gameDesign, automation);
+  }
+
+  @Test
+  void rejectsEpochValueOnUnconditionalBeforeOwnerReads() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    SetPinnedScriptPatchVersionRequest request =
+        setRequest("request-1").toBuilder()
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.UNCONDITIONAL)
+                    .setScriptPinEpoch(7L)
+                    .build())
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                newService(repository, tickService, gameDesign, automation)
+                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .withMessage("expected_current_pin script_pin_epoch must be absent for UNCONDITIONAL");
+    verifyNoInteractions(repository, gameDesign, automation);
+  }
+
+  @Test
   void unreadyPatchIsLedgeredAndDoesNotMutatePin() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
@@ -209,7 +259,7 @@ class GameSessionOperatorControlPlaneServiceTest {
             GetPublishedScriptPatchVersionResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode("GAME_DESIGN_UNAVAILABLE")
+                        .setCode("UNKNOWN_PUBLICATION_FAILURE")
                         .setMessage("down")
                         .build())
                 .build());
@@ -342,8 +392,11 @@ class GameSessionOperatorControlPlaneServiceTest {
   void missingAutomationAuthorityFailsClosedBeforePinMutation() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
     when(repository.recordScriptPinFailure(
             1L,
             7L,
@@ -360,7 +413,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                 null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"));
 
     SetPinnedScriptPatchVersionResponse response =
-        service(repository, tickService)
+        newService(repository, tickService, gameDesign, null)
             .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
 
     org.assertj.core.api.Assertions.assertThat(response.getError().getCode())

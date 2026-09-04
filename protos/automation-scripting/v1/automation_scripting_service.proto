@@ -358,9 +358,10 @@ message TriggerScriptEventRequest {
   string game_instance_id = 2;
   string region_id = 3;
 
-  // Required for gameplay/runtime triggers and scheduler triggers so triggers are fenced
-  // across scoped coordination resets. External/out-of-band triggers that omit region_epoch
-  // must define their own consistency model explicitly.
+  // Required as a positive value for every gameplay/runtime and scheduler trigger so triggers
+  // are fenced across scoped coordination resets. Explicit out-of-band non-runtime triggers may
+  // omit region_epoch only when their owner contract documents the consistency model; the
+  // tenant-readiness onLoad branch is pre-instance and omits runtime region identity.
   int64 region_epoch = 4;
 
   string entity_id = 5;
@@ -405,11 +406,15 @@ message TriggerScriptEventRequest {
   string realm_slug = 21;
   string pointer_version = 22;
 
-  // Exact Game Session source pin generation captured when this trigger was created. Required
-  // for instance-scoped gameplay/runtime triggers; omitted for tenant-readiness onLoad ingress.
+  // Exact Game Session source pin generation captured when this trigger was created. Required as
+  // a positive value for every instance-scoped gameplay/runtime or scheduler trigger, and paired
+  // with a nonblank script_pin_control_plane_request_id; omitted only for tenant-readiness onLoad
+  // ingress, which is pre-instance.
   int64 script_pin_epoch = 23;
 
-  // Canonical control-plane request identity paired with script_pin_epoch when available.
+  // Canonical control-plane request identity paired with script_pin_epoch. Required and nonblank
+  // for every instance-scoped gameplay/runtime or scheduler trigger; omitted only for
+  // tenant-readiness onLoad ingress.
   string script_pin_control_plane_request_id = 24;
 }
 

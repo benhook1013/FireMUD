@@ -27,7 +27,15 @@ CREATE TABLE script_pin_operation (
         OR
         (resulting_script_patch_version IS NOT NULL AND resulting_script_pin_epoch IS NOT NULL AND resulting_script_pin_epoch > 0)
     ),
-    CHECK (expected_pin_kind <> 'EXPECT_EPOCH' OR expected_script_pin_epoch IS NOT NULL)
+    CHECK (
+        (expected_pin_kind = 'EXPECT_UNPINNED' AND expected_script_pin_epoch IS NULL)
+        OR
+        (expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0)
+        OR
+        (expected_pin_kind = 'UNCONDITIONAL' AND expected_script_pin_epoch IS NULL)
+        OR
+        (expected_pin_kind NOT IN ('EXPECT_UNPINNED', 'EXPECT_EPOCH', 'UNCONDITIONAL'))
+    )
 );
 
 CREATE INDEX idx_script_pin_operation_instance

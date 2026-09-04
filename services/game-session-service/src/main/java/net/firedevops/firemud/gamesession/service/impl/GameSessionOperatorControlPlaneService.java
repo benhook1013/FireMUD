@@ -277,6 +277,16 @@ final class GameSessionOperatorControlPlaneService {
         && expected.getScriptPinEpoch() <= 0L) {
       throw new IllegalArgumentException("expected_current_pin script_pin_epoch must be positive");
     }
+    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_UNPINNED
+        && expected.getScriptPinEpoch() != 0L) {
+      throw new IllegalArgumentException(
+          "expected_current_pin script_pin_epoch must be absent for EXPECT_UNPINNED");
+    }
+    if (expected.getKind() == ExpectedCurrentPin.Kind.UNCONDITIONAL
+        && expected.getScriptPinEpoch() != 0L) {
+      throw new IllegalArgumentException(
+          "expected_current_pin script_pin_epoch must be absent for UNCONDITIONAL");
+    }
     if (expected.getKind() == ExpectedCurrentPin.Kind.UNCONDITIONAL
         && !SessionContext.getGlobalRoles().contains("platformAdmin")) {
       throw new IllegalArgumentException("UNCONDITIONAL requires platformAdmin");
@@ -404,9 +414,11 @@ final class GameSessionOperatorControlPlaneService {
     }
     if (publicationResponse.hasError() && !publicationResponse.getError().getCode().isBlank()) {
       String code = publicationResponse.getError().getCode();
-      return code.contains("UNAVAILABLE")
-          ? "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"
-          : "SCRIPT_PATCH_NOT_PUBLISHED";
+      return switch (code) {
+        case "NOT_FOUND" -> "SCRIPT_PATCH_NOT_PUBLISHED";
+        case "GAME_DESIGN_UNAVAILABLE" -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+        default -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      };
     }
     if (!publicationResponse.hasScriptPatch()) {
       return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
@@ -438,9 +450,11 @@ final class GameSessionOperatorControlPlaneService {
     }
     if (readiness.hasError() && !readiness.getError().getCode().isBlank()) {
       String code = readiness.getError().getCode();
-      return code.contains("UNAVAILABLE")
-          ? "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"
-          : "SCRIPT_PATCH_NOT_READY";
+      return switch (code) {
+        case "NOT_FOUND" -> "SCRIPT_PATCH_NOT_READY";
+        case "AUTOMATION_SCRIPTING_UNAVAILABLE" -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+        default -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      };
     }
     if (readiness.getStatus() != ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY) {
       return "SCRIPT_PATCH_NOT_READY";

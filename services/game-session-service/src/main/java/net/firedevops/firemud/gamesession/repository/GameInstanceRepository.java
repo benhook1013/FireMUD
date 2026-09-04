@@ -169,9 +169,13 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch) {
+    if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("target_script_patch_version is required");
+    }
     if (expectedPinKind == null || expectedPinKind.isBlank()) {
       throw new IllegalArgumentException("expected_pin_kind is required");
     }
+    validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
     String mutationDigest =
         mutationDigest(
             tenantId,
@@ -339,9 +343,13 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
+    if (expectedPinKind == null || expectedPinKind.isBlank()) {
+      throw new IllegalArgumentException("expected_pin_kind is required");
+    }
     if (errorCode == null || errorCode.isBlank()) {
       throw new IllegalArgumentException("errorCode is required");
     }
+    validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
     String mutationDigest =
         mutationDigest(
             tenantId,
@@ -507,6 +515,33 @@ public class GameInstanceRepository {
       case "EXPECT_EPOCH" -> pinEpoch != null && pinEpoch.equals(expectedScriptPinEpoch);
       default -> false;
     };
+  }
+
+  private void validateExpectedPin(String expectedPinKind, Long expectedScriptPinEpoch) {
+    switch (expectedPinKind) {
+      case "UNCONDITIONAL" ->
+          require(
+              expectedScriptPinEpoch == null,
+              "expected_script_pin_epoch must be null for UNCONDITIONAL");
+      case "EXPECT_UNPINNED" ->
+          require(
+              expectedScriptPinEpoch == null,
+              "expected_script_pin_epoch must be null for EXPECT_UNPINNED");
+      case "EXPECT_EPOCH" ->
+          require(
+              expectedScriptPinEpoch != null && expectedScriptPinEpoch > 0L,
+              "expected_script_pin_epoch must be positive for EXPECT_EPOCH");
+      default -> {
+        // Unknown tags are retained as explicit ledger outcomes; the service layer owns their
+        // semantic validation.
+      }
+    }
+  }
+
+  private static void require(boolean condition, String message) {
+    if (!condition) {
+      throw new IllegalArgumentException(message);
+    }
   }
 
   private String mutationDigest(

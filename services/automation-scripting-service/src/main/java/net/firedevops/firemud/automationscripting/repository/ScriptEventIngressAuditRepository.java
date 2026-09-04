@@ -56,6 +56,10 @@ public class ScriptEventIngressAuditRepository {
           String scriptEventId,
           boolean dryRun,
           String sourceService) {
+    if (scriptPinEpoch != null && scriptPinEpoch > 0L) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for pinned ingress lookups");
+    }
     return findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
         tenantId,
         gameInstanceId,

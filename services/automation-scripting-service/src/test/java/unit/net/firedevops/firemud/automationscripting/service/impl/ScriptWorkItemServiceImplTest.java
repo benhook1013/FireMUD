@@ -972,6 +972,62 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void rejectsBlankRolloutEventTenantBeforeProjectionLookup() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    assertThatThrownBy(
+            () ->
+                service.listPatchInstanceRolloutEvents(
+                    "",
+                    "game-1",
+                    "patch-1",
+                    0L,
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L,
+                    25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenant_id is required");
+    verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
+  void forwardsPinnedRolloutRequestIdToProjectionLookup() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    assertThat(service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 2L, "req-1"))
+        .isEmpty();
+    verify(rolloutProjectionService).getProjection("1", "game-1", "patch-1", 2L, "req-1");
+  }
+
+  @Test
   void getsInstanceRolloutStatusFromRuntimePin() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);

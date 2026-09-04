@@ -60,7 +60,7 @@ public interface ScriptScheduleInstanceService {
       long changedBeforeMs,
       int limit);
 
-  default List<TimerAuditEventSummary> listTimerAuditEvents(
+  List<TimerAuditEventSummary> listTimerAuditEvents(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
@@ -71,19 +71,7 @@ public interface ScriptScheduleInstanceService {
       String finalReason,
       long changedAfterMs,
       long changedBeforeMs,
-      int limit) {
-    return listTimerAuditEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        scriptId,
-        eventType,
-        finalReason,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
-  }
+      int limit);
 
   default List<TimerAuditEventSummary> listTimerAuditEvents(
       String tenantId,

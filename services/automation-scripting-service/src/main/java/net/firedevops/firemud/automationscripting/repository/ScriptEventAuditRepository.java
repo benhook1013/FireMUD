@@ -223,9 +223,14 @@ public class ScriptEventAuditRepository {
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
     // from the existing row returned by the no-op conflict update, avoiding a
     // race between DO NOTHING and a separate readback query.
+    boolean pinned = entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L;
     return dsl.insertInto(SCRIPT_EVENT_AUDIT)
         .set(record)
         .onConflict(handlerConflictFields(entity))
+        .where(
+            pinned
+                ? SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.gt(0L)
+                : SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNull())
         .doUpdate()
         .set(SCRIPT_EVENT_AUDIT.ID, SCRIPT_EVENT_AUDIT.ID)
         .returningResult(returningFields)
@@ -254,8 +259,10 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT.EVENT_TYPE,
                 SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
                 SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
-    fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
-    fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    if (entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L) {
+      fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
+      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    }
     fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_AUDIT.DRY_RUN);
     return fields.toArray(Field<?>[]::new);
@@ -279,6 +286,11 @@ public class ScriptEventAuditRepository {
       Instant changedAfter,
       Instant changedBefore,
       Pageable pageable) {
+    if ((scriptPinEpoch != null && scriptPinEpoch > 0L)
+        != (scriptPinControlPlaneRequestId != null && !scriptPinControlPlaneRequestId.isBlank())) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for pinned timer audit lookups");
+    }
     Condition condition =
         SCRIPT_EVENT_AUDIT
             .TENANT_ID

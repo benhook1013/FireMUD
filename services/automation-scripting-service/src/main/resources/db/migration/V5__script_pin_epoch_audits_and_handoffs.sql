@@ -87,8 +87,7 @@ ALTER TABLE script_event_audit
 ALTER TABLE script_event_audit
     DROP CONSTRAINT uq_script_event_audit_handler_identity;
 
-ALTER TABLE script_event_audit
-    ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE (
+CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit (
         tenant_id,
         game_instance_id,
         region_id,
@@ -106,7 +105,25 @@ ALTER TABLE script_event_audit
         script_pin_control_plane_request_id,
         script_event_id,
         dry_run
-    );
+    ) WHERE script_pin_epoch > 0;
+
+CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit (
+        tenant_id,
+        game_instance_id,
+        region_id,
+        region_epoch,
+        entity_id,
+        playable_state_scope,
+        world_slug,
+        realm_slug,
+        pointer_version,
+        script_id,
+        event_type,
+        event_schema_version,
+        script_patch_version,
+        script_event_id,
+        dry_run
+    ) WHERE script_pin_epoch IS NULL;
 
 ALTER TABLE script_event_audit
     ADD CONSTRAINT ck_script_event_audit_pin_tuple CHECK (

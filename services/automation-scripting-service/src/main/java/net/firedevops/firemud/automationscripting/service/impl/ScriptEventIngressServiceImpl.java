@@ -360,14 +360,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
-    if (!request.getGameInstanceId().isBlank() && request.getScriptPinEpoch() <= 0L) {
-      return rejected("missing_script_pin_epoch");
-    }
-    if (!request.getGameInstanceId().isBlank()
-        && request.getScriptPinEpoch() > 0L
-        && request.getScriptPinControlPlaneRequestId().isBlank()) {
-      return rejected("missing_script_pin_control_plane_request_id");
-    }
     if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
         > outputProperties.getMaxSerializedWorkItemBytes()) {
       return new TriggerAdmission(
@@ -1183,7 +1175,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptPinEpoch(),
-            request.getScriptPinControlPlaneRequestId(),
+            normalize(request.getScriptPinControlPlaneRequestId()),
             request.getScriptEventId(),
             request.getIsDryRun());
   }

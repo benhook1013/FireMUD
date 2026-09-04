@@ -22,6 +22,13 @@ public record GameInstanceDto(
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
+  /**
+   * Legacy constructor for callers that do not provide a complete script-pin tuple.
+   *
+   * <p>The script patch argument is intentionally discarded: a patch without its positive epoch and
+   * owner request ID is not a valid pinned state, so this constructor normalizes the tuple to
+   * unpinned rather than forwarding partial authority.
+   */
   public GameInstanceDto(
       Long id,
       @NotNull Long tenantId,

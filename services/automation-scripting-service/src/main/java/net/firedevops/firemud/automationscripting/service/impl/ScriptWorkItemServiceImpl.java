@@ -436,6 +436,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs,
       int limit) {
+    requireText(tenantId, "tenant_id");
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     List<PatchInstanceRolloutEventSummary> events =
         scriptPinEpoch > 0

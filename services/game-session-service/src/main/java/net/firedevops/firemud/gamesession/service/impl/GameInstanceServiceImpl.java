@@ -168,6 +168,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         }
         if (existingLifecycle.getStatus()
             == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
+          oldWorldTerminationRequested = true;
           oldWorldTerminationCompleted = true;
         } else {
           requireLifecycleStatus(
@@ -896,9 +897,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       throw new IllegalStateException(
           "WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive");
     }
-    if (expectedStatus != null && snapshot.getStatus() != expectedStatus) {
-      throw new IllegalStateException(
-          "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");
+    if (expectedStatus != null) {
+      requireLifecycleStatus(snapshot, expectedStatus);
     }
     return snapshot;
   }

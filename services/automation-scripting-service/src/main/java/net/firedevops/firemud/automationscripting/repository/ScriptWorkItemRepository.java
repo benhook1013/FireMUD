@@ -389,6 +389,7 @@ public class ScriptWorkItemRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script work item is required");
     }
+    String normalizedRequestId = normalizedScriptPinControlPlaneRequestId(entity);
     for (int attempt = 0; attempt < MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
       if (insertResult.isPresent()) {
@@ -411,7 +412,7 @@ public class ScriptWorkItemRepository {
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
               entity.getScriptPinEpoch(),
-              entity.getScriptPinControlPlaneRequestId(),
+              normalizedRequestId,
               entity.getScriptEventId(),
               entity.isDryRun());
       if (existing.isPresent()) {

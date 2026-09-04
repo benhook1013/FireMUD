@@ -150,6 +150,84 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void nullOrBlankTargetScriptPatchVersionFailsBeforePersistence() {
+    for (String targetScriptPatchVersion : java.util.Arrays.asList(null, " ")) {
+      org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  repository.applyScriptPin(
+                      1L,
+                      7L,
+                      "SET",
+                      targetScriptPatchVersion,
+                      "request-invalid-target",
+                      "operator",
+                      "pin",
+                      "EXPECT_EPOCH",
+                      1L))
+          .withMessage("target_script_patch_version is required");
+    }
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+  }
+
+  @Test
+  void expectedPinEpochShapeFailsBeforePersistence() {
+    org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "SET",
+                    "patch-new",
+                    "request-invalid-unpinned-epoch",
+                    "operator",
+                    "pin",
+                    "EXPECT_UNPINNED",
+                    1L))
+        .withMessage("expected_script_pin_epoch must be null for EXPECT_UNPINNED");
+    org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "SET",
+                    "patch-new",
+                    "request-invalid-epoch",
+                    "operator",
+                    "pin",
+                    "EXPECT_EPOCH",
+                    0L))
+        .withMessage("expected_script_pin_epoch must be positive for EXPECT_EPOCH");
+    org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "SET",
+                    "patch-new",
+                    "request-invalid-unconditional-epoch",
+                    "operator",
+                    "pin",
+                    "UNCONDITIONAL",
+                    1L))
+        .withMessage("expected_script_pin_epoch must be null for UNCONDITIONAL");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
+  }
+
+  @Test
   void recordScriptPinFailurePersistsAndReplaysByExactDigest() {
     ScriptPinMutationResult recorded =
         repository.recordScriptPinFailure(
