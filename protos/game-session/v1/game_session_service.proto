@@ -302,6 +302,7 @@ message GetPinnedScriptPatchVersionResponse {
   string control_plane_request_id = 4;
   ScriptPatchPublicationLink publication = 5;
   shared.v1.ErrorDetail error = 6;
+  int64 script_pin_epoch = 7;
 }
 
 message GetGameSessionPinConvergenceRequest {
@@ -318,6 +319,7 @@ message GetGameSessionPinConvergenceResponse {
   bool is_stale = 6;
   ScriptPatchPublicationLink publication = 7;
   shared.v1.ErrorDetail error = 8;
+  int64 observed_script_pin_epoch = 9;
 }
 
 message ScriptPatchPublicationLink {
@@ -368,6 +370,8 @@ message GameInstanceRuntimeState {
   string region_id = 19;
   int64 region_epoch = 20;
   repeated AdmissionPointerControlPlaneEntry current_admission_pointers = 21;
+  // Monotonic script-pin generation. It fences same-version repins.
+  int64 script_pin_epoch = 22;
 }
 
 message GetGameInstanceRuntimeStateResponse {
@@ -1108,6 +1112,7 @@ message SetPinnedScriptPatchVersionRequest {
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
+  ExpectedCurrentPin expected_current_pin = 7;
 }
 
 message SetPinnedScriptPatchVersionResponse {
@@ -1115,6 +1120,8 @@ message SetPinnedScriptPatchVersionResponse {
   string pinned_script_patch_version = 2;
   string control_plane_request_id = 3;
   shared.v1.ErrorDetail error = 4;
+  int64 previous_script_pin_epoch = 5;
+  int64 script_pin_epoch = 6;
 }
 
 message RollbackScriptPatchVersionRequest {
@@ -1124,6 +1131,7 @@ message RollbackScriptPatchVersionRequest {
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
+  ExpectedCurrentPin expected_current_pin = 7;
 }
 
 message RollbackScriptPatchVersionResponse {
@@ -1131,6 +1139,20 @@ message RollbackScriptPatchVersionResponse {
   string pinned_script_patch_version = 2;
   string control_plane_request_id = 3;
   shared.v1.ErrorDetail error = 4;
+  int64 previous_script_pin_epoch = 5;
+  int64 script_pin_epoch = 6;
+}
+
+message ExpectedCurrentPin {
+  enum Kind {
+    EXPECTED_CURRENT_PIN_KIND_UNSPECIFIED = 0;
+    UNCONDITIONAL = 1;
+    EXPECT_UNPINNED = 2;
+    EXPECT_EPOCH = 3;
+  }
+
+  Kind kind = 1;
+  int64 script_pin_epoch = 2;
 }
 
 message PauseTicksForScopeRequest {
