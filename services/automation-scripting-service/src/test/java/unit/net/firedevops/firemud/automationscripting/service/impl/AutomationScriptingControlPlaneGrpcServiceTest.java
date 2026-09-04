@@ -689,6 +689,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "patch-1",
+                0L,
+                null,
                 "npc-guard",
                 "onInterval",
                 "catch_up_truncated",
@@ -910,13 +912,15 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsScriptPatchInstanceRolloutStatusFromReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    Mockito.when(workItemService.getPatchInstanceRolloutStatus("1", "game-1", "patch-1"))
+    Mockito.when(workItemService.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 0L, null))
         .thenReturn(
             Optional.of(
                 new ScriptWorkItemService.PatchInstanceRolloutSummary(
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
                     "runtime_pin_matches_patch",
                     123L,
@@ -964,6 +968,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "",
+                0L,
+                null,
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
                 10L,
                 20L))
@@ -973,6 +979,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus
                         .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                     "runtime_pin_differs_from_patch",
@@ -1023,6 +1031,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "patch-1",
+                0L,
+                null,
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                 10L,
                 20L,
@@ -1034,6 +1044,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                     "runtime_pin_restored_after_rollback",
                     15L,

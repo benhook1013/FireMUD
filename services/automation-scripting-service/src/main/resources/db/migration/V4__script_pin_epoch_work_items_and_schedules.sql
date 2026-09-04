@@ -57,3 +57,18 @@ ALTER TABLE script_work_items
 
 ALTER TABLE script_schedule_instances
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
+
+-- Rows created before epoch fencing may contain only the legacy request identity.  Do not retain
+-- that identity as if it were evidence for epoch zero; the exact tuple is absent until a positive
+-- owner epoch is observed.
+UPDATE script_schedule_instances
+SET last_observed_control_plane_request_id = ''
+WHERE script_pin_epoch = 0;
+
+ALTER TABLE script_schedule_instances
+    ADD CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
+    );

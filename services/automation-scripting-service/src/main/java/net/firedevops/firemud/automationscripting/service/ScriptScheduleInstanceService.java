@@ -61,30 +61,6 @@ public interface ScriptScheduleInstanceService {
       long changedBeforeMs,
       int limit);
 
-  default List<TimerAuditEventSummary> listTimerAuditEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      String scriptId,
-      String eventType,
-      String finalReason,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit) {
-    return listTimerAuditEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        0L,
-        null,
-        scriptId,
-        eventType,
-        finalReason,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
-  }
-
   record RuntimeTickProgressObservation(
       String tenantId,
       String gameInstanceId,

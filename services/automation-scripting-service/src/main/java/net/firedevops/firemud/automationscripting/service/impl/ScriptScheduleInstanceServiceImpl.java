@@ -754,7 +754,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
-    instance.setScriptPinEpoch(runtimeState.getScriptPinEpoch());
+    long scriptPinEpoch = runtimeState.getScriptPinEpoch();
+    instance.setScriptPinEpoch(scriptPinEpoch);
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
@@ -775,7 +776,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setRequiresExclusiveEvent(binding.isRequiresExclusiveEvent());
     instance.setObservedRuntimeVersionId(blankToEmpty(runtimeState.getRuntimeVersionId()));
     instance.setLastObservedControlPlaneRequestId(
-        blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()));
+        scriptPinEpoch > 0
+            ? blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId())
+            : "");
     instance.setScheduleMetadataJson(definition.getScheduleMetadataJson());
     instance.setScheduleSemanticsHash(definition.getScheduleSemanticsHash());
     instance.setPinObservedAt(pinObservedAt);

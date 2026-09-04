@@ -2824,6 +2824,8 @@ class ScriptScheduleInstanceServiceImplTest {
             "1",
             "game-1",
             "patch-1",
+            0L,
+            null,
             "npc-guard",
             "onInterval",
             "catch_up_truncated",

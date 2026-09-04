@@ -221,7 +221,9 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setRuntimeRegionId(blankToEmpty(runtimeState.getRegionId()));
     projection.setRuntimeRegionEpoch(Math.max(0L, runtimeState.getRegionEpoch()));
     projection.setLastObservedControlPlaneRequestId(
-        runtimeState.getScriptPatchPinnedControlPlaneRequestId());
+        runtimeState.getScriptPinEpoch() > 0
+            ? runtimeState.getScriptPatchPinnedControlPlaneRequestId()
+            : "");
     projection.setObservedAt(
         runtimeState.getScriptPatchPinnedAtMs() > 0
             ? Instant.ofEpochMilli(runtimeState.getScriptPatchPinnedAtMs())

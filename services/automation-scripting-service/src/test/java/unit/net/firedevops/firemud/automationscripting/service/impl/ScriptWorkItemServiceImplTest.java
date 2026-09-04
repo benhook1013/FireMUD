@@ -1099,13 +1099,15 @@ class ScriptWorkItemServiceImplTest {
                         "", "")),
                 "",
                 ""));
-    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
+    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1", 0L, null))
         .thenReturn(
             Optional.of(
                 new ScriptWorkItemService.PatchInstanceRolloutSummary(
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
                     "runtime_pin_matches_patch",
                     150L,
@@ -1135,7 +1137,7 @@ class ScriptWorkItemServiceImplTest {
             gameDesignClient());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
-        service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1");
+        service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 0L, null);
 
     assertThat(summary).isPresent();
     assertThat(summary.get().rolloutStatus())
@@ -1163,13 +1165,15 @@ class ScriptWorkItemServiceImplTest {
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
             new ScriptPatchPinProjectionService.PinConvergenceLookup(Optional.empty(), "", ""));
-    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
+    when(rolloutProjectionService.getProjection("1", "game-1", "patch-1", 0L, null))
         .thenReturn(
             Optional.of(
                 new ScriptWorkItemService.PatchInstanceRolloutSummary(
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus
                         .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                     "projection_lag_exceeded",
@@ -1200,7 +1204,7 @@ class ScriptWorkItemServiceImplTest {
             gameDesignClient());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
-        service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1");
+        service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 0L, null);
 
     assertThat(summary).isPresent();
     assertThat(summary.get().rolloutStatus())
@@ -1251,6 +1255,8 @@ class ScriptWorkItemServiceImplTest {
             "1",
             "",
             "",
+            0L,
+            null,
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
             0L,
             0L))
@@ -1260,6 +1266,8 @@ class ScriptWorkItemServiceImplTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    0L,
+                    "",
                     ScriptPatchInstanceRolloutStatus
                         .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                     "runtime_pin_differs_from_patch",
@@ -1294,6 +1302,8 @@ class ScriptWorkItemServiceImplTest {
             "1",
             "",
             "",
+            0L,
+            null,
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
             0L,
             0L);

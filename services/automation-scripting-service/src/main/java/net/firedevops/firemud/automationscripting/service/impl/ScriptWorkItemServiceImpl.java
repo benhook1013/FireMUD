@@ -337,7 +337,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 scriptPatchVersion,
                 scriptPinEpoch,
                 lastObservedControlPlaneRequestId)
-            : rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
+            : rolloutProjectionService.getProjection(
+                tenantId, gameInstanceId, scriptPatchVersion, 0L, null);
     return projection.map(summary -> withPublication(tenantId, summary));
   }
 
@@ -370,6 +371,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 tenantId,
                 gameInstanceId,
                 scriptPatchVersion,
+                0L,
+                null,
                 rolloutStatus,
                 changedAfterMs,
                 changedBeforeMs);
@@ -406,6 +409,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 tenantId,
                 gameInstanceId,
                 scriptPatchVersion,
+                0L,
+                null,
                 rolloutStatus,
                 changedAfterMs,
                 changedBeforeMs,

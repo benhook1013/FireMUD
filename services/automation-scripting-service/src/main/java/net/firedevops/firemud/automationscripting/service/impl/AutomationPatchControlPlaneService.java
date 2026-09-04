@@ -233,7 +233,9 @@ final class AutomationPatchControlPlaneService {
             : workItemService.getPatchInstanceRolloutStatus(
                 request.getTenantId(),
                 request.getGameInstanceId(),
-                request.getScriptPatchVersion());
+                request.getScriptPatchVersion(),
+                0L,
+                null);
     rollout.ifPresentOrElse(
         summary ->
             response
@@ -301,6 +303,8 @@ final class AutomationPatchControlPlaneService {
                 request.getTenantId(),
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
+                0L,
+                null,
                 request.getScriptId(),
                 request.getEventType(),
                 request.getFinalReason(),
@@ -342,6 +346,8 @@ final class AutomationPatchControlPlaneService {
                 request.getTenantId(),
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
+                0L,
+                null,
                 request.getRolloutStatus(),
                 request.getChangedAfterMs(),
                 request.getChangedBeforeMs());
@@ -373,6 +379,8 @@ final class AutomationPatchControlPlaneService {
                 request.getTenantId(),
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
+                0L,
+                null,
                 request.getRolloutStatus(),
                 request.getChangedAfterMs(),
                 request.getChangedBeforeMs(),
