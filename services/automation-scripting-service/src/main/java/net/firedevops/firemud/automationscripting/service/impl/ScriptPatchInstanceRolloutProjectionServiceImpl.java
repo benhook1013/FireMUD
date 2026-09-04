@@ -191,6 +191,11 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     Optional<ScriptPatchInstanceRolloutProjection> existing =
         repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             tenantId, gameInstanceId, scriptPatchVersion);
+    // Runtime pin evidence is authoritative. Do not infer rollback or delete an existing
+    // projection while the authority is unavailable or has not supplied a positive epoch.
+    if (pin.isEmpty() || !usableRuntimePin(pin.get())) {
+      return;
+    }
     Optional<ProjectionSnapshot> snapshot =
         buildSnapshot(
             tenantId,
@@ -210,7 +215,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setScriptPatchVersion(scriptPatchVersion);
-    projection.setScriptPinEpoch(pin.map(ScriptPatchPinProjectionService.PinConvergenceSummary::scriptPinEpoch).orElse(0L));
+    projection.setScriptPinEpoch(
+        pin.map(ScriptPatchPinProjectionService.PinConvergenceSummary::scriptPinEpoch).orElse(0L));
     projection.setRolloutStatus(snapshot.get().rolloutStatus().name());
     projection.setStatusReason(snapshot.get().statusReason());
     projection.setLastChangedAt(Instant.ofEpochMilli(snapshot.get().lastChangedAtMs()));
@@ -219,6 +225,15 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       appendEvent(tenantId, gameInstanceId, scriptPatchVersion, snapshot.get(), now);
     }
     repository.save(projection);
+  }
+
+  private static boolean usableRuntimePin(
+      ScriptPatchPinProjectionService.PinConvergenceSummary runtime) {
+    return runtime.scriptPinEpoch() > 0
+        && runtime.observedPinnedScriptPatchVersion() != null
+        && !runtime.observedPinnedScriptPatchVersion().isBlank()
+        && runtime.lastObservedControlPlaneRequestId() != null
+        && !runtime.lastObservedControlPlaneRequestId().isBlank();
   }
 
   private Optional<ProjectionSnapshot> buildSnapshot(

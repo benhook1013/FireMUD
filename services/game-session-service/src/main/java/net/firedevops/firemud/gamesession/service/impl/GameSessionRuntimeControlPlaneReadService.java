@@ -79,13 +79,13 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalArgumentException(
           "GAME_INSTANCE_STATUS_INVALID: runtime state requires a RUNNING game instance");
     }
-    validateWorldLifecycle(instance);
     String pinnedScriptPatchVersion = instance.getScriptPatchVersion();
     long scriptPinEpoch = instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch();
     ScriptPinTupleCoherence.requireCoherent(
         pinnedScriptPatchVersion,
         instance.getScriptPinEpoch(),
         instance.getScriptPatchPinnedControlPlaneRequestId());
+    validateWorldLifecycle(instance);
     CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);
     return GameInstanceRuntimeState.newBuilder()
         .setTenantId(Long.toString(instance.getTenantId()))
@@ -141,7 +141,7 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalStateException("world lifecycle authority unavailable", ex);
     }
     if (response == null) {
-      throw new IllegalStateException("world lifecycle authority unavailable");
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: World response was null");
     }
     if (response.hasError()) {
       throw new IllegalStateException(

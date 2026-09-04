@@ -39,7 +39,7 @@ public record GameInstanceDto(
         id,
         tenantId,
         runtimeVersion,
-        scriptPatchVersion,
+        null,
         null,
         gameTemplateId,
         launchDescriptorId,

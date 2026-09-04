@@ -53,7 +53,8 @@ public interface RemoteFollowupRuntimeService {
       String scriptEventId,
       String triggerMode,
       String readSnapshotToken,
-      String eventPayloadJson) {
+      String eventPayloadJson,
+      Long scriptPinEpoch) {
     public ScheduleRequest(
         long tenantId,
         String commandId,
@@ -126,6 +127,7 @@ public interface RemoteFollowupRuntimeService {
           originSourceOrdinal,
           originSourceDueTickId,
           originSourceDueAtMs,
+          null,
           null,
           null,
           null,

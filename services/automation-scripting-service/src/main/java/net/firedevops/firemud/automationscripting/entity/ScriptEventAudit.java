@@ -21,7 +21,10 @@ public class ScriptEventAudit {
   private String eventType;
   private String eventSchemaVersion;
   private String scriptPatchVersion;
-  private long scriptPinEpoch;
+
+  /** Null for tenant-readiness onLoad audits, positive for instance-scoped execution. */
+  private Long scriptPinEpoch;
+
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

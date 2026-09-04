@@ -65,7 +65,7 @@ public class ScriptEventAuditRepository {
         .eq(tenantId)
         .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
         .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(regionId))
-        .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(regionEpoch))
+        .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.isNotDistinctFrom(regionEpoch))
         .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entityId))
         .and(SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
         .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(worldSlug))
@@ -359,7 +359,7 @@ public class ScriptEventAuditRepository {
     entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
-    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));

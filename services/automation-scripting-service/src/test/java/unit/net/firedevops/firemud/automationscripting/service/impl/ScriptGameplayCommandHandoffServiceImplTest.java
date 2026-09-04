@@ -388,6 +388,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getOriginSourceState()).isEqualTo("SCHEDULE_DUE_CLAIMED");
     assertThat(requestCaptor.getValue().getOriginSourceOrdinal()).isEqualTo(5000L);
     assertThat(requestCaptor.getValue().getOriginSourceDueAtMs()).isEqualTo(5000L);
+    assertThat(requestCaptor.getValue().getScriptPinEpoch()).isEqualTo(9L);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
@@ -1494,6 +1495,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setSourceOrdinal(5000L);
     item.setSourceDueAtMs(5000L);
     item.setScriptPatchVersion("patch-1");
+    item.setScriptPinEpoch(9L);
     item.setAdmissionEpoch(1L);
     item.setUpdatedAt(Instant.EPOCH);
     return item;

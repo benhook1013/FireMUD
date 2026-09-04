@@ -50,6 +50,27 @@ class GameInstanceServiceImplTest {
   private Map<Long, GameInstance> store;
   private AtomicLong nextId;
 
+  @Test
+  void legacyDtoConstructorNormalizesPartialScriptPinToUnpinned() {
+    GameInstanceDto dto =
+        new GameInstanceDto(
+            7L,
+            1L,
+            "runtime-1",
+            "patch-1",
+            3L,
+            "launch-1",
+            11L,
+            12L,
+            13L,
+            "generation-1",
+            42L,
+            "RUNNING");
+
+    assertNull(dto.scriptPatchVersion());
+    assertNull(dto.scriptPinEpoch());
+  }
+
   @BeforeEach
   void setup() {
     repository = mock(GameInstanceRepository.class);
@@ -563,7 +584,8 @@ class GameInstanceServiceImplTest {
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
-    assertEquals(42L, store.get(7L).getScriptPinEpoch());
+    assertNull(store.get(7L).getScriptPatchVersion());
+    assertNull(store.get(7L).getScriptPinEpoch());
     verify(stateService, never()).deleteState(2L, 7L);
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(2)).saveState(states.capture());

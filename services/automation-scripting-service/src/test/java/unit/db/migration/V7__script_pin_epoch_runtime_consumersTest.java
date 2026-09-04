@@ -4,24 +4,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
-class V12__script_pin_epoch_projectionTest {
+class V7__script_pin_epoch_runtime_consumersTest {
   @Test
-  void addsFailClosedPinEpochToExistingProjectionRows() throws IOException {
+  void addsFailClosedEpochToRolloutProjectionRows() throws IOException {
     String migration;
     try (var stream =
         getClass()
             .getClassLoader()
-            .getResourceAsStream("db/migration/V12__script_pin_epoch_projection.sql")) {
+            .getResourceAsStream("db/migration/V7__script_pin_epoch_runtime_consumers.sql")) {
       assertThat(stream).isNotNull();
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
     assertThat(migration)
-        .containsPattern(
-            Pattern.quote("ALTER TABLE script_patch_pin_projections")
-                + "\\s+ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;");
+        .contains(
+            "ALTER TABLE script_patch_instance_rollout_projections",
+            "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;");
   }
 }

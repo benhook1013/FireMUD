@@ -987,8 +987,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 150L, 151L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
@@ -1135,8 +1135,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", 1L, "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-2", 1L, "req-2", 260L, 261L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(rolloutProjectionService.listProjections(
@@ -1543,8 +1543,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -1633,8 +1633,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
@@ -1726,8 +1726,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", 1L, "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-2", 1L, "req-2", 600L, 601L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -1751,6 +1751,25 @@ class ScriptWorkItemServiceImplTest {
     assertThat(result.replayedCount()).isEqualTo(0L);
     assertThat(result.rejectedCount()).isEqualTo(1L);
     assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+  }
+
+  @Test
+  void rejectsReplayWhenPinnedPatchMatchesButEpochDiffers() {
+    ScriptWorkItem item = replayableRuntimeWorkItem(79L);
+    item.setScriptPinEpoch(2L);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(79L)).thenReturn(Optional.of(item));
+    ScriptWorkItemService service = replayService(workItemRepository);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "game-1", "", List.of("79"), "patch-1", 0L, 0L, 10, "", "", ""));
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
   }
 
   @Test
@@ -1915,7 +1934,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "", 100L, 100L, 0L, false, "", 0L, "", "", "")),
+                        "1", "game-1", "patch-1", 1L, "", 100L, 100L, 0L, false, "", 0L, "", "",
+                        "")),
                 "",
                 ""));
     return service(

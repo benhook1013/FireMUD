@@ -51,6 +51,11 @@ final class AutomationGameplayCommandAdmissionSupport {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
 
+    Optional<AdmissionResult> scriptPinRejected = rejectIfScriptPinTupleMismatch(request, instance);
+    if (scriptPinRejected.isPresent()) {
+      return scriptPinRejected.orElseThrow();
+    }
+
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
@@ -94,6 +99,11 @@ final class AutomationGameplayCommandAdmissionSupport {
             .orElseThrow(() -> new IllegalArgumentException("game_instance_id not found"));
     if (!request.tenantId().equals(instance.getTenantId())) {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+    }
+
+    Optional<AdmissionResult> scriptPinRejected = rejectIfScriptPinTupleMismatch(request, instance);
+    if (scriptPinRejected.isPresent()) {
+      return scriptPinRejected.orElseThrow();
     }
 
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
@@ -283,6 +293,7 @@ final class AutomationGameplayCommandAdmissionSupport {
         && sameText(existing.getAutomationWorkItemId(), requested.getAutomationWorkItemId())
         && sameText(existing.getScriptId(), requested.getScriptId())
         && sameText(existing.getScriptPatchVersion(), requested.getScriptPatchVersion())
+        && Objects.equals(existing.getScriptPinEpoch(), requested.getScriptPinEpoch())
         && sameText(existing.getPluginId(), requested.getPluginId())
         && sameText(existing.getPluginVersionId(), requested.getPluginVersionId())
         && sameRemoteOrExactPlayableStateScope(existing, requested)
@@ -539,7 +550,8 @@ final class AutomationGameplayCommandAdmissionSupport {
         request.remoteFollowupId(),
         request.command(),
         request.requiresSoloTick(),
-        request.dueTickId());
+        request.dueTickId(),
+        request.scriptPinEpoch());
   }
 
   private static AdmissionResult temporaryPointerAuthorityUnavailable(
@@ -570,6 +582,29 @@ final class AutomationGameplayCommandAdmissionSupport {
         .filter(status -> request.gameInstanceId().equals(status.getGameInstanceId()));
   }
 
+  private static Optional<AdmissionResult> rejectIfScriptPinTupleMismatch(
+      AdmissionRequest request, GameInstance instance) {
+    if (!"AUTOMATION".equals(request.sourceType())) {
+      return Optional.empty();
+    }
+    Long currentEpoch = instance.getScriptPinEpoch();
+    if (request.scriptPinEpoch() == null
+        || request.scriptPinEpoch() <= 0
+        || currentEpoch == null
+        || currentEpoch <= 0
+        || !Objects.equals(request.scriptPatchVersion(), instance.getScriptPatchVersion())
+        || !request.scriptPinEpoch().equals(currentEpoch)) {
+      return Optional.of(
+          new AdmissionResult(
+              false,
+              "REJECTED",
+              null,
+              "STALE_TIMELINE",
+              "script pin tuple does not match current game instance"));
+    }
+    return Optional.empty();
+  }
+
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
     Instant now = Instant.now();
     GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
@@ -594,6 +629,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
     command.setScriptId(blankToNull(request.scriptId()));
     command.setScriptPatchVersion(blankToNull(request.scriptPatchVersion()));
+    command.setScriptPinEpoch(request.scriptPinEpoch());
     command.setPluginId(blankToNull(request.pluginId()));
     command.setPluginVersionId(blankToNull(request.pluginVersionId()));
     command.setPlayableStateScope(blankToNull(request.playableStateScope()));
@@ -689,7 +725,65 @@ final class AutomationGameplayCommandAdmissionSupport {
       String remoteFollowupId,
       String command,
       boolean requiresSoloTick,
-      Long dueTickId) {}
+      Long dueTickId,
+      Long scriptPinEpoch) {
+    AdmissionRequest(
+        Long tenantId,
+        Long gameInstanceId,
+        String regionId,
+        Long regionEpoch,
+        String sourceType,
+        String automationDispatchId,
+        String automationWorkItemId,
+        String scriptId,
+        String scriptPatchVersion,
+        String pluginId,
+        String pluginVersionId,
+        String playableStateScope,
+        String worldSlug,
+        String realmSlug,
+        Long pointerVersion,
+        String originSourceKind,
+        String originSourceState,
+        Long originSourceOrdinal,
+        Long originSourceDueTickId,
+        Long originSourceDueAtMs,
+        String targetEntityId,
+        String remoteCoordinatorId,
+        String remoteFollowupId,
+        String command,
+        boolean requiresSoloTick,
+        Long dueTickId) {
+      this(
+          tenantId,
+          gameInstanceId,
+          regionId,
+          regionEpoch,
+          sourceType,
+          automationDispatchId,
+          automationWorkItemId,
+          scriptId,
+          scriptPatchVersion,
+          pluginId,
+          pluginVersionId,
+          playableStateScope,
+          worldSlug,
+          realmSlug,
+          pointerVersion,
+          originSourceKind,
+          originSourceState,
+          originSourceOrdinal,
+          originSourceDueTickId,
+          originSourceDueAtMs,
+          targetEntityId,
+          remoteCoordinatorId,
+          remoteFollowupId,
+          command,
+          requiresSoloTick,
+          dueTickId,
+          null);
+    }
+  }
 
   record AdmissionResult(
       boolean accepted,

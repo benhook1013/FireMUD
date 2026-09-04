@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -185,7 +187,7 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
             IllegalStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
-    assertEquals("world lifecycle authority unavailable", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_MALFORMED: World response was null", error.getMessage());
   }
 
   @Test
@@ -258,6 +260,22 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
     assertEquals(
         "GAME_INSTANCE_STATUS_INVALID: runtime state requires a RUNNING game instance",
         error.getMessage());
+  }
+
+  @Test
+  void runtimeReadRejectsMalformedLocalPinBeforeWorldAuthorityCall() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    GameSessionRuntimeControlPlaneReadService service = service(world, "RUNNING", "patch-1", null);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals(
+        "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
+        error.getMessage());
+    verify(world, never()).getWorldInstanceLifecycle(1L, 7L);
   }
 
   private GameSessionRuntimeControlPlaneReadService service(WorldManagementClient world) {

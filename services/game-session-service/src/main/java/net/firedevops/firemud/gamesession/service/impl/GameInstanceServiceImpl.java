@@ -530,8 +530,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private void restoreSessionSnapshot(GameInstance instance, GameInstanceDto snapshot) {
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
-    instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
-    instance.setScriptPinEpoch(snapshot.scriptPinEpoch());
     instance.setGameTemplateId(snapshot.gameTemplateId());
     instance.setLaunchDescriptorId(snapshot.launchDescriptorId());
     instance.setVersionId(snapshot.versionId());

@@ -1632,7 +1632,11 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
     verify(automationQueueService).enqueueWorkItem(workItem);
-    verify(eventAuditRepository).save(org.mockito.Mockito.any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getScriptPinEpoch())
+        .isEqualTo(workItem.getScriptPinEpoch())
+        .isPositive();
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
         ArgumentCaptor.forClass(List.class);
@@ -2050,6 +2054,31 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("script_patch_mismatch");
     assertThat(meterRegistry.find("automation_script_timer_runtime_fence_dropped_total").counter())
         .isNull();
+  }
+
+  @Test
+  void matchingPatchWithDifferentEpochPersistsDistinctSkipReason() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1")
+                        .getRuntimeState()
+                        .toBuilder()
+                        .setScriptPinEpoch(2L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("FENCED");
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("script_pin_epoch_mismatch");
   }
 
   @Test

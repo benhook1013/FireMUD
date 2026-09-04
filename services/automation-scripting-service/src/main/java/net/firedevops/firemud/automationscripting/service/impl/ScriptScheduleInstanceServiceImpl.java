@@ -80,6 +80,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String REASON_RUNTIME_SCOPE_CHANGED = "runtime_scope_changed";
   private static final String REASON_PLAYABLE_STATE_SCOPE_CHANGED = "playable_state_scope_changed";
   private static final String REASON_SCRIPT_PATCH_MISMATCH = "script_patch_mismatch";
+  private static final String REASON_SCRIPT_PIN_EPOCH_MISMATCH = "script_pin_epoch_mismatch";
   private static final String REASON_PLUGIN_BINDING_MISMATCH = "plugin_binding_mismatch";
   private static final String REASON_MATERIALIZATION_NOT_READY = "materialization_not_ready";
   private static final String REASON_ROUTING_BUNDLE_CHANGED = "routing_bundle_changed";
@@ -287,12 +288,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       RoutingBundleSupport.RoutingBundle routingBundle =
           RoutingBundleSupport.normalize(
               projection.getWorldSlug(), projection.getRealmSlug(), projection.getPointerVersion());
+      long scriptPinEpoch =
+          projection.getScriptPinEpoch() == null ? 0L : projection.getScriptPinEpoch();
       GameInstanceRuntimeState.Builder runtimeState =
           GameInstanceRuntimeState.newBuilder()
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
-              .setScriptPinEpoch(projection.getScriptPinEpoch())
+              .setScriptPinEpoch(scriptPinEpoch)
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
@@ -1356,7 +1359,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
     }
     if (runtimeState.getScriptPinEpoch() != instance.getScriptPinEpoch()) {
-      return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
+      return MaterializationEligibility.proven(REASON_SCRIPT_PIN_EPOCH_MISMATCH);
     }
     if (!Objects.equals(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
@@ -1540,6 +1543,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
     audit.setScriptEventId(workItem.getScriptEventId());
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);

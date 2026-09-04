@@ -40,6 +40,7 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-7")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-7")
                         .setRegionEpoch(22L)
                         .setPlayableStateScope(
@@ -142,6 +143,8 @@ class ScriptPatchPinProjectionServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-7")
+                        .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-7")
                         .setWorldSlug("demo")
                         .build())
                 .build());
@@ -335,6 +338,91 @@ class ScriptPatchPinProjectionServiceImplTest {
             .build());
 
     verifyNoInteractions(repository, rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
+  void ignoresOutOfOrderLowerEpochWithoutSavingOrReconciling() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setId(7L);
+    existing.setRowVersion(2);
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("patch-2");
+    existing.setScriptPinEpoch(2L);
+    existing.setLastObservedControlPlaneRequestId("req-2");
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
+            .build());
+
+    assertThat(existing.getScriptPinEpoch()).isEqualTo(2L);
+    verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
+  void replacesLegacyPartialProjectionOnFirstPositiveObservation() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setId(7L);
+    existing.setRowVersion(2);
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("legacy-patch");
+    existing.setLastObservedControlPlaneRequestId("legacy-request");
+    existing.setScriptPinEpoch(0L);
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("authoritative-patch")
+            .setScriptPinEpoch(4L)
+            .setScriptPatchPinnedControlPlaneRequestId("authoritative-request")
+            .build());
+
+    assertThat(existing.getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(existing.getObservedPinnedScriptPatchVersion()).isEqualTo("authoritative-patch");
+    assertThat(existing.getLastObservedControlPlaneRequestId()).isEqualTo("authoritative-request");
+    verify(repository).save(existing);
   }
 
   private static ScriptRuntimeProperties runtimeProperties() {

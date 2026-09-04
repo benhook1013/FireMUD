@@ -24,7 +24,10 @@ public class ScriptEventIngressAudit {
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
-  private long scriptPinEpoch;
+
+  /** Null for pre-instance tenant-readiness ingress, positive for instance-scoped events. */
+  private Long scriptPinEpoch;
+
   private String scriptEventId;
   private String sourceService;
   private String triggerMode;

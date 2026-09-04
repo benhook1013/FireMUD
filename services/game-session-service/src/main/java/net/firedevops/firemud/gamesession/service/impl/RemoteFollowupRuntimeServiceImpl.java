@@ -723,6 +723,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
+            existing.getScriptPinEpoch(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
@@ -770,6 +771,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
+            existing.getScriptPinEpoch(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
@@ -829,6 +831,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       String realmSlug,
       Long pointerVersion,
       String scriptPatchVersion,
+      Long scriptPinEpoch,
       String pluginId,
       String pluginVersionId,
       String automationDispatchId,
@@ -857,6 +860,7 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && sameLong(storedRoutingMetadata.pointerVersion(), requestRoutingMetadata.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
+        && sameLong(request.scriptPinEpoch(), scriptPinEpoch)
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
         && normalized(blankToNull(request.pluginVersionId())).equals(normalized(pluginVersionId))
         && normalized(blankToNull(request.automationDispatchId()))
@@ -1076,6 +1080,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
+    coordinator.setScriptPinEpoch(
+        request.scriptPinEpoch() != null
+            ? request.scriptPinEpoch()
+            : command == null ? null : command.getScriptPinEpoch());
     coordinator.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     coordinator.setPluginVersionId(
@@ -1113,6 +1121,10 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
+    followup.setScriptPinEpoch(
+        request.scriptPinEpoch() != null
+            ? request.scriptPinEpoch()
+            : command == null ? null : command.getScriptPinEpoch());
     followup.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     followup.setPluginVersionId(

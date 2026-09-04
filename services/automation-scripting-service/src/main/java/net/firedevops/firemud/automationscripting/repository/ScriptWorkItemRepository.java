@@ -296,6 +296,7 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_WORK_ITEMS.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, entity.getSourceService())
@@ -541,6 +542,7 @@ public class ScriptWorkItemRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -580,6 +582,8 @@ public class ScriptWorkItemRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
     entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));
     entity.setSourceService(record.get(SCRIPT_WORK_ITEMS.SOURCE_SERVICE));

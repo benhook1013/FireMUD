@@ -41,16 +41,31 @@ final class GameplayCommandExecutionFenceService {
     }
 
     String commandPatch = normalize(command.getScriptPatchVersion());
-    if ("AUTOMATION".equals(normalize(command.getSourceType())) && commandPatch.isEmpty()) {
+    boolean automationCommand = "AUTOMATION".equals(normalize(command.getSourceType()));
+    if (automationCommand && commandPatch.isEmpty()) {
       return failure(
           "INCOMPLETE_SCRIPT_PATCH_FENCE",
           "Automation gameplay command must include its admitted script patch");
+    }
+    if (automationCommand
+        && (command.getScriptPinEpoch() == null || command.getScriptPinEpoch() <= 0)) {
+      return failure(
+          "INCOMPLETE_SCRIPT_PIN_FENCE",
+          "Automation gameplay command must include its admitted script pin epoch");
     }
     if (!commandPatch.isEmpty()
         && !commandPatch.equals(normalize(instance.getScriptPatchVersion()))) {
       return failure(
           "STALE_SCRIPT_PATCH_VERSION",
           "Gameplay command script patch no longer matches the pinned instance patch");
+    }
+    if (automationCommand
+        && (instance.getScriptPinEpoch() == null
+            || instance.getScriptPinEpoch() <= 0
+            || !command.getScriptPinEpoch().equals(instance.getScriptPinEpoch()))) {
+      return failure(
+          "STALE_SCRIPT_PIN_EPOCH",
+          "Gameplay command script pin epoch no longer matches the pinned instance epoch");
     }
 
     String pluginId = normalize(command.getPluginId());

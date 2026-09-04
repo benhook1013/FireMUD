@@ -29,6 +29,7 @@ class ScriptEventAuditRepositoryTest {
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));
+    row.setScriptPinEpoch(null);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
@@ -52,6 +53,7 @@ class ScriptEventAuditRepositoryTest {
 
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(11L);
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
   }
 
   @Test

@@ -88,7 +88,7 @@ class RemoteFollowupRuntimeServiceImplTest {
     when(gameplayCommandRepository.findByCommandId("cmd-1")).thenReturn(Optional.of(command));
 
     RemoteFollowupRuntimeService.ScheduleOutcome outcome =
-        service.scheduleFollowup(scheduleRequest());
+        service.scheduleFollowup(scheduleRequestWithEpoch());
 
     assertTrue(outcome.coordinatorCreated());
     assertTrue(outcome.followupCreated());
@@ -106,6 +106,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "work-1".equals(coordinator.getAutomationWorkItemId())
                         && "script-1".equals(coordinator.getScriptId())
                         && "patch-1".equals(coordinator.getScriptPatchVersion())
+                        && Long.valueOf(9L).equals(coordinator.getScriptPinEpoch())
                         && "plugin-1".equals(coordinator.getPluginId())
                         && "plugin-v1".equals(coordinator.getPluginVersionId())
                         && "demo".equals(coordinator.getWorldSlug())
@@ -119,6 +120,7 @@ class RemoteFollowupRuntimeServiceImplTest {
                         && "cmd-1".equals(followup.getCommandId())
                         && "entity:entity-9".equals(followup.getClaimTargetAggregate())
                         && "enqueue_automation_command".equals(followup.getPayloadKind())
+                        && Long.valueOf(9L).equals(followup.getScriptPinEpoch())
                         && "LOOK".equals(followup.getRequestedCommand())
                         && followup.isRequiresSoloTick()
                         && "REMOTE_FOLLOWUP".equals(followup.getOriginSourceKind())
@@ -2936,6 +2938,52 @@ class RemoteFollowupRuntimeServiceImplTest {
         44L,
         22L,
         1700L);
+  }
+
+  private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithEpoch() {
+    return new RemoteFollowupRuntimeService.ScheduleRequest(
+        1L,
+        "cmd-1",
+        "coord-1",
+        7L,
+        "region-a",
+        4L,
+        8L,
+        "region-b",
+        8L,
+        22L,
+        4L,
+        25L,
+        "late_result_safe_to_ignore",
+        "followup-1",
+        "effect-1",
+        "entity-9",
+        "{\"kind\":\"enqueue_automation_command\",\"command\":\"LOOK\",\"requiresSoloTick\":true}",
+        "enqueue_automation_command",
+        "LOOK",
+        true,
+        "SHARED",
+        "demo",
+        "production",
+        17L,
+        "patch-1",
+        "plugin-1",
+        "plugin-v1",
+        "dispatch-1",
+        "work-1",
+        "script-1",
+        "REMOTE_FOLLOWUP",
+        "TARGET_REGION_EXECUTED",
+        44L,
+        22L,
+        1700L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        9L);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest triggerScriptEventScheduleRequest() {

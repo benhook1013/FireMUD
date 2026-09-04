@@ -30,7 +30,8 @@ public class ScriptPatchPinProjectionRepository {
 
   public Optional<ScriptPatchPinProjection> findByTenantIdAndGameInstanceId(
       String tenantId, String gameInstanceId) {
-    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .select(SCRIPT_PIN_EPOCH)
         .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
@@ -42,7 +43,8 @@ public class ScriptPatchPinProjectionRepository {
 
   public List<ScriptPatchPinProjection> findByTenantIdAndObservedPinnedScriptPatchVersion(
       String tenantId, String observedPinnedScriptPatchVersion) {
-    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .select(SCRIPT_PIN_EPOCH)
         .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
@@ -108,7 +110,8 @@ public class ScriptPatchPinProjectionRepository {
   }
 
   private Optional<ScriptPatchPinProjection> findById(Long id) {
-    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields())
+        .select(SCRIPT_PIN_EPOCH)
         .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(SCRIPT_PATCH_PIN_PROJECTIONS.ID.eq(id))
         .fetchOptional(this::toEntity);
@@ -142,7 +145,7 @@ public class ScriptPatchPinProjectionRepository {
     entity.setRealmSlug(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION));
     Long scriptPinEpoch = record.get(SCRIPT_PIN_EPOCH);
-    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setRuntimeRegionId(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID));
     Long runtimeRegionEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH);
     entity.setRuntimeRegionEpoch(runtimeRegionEpoch == null ? 0L : runtimeRegionEpoch);

@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -374,8 +375,7 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
-    verify(gameSessionControlPlaneClient)
-        .getGameInstanceRuntimeState("1", "game-1", "region-1");
+    verify(gameSessionControlPlaneClient).getGameInstanceRuntimeState("1", "game-1", "region-1");
     assertThat(auditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(auditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
     assertThat(auditCaptor.getValue().getSourceService()).isEqualTo("game-session-service");
@@ -2848,6 +2848,8 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
@@ -2863,8 +2865,8 @@ class ScriptEventIngressServiceImplTest {
         new ScriptEventIngressServiceImpl(
             repository,
             Mockito.mock(ScriptEventBindingRepository.class),
-            Mockito.mock(ScriptWorkItemRepository.class),
-            Mockito.mock(ScriptEventAuditRepository.class),
+            workItemRepository,
+            eventAuditRepository,
             new BuiltInScriptEventRegistryService(),
             Mockito.mock(AutomationQueueService.class),
             outputProperties(),
@@ -2899,8 +2901,10 @@ class ScriptEventIngressServiceImplTest {
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
     assertThat(auditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
-    assertThat(auditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
-    verify(gameSessionControlPlaneClient)
+    assertThat(auditCaptor.getValue().getScriptPinEpoch()).isNull();
+    verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
+    verify(eventAuditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
+    verify(gameSessionControlPlaneClient, times(1))
         .getGameInstanceRuntimeState("1", "game-1", "region-1");
   }
 

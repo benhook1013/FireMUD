@@ -42,10 +42,10 @@ public class ScriptEventIngressAuditRepository {
             SCRIPT_EVENT_INGRESS_AUDIT
                 .TENANT_ID
                 .eq(tenantId)
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.eq(regionId))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.eq(regionEpoch))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.eq(entityId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNotDistinctFrom(gameInstanceId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.isNotDistinctFrom(regionId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.isNotDistinctFrom(regionEpoch))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entityId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
@@ -174,7 +174,7 @@ public class ScriptEventIngressAuditRepository {
     entity.setPluginId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
-    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setEventType(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS));

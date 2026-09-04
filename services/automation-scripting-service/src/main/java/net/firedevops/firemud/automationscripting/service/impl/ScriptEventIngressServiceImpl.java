@@ -451,7 +451,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!request.getScriptPatchVersion().equals(runtimeState.getPinnedScriptPatchVersion())) {
       return new PinValidation(
           new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "version_unavailable", 0),
-          runtimeState.getScriptPinEpoch());
+          null);
     }
     if (request.getPlayableStateScopeValue() != 0
         && runtimeState.getPlayableStateScopeValue() != 0
@@ -1222,10 +1222,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String pointerVersion) {}
 
   private static final class PinEpochHolder {
-    private long value;
+    private Long value;
   }
 
-  private record PinValidation(TriggerAdmission admission, long scriptPinEpoch) {}
+  private record PinValidation(TriggerAdmission admission, Long scriptPinEpoch) {}
 
   private record AdmissionStateValidation(
       TriggerAdmission admission, AutomationAdmissionStateService.AdmissionStateSummary state) {

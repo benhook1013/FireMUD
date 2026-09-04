@@ -81,6 +81,22 @@ class GameplayCommandExecutionFenceServiceTest {
   }
 
   @Test
+  void rejectsSamePatchCommandFromDifferentPinEpoch() {
+    GameplayCommand command = command();
+    command.setSourceType("AUTOMATION");
+    command.setScriptPinEpoch(1L);
+    GameInstance current = instance("patch-1");
+    current.setScriptPinEpoch(2L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(current));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("STALE_SCRIPT_PIN_EPOCH", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
   void acceptsEnabledPluginVersionForCurrentRuntimeScope() {
     GameplayCommand command = command();
     command.setPluginId("plugin-1");
@@ -163,6 +179,7 @@ class GameplayCommandExecutionFenceServiceTest {
     instance.setId(2L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion(scriptPatchVersion);
+    instance.setScriptPinEpoch(1L);
     return instance;
   }
 }

@@ -28,6 +28,7 @@ public class RemoteCommandCoordinator {
   private String realmSlug;
   private Long pointerVersion;
   private String scriptPatchVersion;
+  private Long scriptPinEpoch;
   private String pluginId;
   private String pluginVersionId;
   private String automationDispatchId;
