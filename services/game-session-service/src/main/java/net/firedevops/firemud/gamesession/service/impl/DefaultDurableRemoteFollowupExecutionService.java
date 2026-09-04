@@ -295,14 +295,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       } catch (IllegalArgumentException ex) {
         return failure("REMOTE_GAMEPLAY_PAYLOAD_INVALID", ex.getMessage());
       }
-      PayloadExecution sourceAuthorityFailure = validateSourceScriptPinAuthority(coordinator, followup);
-      if (sourceAuthorityFailure != null) {
-        return sourceAuthorityFailure;
-      }
-      PayloadExecution targetAuthorityFailure = validateTargetScriptPinAuthority(coordinator, followup);
-      if (targetAuthorityFailure != null) {
-        return targetAuthorityFailure;
-      }
       return executeEnqueueGameplayCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
@@ -312,26 +304,10 @@ public final class DefaultDurableRemoteFollowupExecutionService
       } catch (IllegalArgumentException ex) {
         return failure("REMOTE_AUTOMATION_PAYLOAD_INVALID", ex.getMessage());
       }
-      PayloadExecution sourceAuthorityFailure = validateSourceScriptPinAuthority(coordinator, followup);
-      if (sourceAuthorityFailure != null) {
-        return sourceAuthorityFailure;
-      }
-      PayloadExecution targetAuthorityFailure = validateTargetScriptPinAuthority(coordinator, followup);
-      if (targetAuthorityFailure != null) {
-        return targetAuthorityFailure;
-      }
       return executeEnqueueAutomationCommand(
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      PayloadExecution sourceAuthorityFailure = validateSourceScriptPinAuthority(coordinator, followup);
-      if (sourceAuthorityFailure != null) {
-        return sourceAuthorityFailure;
-      }
-      PayloadExecution targetAuthorityFailure = validateTargetScriptPinAuthority(coordinator, followup);
-      if (targetAuthorityFailure != null) {
-        return targetAuthorityFailure;
-      }
       if (gameplayAdmissionPointerAuthorityService == null) {
         try {
           return executeTriggerScriptEvent(
@@ -392,13 +368,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                       coordinator.getAutomationWorkItemId(), root, "automationWorkItemId"),
                   requiredAuthoritativeText(coordinator.getScriptId(), root, "scriptId"),
                   requiredAuthoritativeText(
-                      firstNonBlank(
-                          followup.getTargetScriptPatchVersion(),
-                          firstNonBlank(
-                              coordinator.getTargetScriptPatchVersion(),
-                              coordinator.getScriptPatchVersion())),
-                      root,
-                      "scriptPatchVersion"),
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
                   routingBundle == null ? null : routingBundle.playableStateScope(),
@@ -424,9 +394,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   followup.getFollowupId(),
                   requiredAuthoritativeText(requestedCommand, root, "command"),
                   requiresSoloTick,
-                  followup.getDueTickId(),
-                  effectiveTargetScriptPinEpoch(followup, coordinator, root),
-                  effectiveTargetScriptPinControlPlaneRequestId(followup, coordinator, root)),
+                  followup.getDueTickId()),
               gameInstanceRepository,
               gameplayCommandRepository,
               runtimeRegionStatusRepository,
@@ -485,13 +453,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   null,
                   authoritativeText(coordinator.getScriptId(), root, "scriptId"),
                   authoritativeText(
-                      firstNonBlank(
-                          followup.getTargetScriptPatchVersion(),
-                          firstNonBlank(
-                              coordinator.getTargetScriptPatchVersion(),
-                              coordinator.getScriptPatchVersion())),
-                      root,
-                      "scriptPatchVersion"),
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   authoritativeText(coordinator.getPluginId(), root, "pluginId"),
                   authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId"),
                   routingBundle == null ? null : routingBundle.playableStateScope(),
@@ -517,9 +479,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                   followup.getFollowupId(),
                   requiredAuthoritativeText(requestedCommand, root, "command"),
                   requiresSoloTick,
-                  followup.getDueTickId(),
-                  effectiveTargetScriptPinEpoch(followup, coordinator, root),
-                  effectiveTargetScriptPinControlPlaneRequestId(followup, coordinator, root)),
+                  followup.getDueTickId()),
               gameInstanceRepository,
               gameplayCommandRepository,
               runtimeRegionStatusRepository,
@@ -655,94 +615,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
     };
   }
 
-  private PayloadExecution validateSourceScriptPinAuthority(
-      RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
-    String sourcePatch =
-        firstNonBlank(followup.getSourceScriptPatchVersion(), coordinator.getSourceScriptPatchVersion());
-    Long sourceEpoch =
-        followup.getSourceScriptPinEpoch() != null
-            ? followup.getSourceScriptPinEpoch()
-            : coordinator.getSourceScriptPinEpoch();
-    String sourceRequestId =
-        firstNonBlank(
-            followup.getSourceScriptPinControlPlaneRequestId(),
-            coordinator.getSourceScriptPinControlPlaneRequestId());
-    if (sourcePatch == null || sourcePatch.isBlank() || sourceEpoch == null || sourceEpoch <= 0L) {
-      return failure(
-          "REMOTE_SOURCE_SCRIPT_PIN_INVALID",
-          "Remote followup source script pin tuple is incomplete");
-    }
-    if (followup.getSourceScriptPatchVersion() != null
-        && coordinator.getSourceScriptPatchVersion() != null
-        && !followup.getSourceScriptPatchVersion().equals(coordinator.getSourceScriptPatchVersion())) {
-      return failure(
-          "REMOTE_SOURCE_SCRIPT_PIN_CONFLICT",
-          "Remote followup source script patch differs between durable rows");
-    }
-    if (followup.getSourceScriptPinEpoch() != null
-        && coordinator.getSourceScriptPinEpoch() != null
-        && !followup.getSourceScriptPinEpoch().equals(coordinator.getSourceScriptPinEpoch())) {
-      return failure(
-          "REMOTE_SOURCE_SCRIPT_PIN_CONFLICT",
-          "Remote followup source script epoch differs between durable rows");
-    }
-    net.firedevops.firemud.gamesession.entity.GameInstance origin =
-        gameInstanceRepository.findById(followup.getOriginGameInstanceId()).orElse(null);
-    if (origin == null) {
-      return retryablePayloadExecution(
-          "AUTH_UNAVAILABLE",
-          "Origin script pin authority is temporarily unavailable",
-          "{\"failureCode\":\"AUTH_UNAVAILABLE\"}",
-          null);
-    }
-    String currentPatch = normalize(origin.getScriptPatchVersion());
-    Long currentEpoch = origin.getScriptPinEpoch();
-    String currentRequestId = normalize(origin.getScriptPatchPinnedControlPlaneRequestId());
-    if (!sourcePatch.equals(currentPatch)
-        || currentEpoch == null
-        || !sourceEpoch.equals(currentEpoch)
-        || (sourceRequestId != null && !sourceRequestId.equals(currentRequestId))) {
-      return failure(
-          "REMOTE_SOURCE_SCRIPT_PIN_DISPLACED",
-          "Origin script pin tuple no longer matches the captured source authority");
-    }
-    return null;
-  }
-
-  private PayloadExecution validateTargetScriptPinAuthority(
-      RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
-    String targetPatch =
-        firstNonBlank(followup.getTargetScriptPatchVersion(), coordinator.getTargetScriptPatchVersion());
-    Long targetEpoch = effectiveTargetScriptPinEpoch(followup, coordinator, MissingNode.getInstance());
-    net.firedevops.firemud.gamesession.entity.GameInstance target =
-        gameInstanceRepository.findById(followup.getTargetGameInstanceId()).orElse(null);
-    if (target == null) {
-      return retryablePayloadExecution(
-          "AUTH_UNAVAILABLE",
-          "Target script pin authority is temporarily unavailable",
-          "{\"failureCode\":\"AUTH_UNAVAILABLE\"}",
-          null);
-    }
-    if (normalize(target.getScriptPatchVersion()).isBlank()
-        || target.getScriptPinEpoch() == null
-        || target.getScriptPinEpoch() <= 0L) {
-      return failure("REMOTE_TARGET_UNPINNED", "Target game instance has no pinned script authority");
-    }
-    if (targetPatch == null || targetPatch.isBlank() || targetEpoch == null || targetEpoch <= 0L) {
-      return failure(
-          "REMOTE_TARGET_SCRIPT_PIN_INVALID",
-          "Remote followup target script pin tuple is incomplete");
-    }
-    if (!normalize(target.getScriptPatchVersion()).equals(targetPatch)
-        || target.getScriptPinEpoch() == null
-        || !targetEpoch.equals(target.getScriptPinEpoch())) {
-      return failure(
-          "REMOTE_TARGET_SCRIPT_PIN_DISPLACED",
-          "Target script pin tuple no longer matches the frozen target authority");
-    }
-    return null;
-  }
-
   private void retryFollowup(
       RemoteFollowup followup, String tickBatchId, String failureCode, String failureMessage) {
     if (!CLAIMED_STATUS.equals(followup.getStatus())
@@ -793,18 +665,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
                           followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
                       firstNonBlank(followup.getEventSchemaVersion(), "v1")),
                   requiredAuthoritativeText(
-                      firstNonBlank(
-                          followup.getTargetScriptPatchVersion(),
-                          firstNonBlank(
-                              coordinator.getTargetScriptPatchVersion(),
-                              firstNonBlank(
-                                  coordinator.getScriptPatchVersion(),
-                                  followup.getScriptPatchVersion()))),
-                      root,
-                      "scriptPatchVersion"),
-                  requirePositiveScriptPinEpoch(
-                      effectiveTargetScriptPinEpoch(followup, coordinator, root), root),
-                  effectiveTargetScriptPinControlPlaneRequestId(followup, coordinator, root),
+                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
                   requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
                   isDryRun,
                   triggerMode(root, followup),
@@ -873,54 +734,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
     }
-  }
-
-  private static long requirePositiveScriptPinEpoch(Long durableEpoch, JsonNode root) {
-    Long epoch = authoritativeLong(durableEpoch, root, "scriptPinEpoch");
-    if (epoch == null || epoch <= 0L) {
-      throw new IllegalArgumentException("scriptPinEpoch is required");
-    }
-    return epoch;
-  }
-
-  private static Long effectiveTargetScriptPinEpoch(
-      RemoteFollowup followup, RemoteCommandCoordinator coordinator, JsonNode root) {
-    Long durableEpoch =
-        followup.getTargetScriptPinEpoch() != null
-            ? followup.getTargetScriptPinEpoch()
-            : coordinator.getTargetScriptPinEpoch() != null
-                ? coordinator.getTargetScriptPinEpoch()
-                : followup.getScriptPinEpoch();
-    return authoritativeLong(durableEpoch, root, "scriptPinEpoch");
-  }
-
-  private static Long effectiveSourceScriptPinEpoch(
-      RemoteFollowup followup, RemoteCommandCoordinator coordinator, JsonNode root) {
-    Long durableEpoch =
-        followup.getSourceScriptPinEpoch() != null
-            ? followup.getSourceScriptPinEpoch()
-            : coordinator.getSourceScriptPinEpoch() != null
-                ? coordinator.getSourceScriptPinEpoch()
-                : followup.getScriptPinEpoch() != null
-                    ? followup.getScriptPinEpoch()
-                    : coordinator.getScriptPinEpoch();
-    return authoritativeLong(durableEpoch, root, "scriptPinEpoch");
-  }
-
-  private static String effectiveTargetScriptPinControlPlaneRequestId(
-      RemoteFollowup followup, RemoteCommandCoordinator coordinator, JsonNode root) {
-    String durableRequestId =
-        firstNonBlank(
-            followup.getTargetScriptPinControlPlaneRequestId(),
-            coordinator.getTargetScriptPinControlPlaneRequestId());
-    String payloadRequestId = optionalText(root, "scriptPinControlPlaneRequestId");
-    if (durableRequestId != null
-        && payloadRequestId != null
-        && !durableRequestId.equals(payloadRequestId)) {
-      throw new IllegalArgumentException(
-          "scriptPinControlPlaneRequestId conflicts with durable followup value");
-    }
-    return firstNonBlank(durableRequestId, payloadRequestId);
   }
 
   private static boolean isRetryableTriggerAdmissionFailure(
@@ -1100,10 +913,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
 
   private static String firstNonBlank(String primary, String fallback) {
     return primary == null || primary.isBlank() ? fallback : primary;
-  }
-
-  private static String normalize(String value) {
-    return value == null ? "" : value.trim();
   }
 
   private static Long firstNonNull(Long primary, Long fallback) {

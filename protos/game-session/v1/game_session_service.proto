@@ -657,7 +657,6 @@ message RemoteCommandCoordinatorEntry {
   int64 current_target_runtime_pointer_version = 80;
   bool is_origin_routing_bundle_stale = 81;
   bool is_target_routing_bundle_stale = 82;
-  int64 script_pin_epoch = 83;
 }
 
 message GetRemoteCommandCoordinatorResponse {
@@ -771,17 +770,6 @@ message ScheduleRemoteFollowupRequest {
   string trigger_mode = 39;
   string read_snapshot_token = 40;
   string event_payload_json = 41;
-  int64 script_pin_epoch = 42;
-  // The immutable source pin tuple captured at origin admission. The legacy
-  // script_patch_version/script_pin_epoch fields remain source aliases for
-  // callers that have not yet been upgraded.
-  string source_script_patch_version = 43;
-  int64 source_script_pin_epoch = 44;
-  string source_script_pin_control_plane_request_id = 45;
-  // The exact target pin tuple frozen from the target owner at scheduling.
-  string target_script_patch_version = 46;
-  int64 target_script_pin_epoch = 47;
-  string target_script_pin_control_plane_request_id = 48;
 }
 
 message ScheduleRemoteFollowupResponse {
@@ -920,7 +908,6 @@ message RemoteFollowupEntry {
   int64 current_target_runtime_pointer_version = 72;
   bool is_origin_routing_bundle_stale = 73;
   bool is_target_routing_bundle_stale = 74;
-  int64 script_pin_epoch = 75;
 }
 
 message ListRemoteFollowupsResponse {
@@ -1308,8 +1295,6 @@ message EnqueueAutomationCommandIfAbsentRequest {
   int64 origin_source_ordinal = 21;
   int64 origin_source_due_tick_id = 22;
   int64 origin_source_due_at_ms = 23;
-  int64 script_pin_epoch = 24;
-  string script_pin_control_plane_request_id = 25;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {

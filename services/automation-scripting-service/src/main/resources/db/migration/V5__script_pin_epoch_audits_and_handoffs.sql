@@ -92,9 +92,3 @@ ALTER TABLE script_event_audit
         script_event_id,
         dry_run
     );
-
-ALTER TABLE script_handoff_events
-    ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
-
-ALTER TABLE script_handoff_events
-    ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);

@@ -315,14 +315,7 @@ final class GameSessionRemoteControlPlaneService {
                 normalizeBlank(request.getScriptEventId()),
                 normalizeBlank(request.getTriggerMode()),
                 normalizeBlank(request.getReadSnapshotToken()),
-                normalizeBlank(request.getEventPayloadJson()),
-                request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
-                normalizeBlank(request.getSourceScriptPatchVersion()),
-                request.getSourceScriptPinEpoch() > 0 ? request.getSourceScriptPinEpoch() : null,
-                normalizeBlank(request.getSourceScriptPinControlPlaneRequestId()),
-                normalizeBlank(request.getTargetScriptPatchVersion()),
-                request.getTargetScriptPinEpoch() > 0 ? request.getTargetScriptPinEpoch() : null,
-                normalizeBlank(request.getTargetScriptPinControlPlaneRequestId())));
+                normalizeBlank(request.getEventPayloadJson())));
     return ScheduleRemoteFollowupResponse.newBuilder()
         .setCoordinatorId(outcome.coordinatorId())
         .setFollowupId(outcome.followupId())
@@ -650,9 +643,6 @@ final class GameSessionRemoteControlPlaneService {
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
-    if (coordinator.getScriptPinEpoch() != null && coordinator.getScriptPinEpoch() > 0) {
-      builder.setScriptPinEpoch(coordinator.getScriptPinEpoch());
-    }
     applyDirectCommandIdentity(
         builder,
         coordinator.getAutomationDispatchId(),
@@ -756,9 +746,6 @@ final class GameSessionRemoteControlPlaneService {
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
-    if (followup.getScriptPinEpoch() != null && followup.getScriptPinEpoch() > 0) {
-      builder.setScriptPinEpoch(followup.getScriptPinEpoch());
-    }
     applyDirectCommandIdentity(
         builder,
         followup.getCommandId(),

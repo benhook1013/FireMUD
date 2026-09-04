@@ -118,27 +118,23 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
   @Override
   @Transactional
   public ScheduleOutcome scheduleFollowup(ScheduleRequest request) {
-    GameplayCommand command = findScheduleSourceCommand(request);
-    ScheduleRequest.PinTuple effectiveTuple = resolveEffectivePinTuple(request, command);
-    ScheduleRequest resolvedRequest = request.withResolvedPinTuple(effectiveTuple);
-    validateScheduleRequest(resolvedRequest);
+    validateScheduleRequest(request);
     Instant now = Instant.now(clock);
+    GameplayCommand command = findScheduleSourceCommand(request);
 
     Optional<RemoteCommandCoordinator> existingCoordinator =
         remoteCommandCoordinatorRepository.findByTenantIdAndCommandId(
-            resolvedRequest.tenantId(), resolvedRequest.commandId());
-    existingCoordinator.ifPresent(
-        existing -> validateExistingCoordinator(existing, resolvedRequest));
+            request.tenantId(), request.commandId());
+    existingCoordinator.ifPresent(existing -> validateExistingCoordinator(existing, request));
     Optional<RemoteFollowup> existingFollowup =
         remoteFollowupRepository
             .findByTenantIdAndTargetGameInstanceIdAndTargetRegionIdAndTargetRegionEpochAndEffectKey(
-                resolvedRequest.tenantId(),
-                resolvedRequest.targetGameInstanceId(),
-                resolvedRequest.targetRegionId(),
-                resolvedRequest.targetRegionEpoch(),
-                resolvedRequest.effectKey());
-    existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, resolvedRequest));
-    request = resolvedRequest;
+                request.tenantId(),
+                request.targetGameInstanceId(),
+                request.targetRegionId(),
+                request.targetRegionEpoch(),
+                request.effectKey());
+    existingFollowup.ifPresent(existing -> validateExistingFollowup(existing, request));
 
     if (existingCoordinator.isPresent() != existingFollowup.isPresent()) {
       throw new IllegalArgumentException(
@@ -602,106 +598,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
     requireNotBlank(request.effectKey(), "effect_key");
     requireNotBlank(request.lateResultPolicy(), "late_result_policy");
     validateSchedulePayload(request);
-    validatePinTuple(
-        request.sourceScriptPatchVersion(),
-        request.sourceScriptPinEpoch(),
-        request.sourceScriptPinControlPlaneRequestId(),
-        "source");
-    validatePinTuple(
-        request.targetScriptPatchVersion(),
-        request.targetScriptPinEpoch(),
-        request.targetScriptPinControlPlaneRequestId(),
-        "target");
-  }
-
-  private static void validatePinTuple(
-      String patchVersion, Long pinEpoch, String controlPlaneRequestId, String role) {
-    boolean patchPresent = patchVersion != null && !patchVersion.isBlank();
-    boolean epochPresent = pinEpoch != null;
-    boolean requestPresent = controlPlaneRequestId != null && !controlPlaneRequestId.isBlank();
-    if (patchPresent != epochPresent || (epochPresent && pinEpoch <= 0L)) {
-      throw new IllegalArgumentException(role + " script pin tuple is partial or invalid");
-    }
-    if (!patchPresent && requestPresent) {
-      throw new IllegalArgumentException(role + " script pin request identity is partial");
-    }
-  }
-
-  private static ScheduleRequest.PinTuple resolveEffectivePinTuple(
-      ScheduleRequest request, GameplayCommand command) {
-    String sourcePatch =
-        coherentString(
-            "source script patch",
-            request.sourceScriptPatchVersion(),
-            request.scriptPatchVersion(),
-            command == null ? null : command.getSourceScriptPatchVersion(),
-            command == null ? null : command.getScriptPatchVersion());
-    Long sourceEpoch =
-        coherentLong(
-            "source script pin epoch",
-            request.sourceScriptPinEpoch(),
-            request.scriptPinEpoch(),
-            command == null ? null : command.getSourceScriptPinEpoch(),
-            command == null ? null : command.getScriptPinEpoch());
-    String sourceRequestId =
-        coherentString(
-            "source script pin request identity",
-            request.sourceScriptPinControlPlaneRequestId(),
-            command == null ? null : command.getSourceScriptPinControlPlaneRequestId(),
-            command == null ? null : command.getScriptPinControlPlaneRequestId());
-    String targetPatch =
-        coherentString(
-            "target script patch",
-            request.targetScriptPatchVersion(),
-            command == null ? null : command.getTargetScriptPatchVersion());
-    Long targetEpoch =
-        coherentLong(
-            "target script pin epoch",
-            request.targetScriptPinEpoch(),
-            command == null ? null : command.getTargetScriptPinEpoch());
-    String targetRequestId =
-        coherentString(
-            "target script pin request identity",
-            request.targetScriptPinControlPlaneRequestId(),
-            command == null ? null : command.getTargetScriptPinControlPlaneRequestId());
-    if (targetPatch == null && targetEpoch == null && targetRequestId == null
-        && request.originGameInstanceId() == request.targetGameInstanceId()) {
-      targetPatch = sourcePatch;
-      targetEpoch = sourceEpoch;
-      targetRequestId = sourceRequestId;
-    }
-    return new ScheduleRequest.PinTuple(
-        blankToNull(sourcePatch), sourceEpoch, sourceRequestId,
-        targetPatch, targetEpoch, targetRequestId);
-  }
-
-  private static String coherentString(String role, String... values) {
-    String effective = null;
-    for (String value : values) {
-      String candidate = blankToNull(value);
-      if (candidate == null) {
-        continue;
-      }
-      if (effective != null && !effective.equals(candidate)) {
-        throw new IllegalArgumentException(role + " conflicts across request and source command");
-      }
-      effective = candidate;
-    }
-    return effective;
-  }
-
-  private static Long coherentLong(String role, Long... values) {
-    Long effective = null;
-    for (Long value : values) {
-      if (value == null) {
-        continue;
-      }
-      if (effective != null && !effective.equals(value)) {
-        throw new IllegalArgumentException(role + " conflicts across request and source command");
-      }
-      effective = value;
-    }
-    return effective;
   }
 
   private static void validateSchedulePayload(ScheduleRequest request) {
@@ -827,20 +723,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
-            existing.getScriptPinEpoch(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
             existing.getAutomationWorkItemId(),
             existing.getScriptId(),
-            request)
-        || !samePinTuples(
-            existing.getSourceScriptPatchVersion(),
-            existing.getSourceScriptPinEpoch(),
-            existing.getSourceScriptPinControlPlaneRequestId(),
-            existing.getTargetScriptPatchVersion(),
-            existing.getTargetScriptPinEpoch(),
-            existing.getTargetScriptPinControlPlaneRequestId(),
             request)) {
       throw new IllegalArgumentException(
           "command_id already maps to different remote followup metadata");
@@ -883,20 +770,11 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             existing.getRealmSlug(),
             existing.getPointerVersion(),
             existing.getScriptPatchVersion(),
-            existing.getScriptPinEpoch(),
             existing.getPluginId(),
             existing.getPluginVersionId(),
             existing.getAutomationDispatchId(),
             existing.getAutomationWorkItemId(),
             existing.getScriptId(),
-            request)
-        || !samePinTuples(
-            existing.getSourceScriptPatchVersion(),
-            existing.getSourceScriptPinEpoch(),
-            existing.getSourceScriptPinControlPlaneRequestId(),
-            existing.getTargetScriptPatchVersion(),
-            existing.getTargetScriptPinEpoch(),
-            existing.getTargetScriptPinControlPlaneRequestId(),
             request)) {
       throw new IllegalArgumentException(
           "effect_key already maps to different remote followup metadata");
@@ -951,7 +829,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       String realmSlug,
       Long pointerVersion,
       String scriptPatchVersion,
-      Long scriptPinEpoch,
       String pluginId,
       String pluginVersionId,
       String automationDispatchId,
@@ -980,7 +857,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         && sameLong(storedRoutingMetadata.pointerVersion(), requestRoutingMetadata.pointerVersion())
         && normalized(blankToNull(request.scriptPatchVersion()))
             .equals(normalized(scriptPatchVersion))
-        && sameLong(request.scriptPinEpoch(), scriptPinEpoch)
         && normalized(blankToNull(request.pluginId())).equals(normalized(pluginId))
         && normalized(blankToNull(request.pluginVersionId())).equals(normalized(pluginVersionId))
         && normalized(blankToNull(request.automationDispatchId()))
@@ -992,26 +868,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static boolean sameLong(Long left, Long right) {
     return left == null ? right == null : left.equals(right);
-  }
-
-  private static boolean samePinTuples(
-      String sourcePatch,
-      Long sourceEpoch,
-      String sourceRequestId,
-      String targetPatch,
-      Long targetEpoch,
-      String targetRequestId,
-      ScheduleRequest request) {
-    return normalized(blankToNull(sourcePatch))
-            .equals(normalized(blankToNull(request.sourceScriptPatchVersion())))
-        && sameLong(sourceEpoch, request.sourceScriptPinEpoch())
-        && normalized(blankToNull(sourceRequestId))
-            .equals(normalized(blankToNull(request.sourceScriptPinControlPlaneRequestId())))
-        && normalized(blankToNull(targetPatch))
-            .equals(normalized(blankToNull(request.targetScriptPatchVersion())))
-        && sameLong(targetEpoch, request.targetScriptPinEpoch())
-        && normalized(blankToNull(targetRequestId))
-            .equals(normalized(blankToNull(request.targetScriptPinControlPlaneRequestId())));
   }
 
   private static void requireNotBlank(String value, String field) {
@@ -1166,20 +1022,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
             coordinator != null && coordinator.getScriptPatchVersion() != null
                 ? coordinator.getScriptPatchVersion()
                 : followup == null ? null : followup.getScriptPatchVersion()));
-    result.setScriptPinEpoch(
-        coordinator != null && coordinator.getScriptPinEpoch() != null
-            ? coordinator.getScriptPinEpoch()
-            : followup == null ? null : followup.getScriptPinEpoch());
-    if (coordinator != null) {
-      result.setSourceScriptPatchVersion(coordinator.getSourceScriptPatchVersion());
-      result.setSourceScriptPinEpoch(coordinator.getSourceScriptPinEpoch());
-      result.setSourceScriptPinControlPlaneRequestId(
-          coordinator.getSourceScriptPinControlPlaneRequestId());
-      result.setTargetScriptPatchVersion(coordinator.getTargetScriptPatchVersion());
-      result.setTargetScriptPinEpoch(coordinator.getTargetScriptPinEpoch());
-      result.setTargetScriptPinControlPlaneRequestId(
-          coordinator.getTargetScriptPinControlPlaneRequestId());
-    }
     result.setPluginId(
         blankToNull(
             coordinator != null && coordinator.getPluginId() != null
@@ -1234,20 +1076,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
-    coordinator.setScriptPinEpoch(
-        request.scriptPinEpoch() != null
-            ? request.scriptPinEpoch()
-            : command == null ? null : command.getScriptPinEpoch());
-    coordinator.setSourceScriptPatchVersion(
-        firstNonBlank(request.sourceScriptPatchVersion(), coordinator.getScriptPatchVersion()));
-    coordinator.setSourceScriptPinEpoch(
-        firstNonNull(request.sourceScriptPinEpoch(), coordinator.getScriptPinEpoch()));
-    coordinator.setSourceScriptPinControlPlaneRequestId(
-        blankToNull(request.sourceScriptPinControlPlaneRequestId()));
-    coordinator.setTargetScriptPatchVersion(blankToNull(request.targetScriptPatchVersion()));
-    coordinator.setTargetScriptPinEpoch(request.targetScriptPinEpoch());
-    coordinator.setTargetScriptPinControlPlaneRequestId(
-        blankToNull(request.targetScriptPinControlPlaneRequestId()));
     coordinator.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     coordinator.setPluginVersionId(
@@ -1285,20 +1113,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
         metadataValue(
             request.scriptPatchVersion(),
             command == null ? null : command.getScriptPatchVersion()));
-    followup.setScriptPinEpoch(
-        request.scriptPinEpoch() != null
-            ? request.scriptPinEpoch()
-            : command == null ? null : command.getScriptPinEpoch());
-    followup.setSourceScriptPatchVersion(
-        firstNonBlank(request.sourceScriptPatchVersion(), followup.getScriptPatchVersion()));
-    followup.setSourceScriptPinEpoch(
-        firstNonNull(request.sourceScriptPinEpoch(), followup.getScriptPinEpoch()));
-    followup.setSourceScriptPinControlPlaneRequestId(
-        blankToNull(request.sourceScriptPinControlPlaneRequestId()));
-    followup.setTargetScriptPatchVersion(blankToNull(request.targetScriptPatchVersion()));
-    followup.setTargetScriptPinEpoch(request.targetScriptPinEpoch());
-    followup.setTargetScriptPinControlPlaneRequestId(
-        blankToNull(request.targetScriptPinControlPlaneRequestId()));
     followup.setPluginId(
         metadataValue(request.pluginId(), command == null ? null : command.getPluginId()));
     followup.setPluginVersionId(
@@ -1735,28 +1549,6 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private static String firstNonBlank(String... values) {
-    if (values != null) {
-      for (String value : values) {
-        if (value != null && !value.isBlank()) {
-          return value;
-        }
-      }
-    }
-    return null;
-  }
-
-  private static Long firstNonNull(Long... values) {
-    if (values != null) {
-      for (Long value : values) {
-        if (value != null) {
-          return value;
-        }
-      }
-    }
-    return null;
   }
 
   private static String normalized(String value) {

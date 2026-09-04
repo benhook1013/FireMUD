@@ -32,15 +32,6 @@ public class GameplayCommand {
   private String scriptId;
   private String executionHook;
   private String scriptPatchVersion;
-  private Long scriptPinEpoch;
-  /** Exact pin request identity captured with the admitted tuple. */
-  private String scriptPinControlPlaneRequestId;
-  private String sourceScriptPatchVersion;
-  private Long sourceScriptPinEpoch;
-  private String sourceScriptPinControlPlaneRequestId;
-  private String targetScriptPatchVersion;
-  private Long targetScriptPinEpoch;
-  private String targetScriptPinControlPlaneRequestId;
   private String pluginId;
   private String pluginVersionId;
   private String playableStateScope;

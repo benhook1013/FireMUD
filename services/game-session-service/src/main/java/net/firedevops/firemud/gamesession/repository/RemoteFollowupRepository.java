@@ -450,21 +450,6 @@ public class RemoteFollowupRepository {
             .set(REMOTE_FOLLOWUP.REALM_SLUG, entity.getRealmSlug())
             .set(REMOTE_FOLLOWUP.POINTER_VERSION, entity.getPointerVersion())
             .set(REMOTE_FOLLOWUP.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
-            .set(REMOTE_FOLLOWUP.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(
-                REMOTE_FOLLOWUP.SOURCE_SCRIPT_PATCH_VERSION,
-                entity.getSourceScriptPatchVersion())
-            .set(REMOTE_FOLLOWUP.SOURCE_SCRIPT_PIN_EPOCH, entity.getSourceScriptPinEpoch())
-            .set(
-                REMOTE_FOLLOWUP.SOURCE_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                entity.getSourceScriptPinControlPlaneRequestId())
-            .set(
-                REMOTE_FOLLOWUP.TARGET_SCRIPT_PATCH_VERSION,
-                entity.getTargetScriptPatchVersion())
-            .set(REMOTE_FOLLOWUP.TARGET_SCRIPT_PIN_EPOCH, entity.getTargetScriptPinEpoch())
-            .set(
-                REMOTE_FOLLOWUP.TARGET_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                entity.getTargetScriptPinControlPlaneRequestId())
             .set(REMOTE_FOLLOWUP.PLUGIN_ID, entity.getPluginId())
             .set(REMOTE_FOLLOWUP.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(REMOTE_FOLLOWUP.COMMAND_ID, entity.getCommandId())
@@ -575,13 +560,6 @@ public class RemoteFollowupRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
-    record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.setSourceScriptPatchVersion(entity.getSourceScriptPatchVersion());
-    record.setSourceScriptPinEpoch(entity.getSourceScriptPinEpoch());
-    record.setSourceScriptPinControlPlaneRequestId(entity.getSourceScriptPinControlPlaneRequestId());
-    record.setTargetScriptPatchVersion(entity.getTargetScriptPatchVersion());
-    record.setTargetScriptPinEpoch(entity.getTargetScriptPinEpoch());
-    record.setTargetScriptPinControlPlaneRequestId(entity.getTargetScriptPinControlPlaneRequestId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setCommandId(entity.getCommandId());
@@ -637,15 +615,6 @@ public class RemoteFollowupRepository {
     entity.setRealmSlug(record.get(REMOTE_FOLLOWUP.REALM_SLUG));
     entity.setPointerVersion(record.get(REMOTE_FOLLOWUP.POINTER_VERSION));
     entity.setScriptPatchVersion(record.get(REMOTE_FOLLOWUP.SCRIPT_PATCH_VERSION));
-    entity.setScriptPinEpoch(record.get(REMOTE_FOLLOWUP.SCRIPT_PIN_EPOCH));
-    entity.setSourceScriptPatchVersion(record.get(REMOTE_FOLLOWUP.SOURCE_SCRIPT_PATCH_VERSION));
-    entity.setSourceScriptPinEpoch(record.get(REMOTE_FOLLOWUP.SOURCE_SCRIPT_PIN_EPOCH));
-    entity.setSourceScriptPinControlPlaneRequestId(
-        record.get(REMOTE_FOLLOWUP.SOURCE_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
-    entity.setTargetScriptPatchVersion(record.get(REMOTE_FOLLOWUP.TARGET_SCRIPT_PATCH_VERSION));
-    entity.setTargetScriptPinEpoch(record.get(REMOTE_FOLLOWUP.TARGET_SCRIPT_PIN_EPOCH));
-    entity.setTargetScriptPinControlPlaneRequestId(
-        record.get(REMOTE_FOLLOWUP.TARGET_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setPluginId(record.get(REMOTE_FOLLOWUP.PLUGIN_ID));
     entity.setPluginVersionId(record.get(REMOTE_FOLLOWUP.PLUGIN_VERSION_ID));
     entity.setCommandId(record.get(REMOTE_FOLLOWUP.COMMAND_ID));

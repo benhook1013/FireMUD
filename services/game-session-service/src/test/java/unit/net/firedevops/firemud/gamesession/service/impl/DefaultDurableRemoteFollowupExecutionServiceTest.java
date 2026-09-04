@@ -63,18 +63,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     tickService = mock(TickService.class);
     remoteFollowupRuntimeService = mock(RemoteFollowupRuntimeService.class);
     automationScriptingClient = mock(AutomationScriptingClient.class);
-    GameInstance sourceAuthority = new GameInstance();
-    sourceAuthority.setId(7L);
-    sourceAuthority.setTenantId(1L);
-    sourceAuthority.setScriptPatchVersion("patch-1");
-    sourceAuthority.setScriptPinEpoch(1L);
-    GameInstance targetAuthority = new GameInstance();
-    targetAuthority.setId(9L);
-    targetAuthority.setTenantId(1L);
-    targetAuthority.setScriptPatchVersion("patch-1");
-    targetAuthority.setScriptPinEpoch(1L);
-    when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(sourceAuthority));
-    when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(targetAuthority));
     when(remoteFollowupRuntimeService.recordResult(org.mockito.ArgumentMatchers.any()))
         .thenReturn(
             new RemoteFollowupRuntimeService.ResultOutcome(
@@ -265,8 +253,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
@@ -539,8 +525,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
@@ -791,7 +775,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("321", request.getEntityId());
     assertEquals("script-1", request.getScriptId());
     assertEquals("patch-1", request.getScriptPatchVersion());
-    assertEquals(1L, request.getScriptPinEpoch());
     assertEquals("onEnterRegion", request.getEventType());
     assertEquals("remote-enter-1", request.getScriptEventId());
     assertEquals("v1", request.getEventSchemaVersion());
@@ -891,8 +874,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
@@ -1068,8 +1049,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
@@ -1305,8 +1284,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus regionScopedStatus =
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     regionScopedStatus.setTenantId(1L);
@@ -1389,8 +1366,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     GameInstance instance = new GameInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
-    instance.setScriptPatchVersion("patch-1");
-    instance.setScriptPinEpoch(1L);
     net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus runtimeStatus =
         new net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
@@ -1502,11 +1477,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     followup.setTargetGameInstanceId(9L);
     followup.setTargetRegionId("region-b");
     followup.setTargetRegionEpoch(8L);
-    followup.setSourceScriptPatchVersion("patch-1");
-    followup.setSourceScriptPinEpoch(1L);
-    followup.setTargetScriptPatchVersion("patch-1");
-    followup.setTargetScriptPinEpoch(1L);
-    followup.setScriptPinEpoch(1L);
     return followup;
   }
 
@@ -1518,10 +1488,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     coordinator.setTargetGameInstanceId(9L);
     coordinator.setTargetRegionId("region-b");
     coordinator.setTargetRegionEpoch(8L);
-    coordinator.setSourceScriptPatchVersion("patch-1");
-    coordinator.setSourceScriptPinEpoch(1L);
-    coordinator.setTargetScriptPatchVersion("patch-1");
-    coordinator.setTargetScriptPinEpoch(1L);
     return coordinator;
   }
 }

@@ -232,34 +232,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
           false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
     }
     boolean remoteHandoff = requiresRemoteHandoff(workItem, command);
-    TargetPinTuple targetPinTuple = remoteHandoff ? resolveTargetPinTuple(workItem, command) : null;
-    if (remoteHandoff && targetPinTuple == null) {
-      Instant now = Instant.now();
-      HandoffResult result =
-          new HandoffResult(
-              false,
-              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
-              "",
-              "",
-              "",
-              ScriptHandoffOutcomeSupport.ERROR_AUTHORITY_UNAVAILABLE,
-              "target script pin authority unavailable");
-      applyOutcome(workItem, command, dispatchId, result, now);
-      return result;
-    }
-    if (remoteHandoff && targetPinTuple.unpinned()) {
-      Instant now = Instant.now();
-      HandoffResult result =
-          new HandoffResult(
-              false,
-              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
-              "",
-              "",
-              "",
-              "REMOTE_TARGET_UNPINNED");
-      applyOutcome(workItem, command, dispatchId, result, now);
-      return result;
-    }
     if (remoteHandoff && runtimeScopeStatus != RuntimeRegionScopeStatus.CURRENT) {
       Instant now = Instant.now();
       String errorCode =
@@ -322,7 +294,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
       } else {
         ScheduleRemoteFollowupResponse remoteResponse =
             gameSessionClient.scheduleRemoteFollowup(
-                toRemoteScheduleRequest(workItem, command, dispatchId, targetPinTuple));
+                toRemoteScheduleRequest(workItem, command, dispatchId));
         result = remoteHandoffResult(remoteResponse);
       }
     } else if (response == null) {
@@ -575,68 +547,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
         || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
       return RuntimeRegionScopeStatus.MALFORMED;
     }
-    if (!runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
-        || runtimeState.getRuntimeState().getRegionEpoch() != workItem.getRegionEpoch()
-        || !runtimeState
-            .getRuntimeState()
-            .getPinnedScriptPatchVersion()
-            .equals(normalize(workItem.getScriptPatchVersion()))
-        || runtimeState.getRuntimeState().getScriptPinEpoch() != workItem.getScriptPinEpoch()
-        || (workItem.getScriptPinControlPlaneRequestId() != null
-            && !workItem
-                .getScriptPinControlPlaneRequestId()
-                .equals(
-                    runtimeState.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId()))) {
-      return RuntimeRegionScopeStatus.ADVANCED;
-    }
-    return RuntimeRegionScopeStatus.CURRENT;
+    return runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
+            && runtimeState.getRuntimeState().getRegionEpoch() == workItem.getRegionEpoch()
+        ? RuntimeRegionScopeStatus.CURRENT
+        : RuntimeRegionScopeStatus.ADVANCED;
   }
-
-  /**
-   * Resolves the target script authority at the handoff boundary. The origin work item remains the
-   * source/provenance tuple; a remote target must never inherit that tuple implicitly.
-   */
-  private TargetPinTuple resolveTargetPinTuple(ScriptWorkItem workItem, EmittedCommand command) {
-    String targetGameInstanceId = normalize(command.targetGameInstanceId());
-    String targetRegionId = normalize(command.targetRegionId());
-    if (targetGameInstanceId.isBlank() || targetRegionId.isBlank()) {
-      return null;
-    }
-    GetGameInstanceRuntimeStateResponse response;
-    try {
-      response =
-          gameSessionClient.getGameInstanceRuntimeState(
-              workItem.getTenantId(), targetGameInstanceId, targetRegionId);
-    } catch (RuntimeException ex) {
-      LOGGER.warn("Target script pin authority read failed for remote handoff", ex);
-      return null;
-    }
-    if (response == null || response.hasError() || !response.hasRuntimeState()) {
-      return null;
-    }
-    var state = response.getRuntimeState();
-    if (!normalize(state.getTenantId()).equals(normalize(workItem.getTenantId()))
-        || !normalize(state.getGameInstanceId()).equals(targetGameInstanceId)
-        || !normalize(state.getRegionId()).equals(targetRegionId)
-        || state.getRegionEpoch() <= 0) {
-      return null;
-    }
-    String patchVersion = normalize(state.getPinnedScriptPatchVersion());
-    long pinEpoch = state.getScriptPinEpoch();
-    String requestId = normalize(state.getScriptPatchPinnedControlPlaneRequestId());
-    if (patchVersion.isBlank() && pinEpoch == 0L && requestId.isBlank()) {
-      return new TargetPinTuple("", 0L, "", true);
-    }
-    // A remote script handoff cannot be admitted against a semantically unpinned or malformed
-    // target. Returning null makes the caller retain the durable retry/error path.
-    if (patchVersion.isBlank() || pinEpoch <= 0 || requestId.isBlank()) {
-      return null;
-    }
-    return new TargetPinTuple(patchVersion, pinEpoch, requestId, false);
-  }
-
-  private record TargetPinTuple(
-      String patchVersion, long pinEpoch, String controlPlaneRequestId, boolean unpinned) {}
 
   private void cancelForRuntimeRegionScopeAdvance(
       ScriptWorkItem workItem,
@@ -684,8 +599,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setAutomationWorkItemId(workItem.getId().toString())
         .setScriptId(workItem.getScriptId())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
-        .setScriptPinEpoch(workItem.getScriptPinEpoch())
-        .setScriptPinControlPlaneRequestId(workItem.getScriptPinControlPlaneRequestId())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
@@ -704,10 +617,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private ScheduleRemoteFollowupRequest toRemoteScheduleRequest(
-      ScriptWorkItem workItem,
-      EmittedCommand command,
-      String dispatchId,
-      TargetPinTuple targetPinTuple) {
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
     long targetDueTickId = command.dueTickId() > 0 ? command.dueTickId() : 0L;
     long originDeadlineTickId = originDeadlineTickId(workItem, command);
     RoutingBundleSupport.RoutingBundle routingBundle =
@@ -738,14 +648,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setRealmSlug(routingBundle.realmSlug())
         .setPointerVersion(routingBundle.parsedPointerVersion())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
-        .setScriptPinEpoch(workItem.getScriptPinEpoch())
-        .setSourceScriptPatchVersion(workItem.getScriptPatchVersion())
-        .setSourceScriptPinEpoch(workItem.getScriptPinEpoch())
-        .setSourceScriptPinControlPlaneRequestId(workItem.getScriptPinControlPlaneRequestId())
-        .setTargetScriptPatchVersion(targetPinTuple == null ? "" : targetPinTuple.patchVersion())
-        .setTargetScriptPinEpoch(targetPinTuple == null ? 0L : targetPinTuple.pinEpoch())
-        .setTargetScriptPinControlPlaneRequestId(
-            targetPinTuple == null ? "" : targetPinTuple.controlPlaneRequestId())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setAutomationDispatchId(dispatchId)
@@ -874,8 +776,6 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setTenantId(workItem.getTenantId());
     event.setGameInstanceId(workItem.getGameInstanceId());
     event.setScriptPatchVersion(workItem.getScriptPatchVersion());
-    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
-    event.setScriptPinControlPlaneRequestId(workItem.getScriptPinControlPlaneRequestId());
     event.setScriptId(workItem.getScriptId());
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));

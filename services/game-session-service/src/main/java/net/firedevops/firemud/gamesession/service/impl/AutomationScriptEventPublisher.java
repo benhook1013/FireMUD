@@ -377,36 +377,14 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     if (gameInstanceId <= 0 || !StringUtils.hasText(entityId)) {
       return null;
     }
-    boolean scriptBearing = isScriptBearing(command);
-    GameInstance instance =
-        scriptBearing ? null : gameInstanceRepository.findById(gameInstanceId).orElse(null);
-    String scriptPatchVersion =
-        scriptBearing
-            ? firstNonBlank(command.getTargetScriptPatchVersion(), command.getScriptPatchVersion())
-            : instance == null ? "" : instance.getScriptPatchVersion();
+    GameInstance instance = gameInstanceRepository.findById(gameInstanceId).orElse(null);
+    String scriptPatchVersion = instance == null ? "" : instance.getScriptPatchVersion();
     long scriptPinEpoch =
-        scriptBearing
-            ? positive(
-                command.getTargetScriptPinEpoch(),
-                positive(command.getScriptPinEpoch(), 0L))
-            : instance == null || instance.getScriptPinEpoch() == null
-                ? 0L
-                : instance.getScriptPinEpoch();
+        instance == null || instance.getScriptPinEpoch() == null
+            ? 0L
+            : instance.getScriptPinEpoch();
     String scriptPinControlPlaneRequestId =
-        scriptBearing
-            ? firstNonBlank(
-                command.getTargetScriptPinControlPlaneRequestId(),
-                command.getScriptPinControlPlaneRequestId())
-            : instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
-    if (scriptBearing
-        && (!StringUtils.hasText(scriptPatchVersion)
-            || scriptPinEpoch <= 0L
-            || !capturedTupleIsCoherent(command, scriptPatchVersion, scriptPinEpoch))) {
-      LOG.warn(
-          "Skipping script event publish because admitted command has no coherent captured script pin tuple commandId={}",
-          command == null ? "" : command.getCommandId());
-      return null;
-    }
+        instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
     if (!StringUtils.hasText(scriptPatchVersion) || scriptPinEpoch <= 0L) {
       LOG.debug(
           "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
@@ -562,37 +540,6 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
 
   private static String normalize(String value) {
     return value == null ? "" : value.trim();
-  }
-
-  private static boolean isScriptBearing(GameplayCommand command) {
-    return command != null
-        && ("AUTOMATION".equals(normalize(command.getSourceType()))
-            || "REMOTE_FOLLOWUP".equals(normalize(command.getSourceType()))
-            || StringUtils.hasText(command.getScriptId())
-            || StringUtils.hasText(command.getScriptPatchVersion())
-            || command.getScriptPinEpoch() != null
-            || StringUtils.hasText(command.getTargetScriptPatchVersion())
-            || command.getTargetScriptPinEpoch() != null);
-  }
-
-  private static boolean capturedTupleIsCoherent(
-      GameplayCommand command, String patchVersion, long pinEpoch) {
-    String explicitTargetPatch = normalize(command.getTargetScriptPatchVersion());
-    Long explicitTargetEpoch = command.getTargetScriptPinEpoch();
-    return (explicitTargetPatch.isBlank() || explicitTargetPatch.equals(patchVersion))
-        && (explicitTargetEpoch == null || explicitTargetEpoch == pinEpoch)
-        && (!StringUtils.hasText(command.getScriptPatchVersion())
-            || command.getScriptPatchVersion().equals(patchVersion))
-        && (command.getScriptPinEpoch() == null || command.getScriptPinEpoch() == pinEpoch);
-  }
-
-  private static String firstNonBlank(String... values) {
-    for (String value : values) {
-      if (StringUtils.hasText(value)) {
-        return value.trim();
-      }
-    }
-    return "";
   }
 
   private static String canonicalPayloadRoomId(String roomInstanceId) {
