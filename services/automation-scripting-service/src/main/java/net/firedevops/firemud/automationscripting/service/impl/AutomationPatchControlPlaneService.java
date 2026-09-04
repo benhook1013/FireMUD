@@ -190,6 +190,7 @@ final class AutomationPatchControlPlaneService {
           .setTenantId(summary.tenantId())
           .setGameInstanceId(summary.gameInstanceId())
           .setObservedPinnedScriptPatchVersion(summary.observedPinnedScriptPatchVersion())
+          .setObservedScriptPinEpoch(summary.scriptPinEpoch())
           .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
           .setObservedAtMs(summary.observedAtMs())
           .setProjectionAsOfMs(summary.projectionAsOfMs())
@@ -640,6 +641,7 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
             .setScriptId(summary.scriptId())
             .setPlayableStateScope(
                 AutomationControlPlaneSupport.toPlayableStateScope(summary.playableStateScope()))
@@ -778,6 +780,7 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())

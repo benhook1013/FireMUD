@@ -134,6 +134,7 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -234,6 +235,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v2")
             .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
@@ -304,6 +306,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setWorldSlug("demo")
             .build());
@@ -330,6 +333,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId(runtimeTenantId)
             .setGameInstanceId(runtimeGameInstanceId)
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -450,6 +454,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -480,6 +485,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -571,6 +577,7 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-2")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -649,6 +656,7 @@ class ScriptScheduleInstanceServiceImplTest {
     projection.setPointerVersion("17");
     projection.setRuntimeRegionId("region-1");
     projection.setRuntimeRegionEpoch(7L);
+    projection.setScriptPinEpoch(1L);
     projection.setPlayableStateScope("SHARED");
     when(pinProjectionRepository.findByTenantIdAndObservedPinnedScriptPatchVersion("1", "patch-1"))
         .thenReturn(List.of(projection));
@@ -714,6 +722,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -757,6 +766,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-2")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -801,6 +811,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -854,6 +865,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setScriptPatchPinnedAtMs(1_000L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
@@ -933,6 +945,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setRegionId("region-1")
@@ -995,6 +1008,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1038,6 +1052,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1083,6 +1098,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-live")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1137,6 +1153,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1160,6 +1177,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -1513,6 +1531,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setScriptPatchPinnedAtMs(1_000L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
@@ -1552,6 +1571,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -1691,6 +1711,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -1779,6 +1800,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -2141,6 +2163,7 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
@@ -2274,6 +2297,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -2641,6 +2665,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptId("npc-guard");
     instance.setPlayableStateScope("SHARED");
     instance.setWorldSlug("demo");
@@ -2723,6 +2748,7 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -2748,6 +2774,7 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -2893,6 +2920,7 @@ class ScriptScheduleInstanceServiceImplTest {
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setPinnedScriptPatchVersion(scriptPatchVersion)
+                .setScriptPinEpoch(1L)
                 .setRegionId("region-1")
                 .setRegionEpoch(12L)
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -2906,6 +2934,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptId("npc-guard");
     instance.setEventType("onTimerExpire");
     instance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -3012,6 +3041,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptId(scriptId);
     instance.setEventType("onInterval");
     instance.setScheduleDefinitionId(scheduleDefinitionId);

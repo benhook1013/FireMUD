@@ -3,6 +3,8 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchPinProjections.SCRIPT_PATCH_PIN_PROJECTIONS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
@@ -10,6 +12,7 @@ import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptPatchPinProjectionsRecord;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +21,7 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptPatchPinProjectionRepository {
+  private static final Field<Long> SCRIPT_PIN_EPOCH = field(name("script_pin_epoch"), Long.class);
   private final DSLContext dsl;
 
   public ScriptPatchPinProjectionRepository(DSLContext dsl) {
@@ -26,7 +30,8 @@ public class ScriptPatchPinProjectionRepository {
 
   public Optional<ScriptPatchPinProjection> findByTenantIdAndGameInstanceId(
       String tenantId, String gameInstanceId) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
                 .TENANT_ID
@@ -37,7 +42,8 @@ public class ScriptPatchPinProjectionRepository {
 
   public List<ScriptPatchPinProjection> findByTenantIdAndObservedPinnedScriptPatchVersion(
       String tenantId, String observedPinnedScriptPatchVersion) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(
             SCRIPT_PATCH_PIN_PROJECTIONS
                 .TENANT_ID
@@ -52,7 +58,16 @@ public class ScriptPatchPinProjectionRepository {
     if (entity.getId() == null) {
       ScriptPatchPinProjectionsRecord record = dsl.newRecord(SCRIPT_PATCH_PIN_PROJECTIONS);
       populate(record, entity);
-      record.store();
+      Long id =
+          dsl.insertInto(SCRIPT_PATCH_PIN_PROJECTIONS)
+              .set(record)
+              .set(SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+              .returning(SCRIPT_PATCH_PIN_PROJECTIONS.ID)
+              .fetchOne(SCRIPT_PATCH_PIN_PROJECTIONS.ID);
+      if (id == null) {
+        throw new IllegalStateException("Saved script patch projection did not return an id");
+      }
+      record.setId(id);
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
@@ -67,6 +82,7 @@ public class ScriptPatchPinProjectionRepository {
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.WORLD_SLUG, entity.getWorldSlug())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION, entity.getPointerVersion())
+            .set(SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID, entity.getRuntimeRegionId())
             .set(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH, entity.getRuntimeRegionEpoch())
             .set(
@@ -92,7 +108,8 @@ public class ScriptPatchPinProjectionRepository {
   }
 
   private Optional<ScriptPatchPinProjection> findById(Long id) {
-    return dsl.selectFrom(SCRIPT_PATCH_PIN_PROJECTIONS)
+    return dsl.select(SCRIPT_PATCH_PIN_PROJECTIONS.fields()).select(SCRIPT_PIN_EPOCH)
+        .from(SCRIPT_PATCH_PIN_PROJECTIONS)
         .where(SCRIPT_PATCH_PIN_PROJECTIONS.ID.eq(id))
         .fetchOptional(this::toEntity);
   }
@@ -124,6 +141,8 @@ public class ScriptPatchPinProjectionRepository {
     entity.setWorldSlug(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.WORLD_SLUG));
     entity.setRealmSlug(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setRuntimeRegionId(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID));
     Long runtimeRegionEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH);
     entity.setRuntimeRegionEpoch(runtimeRegionEpoch == null ? 0L : runtimeRegionEpoch);

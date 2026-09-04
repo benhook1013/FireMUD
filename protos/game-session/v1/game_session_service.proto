@@ -302,6 +302,7 @@ message GetPinnedScriptPatchVersionResponse {
   string control_plane_request_id = 4;
   ScriptPatchPublicationLink publication = 5;
   shared.v1.ErrorDetail error = 6;
+  int64 script_pin_epoch = 7;
 }
 
 message GetGameSessionPinConvergenceRequest {
@@ -318,6 +319,7 @@ message GetGameSessionPinConvergenceResponse {
   bool is_stale = 6;
   ScriptPatchPublicationLink publication = 7;
   shared.v1.ErrorDetail error = 8;
+  int64 observed_script_pin_epoch = 9;
 }
 
 message ScriptPatchPublicationLink {
@@ -368,6 +370,8 @@ message GameInstanceRuntimeState {
   string region_id = 19;
   int64 region_epoch = 20;
   repeated AdmissionPointerControlPlaneEntry current_admission_pointers = 21;
+  // Monotonic script-pin generation. It fences same-version repins.
+  int64 script_pin_epoch = 22;
 }
 
 message GetGameInstanceRuntimeStateResponse {

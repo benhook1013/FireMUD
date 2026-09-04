@@ -987,7 +987,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-1", 1L, "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));
@@ -1135,7 +1135,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-2", 1L, "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));
@@ -1543,7 +1543,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));
@@ -1633,7 +1633,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));
@@ -1726,7 +1726,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-2", 1L, "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));
@@ -1888,6 +1888,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId("1");
     item.setScriptPatchVersion(patchVersion);
+    item.setScriptPinEpoch(1L);
     item.setStatus(status);
     item.setUpdatedAt(updatedAt);
     return item;
@@ -1914,7 +1915,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "", 100L, 100L, 0L, false, "", 0L, "", "", "")),
+                        "1", "game-1", "patch-1", 1L, "", 100L, 100L, 0L, false, "", 0L, "", "", "")),
                 "",
                 ""));
     return service(

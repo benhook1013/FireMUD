@@ -46,9 +46,14 @@ final class GameSessionOperatorControlPlaneService {
   GetPinnedScriptPatchVersionResponse getPinnedScriptPatchVersion(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
+    ScriptPinTupleCoherence.requireCoherent(
+        instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId());
     return GetPinnedScriptPatchVersionResponse.newBuilder()
         .setPinnedScriptPatchVersion(
             instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+        .setScriptPinEpoch(instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
         .setPinnedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
         .setPinnedBy(
             instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
@@ -64,11 +69,16 @@ final class GameSessionOperatorControlPlaneService {
   GetGameSessionPinConvergenceResponse getGameSessionPinConvergence(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
+    ScriptPinTupleCoherence.requireCoherent(
+        instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId());
     return GetGameSessionPinConvergenceResponse.newBuilder()
         .setTenantId(Long.toString(instance.getTenantId()))
         .setGameInstanceId(Long.toString(instance.getId()))
         .setObservedPinnedScriptPatchVersion(
             instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+        .setObservedScriptPinEpoch(instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
         .setLastObservedControlPlaneRequestId(
             instance.getScriptPatchPinnedControlPlaneRequestId() == null
                 ? ""
@@ -82,6 +92,10 @@ final class GameSessionOperatorControlPlaneService {
 
   SetPinnedScriptPatchVersionResponse setPinnedScriptPatchVersion(
       long tenantId, long gameInstanceId, SetPinnedScriptPatchVersionRequest request) {
+    requireText(request.getTargetScriptPatchVersion(), "target_script_patch_version is required");
+    requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+    requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     String previous = instance.getScriptPatchVersion();
     updatePinnedPatch(
@@ -100,6 +114,10 @@ final class GameSessionOperatorControlPlaneService {
 
   RollbackScriptPatchVersionResponse rollbackScriptPatchVersion(
       long tenantId, long gameInstanceId, RollbackScriptPatchVersionRequest request) {
+    requireText(request.getTargetScriptPatchVersion(), "target_script_patch_version is required");
+    requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+    requireText(request.getActorPrincipal(), "actor_principal is required");
+    requireText(request.getReason(), "reason is required");
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     String previous = instance.getScriptPatchVersion();
     updatePinnedPatch(
@@ -189,7 +207,17 @@ final class GameSessionOperatorControlPlaneService {
       String actorPrincipal,
       String reason,
       String controlPlaneRequestId) {
+    ScriptPinTupleCoherence.requireCoherent(
+        instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId());
+    long currentScriptPinEpoch =
+        instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch();
+    if (currentScriptPinEpoch == Long.MAX_VALUE) {
+      throw new IllegalStateException("script pin epoch exhausted");
+    }
     instance.setScriptPatchVersion(targetScriptPatchVersion);
+    instance.setScriptPinEpoch(currentScriptPinEpoch + 1L);
     instance.setScriptPatchPinnedAt(Instant.now());
     instance.setScriptPatchPinnedBy(actorPrincipal);
     instance.setScriptPatchPinnedReason(reason);

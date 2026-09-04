@@ -210,6 +210,7 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setScriptPatchVersion(scriptPatchVersion);
+    projection.setScriptPinEpoch(pin.map(ScriptPatchPinProjectionService.PinConvergenceSummary::scriptPinEpoch).orElse(0L));
     projection.setRolloutStatus(snapshot.get().rolloutStatus().name());
     projection.setStatusReason(snapshot.get().statusReason());
     projection.setLastChangedAt(Instant.ofEpochMilli(snapshot.get().lastChangedAtMs()));
@@ -230,7 +231,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       Instant now) {
     if (pin.isPresent()) {
       ScriptPatchPinProjectionService.PinConvergenceSummary runtime = pin.get();
-      if (scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
+      if (runtime.scriptPinEpoch() > 0
+          && scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
         ScriptPatchInstanceRolloutStatus rolloutStatus =
             priorRollbackObserved(existingRolloutStatus)
                 ? ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED

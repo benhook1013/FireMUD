@@ -21,6 +21,7 @@ public class ScriptEventAudit {
   private String eventType;
   private String eventSchemaVersion;
   private String scriptPatchVersion;
+  private long scriptPinEpoch;
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

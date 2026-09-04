@@ -149,6 +149,7 @@ public class ScriptHandoffEventRepository {
             .set(SCRIPT_HANDOFF_EVENTS.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
@@ -201,6 +202,7 @@ public class ScriptHandoffEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
@@ -237,6 +239,8 @@ public class ScriptHandoffEventRepository {
     entity.setTenantId(record.get(SCRIPT_HANDOFF_EVENTS.TENANT_ID));
     entity.setGameInstanceId(record.get(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptId(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID));

@@ -96,6 +96,9 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION,
                 entity.getScriptPatchVersion())
             .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH,
+                entity.getScriptPinEpoch())
+            .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -142,6 +145,7 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
@@ -157,6 +161,8 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON));
     entity.setLastChangedAt(

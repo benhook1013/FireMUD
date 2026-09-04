@@ -161,6 +161,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     if (runtimeState.getRegionId().isBlank()
         || runtimeState.getRegionEpoch() <= 0
+        || runtimeState.getScriptPinEpoch() <= 0
         || !hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())
         || !RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()) {
       // Schedule activation is scoped to the authoritative runtime timeline. A partial
@@ -291,6 +292,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setScriptPinEpoch(projection.getScriptPinEpoch())
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
@@ -300,7 +302,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli());
-      if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
+      if (runtimeState.getRegionId().isBlank()
+          || runtimeState.getRegionEpoch() <= 0
+          || runtimeState.getScriptPinEpoch() <= 0) {
         // A pin projection without a complete runtime scope is not authoritative enough to
         // reconcile or delete schedule rows. The next complete projection will retry it.
         markRetainedSchedulesPending(tenantId, projection.getGameInstanceId());
@@ -692,6 +696,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
+    instance.setScriptPinEpoch(runtimeState.getScriptPinEpoch());
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
@@ -761,6 +766,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     // The durable observed runtime tuple is the generation boundary. A semantics hash is
     // diagnostic only and cannot infer continuity across a new pin/reset with identical text.
     return Objects.equals(instance.getScriptPatchVersion(), definition.getScriptPatchVersion())
+        && instance.getScriptPinEpoch() > 0
+        && instance.getScriptPinEpoch() == runtimeState.getScriptPinEpoch()
         && Objects.equals(
             blankToEmpty(instance.getObservedRuntimeVersionId()),
             blankToEmpty(runtimeState.getRuntimeVersionId()))
@@ -1096,6 +1103,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
     audit.setScriptEventId(scriptEventId);
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
@@ -1245,6 +1253,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
+    item.setScriptPinEpoch(instance.getScriptPinEpoch());
     item.setScriptEventId(scriptEventId);
     item.setDryRun(SCHEDULER_IS_DRY_RUN);
     item.setSourceService(SOURCE_SERVICE);
@@ -1313,6 +1322,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
       return MaterializationEligibility.authorityUnavailable();
     }
+    if (runtimeState.getScriptPinEpoch() <= 0 || instance.getScriptPinEpoch() <= 0) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
     if (!hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())) {
       return MaterializationEligibility.authorityUnavailable();
     }
@@ -1341,6 +1353,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     if (!Objects.equals(
         runtimeState.getPinnedScriptPatchVersion(), instance.getScriptPatchVersion())) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
+    }
+    if (runtimeState.getScriptPinEpoch() != instance.getScriptPinEpoch()) {
       return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
     }
     if (!Objects.equals(
@@ -1655,6 +1670,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.scriptId(),
         summary.playableStateScope(),
         summary.worldSlug(),
@@ -1903,6 +1919,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getTenantId(),
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
         instance.getScriptId(),
         blankToEmpty(instance.getPlayableStateScope()),
         routingBundle.worldSlug(),

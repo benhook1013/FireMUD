@@ -74,6 +74,7 @@ public interface ScriptScheduleInstanceService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       String scriptId,
       String playableStateScope,
       String worldSlug,
@@ -104,7 +105,28 @@ public interface ScriptScheduleInstanceService {
       long lastObservedTickId,
       long lastRuntimeProgressObservedAtMs,
       ScriptPatchPublicationLink publication,
-      PluginPublicationLink pluginPublication) {}
+      PluginPublicationLink pluginPublication) {
+    public ScheduleInstanceSummary(
+        String tenantId, String gameInstanceId, String scriptPatchVersion, String scriptId,
+        String playableStateScope, String worldSlug, String realmSlug, String pointerVersion,
+        String pluginId, String pluginVersionId, String eventType, String scheduleDefinitionId,
+        String scheduleKind, long cadenceValue, String cadenceUnit, String priorityTag,
+        String targetScopeType, String targetScopeId, int bindingPriority,
+        boolean requiresExclusiveEvent, String materializationStatus, long nextDueAtMs,
+        long nextDueTickId, String observedRuntimeVersionId, String lastObservedControlPlaneRequestId,
+        long pinObservedAtMs, long materializedAtMs, long updatedAtMs, String runtimeRegionId,
+        long runtimeRegionEpoch, long lastObservedTickId, long lastRuntimeProgressObservedAtMs,
+        ScriptPatchPublicationLink publication, PluginPublicationLink pluginPublication) {
+      this(tenantId, gameInstanceId, scriptPatchVersion, 0L, scriptId, playableStateScope,
+          worldSlug, realmSlug, pointerVersion, pluginId, pluginVersionId, eventType,
+          scheduleDefinitionId, scheduleKind, cadenceValue, cadenceUnit, priorityTag,
+          targetScopeType, targetScopeId, bindingPriority, requiresExclusiveEvent,
+          materializationStatus, nextDueAtMs, nextDueTickId, observedRuntimeVersionId,
+          lastObservedControlPlaneRequestId, pinObservedAtMs, materializedAtMs, updatedAtMs,
+          runtimeRegionId, runtimeRegionEpoch, lastObservedTickId,
+          lastRuntimeProgressObservedAtMs, publication, pluginPublication);
+    }
+  }
 
   record TimerAuditEventSummary(
       String tenantId,

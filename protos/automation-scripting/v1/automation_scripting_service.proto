@@ -544,6 +544,7 @@ message GetAutomationPinConvergenceResponse {
   ScriptPatchPublicationLink publication = 13;
   string region_id = 14;
   int64 region_epoch = 15;
+  int64 observed_script_pin_epoch = 16;
 }
 
 enum ScriptPatchInstanceRolloutStatus {
@@ -626,6 +627,7 @@ message ScriptScheduleInstanceEntry {
   string current_runtime_realm_slug = 43;
   string current_runtime_pointer_version = 44;
   bool is_routing_bundle_stale = 45;
+  int64 script_pin_epoch = 46;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -820,6 +822,7 @@ message ScriptHandoffEventEntry {
   string current_target_runtime_realm_slug = 46;
   string current_target_runtime_pointer_version = 47;
   bool is_target_routing_bundle_stale = 48;
+  int64 script_pin_epoch = 49;
 }
 
 message ListScriptHandoffEventsResponse {

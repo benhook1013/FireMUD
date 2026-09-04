@@ -23,6 +23,7 @@ public class ScriptWorkItem {
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
+  private long scriptPinEpoch;
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

@@ -179,6 +179,7 @@ public interface ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       String scriptId,
       String pluginId,
       String pluginVersionId,
@@ -206,7 +207,27 @@ public interface ScriptWorkItemService {
       String handoffReason,
       long observedAtMs,
       ScriptPatchPublicationLink publication,
-      PluginPublicationLink pluginPublication) {}
+      PluginPublicationLink pluginPublication) {
+    public HandoffEventSummary(
+        String eventId, String tenantId, String gameInstanceId, String scriptPatchVersion,
+        String scriptId, String pluginId, String pluginVersionId, String workItemId,
+        int commandOrdinal, String automationDispatchId, String gameSessionCommandId,
+        String targetGameInstanceId, String targetRegionId, long targetRegionEpoch,
+        String remoteCoordinatorId, String remoteFollowupId, String targetEntityId,
+        String playableStateScope, String worldSlug, String realmSlug, String pointerVersion,
+        String sourceKind, String sourceState, long sourceOrdinal, long sourceDueTickId,
+        long sourceDueAtMs, String emittedCommandText, String handoffOutcome, String handoffReason,
+        long observedAtMs, ScriptPatchPublicationLink publication,
+        PluginPublicationLink pluginPublication) {
+      this(eventId, tenantId, gameInstanceId, scriptPatchVersion, 0L, scriptId, pluginId,
+          pluginVersionId, workItemId, commandOrdinal, automationDispatchId, gameSessionCommandId,
+          targetGameInstanceId, targetRegionId, targetRegionEpoch, remoteCoordinatorId,
+          remoteFollowupId, targetEntityId, playableStateScope, worldSlug, realmSlug,
+          pointerVersion, sourceKind, sourceState, sourceOrdinal, sourceDueTickId, sourceDueAtMs,
+          emittedCommandText, handoffOutcome, handoffReason, observedAtMs, publication,
+          pluginPublication);
+    }
+  }
 
   record DeadLetterSummary(
       String workItemId,

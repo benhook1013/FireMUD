@@ -561,6 +561,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.scriptId(),
         summary.pluginId(),
         summary.pluginVersionId(),
@@ -738,6 +739,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         event.getTenantId(),
         event.getGameInstanceId(),
         event.getScriptPatchVersion(),
+        event.getScriptPinEpoch(),
         event.getScriptId(),
         blankToEmpty(event.getPluginId()),
         blankToEmpty(event.getPluginVersionId()),
@@ -827,7 +829,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (runtime.isEmpty() || runtime.get().projectionStale()) {
       return false;
     }
-    if (!item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())) {
+    if (item.getScriptPinEpoch() <= 0
+        || runtime.get().scriptPinEpoch() <= 0
+        || !item.getScriptPatchVersion().equals(runtime.get().observedPinnedScriptPatchVersion())
+        || item.getScriptPinEpoch() != runtime.get().scriptPinEpoch()) {
       return false;
     }
     String pluginId = blankToEmpty(item.getPluginId());

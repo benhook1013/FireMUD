@@ -22,6 +22,13 @@ import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
@@ -256,7 +263,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
     instance.setRuntimeVersion(Long.toString(resolvedLaunchDescriptor.versionId()));
-    instance.setScriptPatchVersion(resolvedLaunchDescriptor.scriptPatchVersion());
+    // The launch descriptor carries only a candidate patch.  The authoritative pin tuple is
+    // allocated by the owner pin transition, so a new instance must remain semantically
+    // UNPINNED until that transition commits all owner fields together.
     instance.setGameTemplateId(request.gameTemplateId());
     instance.setLaunchDescriptorId(resolvedLaunchDescriptor.launchDescriptorId());
     instance.setVersionId(resolvedLaunchDescriptor.versionId());
@@ -506,6 +515,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getTenantId(),
         instance.getRuntimeVersion(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
         instance.getGameTemplateId(),
         instance.getLaunchDescriptorId(),
         instance.getVersionId(),
@@ -521,6 +531,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
     instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
+    instance.setScriptPinEpoch(snapshot.scriptPinEpoch());
     instance.setGameTemplateId(snapshot.gameTemplateId());
     instance.setLaunchDescriptorId(snapshot.launchDescriptorId());
     instance.setVersionId(snapshot.versionId());
@@ -539,6 +550,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.tenantId(),
         snapshot.runtimeVersion(),
         snapshot.scriptPatchVersion(),
+        snapshot.scriptPinEpoch(),
         snapshot.gameTemplateId(),
         snapshot.launchDescriptorId(),
         snapshot.versionId(),
@@ -654,30 +666,42 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world activation authority unavailable");
     }
-    var response =
-        worldManagementClient.prepareWorldInstance(
-            request.tenantId(),
-            startingState.id(),
-            request.gameTemplateId(),
-            request.controlPlaneRequestId(),
-            resolvedLaunchDescriptor.launchDescriptorId(),
-            resolvedLaunchDescriptor.versionId(),
-            resolvedLaunchDescriptor.scriptPatchVersion(),
-            resolvedLaunchDescriptor.runtimeFlagsJson(),
-            resolvedLaunchDescriptor.generationConfigRevision(),
-            resolvedLaunchDescriptor.releaseBundleId(),
-            resolvedLaunchDescriptor.publishedReleaseBundleRef(),
-            resolvedLaunchDescriptor.versionStateEpoch(),
-            resolvedLaunchDescriptor.remapSetId());
+    final PrepareWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.prepareWorldInstance(
+              request.tenantId(),
+              startingState.id(),
+              request.gameTemplateId(),
+              request.controlPlaneRequestId(),
+              resolvedLaunchDescriptor.launchDescriptorId(),
+              resolvedLaunchDescriptor.versionId(),
+              resolvedLaunchDescriptor.scriptPatchVersion(),
+              resolvedLaunchDescriptor.runtimeFlagsJson(),
+              resolvedLaunchDescriptor.generationConfigRevision(),
+              resolvedLaunchDescriptor.releaseBundleId(),
+              resolvedLaunchDescriptor.publishedReleaseBundleRef(),
+              resolvedLaunchDescriptor.versionStateEpoch(),
+              resolvedLaunchDescriptor.remapSetId());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("world activation authority unavailable", ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            response.hasWorldInstance(),
+            response.getWorldInstance(),
+            request.tenantId(),
+            startingState.id(),
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING);
     return new PreparedWorldInstance(
-        requirePositiveExternalId(response.getWorldInstance().getTenantId(), "tenantId"),
-        requirePositiveExternalId(
-            response.getWorldInstance().getGameInstanceId(), "gameInstanceId"),
-        response.getWorldInstance().getLifecycleEpoch());
+        request.tenantId(), startingState.id(), snapshot.getLifecycleEpoch());
   }
 
   private long requirePositiveExternalId(String value, String fieldName) {
@@ -688,44 +712,87 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world activation authority unavailable");
     }
-    var response =
-        worldManagementClient.activatePreparedWorldInstance(
-            preparedWorldInstance.tenantId(),
-            preparedWorldInstance.gameInstanceId(),
-            preparedWorldInstance.lifecycleEpoch());
+    final ActivatePreparedWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.activatePreparedWorldInstance(
+              preparedWorldInstance.tenantId(),
+              preparedWorldInstance.gameInstanceId(),
+              preparedWorldInstance.lifecycleEpoch());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("world activation authority unavailable", ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    requireWorldSnapshot(
+        response.hasWorldInstance(),
+        response.getWorldInstance(),
+        preparedWorldInstance.tenantId(),
+        preparedWorldInstance.gameInstanceId(),
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
   }
 
   private void failPreparedWorldInstance(
       PreparedWorldInstance preparedWorldInstance, String reason) {
-    var response =
-        worldManagementClient.failPreparedWorldInstance(
-            preparedWorldInstance.tenantId(),
-            preparedWorldInstance.gameInstanceId(),
-            preparedWorldInstance.lifecycleEpoch(),
-            reason);
+    final FailPreparedWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.failPreparedWorldInstance(
+              preparedWorldInstance.tenantId(),
+              preparedWorldInstance.gameInstanceId(),
+              preparedWorldInstance.lifecycleEpoch(),
+              reason);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("world activation authority unavailable", ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    requireWorldSnapshot(
+        response.hasWorldInstance(),
+        response.getWorldInstance(),
+        preparedWorldInstance.tenantId(),
+        preparedWorldInstance.gameInstanceId(),
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION);
   }
 
   private long readWorldInstanceLifecycleEpoch(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world termination authority unavailable");
     }
-    var lifecycleResponse =
-        worldManagementClient.getWorldInstanceLifecycle(runningState.tenantId(), runningState.id());
+    final GetWorldInstanceLifecycleResponse lifecycleResponse;
+    try {
+      lifecycleResponse =
+          worldManagementClient.getWorldInstanceLifecycle(
+              runningState.tenantId(), runningState.id());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("world termination authority unavailable", ex);
+    }
+    if (lifecycleResponse == null) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+    }
     if (lifecycleResponse.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           lifecycleResponse.getError().getCode()
               + ": "
               + lifecycleResponse.getError().getMessage());
     }
-    return lifecycleResponse.getWorldInstance().getLifecycleEpoch();
+    return requireWorldSnapshot(
+            lifecycleResponse.hasWorldInstance(),
+            lifecycleResponse.getWorldInstance(),
+            runningState.tenantId(),
+            runningState.id(),
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+        .getLifecycleEpoch();
   }
 
   private void terminateWorldInstance(
@@ -736,19 +803,67 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (worldManagementClient == null) {
       throw new IllegalStateException("world termination authority unavailable");
     }
-    var terminateResponse =
-        worldManagementClient.terminateWorldInstance(
-            runningState.tenantId(),
-            runningState.id(),
-            lifecycleEpoch,
-            terminationRequestId,
-            terminationReason);
+    final TerminateWorldInstanceResponse terminateResponse;
+    try {
+      terminateResponse =
+          worldManagementClient.terminateWorldInstance(
+              runningState.tenantId(),
+              runningState.id(),
+              lifecycleEpoch,
+              terminationRequestId,
+              terminationReason);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("world termination authority unavailable", ex);
+    }
+    if (terminateResponse == null) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+    }
     if (terminateResponse.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           terminateResponse.getError().getCode()
               + ": "
               + terminateResponse.getError().getMessage());
     }
+    requireWorldSnapshot(
+        terminateResponse.hasWorldInstance(),
+        terminateResponse.getWorldInstance(),
+        runningState.tenantId(),
+        runningState.id(),
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED);
+  }
+
+  private WorldInstanceLifecycleSnapshot requireWorldSnapshot(
+      boolean present,
+      WorldInstanceLifecycleSnapshot snapshot,
+      long expectedTenantId,
+      long expectedGameInstanceId,
+      WorldInstanceLifecycleStatus expectedStatus) {
+    if (!present) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot");
+    }
+    final long responseTenantId;
+    final long responseGameInstanceId;
+    try {
+      responseTenantId = requirePositiveExternalId(snapshot.getTenantId(), "tenantId");
+      responseGameInstanceId =
+          requirePositiveExternalId(snapshot.getGameInstanceId(), "gameInstanceId");
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(ex.getMessage(), ex);
+    }
+    if (responseTenantId != expectedTenantId || responseGameInstanceId != expectedGameInstanceId) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_SCOPE_MISMATCH: lifecycle response does not match the requested instance");
+    }
+    if (snapshot.getLifecycleEpoch() <= 0L) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive");
+    }
+    if (expectedStatus != null && snapshot.getStatus() != expectedStatus) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");
+    }
+    return snapshot;
   }
 
   private void runRollbackSafely(String actionName, Runnable rollbackAction) {

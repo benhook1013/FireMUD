@@ -268,6 +268,7 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
@@ -320,6 +321,7 @@ public class ScriptEventAuditRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
@@ -356,6 +358,8 @@ public class ScriptEventAuditRepository {
     entity.setScriptId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
+    Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));

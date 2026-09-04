@@ -133,6 +133,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setObservedPinnedScriptPatchVersion(runtimeState.getPinnedScriptPatchVersion());
+    projection.setScriptPinEpoch(runtimeState.getScriptPinEpoch());
     projection.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
     projection.setWorldSlug(routingBundle.worldSlug());
@@ -160,6 +161,7 @@ public class ScriptPatchPinProjectionServiceImpl implements ScriptPatchPinProjec
         projection.getTenantId(),
         projection.getGameInstanceId(),
         projection.getObservedPinnedScriptPatchVersion(),
+        projection.getScriptPinEpoch(),
         projection.getLastObservedControlPlaneRequestId(),
         projection.getObservedAt().equals(Instant.EPOCH)
             ? 0L

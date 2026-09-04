@@ -16,6 +16,7 @@ public interface ScriptPatchPinProjectionService {
       String tenantId,
       String gameInstanceId,
       String observedPinnedScriptPatchVersion,
+      long scriptPinEpoch,
       String lastObservedControlPlaneRequestId,
       long observedAtMs,
       long projectionAsOfMs,
@@ -25,5 +26,36 @@ public interface ScriptPatchPinProjectionService {
       long runtimeRegionEpoch,
       String worldSlug,
       String realmSlug,
-      String pointerVersion) {}
+      String pointerVersion) {
+    public PinConvergenceSummary(
+        String tenantId,
+        String gameInstanceId,
+        String observedPinnedScriptPatchVersion,
+        String lastObservedControlPlaneRequestId,
+        long observedAtMs,
+        long projectionAsOfMs,
+        long projectionLagMs,
+        boolean projectionStale,
+        String runtimeRegionId,
+        long runtimeRegionEpoch,
+        String worldSlug,
+        String realmSlug,
+        String pointerVersion) {
+      this(
+          tenantId,
+          gameInstanceId,
+          observedPinnedScriptPatchVersion,
+          0L,
+          lastObservedControlPlaneRequestId,
+          observedAtMs,
+          projectionAsOfMs,
+          projectionLagMs,
+          projectionStale,
+          runtimeRegionId,
+          runtimeRegionEpoch,
+          worldSlug,
+          realmSlug,
+          pointerVersion);
+    }
+  }
 }

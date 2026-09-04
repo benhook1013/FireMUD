@@ -329,6 +329,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -373,6 +374,10 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
+    verify(gameSessionControlPlaneClient)
+        .getGameInstanceRuntimeState("1", "game-1", "region-1");
+    assertThat(auditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(auditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
     assertThat(auditCaptor.getValue().getSourceService()).isEqualTo("game-session-service");
     assertThat(auditCaptor.getValue().isAdmitted()).isTrue();
     assertThat(auditCaptor.getValue().getResolvedHandlerCount()).isEqualTo(1);
@@ -385,6 +390,8 @@ class ScriptEventIngressServiceImplTest {
         .isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(workItemCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
@@ -400,6 +407,8 @@ class ScriptEventIngressServiceImplTest {
     ArgumentCaptor<ScriptEventAudit> eventAuditCaptor =
         ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).save(eventAuditCaptor.capture());
+    assertThat(eventAuditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(eventAuditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
     assertThat(eventAuditCaptor.getValue().getFinalStage()).isEqualTo("ADMISSION");
     assertThat(eventAuditCaptor.getValue().getFinalOutcome()).isEqualTo("work_item_persisted");
     assertThat(eventAuditCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
@@ -466,6 +475,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -580,6 +590,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -688,6 +699,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -773,6 +785,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -896,6 +909,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -999,6 +1013,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-2"))
@@ -1116,6 +1131,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -1233,6 +1249,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
 
@@ -1320,6 +1337,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-2")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -1417,6 +1435,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -1509,6 +1528,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -1599,6 +1619,7 @@ class ScriptEventIngressServiceImplTest {
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -2104,6 +2125,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     PluginRuntimeStateService pluginRuntimeStateService =
@@ -2182,6 +2204,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     PluginRuntimeStateService pluginRuntimeStateService =
@@ -2285,6 +2308,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     when(quotaService.tryAcquire("1", "script-1")).thenReturn(false);
@@ -2363,6 +2387,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     when(dryRunQuotaService.tryAcquire("1", "script-1", "account:41")).thenReturn(false);
@@ -2442,6 +2467,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventBindingRepository bindingRepository =
@@ -2830,6 +2856,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-other")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -2868,7 +2895,13 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.outcome())
         .isEqualTo(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE.name());
     assertThat(admission.reason()).isEqualTo("version_unavailable");
-    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+    ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(auditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
+    verify(gameSessionControlPlaneClient)
+        .getGameInstanceRuntimeState("1", "game-1", "region-1");
   }
 
   @ParameterizedTest(name = "rejects runtime authority from {0}/{1}")
@@ -2891,6 +2924,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId(runtimeTenantId)
                         .setGameInstanceId(runtimeGameInstanceId)
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     ScriptEventIngressService service =
@@ -2953,6 +2987,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                         .build())
                 .build());
@@ -3066,6 +3101,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     AutomationAdmissionStateService admissionStateService =
@@ -3137,6 +3173,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .build())
                 .build());
     AutomationAdmissionStateService admissionStateService =
@@ -3338,6 +3375,7 @@ class ScriptEventIngressServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(7L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
