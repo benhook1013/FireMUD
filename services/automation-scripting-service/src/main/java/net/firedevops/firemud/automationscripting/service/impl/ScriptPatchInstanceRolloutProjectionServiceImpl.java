@@ -52,14 +52,29 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
   @Override
   @Transactional
   public Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
-      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId) {
     requireText(tenantId, "tenant_id");
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompleteTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
     refreshProjection(tenantId, gameInstanceId, scriptPatchVersion);
-    return repository
-        .findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-            tenantId, gameInstanceId, scriptPatchVersion)
+    Optional<ScriptPatchInstanceRolloutProjection> projection =
+        scriptPinEpoch > 0
+            ? repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersionAndScriptPinEpoch(
+                tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)
+            : repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+                tenantId, gameInstanceId, scriptPatchVersion);
+    return projection
+        .filter(
+            value ->
+                scriptPinEpoch <= 0
+                    || normalize(lastObservedControlPlaneRequestId)
+                        .equals(normalize(value.getLastObservedControlPlaneRequestId())))
         .map(this::toSummary);
   }
 
@@ -69,10 +84,14 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompleteTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     if (gameInstanceId != null && !gameInstanceId.isBlank()) {
       refreshForInstance(tenantId, gameInstanceId);
     }
@@ -90,6 +109,13 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
                 scriptPatchVersion == null
                     || scriptPatchVersion.isBlank()
                     || projection.getScriptPatchVersion().equals(scriptPatchVersion))
+        .filter(
+            projection -> scriptPinEpoch <= 0 || projection.getScriptPinEpoch() == scriptPinEpoch)
+        .filter(
+            projection ->
+                scriptPinEpoch <= 0
+                    || normalize(lastObservedControlPlaneRequestId)
+                        .equals(normalize(projection.getLastObservedControlPlaneRequestId())))
         .map(this::toSummary)
         .filter(
             summary ->
@@ -115,11 +141,15 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs,
       int limit) {
     requireText(tenantId, "tenant_id");
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompleteTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
     String rolloutStatusFilter =
         rolloutStatus
@@ -131,6 +161,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
             tenantId,
             normalize(gameInstanceId),
             normalize(scriptPatchVersion),
+            scriptPinEpoch <= 0 ? null : scriptPinEpoch,
+            scriptPinEpoch <= 0 ? null : normalize(lastObservedControlPlaneRequestId),
             rolloutStatusFilter,
             changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
             changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
@@ -191,6 +223,11 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     Optional<ScriptPatchInstanceRolloutProjection> existing =
         repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             tenantId, gameInstanceId, scriptPatchVersion);
+    // Runtime pin evidence is authoritative. Do not infer rollback or delete an existing
+    // projection while the authority is unavailable or has not supplied a positive epoch.
+    if (pin.isEmpty() || !usableRuntimePin(pin.get())) {
+      return;
+    }
     Optional<ProjectionSnapshot> snapshot =
         buildSnapshot(
             tenantId,
@@ -210,6 +247,13 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setScriptPatchVersion(scriptPatchVersion);
+    projection.setScriptPinEpoch(
+        pin.map(ScriptPatchPinProjectionService.PinConvergenceSummary::scriptPinEpoch).orElse(0L));
+    projection.setLastObservedControlPlaneRequestId(
+        pin.map(
+                ScriptPatchPinProjectionService.PinConvergenceSummary
+                    ::lastObservedControlPlaneRequestId)
+            .orElse(""));
     projection.setRolloutStatus(snapshot.get().rolloutStatus().name());
     projection.setStatusReason(snapshot.get().statusReason());
     projection.setLastChangedAt(Instant.ofEpochMilli(snapshot.get().lastChangedAtMs()));
@@ -218,6 +262,16 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       appendEvent(tenantId, gameInstanceId, scriptPatchVersion, snapshot.get(), now);
     }
     repository.save(projection);
+  }
+
+  private static boolean usableRuntimePin(
+      ScriptPatchPinProjectionService.PinConvergenceSummary runtime) {
+    return !runtime.projectionStale()
+        && runtime.scriptPinEpoch() > 0
+        && runtime.observedPinnedScriptPatchVersion() != null
+        && !runtime.observedPinnedScriptPatchVersion().isBlank()
+        && runtime.lastObservedControlPlaneRequestId() != null
+        && !runtime.lastObservedControlPlaneRequestId().isBlank();
   }
 
   private Optional<ProjectionSnapshot> buildSnapshot(
@@ -230,7 +284,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       Instant now) {
     if (pin.isPresent()) {
       ScriptPatchPinProjectionService.PinConvergenceSummary runtime = pin.get();
-      if (scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
+      if (runtime.scriptPinEpoch() > 0
+          && scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
         ScriptPatchInstanceRolloutStatus rolloutStatus =
             priorRollbackObserved(existingRolloutStatus)
                 ? ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
@@ -243,13 +298,19 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
                 : "runtime_pin_matches_patch";
         return Optional.of(
             new ProjectionSnapshot(
-                rolloutStatus, reason, maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
+                rolloutStatus,
+                reason,
+                runtime.scriptPinEpoch(),
+                runtime.lastObservedControlPlaneRequestId(),
+                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
       }
       if (!workItems.isEmpty()) {
         return Optional.of(
             new ProjectionSnapshot(
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                 "runtime_pin_differs_from_patch",
+                runtime.scriptPinEpoch(),
+                runtime.lastObservedControlPlaneRequestId(),
                 maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
       }
       return Optional.empty();
@@ -260,7 +321,11 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     long lastChangedAtMs = maxWorkItemUpdatedAtMs(workItems);
     return Optional.of(
         new ProjectionSnapshot(
-            localFallbackRolloutStatus(workItems), "projection_lag_exceeded", lastChangedAtMs));
+            localFallbackRolloutStatus(workItems),
+            "projection_lag_exceeded",
+            0L,
+            "",
+            lastChangedAtMs));
   }
 
   private ScriptWorkItemService.PatchInstanceRolloutSummary toSummary(
@@ -274,6 +339,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
         projection.getTenantId(),
         projection.getGameInstanceId(),
         projection.getScriptPatchVersion(),
+        projection.getScriptPinEpoch(),
+        normalize(projection.getLastObservedControlPlaneRequestId()),
         ScriptPatchInstanceRolloutStatus.valueOf(projection.getRolloutStatus()),
         projectionStale ? "projection_lag_exceeded" : projection.getStatusReason(),
         projection.getLastChangedAt().toEpochMilli(),
@@ -290,6 +357,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
         event.getTenantId(),
         event.getGameInstanceId(),
         event.getScriptPatchVersion(),
+        event.getScriptPinEpoch(),
+        normalize(event.getLastObservedControlPlaneRequestId()),
         ScriptPatchInstanceRolloutStatus.valueOf(event.getRolloutStatus()),
         event.getStatusReason(),
         event.getObservedAt().toEpochMilli(),
@@ -304,7 +373,10 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     }
     ScriptPatchInstanceRolloutProjection current = existing.get();
     return !current.getRolloutStatus().equals(snapshot.rolloutStatus().name())
-        || !current.getStatusReason().equals(snapshot.statusReason());
+        || !current.getStatusReason().equals(snapshot.statusReason())
+        || current.getScriptPinEpoch() != snapshot.scriptPinEpoch()
+        || !normalize(current.getLastObservedControlPlaneRequestId())
+            .equals(normalize(snapshot.lastObservedControlPlaneRequestId()));
   }
 
   private void appendEvent(
@@ -318,6 +390,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     event.setTenantId(tenantId);
     event.setGameInstanceId(gameInstanceId);
     event.setScriptPatchVersion(scriptPatchVersion);
+    event.setScriptPinEpoch(snapshot.scriptPinEpoch());
+    event.setLastObservedControlPlaneRequestId(snapshot.lastObservedControlPlaneRequestId());
     event.setRolloutStatus(snapshot.rolloutStatus().name());
     event.setStatusReason(snapshot.statusReason());
     event.setObservedAt(Instant.ofEpochMilli(snapshot.lastChangedAtMs()));
@@ -355,6 +429,18 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     }
   }
 
+  private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+  }
+
+  private static void requireCompleteTuple(long scriptPinEpoch, String requestId) {
+    if ((scriptPinEpoch > 0) != !normalize(requestId).isBlank()) {
+      throw new IllegalArgumentException("script_pin_control_plane_request_id_required");
+    }
+  }
+
   private static boolean priorRollbackObserved(Optional<String> existingRolloutStatus) {
     return existingRolloutStatus
         .map(
@@ -379,5 +465,9 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
   }
 
   private record ProjectionSnapshot(
-      ScriptPatchInstanceRolloutStatus rolloutStatus, String statusReason, long lastChangedAtMs) {}
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      String statusReason,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
+      long lastChangedAtMs) {}
 }

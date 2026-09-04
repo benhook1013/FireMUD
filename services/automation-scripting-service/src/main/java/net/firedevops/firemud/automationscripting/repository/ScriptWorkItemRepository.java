@@ -6,6 +6,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -29,6 +30,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
+  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
+      field(name("script_pin_control_plane_request_id"), String.class);
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
@@ -51,7 +54,7 @@ public class ScriptWorkItemRepository {
   }
 
   public boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
@@ -65,6 +68,8 @@ public class ScriptWorkItemRepository {
           String eventType,
           String eventSchemaVersion,
           String scriptPatchVersion,
+          long scriptPinEpoch,
+          String scriptPinControlPlaneRequestId,
           String scriptEventId,
           boolean dryRun) {
     return dsl.fetchExists(
@@ -83,6 +88,8 @@ public class ScriptWorkItemRepository {
             eventType,
             eventSchemaVersion,
             scriptPatchVersion,
+            scriptPinEpoch,
+            scriptPinControlPlaneRequestId,
             scriptEventId,
             dryRun));
   }
@@ -272,10 +279,7 @@ public class ScriptWorkItemRepository {
 
   public ScriptWorkItem save(ScriptWorkItem entity) {
     if (entity.getId() == null) {
-      ScriptWorkItemsRecord record = dsl.newRecord(SCRIPT_WORK_ITEMS);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      return insertIfAbsentByTriggerIdentity(entity).workItem();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
@@ -296,6 +300,10 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_WORK_ITEMS.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                normalizedScriptPinControlPlaneRequestId(entity))
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, entity.getSourceService())
@@ -341,6 +349,7 @@ public class ScriptWorkItemRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script work item is required");
     }
+    String normalizedRequestId = normalizedScriptPinControlPlaneRequestId(entity);
     for (int attempt = 0; attempt < MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
       if (insertResult.isPresent()) {
@@ -362,6 +371,8 @@ public class ScriptWorkItemRepository {
               entity.getEventType(),
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
+              entity.getScriptPinEpoch(),
+              normalizedRequestId,
               entity.getScriptEventId(),
               entity.isDryRun());
       if (existing.isPresent()) {
@@ -376,29 +387,20 @@ public class ScriptWorkItemRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_WORK_ITEMS.fields());
+    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
     // from the existing row returned by the no-op conflict update, avoiding a
     // race between DO NOTHING and a separate readback query.
-    return dsl.insertInto(SCRIPT_WORK_ITEMS)
-        .set(record)
-        .onConflict(
-            SCRIPT_WORK_ITEMS.TENANT_ID,
-            SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID,
-            SCRIPT_WORK_ITEMS.REGION_ID,
-            SCRIPT_WORK_ITEMS.REGION_EPOCH,
-            SCRIPT_WORK_ITEMS.ENTITY_ID,
-            SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE,
-            SCRIPT_WORK_ITEMS.WORLD_SLUG,
-            SCRIPT_WORK_ITEMS.REALM_SLUG,
-            SCRIPT_WORK_ITEMS.POINTER_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_ID,
-            SCRIPT_WORK_ITEMS.EVENT_TYPE,
-            SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID,
-            SCRIPT_WORK_ITEMS.DRY_RUN)
+    var conflictTarget =
+        dsl.insertInto(SCRIPT_WORK_ITEMS).set(record).onConflict(triggerConflictFields(entity));
+    var conflictPredicate =
+        entity.getScriptPinEpoch() > 0L
+            ? SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.gt(0L)
+            : SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(0L);
+    return conflictTarget
+        .where(conflictPredicate)
         .doUpdate()
         .set(SCRIPT_WORK_ITEMS.ID, SCRIPT_WORK_ITEMS.ID)
         .returningResult(returningFields)
@@ -409,6 +411,32 @@ public class ScriptWorkItemRepository {
   }
 
   private record TriggerIdentityInsertResult(ScriptWorkItem workItem, boolean inserted) {}
+
+  private static Field<?>[] triggerConflictFields(ScriptWorkItem entity) {
+    List<Field<?>> fields =
+        new ArrayList<>(
+            List.of(
+                SCRIPT_WORK_ITEMS.TENANT_ID,
+                SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID,
+                SCRIPT_WORK_ITEMS.REGION_ID,
+                SCRIPT_WORK_ITEMS.REGION_EPOCH,
+                SCRIPT_WORK_ITEMS.ENTITY_ID,
+                SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE,
+                SCRIPT_WORK_ITEMS.WORLD_SLUG,
+                SCRIPT_WORK_ITEMS.REALM_SLUG,
+                SCRIPT_WORK_ITEMS.POINTER_VERSION,
+                SCRIPT_WORK_ITEMS.SCRIPT_ID,
+                SCRIPT_WORK_ITEMS.EVENT_TYPE,
+                SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
+                SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    if (entity.getScriptPinEpoch() > 0L) {
+      fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
+      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    }
+    fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
+    fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
+    return fields.toArray(Field<?>[]::new);
+  }
 
   private Optional<ScriptWorkItem> findByTriggerIdentity(
       String tenantId,
@@ -424,6 +452,8 @@ public class ScriptWorkItemRepository {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
@@ -442,6 +472,8 @@ public class ScriptWorkItemRepository {
                 eventType,
                 eventSchemaVersion,
                 scriptPatchVersion,
+                scriptPinEpoch,
+                scriptPinControlPlaneRequestId,
                 scriptEventId,
                 dryRun))
         .fetchOptional(this::toEntity);
@@ -461,6 +493,8 @@ public class ScriptWorkItemRepository {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return SCRIPT_WORK_ITEMS
@@ -478,6 +512,8 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+        .and(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch))
+        .and(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(scriptPinControlPlaneRequestId))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
   }
@@ -541,6 +577,9 @@ public class ScriptWorkItemRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.set(
+        SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, normalizedScriptPinControlPlaneRequestId(entity));
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -559,6 +598,25 @@ public class ScriptWorkItemRepository {
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
+  }
+
+  private static String normalizedScriptPinControlPlaneRequestId(ScriptWorkItem entity) {
+    if (entity.getScriptPinEpoch() < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    String requestId = entity.getScriptPinControlPlaneRequestId();
+    if (entity.getScriptPinEpoch() == 0L) {
+      if (requestId != null && !requestId.isBlank()) {
+        throw new IllegalArgumentException(
+            "script_pin_control_plane_request_id requires a positive script_pin_epoch");
+      }
+      return null;
+    }
+    if (requestId == null || requestId.isBlank()) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for a positive script_pin_epoch");
+    }
+    return requestId;
   }
 
   private ScriptWorkItem toEntity(Record record) {
@@ -580,6 +638,9 @@ public class ScriptWorkItemRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
     entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));
     entity.setSourceService(record.get(SCRIPT_WORK_ITEMS.SOURCE_SERVICE));

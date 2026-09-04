@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -20,6 +22,56 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class ScriptPatchInstanceRolloutProjectionServiceImplTest {
+  @Test
+  void rejectsPositiveEpochWithoutOwnerRequestIdOnFullReads() {
+    ScriptPatchInstanceRolloutProjectionRepository repository =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
+    ScriptPatchInstanceRolloutEventRepository eventRepository =
+        Mockito.mock(ScriptPatchInstanceRolloutEventRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchInstanceRolloutProjectionServiceImpl service =
+        new ScriptPatchInstanceRolloutProjectionServiceImpl(
+            repository,
+            eventRepository,
+            workItemRepository,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties());
+
+    assertThatThrownBy(() -> service.getProjection("1", "game-1", "patch-1", 2L, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    assertThatThrownBy(
+            () ->
+                service.listProjections(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    "",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    assertThatThrownBy(
+            () ->
+                service.listEvents(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    null,
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L,
+                    25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    verifyNoInteractions(repository, eventRepository, workItemRepository);
+  }
+
   @Test
   void marksProjectionRepinnedWhenPatchReturnsAfterRollback() {
     ScriptPatchInstanceRolloutProjectionRepository repository =
@@ -51,8 +103,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", "req-2", 200L, 205L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 2L, "req-2", 200L, 205L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))

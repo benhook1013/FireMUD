@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -26,18 +27,68 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
+  void timerAuditLookupRejectsPinnedEpochWithoutOwnerRequestId() {
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findTimerAuditEvents(
+                    "tenant-1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    null,
+                    "script-1",
+                    "onTimerExpire",
+                    "",
+                    null,
+                    null,
+                    PageRequest.of(0, 25)))
+        .withMessage(
+            "script_pin_control_plane_request_id is required for pinned timer audit lookups");
+  }
+
+  @Test
+  void timerAuditLookupRejectsNegativeEpochWithoutNormalizingToUnpinned() {
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findTimerAuditEvents(
+                    "tenant-1",
+                    "game-1",
+                    "patch-1",
+                    -1L,
+                    null,
+                    "script-1",
+                    "onTimerExpire",
+                    "",
+                    null,
+                    null,
+                    PageRequest.of(0, 25)))
+        .withMessage("script_pin_epoch must be non-negative");
+  }
+
+  @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));
+    row.setScriptPinEpoch(null);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, "");
           returned.set(insertedField, false);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
@@ -52,6 +103,7 @@ class ScriptEventAuditRepositoryTest {
 
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(11L);
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
   }
 
   @Test
@@ -64,12 +116,14 @@ class ScriptEventAuditRepositoryTest {
         context -> {
           sqlRef.set(context.sql());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
           fields.add(insertedField);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, null);
           returned.set(insertedField, true);
           result.add(returned);
           return new MockResult[] {new MockResult(1, result)};
@@ -84,6 +138,9 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.inserted()).isTrue();
     assertThat(result.audit().getId()).isEqualTo(7L);
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
         .contains("on conflict", " do update", "returning", "xmax = 0");
     String conflictClause = conflictClause(sqlRef.get());
@@ -104,6 +161,55 @@ class ScriptEventAuditRepositoryTest {
             "script_patch_version",
             "script_event_id",
             "dry_run");
+    assertThat(conflictClause).contains("where", "script_pin_epoch", "is null");
+  }
+
+  @Test
+  void insertIfAbsentByHandlerIdentityUsesPinnedPartialIndexPredicate() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(8L, now, now);
+    row.setScriptPinEpoch(2L);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(insertedField);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(requestIdField, "pin-request-1");
+          returned.set(insertedField, true);
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    ScriptEventAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByHandlerIdentity(entity);
+
+    assertThat(result.inserted()).isTrue();
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
+    String conflictClause = conflictClause(sqlRef.get());
+    assertThat(conflictClause)
+        .contains(
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "script_event_id",
+            "dry_run");
+    assertThat(conflictClause).contains("where", "script_pin_epoch", "> 0");
+    assertThat(conflictClause).doesNotContain("is not null");
   }
 
   @Test
@@ -138,6 +244,9 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.audit().getId()).isEqualTo(9L);
     assertThat(result.audit().getTenantId()).isEqualTo("tenant-1");
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(result.audit().getFinalReason()).isEqualTo("original_reason");
     assertThat(result.audit().getCreatedAt()).isEqualTo(now);
     assertThat(result.audit().getUpdatedAt()).isEqualTo(now.plusSeconds(1));
@@ -159,6 +268,8 @@ class ScriptEventAuditRepositoryTest {
             "event_type",
             "event_schema_version",
             "script_patch_version",
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
             "script_event_id",
             "dry_run");
   }

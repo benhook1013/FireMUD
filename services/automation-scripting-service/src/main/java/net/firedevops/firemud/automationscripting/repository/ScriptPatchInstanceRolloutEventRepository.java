@@ -32,6 +32,8 @@ public class ScriptPatchInstanceRolloutEventRepository {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      Long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       String rolloutStatus,
       Instant changedAfter,
       Instant changedBefore,
@@ -45,6 +47,16 @@ public class ScriptPatchInstanceRolloutEventRepository {
       condition =
           condition.and(
               SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    if (scriptPinEpoch != null) {
+      condition =
+          condition.and(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch));
+    }
+    if (lastObservedControlPlaneRequestId != null && !lastObservedControlPlaneRequestId.isBlank()) {
+      condition =
+          condition.and(
+              SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID.eq(
+                  lastObservedControlPlaneRequestId));
     }
     if (!rolloutStatus.isBlank()) {
       condition =
@@ -70,6 +82,26 @@ public class ScriptPatchInstanceRolloutEventRepository {
         .fetch(this::toEntity);
   }
 
+  public List<ScriptPatchInstanceRolloutEvent> findEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String rolloutStatus,
+      Instant changedAfter,
+      Instant changedBefore,
+      Pageable pageable) {
+    return findEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        null,
+        null,
+        rolloutStatus,
+        changedAfter,
+        changedBefore,
+        pageable);
+  }
+
   public ScriptPatchInstanceRolloutEvent save(ScriptPatchInstanceRolloutEvent entity) {
     if (entity.getId() == null) {
       ScriptPatchInstanceRolloutEventsRecord record =
@@ -87,6 +119,10 @@ public class ScriptPatchInstanceRolloutEventRepository {
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION,
                 entity.getScriptPatchVersion())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
+                entity.getLastObservedControlPlaneRequestId())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -124,6 +160,8 @@ public class ScriptPatchInstanceRolloutEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setLastObservedControlPlaneRequestId(entity.getLastObservedControlPlaneRequestId());
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
@@ -139,6 +177,10 @@ public class ScriptPatchInstanceRolloutEventRepository {
     entity.setGameInstanceId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setLastObservedControlPlaneRequestId(
+        record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID));
     entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON));
     entity.setObservedAt(toInstant(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT)));

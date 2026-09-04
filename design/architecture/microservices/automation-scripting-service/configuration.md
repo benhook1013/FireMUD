@@ -48,7 +48,7 @@ Current live bindings in the service are narrower than the full target-state scr
 - the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
 - the current runtime does not implement artifact-estimate ordered-prefix reservation;
 - live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention and `DEAD_LETTERED` rows by max age plus a row-count cap; stage-aware recovery and a coherent retained-evidence bundle remain unimplemented;
-- live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission;
+- live instance-bound admission reads Game Session state and compares the exact observed `scriptPatchVersion`/`scriptPinEpoch` pair, retaining the associated owner `controlPlaneRequestId` where present; absent or mismatched epoch evidence fails closed. Complete final-effect fencing and source/target remote proof remain gaps;
 - current live properties enforce only a positive minimum for `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`; target upper-bound validation and focused proof remain an implementation gap.
 
 ## Service-Specific Variables

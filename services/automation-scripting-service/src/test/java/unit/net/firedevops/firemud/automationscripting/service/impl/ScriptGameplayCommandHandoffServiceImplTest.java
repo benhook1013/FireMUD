@@ -1166,6 +1166,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getTargetGameInstanceId()).isEqualTo("8");
     assertThat(handoffCaptor.getValue().getTargetRegionId()).isEqualTo("region-2");
     assertThat(handoffCaptor.getValue().getTargetRegionEpoch()).isEqualTo(77L);
+    assertThat(handoffCaptor.getValue().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(handoffCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
   }
 
   @Test
@@ -1494,6 +1497,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setSourceOrdinal(5000L);
     item.setSourceDueAtMs(5000L);
     item.setScriptPatchVersion("patch-1");
+    item.setScriptPinEpoch(2L);
+    item.setScriptPinControlPlaneRequestId("pin-request-1");
     item.setAdmissionEpoch(1L);
     item.setUpdatedAt(Instant.EPOCH);
     return item;

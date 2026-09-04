@@ -52,12 +52,38 @@ public interface ScriptScheduleInstanceService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptId,
       String eventType,
       String finalReason,
       long changedAfterMs,
       long changedBeforeMs,
       int limit);
+
+  default List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    return listTimerAuditEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        0L,
+        null,
+        scriptId,
+        eventType,
+        finalReason,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
 
   record RuntimeTickProgressObservation(
       String tenantId,
@@ -74,6 +100,7 @@ public interface ScriptScheduleInstanceService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       String scriptId,
       String playableStateScope,
       String worldSlug,
@@ -121,6 +148,8 @@ public interface ScriptScheduleInstanceService {
       String pluginVersionId,
       String eventType,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       String triggerMode,
       String sourceState,
