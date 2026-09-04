@@ -25,6 +25,12 @@ public class FactionRepository {
     return dsl.selectFrom(FACTIONS).where(FACTIONS.ID.eq(id)).fetchOptional(this::toEntity);
   }
 
+  public Optional<Faction> findByTenantIdAndId(Long tenantId, Long id) {
+    return dsl.selectFrom(FACTIONS)
+        .where(FACTIONS.TENANT_ID.eq(tenantId).and(FACTIONS.ID.eq(id)))
+        .fetchOptional(this::toEntity);
+  }
+
   public Faction save(Faction entity) {
     if (entity.getId() == null) {
       FactionsRecord record = dsl.newRecord(FACTIONS);
