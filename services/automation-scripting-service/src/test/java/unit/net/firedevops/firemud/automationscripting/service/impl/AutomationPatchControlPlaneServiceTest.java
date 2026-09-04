@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.util.List;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
@@ -11,9 +12,13 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjecti
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
+import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
@@ -26,6 +31,61 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationPatchControlPlaneServiceTest {
+  @Test
+  void rejectsPartialScriptPinFiltersBeforeDelegating() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    var service =
+        newService(
+            workItemService,
+            Mockito.mock(AutomationAdmissionStateService.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            scheduleService,
+            new ScriptRuntimeProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.getScriptPatchInstanceRolloutStatus(
+                    GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPinEpoch(0L)
+                        .setLastObservedControlPlaneRequestId("request-1")
+                        .build()))
+        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.listScriptPatchInstanceRollouts(
+                    ListScriptPatchInstanceRolloutsRequest.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPinEpoch(2L)
+                        .build()))
+        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.listScriptPatchInstanceRolloutEvents(
+                    ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+                        .setTenantId("1")
+                        .setLastObservedControlPlaneRequestId("request-1")
+                        .build()))
+        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.listScriptTimerAuditEvents(
+                    ListScriptTimerAuditEventsRequest.newBuilder()
+                        .setTenantId("1")
+                        .setScriptPinEpoch(2L)
+                        .build()))
+        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
+
+    Mockito.verifyNoInteractions(workItemService, scheduleService);
+  }
+
   private static GameDesignControlPlaneClient gameDesignClient() {
     GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
     Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))

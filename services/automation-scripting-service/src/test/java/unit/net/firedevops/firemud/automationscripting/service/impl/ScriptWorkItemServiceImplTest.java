@@ -1330,6 +1330,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setSourceState("WORK_ITEM_PERSISTED");
     deadLetter.setPluginId("plugin-1");
     deadLetter.setPluginVersionId("plugin-v1");
+    deadLetter.setScriptPinEpoch(2L);
+    deadLetter.setScriptPinControlPlaneRequestId("request-1");
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1358,6 +1360,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).sourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(deadLetters.get(0).pluginId()).isEqualTo("plugin-1");
     assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(deadLetters.get(0).scriptPinEpoch()).isEqualTo(2L);
+    assertThat(deadLetters.get(0).scriptPinControlPlaneRequestId()).isEqualTo("request-1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
     assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
@@ -1908,6 +1912,25 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void rejectsReplayWhenPinnedPatchMatchesButEpochDiffers() {
+    ScriptWorkItem item = replayableRuntimeWorkItem(79L);
+    item.setScriptPinEpoch(2L);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(79L)).thenReturn(Optional.of(item));
+    ScriptWorkItemService service = replayService(workItemRepository);
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "game-1", "", List.of("79"), "patch-1", 0L, 0L, 10, "", "", ""));
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
+  }
+
+  @Test
   void replaysFailedOnLoadDeadLetterWhenReadinessProjectionMatches() {
     ScriptWorkItem item = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     item.setId(88L);
@@ -2042,6 +2065,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId("1");
     item.setScriptPatchVersion(patchVersion);
+    item.setScriptPinEpoch(1L);
+    item.setScriptPinControlPlaneRequestId("req-1");
     item.setStatus(status);
     item.setUpdatedAt(updatedAt);
     return item;

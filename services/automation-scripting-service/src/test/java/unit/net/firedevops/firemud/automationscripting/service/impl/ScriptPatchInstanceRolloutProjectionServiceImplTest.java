@@ -139,6 +139,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     existing.setTenantId("1");
     existing.setGameInstanceId("game-1");
     existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
     existing.setRolloutStatus(
         ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK.name());
     existing.setStatusReason("runtime_pin_differs_from_patch");
@@ -148,6 +149,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     workItem.setTenantId("1");
     workItem.setGameInstanceId("game-1");
     workItem.setScriptPatchVersion("patch-1");
+    workItem.setScriptPinEpoch(1L);
     workItem.setUpdatedAt(Instant.ofEpochMilli(120));
     when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
             "1", "game-1", "patch-1"))

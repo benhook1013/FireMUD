@@ -1164,15 +1164,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
-    when(automationScriptingClient.triggerScriptEvent(org.mockito.ArgumentMatchers.any()))
-        .thenReturn(
-            TriggerScriptEventResponse.newBuilder()
-                .setAdmitted(true)
-                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
-                .setAdmissionReason("admitted_for_handler_resolution")
-                .setResolvedHandlerCount(2)
-                .build());
-
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
