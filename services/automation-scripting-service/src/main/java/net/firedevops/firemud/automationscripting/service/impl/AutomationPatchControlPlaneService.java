@@ -218,7 +218,8 @@ final class AutomationPatchControlPlaneService {
 
   GetScriptPatchInstanceRolloutStatusResponse getScriptPatchInstanceRolloutStatus(
       GetScriptPatchInstanceRolloutStatusRequest request) {
-    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     GetScriptPatchInstanceRolloutStatusResponse.Builder response =
         GetScriptPatchInstanceRolloutStatusResponse.newBuilder();
     var rollout =
@@ -280,7 +281,8 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
-    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getScriptPinControlPlaneRequestId());
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
         request.getScriptPinEpoch() > 0
             ? scriptScheduleInstanceService.listTimerAuditEvents(
@@ -321,7 +323,8 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptPatchInstanceRolloutsResponse listScriptPatchInstanceRollouts(
       ListScriptPatchInstanceRolloutsRequest request) {
-    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutsResponse.Builder response =
         ListScriptPatchInstanceRolloutsResponse.newBuilder();
     var rollouts =
@@ -350,7 +353,8 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptPatchInstanceRolloutEventsResponse listScriptPatchInstanceRolloutEvents(
       ListScriptPatchInstanceRolloutEventsRequest request) {
-    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutEventsResponse.Builder response =
         ListScriptPatchInstanceRolloutEventsResponse.newBuilder();
     var rolloutEvents =
@@ -616,6 +620,8 @@ final class AutomationPatchControlPlaneService {
             .setPluginVersionId(summary.pluginVersionId())
             .setEventType(summary.eventType())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptEventId(summary.scriptEventId())
             .setStatus(summary.status())
             .setReason(summary.reason())
@@ -1088,9 +1094,14 @@ final class AutomationPatchControlPlaneService {
     return !persistedRoutingBundle.pointerVersion().equals(currentScope.pointerVersion());
   }
 
-  private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
+  private static void requireCoherentScriptPinFilter(long scriptPinEpoch, String requestId) {
     if (scriptPinEpoch < 0) {
       throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    boolean hasRequestId = requestId != null && !requestId.isBlank();
+    if ((scriptPinEpoch > 0) != hasRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_epoch and control-plane request ID must be supplied together");
     }
   }
 

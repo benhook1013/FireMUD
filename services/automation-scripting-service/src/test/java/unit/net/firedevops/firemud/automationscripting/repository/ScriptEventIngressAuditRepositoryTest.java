@@ -65,12 +65,10 @@ class ScriptEventIngressAuditRepositoryTest {
     claim.setClaimStartedAt(Instant.now().minusSeconds(60));
 
     Optional<ScriptEventIngressAudit> reclaimed =
-        repository.reclaimStaleInProgress(
-            claim, Instant.now().minusSeconds(30), Instant.now());
+        repository.reclaimStaleInProgress(claim, Instant.now().minusSeconds(30), Instant.now());
 
     assertThat(reclaimed).isPresent();
-    assertThat(sqlRef.get())
-        .contains("source_state", "row_version", "claim_started_at");
+    assertThat(sqlRef.get()).contains("source_state", "row_version", "claim_started_at");
   }
 
   @Test
@@ -129,10 +127,12 @@ class ScriptEventIngressAuditRepositoryTest {
   @Test
   void lookupUsesCanonicalEventScopeFieldsAndSourceService() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
           return new MockResult[] {
             new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT))
           };
@@ -169,5 +169,6 @@ class ScriptEventIngressAuditRepositoryTest {
         .contains("script_pin_epoch")
         .contains("script_pin_control_plane_request_id")
         .doesNotContain("world_slug", "realm_slug", "pointer_version");
+    assertThat(bindingsRef.get()).contains(4L, "pin-request-1");
   }
 }

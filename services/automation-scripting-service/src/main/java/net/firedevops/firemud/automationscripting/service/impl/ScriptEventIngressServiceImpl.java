@@ -76,6 +76,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
    * handler work. The durable state is carried by sourceState=IN_PROGRESS.
    */
   private static final String IN_PROGRESS_REASON = "ingress_in_progress";
+
   private static final String RECLAIMED_STALE_REASON = "ingress_reclaimed_stale";
 
   private static final String IN_PROGRESS_STATE = "IN_PROGRESS";
@@ -344,7 +345,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     Instant startedAt =
         audit.getClaimStartedAt() == null ? audit.getCreatedAt() : audit.getClaimStartedAt();
     return startedAt != null
-        && startedAt.plusMillis(runtimeProperties.getIngressClaimStaleThresholdMs()).isBefore(Instant.now());
+        && startedAt
+            .plusMillis(runtimeProperties.getIngressClaimStaleThresholdMs())
+            .isBefore(Instant.now());
   }
 
   private TriggerAdmission validate(
@@ -1143,7 +1146,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptPinEpoch(),
-            request.getScriptPinControlPlaneRequestId(),
+            normalize(request.getScriptPinControlPlaneRequestId()),
             request.getScriptEventId(),
             request.getIsDryRun());
   }
@@ -1267,7 +1270,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             instanceScoped && request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
-            request.getScriptPinControlPlaneRequestId(),
+            normalize(request.getScriptPinControlPlaneRequestId()),
             request.getScriptEventId(),
             request.getIsDryRun(),
             sourceService)

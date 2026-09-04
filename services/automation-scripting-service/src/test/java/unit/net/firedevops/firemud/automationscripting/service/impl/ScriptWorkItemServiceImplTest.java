@@ -1216,6 +1216,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setSourceState("WORK_ITEM_PERSISTED");
     deadLetter.setPluginId("plugin-1");
     deadLetter.setPluginVersionId("plugin-v1");
+    deadLetter.setScriptPinEpoch(2L);
+    deadLetter.setScriptPinControlPlaneRequestId("request-1");
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1244,6 +1246,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).sourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(deadLetters.get(0).pluginId()).isEqualTo("plugin-1");
     assertThat(deadLetters.get(0).pluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(deadLetters.get(0).scriptPinEpoch()).isEqualTo(2L);
+    assertThat(deadLetters.get(0).scriptPinControlPlaneRequestId()).isEqualTo("request-1");
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
     assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
@@ -1941,8 +1945,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 100L, 100L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 100L, 100L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     return service(

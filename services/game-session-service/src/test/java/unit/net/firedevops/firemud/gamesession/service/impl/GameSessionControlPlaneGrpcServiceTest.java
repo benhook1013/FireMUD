@@ -15,12 +15,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingControlPlaneClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
@@ -106,22 +109,36 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class GameSessionControlPlaneGrpcServiceTest {
+  private static AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient() {
+    AutomationScriptingControlPlaneClient client =
+        Mockito.mock(AutomationScriptingControlPlaneClient.class);
+    Mockito.when(client.getScriptPatchStatus(Mockito.anyLong(), Mockito.anyString()))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(7L)
+                .build());
+    return client;
+  }
+
   private static GameDesignClient gameDesignClient() {
     GameDesignClient client = Mockito.mock(GameDesignClient.class);
     Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString()))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setScriptPatchVersion("patch-2")
-                        .setVersionId(17L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setLastChangedAtMs(150L)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetPublishedScriptPatchVersionResponse.newBuilder()
+                    .setScriptPatch(
+                        PublishedScriptPatchVersion.newBuilder()
+                            .setTenantId("1")
+                            .setScriptPatchVersion(invocation.getArgument(1, String.class))
+                            .setVersionId(17L)
+                            .setBaseVersionId(7L)
+                            .setPublicationState(
+                                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                            .setLastChangedAtMs(150L)
+                            .build())
+                    .build());
     Mockito.when(
             client.getPublishedPluginVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
@@ -187,6 +204,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("1.0.0");
+    instance.setVersionId(7L);
     instance.setScriptPatchVersion("patch-1");
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-01-01T00:00:00Z"));
@@ -258,6 +276,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-2");
+    instance.setVersionId(7L);
     instance.setScriptPinEpoch(7L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
@@ -7808,7 +7827,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             meterRegistry);
     GameSessionOperatorControlPlaneService operatorControlPlaneService =
         new GameSessionOperatorControlPlaneService(
-            gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+            gameInstanceRepository,
+            tickService,
+            gameDesignClient,
+            automationScriptingControlPlaneClient(),
+            gameSessionProperties);
     GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService =
         new GameSessionVersionUpgradeControlPlaneService(
             instanceCutoverCompatibilityService, versionUpgradePreparationService);

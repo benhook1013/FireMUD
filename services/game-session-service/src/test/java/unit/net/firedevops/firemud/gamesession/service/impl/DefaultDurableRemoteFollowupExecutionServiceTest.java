@@ -745,6 +745,19 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
         .thenReturn(Optional.of(coordinator));
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    service =
+        new DefaultDurableRemoteFollowupExecutionService(
+            remoteFollowupRepository,
+            remoteCommandCoordinatorRepository,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService,
+            remoteFollowupRuntimeService,
+            automationScriptingClient,
+            pointerAuthority);
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
         service.execute(effect);
 
@@ -761,39 +774,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals(7L, requestCaptor.getValue().originGameInstanceId());
     assertEquals(9L, requestCaptor.getValue().targetGameInstanceId());
     assertEquals("ABANDONED", requestCaptor.getValue().outcome());
-  }
-
-  @Test
-  void executeRetriesScriptEventWhenAutomationAuthorityIsUnavailable() {
-    TickEffect effect = triggerScriptEventEffect();
-    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
-    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
-    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
-    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(coordinator));
-    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
-        service.execute(effect);
-
-    assertEquals("ABANDONED", result.effectStatus());
-    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    verify(remoteFollowupRepository, never()).save(followup);
-    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
-  }
-
-  @Test
-  void executePropagatesUnexpectedRuntimeExceptionFromTriggerExecution() {
-    TickEffect effect = triggerScriptEventEffect();
-    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
-    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
-    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
-    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(coordinator));
-    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
-        service.execute(effect);
-    assertEquals("ABANDONED", result.effectStatus());
-    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    verify(remoteFollowupRepository, never()).save(followup);
-    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(pointerAuthority);
   }
 
   @Test
@@ -878,23 +859,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
     verify(gameplayCommandRepository, never())
         .insertIfAbsentByIdempotencyIdentity(org.mockito.ArgumentMatchers.any());
-  }
-
-  @Test
-  void executeAbandonsTriggerScriptEventWhenVersionMismatchIsReported() {
-    TickEffect effect = triggerScriptEventEffect();
-    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
-    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
-    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
-    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(coordinator));
-    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
-        service.execute(effect);
-
-    assertEquals("ABANDONED", result.effectStatus());
-    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
-    verify(remoteFollowupRepository, never()).save(followup);
   }
 
   @Test

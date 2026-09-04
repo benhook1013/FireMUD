@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;

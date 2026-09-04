@@ -111,6 +111,7 @@ Ordinary producer event-scope ingress identity before handler resolution:
 | `eventSchemaVersion` | Yes | Version of the event and payload contract being admitted. |
 | `scriptPatchVersion` | Yes | Patch version supplied by the producer for pin/version checks. |
 | `scriptPinEpoch` | Yes (gameplay/runtime ingress) | Exact Game Session pin epoch supplied with the patch; absent for tenant-readiness `onLoad`. |
+| `scriptPinControlPlaneRequestId` | Yes (gameplay/runtime ingress) | Owner-grounded request identity paired with the exact patch and epoch; absent for tenant-readiness `onLoad`. |
 | `scriptEventId` | Yes | Caller-supplied live ingress idempotency token, or service-generated dry-run/test token. |
 | `isDryRun` | Yes | Separates live and dry-run/test ingress namespaces. |
 | `sourceService` | Yes for custom/service-specific events | Canonical producing service identity derived from the authenticated producer/workload identity and authorized by the event registry. It is not an untrusted caller field. Include the same value in the event-scope key and persist it unchanged in ingress and handler audit records; omit it for built-in events that originate entirely within Automation & Scripting. |

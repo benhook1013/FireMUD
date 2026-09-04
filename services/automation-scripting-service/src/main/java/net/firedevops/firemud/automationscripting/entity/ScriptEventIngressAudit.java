@@ -30,7 +30,9 @@ public class ScriptEventIngressAudit {
 
   private String scriptPinControlPlaneRequestId;
 
-  /** Mutable lease timestamp for crash recovery; createdAt remains the immutable retention anchor. */
+  /**
+   * Mutable lease timestamp for crash recovery; createdAt remains the immutable retention anchor.
+   */
   private Instant claimStartedAt = Instant.now();
 
   private String scriptEventId;

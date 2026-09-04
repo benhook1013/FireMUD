@@ -306,36 +306,17 @@ public final class DefaultDurableRemoteFollowupExecutionService
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      if (gameplayAdmissionPointerAuthorityService == null) {
-        try {
-          return executeTriggerScriptEvent(
-              root,
-              coordinator,
-              followup,
-              TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")),
-              null);
-        } catch (IllegalArgumentException ex) {
-          return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
-        }
-      }
-      TargetPointerResolution targetPointer = resolveTargetPointer(followup);
-      if (!targetPointer.available()) {
-        return retryableTargetPointerFailure(targetPointer);
-      }
-      PlayableStateScope targetScope;
       try {
-        targetScope =
+        return executeTriggerScriptEvent(
+            root,
+            coordinator,
+            followup,
             TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                targetPointer.pointer().stateScope());
+                authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")),
+            null);
       } catch (IllegalArgumentException ex) {
-        return retryableTargetPointerFailure(
-            TargetPointerResolution.unavailable(
-                "ADMISSION_POINTER_UNAVAILABLE",
-                "Current target gameplay admission pointer is invalid"));
+        return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
       }
-      return executeTriggerScriptEvent(
-          root, coordinator, followup, targetScope, targetPointer.pointer());
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",

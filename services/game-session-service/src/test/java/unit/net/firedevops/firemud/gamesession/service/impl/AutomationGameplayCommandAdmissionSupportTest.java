@@ -1581,7 +1581,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void remoteTriggerScriptEventAbandonsWithoutDurablePinTupleAndExactReplaySkipsPointerReread() {
+  void remoteTriggerScriptEventAbandonsWithoutDurablePinTupleAndSkipsPointerLookup() {
     usePointerAuthority();
     TickEffect effect = commandEffect("trigger-followup");
     RemoteFollowup followup = commandFollowup("trigger-followup", "trigger_script_event");
@@ -1594,8 +1594,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
     followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     RemoteCommandCoordinator coordinator = commandCoordinator("trigger-followup");
     configureTargetAdmission(followup, coordinator, "trigger");
-    when(pointerAuthority.listByRuntimeTarget(1L, 9L))
-        .thenReturn(List.of(targetPointer("target-world", "target-realm", 23L, "ISOLATED")));
     when(remoteFollowupRuntimeService.recordResult(any()))
         .thenAnswer(
             invocation -> {
@@ -1620,7 +1618,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("ABANDONED", replay.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", replay.failureCode());
     verify(automationScriptingClient, never()).triggerScriptEvent(any());
-    verify(pointerAuthority).listByRuntimeTarget(1L, 9L);
+    org.mockito.Mockito.verifyNoInteractions(pointerAuthority);
   }
 
   static Stream<List<GameplayAdmissionPointerSnapshot>> temporarilyUnavailableTargetPointers() {

@@ -110,7 +110,7 @@ class ScriptPinOperationRepositoryIntegrationTest {
           repository.applyScriptPin(
               1L,
               7L,
-              winner == firstResult ? "SET" : "SET",
+              "SET",
               winner.resultingScriptPatchVersion(),
               winner.controlPlaneRequestId(),
               "operator",
@@ -119,6 +119,119 @@ class ScriptPinOperationRepositoryIntegrationTest {
               1L);
       assertThat(retry).isEqualTo(winner);
     }
+  }
+
+  @Test
+  void nullExpectedPinKindFailsClosedWithoutMutatingTheInstance() {
+    org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "SET",
+                    "patch-new",
+                    "request-null-kind",
+                    "operator",
+                    "test",
+                    null,
+                    null))
+        .withMessage("expected_pin_kind is required");
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+  }
+
+  @Test
+  void recordScriptPinFailurePersistsAndReplaysByExactDigest() {
+    ScriptPinMutationResult recorded =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+
+    GameInstanceRepository reloadedRepository = new GameInstanceRepository(dsl);
+    ScriptPinMutationResult replay =
+        reloadedRepository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    ScriptPinMutationResult conflict =
+        reloadedRepository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-other",
+            "request-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+
+    assertThat(recorded.succeeded()).isFalse();
+    assertThat(recorded.errorCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    assertThat(recorded.previousScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(recorded.previousScriptPinEpoch()).isEqualTo(1L);
+    assertThat(replay).isEqualTo(recorded);
+    assertThat(conflict.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(
+                    SCRIPT_PIN_OPERATION.OUTCOME,
+                    SCRIPT_PIN_OPERATION.ERROR_CODE,
+                    SCRIPT_PIN_OPERATION.MUTATION_DIGEST,
+                    SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION,
+                    SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-failure"))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST)).isNotBlank();
+              assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION))
+                  .isEqualTo("patch-1");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+                  .isEqualTo("patch-1");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
   }
 
   @Test

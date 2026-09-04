@@ -125,6 +125,10 @@ public class ScriptEventAuditRepository {
           Long scriptPinEpoch,
           String scriptEventId,
           boolean dryRun) {
+    if (scriptPinEpoch != null && scriptPinEpoch > 0L) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for pinned audit lookups");
+    }
     return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
         tenantId,
         gameInstanceId,

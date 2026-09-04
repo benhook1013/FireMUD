@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -35,6 +36,9 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -51,7 +55,7 @@ class GameInstanceServiceImplTest {
   private AtomicLong nextId;
 
   @Test
-  void legacyDtoConstructorNormalizesPartialScriptPinToUnpinned() {
+  void legacyDtoConstructorNormalizesPinToUnpinnedWithoutCompleteTuple() {
     GameInstanceDto dto =
         new GameInstanceDto(
             7L,
@@ -529,6 +533,26 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionFinalizesLocallyWhenWorldIsAlreadyTerminated() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "1",
+                "10",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+
+    GameInstanceDto dto = service.stopSession(10L);
+
+    assertEquals("STOPPED", dto.status());
+    assertEquals("STOPPED", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
   void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     AtomicInteger mapperCalls = new AtomicInteger();
@@ -620,6 +644,57 @@ class GameInstanceServiceImplTest {
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(1)).saveState(states.capture());
     assertEquals(10L, states.getValue().id());
+  }
+
+  @Test
+  void startSessionWithReplacementFinalizesAlreadyTerminatedExistingSession() {
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-terminated-replacement", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+
+    GameInstanceDto dto = service.startSession(request, true);
+
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    assertEquals("RUNNING", dto.status());
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationIsInProgress() {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-terminating-replacement", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals(
+        "WORLD_TERMINATION_IN_PROGRESS: replaced session is already terminating",
+        error.getMessage());
+    assertEquals("STOPPING", store.get(7L).getStatus());
+    assertEquals(1, store.size());
+    verify(stateService).deleteState(2L, 10L);
+    verify(stateService, never()).saveState(argThat(state -> state.id() == 7L));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
 
   @Test
@@ -745,7 +820,7 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
-  void stopSessionFailsClosedWhenWorldLifecycleIsNotActive() {
+  void stopSessionLeavesStoppingStateWhenWorldTerminationIsInProgress() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
         .thenReturn(
@@ -766,7 +841,11 @@ class GameInstanceServiceImplTest {
         assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     assertEquals(
-        "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status", error.getMessage());
+        "WORLD_TERMINATION_IN_PROGRESS: session termination is already in progress",
+        error.getMessage());
+    assertEquals("STOPPING", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).saveState(any(GameInstanceDto.class));
     verify(worldManagementClient, never())
         .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
@@ -923,7 +1002,8 @@ class GameInstanceServiceImplTest {
         assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
 
     assertEquals(
-        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle",
+        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release"
+            + " bundle",
         error.getMessage());
   }
 
@@ -1048,6 +1128,22 @@ class GameInstanceServiceImplTest {
                 .setStatus(
                     net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
                         .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                .build())
+        .build();
+  }
+
+  private static GetWorldInstanceLifecycleResponse worldLifecycleSnapshot(
+      String tenantId,
+      String gameInstanceId,
+      long lifecycleEpoch,
+      WorldInstanceLifecycleStatus status) {
+    return GetWorldInstanceLifecycleResponse.newBuilder()
+        .setWorldInstance(
+            WorldInstanceLifecycleSnapshot.newBuilder()
+                .setTenantId(tenantId)
+                .setGameInstanceId(gameInstanceId)
+                .setLifecycleEpoch(lifecycleEpoch)
+                .setStatus(status)
                 .build())
         .build();
   }

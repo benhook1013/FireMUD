@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -25,6 +26,35 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
+  @Test
+  void legacyHandlerLookupRejectsPinnedEpochWithoutOwnerRequestId() {
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository
+                    .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+                        "tenant-1",
+                        "game-1",
+                        "region-1",
+                        7L,
+                        "entity-1",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        "17",
+                        "script-1",
+                        "onCommand",
+                        "v1",
+                        "patch-1",
+                        2L,
+                        "event-1",
+                        false))
+        .withMessage("script_pin_control_plane_request_id is required for pinned audit lookups");
+  }
+
   @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");

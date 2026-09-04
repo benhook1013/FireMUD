@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
@@ -376,8 +377,8 @@ final class GameSessionOperatorControlPlaneService {
 
   /**
    * Validates both owner authorities before the Game Session pin transaction. A null result is a
-   * valid target. The legacy four-argument constructor intentionally leaves this gate unavailable
-   * for unit tests that only exercise the pre-existing repository delegation path.
+   * valid target. The compatibility constructor does not provide the owner authority client, so pin
+   * mutations must fail closed when it is used.
    */
   private String validateTargetPatch(
       long tenantId, GameInstance instance, String targetScriptPatchVersion, boolean rollback) {
@@ -386,7 +387,7 @@ final class GameSessionOperatorControlPlaneService {
       return "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT";
     }
     if (automationScriptingControlPlaneClient == null) {
-      return null;
+      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
     }
 
     GetPublishedScriptPatchVersionResponse publicationResponse;
@@ -394,8 +395,7 @@ final class GameSessionOperatorControlPlaneService {
       publicationResponse =
           gameDesignClient == null
               ? null
-              : gameDesignClient.getPublishedScriptPatchVersion(
-                  tenantId, targetScriptPatchVersion);
+              : gameDesignClient.getPublishedScriptPatchVersion(tenantId, targetScriptPatchVersion);
     } catch (RuntimeException ex) {
       return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
     }

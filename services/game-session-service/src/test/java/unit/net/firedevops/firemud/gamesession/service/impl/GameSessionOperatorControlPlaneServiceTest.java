@@ -34,7 +34,8 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameDesignClient gameDesign = mock(GameDesignClient.class);
-    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
@@ -46,15 +47,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                 .setBaseVersionId(100L)
                 .build());
     when(repository.applyScriptPin(
-            1L,
-            7L,
-            "SET",
-            "patch-new",
-            "request-1",
-            "operator",
-            "pin",
-            "EXPECT_UNPINNED",
-            null))
+            1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null))
         .thenReturn(new ScriptPinMutationResult(null, null, "patch-new", 1L, "request-1", null));
 
     SetPinnedScriptPatchVersionResponse response =
@@ -64,15 +57,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     org.assertj.core.api.Assertions.assertThat(response.hasError()).isFalse();
     org.mockito.Mockito.verify(repository)
         .applyScriptPin(
-            1L,
-            7L,
-            "SET",
-            "patch-new",
-            "request-1",
-            "operator",
-            "pin",
-            "EXPECT_UNPINNED",
-            null);
+            1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null);
   }
 
   @Test
@@ -80,7 +65,8 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameDesignClient gameDesign = mock(GameDesignClient.class);
-    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     GameInstance instance = validUnpinnedInstance();
     when(repository.findById(7L)).thenReturn(Optional.of(instance));
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
@@ -102,7 +88,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             "EXPECT_UNPINNED",
             null,
             "SCRIPT_PATCH_NOT_READY"))
-        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_NOT_READY"));
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_NOT_READY"));
 
     SetPinnedScriptPatchVersionResponse response =
         newService(repository, tickService, gameDesign, automation)
@@ -129,7 +117,8 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameDesignClient gameDesign = mock(GameDesignClient.class);
-    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
         .thenReturn(publishedPatch(2L, 200L, 100L));
@@ -144,7 +133,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             "EXPECT_UNPINNED",
             null,
             "SCRIPT_PATCH_TENANT_MISMATCH"))
-        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_TENANT_MISMATCH"));
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_TENANT_MISMATCH"));
 
     SetPinnedScriptPatchVersionResponse response =
         newService(repository, tickService, gameDesign, automation)
@@ -171,7 +162,8 @@ class GameSessionOperatorControlPlaneServiceTest {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameDesignClient gameDesign = mock(GameDesignClient.class);
-    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
         .thenReturn(publishedPatch(1L, 200L, 999L));
@@ -192,7 +184,9 @@ class GameSessionOperatorControlPlaneServiceTest {
             "EXPECT_UNPINNED",
             null,
             "SCRIPT_PATCH_BASE_VERSION_MISMATCH"))
-        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_BASE_VERSION_MISMATCH"));
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_BASE_VERSION_MISMATCH"));
 
     SetPinnedScriptPatchVersionResponse response =
         newService(repository, tickService, gameDesign, automation)
@@ -203,11 +197,12 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
-  void unavailableAuthorityIsLedgeredAndExactRetryReplaysStoredFailure() {
+  void unavailableAuthorityRecordsEachAttemptAndReplaysStoredFailure() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameDesignClient gameDesign = mock(GameDesignClient.class);
-    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
     when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
         .thenReturn(
@@ -262,9 +257,13 @@ class GameSessionOperatorControlPlaneServiceTest {
   void returnsLedgeredScriptPinEpochExhaustionFailureWithoutLocalMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(100L);
     instance.setScriptPatchVersion("patch-old");
     instance.setScriptPinEpoch(Long.MAX_VALUE);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
@@ -287,7 +286,16 @@ class GameSessionOperatorControlPlaneServiceTest {
                 Long.MAX_VALUE,
                 "request-1",
                 "SCRIPT_PIN_EPOCH_EXHAUSTED"));
-    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
+    when(gameDesignClient.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    GameSessionOperatorControlPlaneService service =
+        newService(gameInstanceRepository, tickService, gameDesignClient, automation);
 
     SetPinnedScriptPatchVersionResponse response =
         service.setPinnedScriptPatchVersion(
@@ -331,6 +339,58 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void missingAutomationAuthorityFailsClosedBeforePinMutation() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = validUnpinnedInstance();
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        service(repository, tickService)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    org.mockito.Mockito.verify(repository)
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .applyScriptPin(
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(Long.class));
+  }
+
+  @Test
   void rejectsMalformedCurrentScriptPinBeforeMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
@@ -358,7 +418,8 @@ class GameSessionOperatorControlPlaneServiceTest {
                                 .build())
                         .build()))
         .withMessage(
-            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together");
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                + " together");
 
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion())
         .isEqualTo("patch-old");

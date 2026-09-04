@@ -2,11 +2,13 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWorkItemsRecord;
@@ -23,13 +25,68 @@ import org.junit.jupiter.api.Test;
 
 class ScriptWorkItemRepositoryTest {
   @Test
+  void insertRejectsIncompleteScriptPinTuple() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setScriptPinEpoch(2L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .withMessage(
+            "script_pin_control_plane_request_id is required for a positive script_pin_epoch");
+  }
+
+  @Test
+  void insertRejectsOwnerRequestIdOnUnpinnedTuple() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .withMessage("script_pin_control_plane_request_id requires a positive script_pin_epoch");
+  }
+
+  @Test
+  void legacyTriggerLookupRejectsPinnedEpochWithoutOwnerRequestId() {
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository
+                    .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+                        "tenant-1",
+                        "game-1",
+                        "region-1",
+                        7L,
+                        "entity-1",
+                        "SHARED",
+                        "demo",
+                        "production",
+                        "17",
+                        "script-1",
+                        "onCommand",
+                        "v1",
+                        "patch-1",
+                        2L,
+                        "event-1",
+                        false))
+        .withMessage(
+            "script_pin_control_plane_request_id is required for pinned work-item lookups");
+  }
+
+  @Test
   void insertAndHydratePositiveScriptPinEpoch() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
-          insertSql.set(context.sql().toLowerCase());
+          insertSql.set(context.sql().toLowerCase(Locale.ROOT));
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
           Field<String> requestIdField =
               DSL.field("script_pin_control_plane_request_id", String.class);
@@ -73,7 +130,7 @@ class ScriptWorkItemRepositoryTest {
     AtomicReference<String> insertSql = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
-          insertSql.set(context.sql().toLowerCase());
+          insertSql.set(context.sql().toLowerCase(Locale.ROOT));
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
           Field<String> requestIdField =
               DSL.field("script_pin_control_plane_request_id", String.class);
@@ -83,7 +140,7 @@ class ScriptWorkItemRepositoryTest {
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
-          returned.set(requestIdField, "");
+          returned.set(requestIdField, (String) null);
           returned.set(insertedField, true);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
@@ -101,8 +158,9 @@ class ScriptWorkItemRepositoryTest {
 
     assertThat(saved.getScriptPinEpoch()).isZero();
     assertThat(conflictClause(insertSql.get()))
-        .contains("script_pin_epoch")
-        .contains("script_pin_control_plane_request_id");
+        .contains("where", "script_pin_epoch", "= 0")
+        .doesNotContain("script_pin_control_plane_request_id");
+    assertThat(saved.getScriptPinControlPlaneRequestId()).isNull();
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {
@@ -118,7 +176,7 @@ class ScriptWorkItemRepositoryTest {
   }
 
   private static String conflictClause(String sql) {
-    String normalized = sql.toLowerCase();
+    String normalized = sql.toLowerCase(Locale.ROOT);
     int conflictStart = normalized.indexOf("on conflict");
     assertThat(conflictStart).isGreaterThanOrEqualTo(0);
     int actionStart = normalized.indexOf(" do update", conflictStart);

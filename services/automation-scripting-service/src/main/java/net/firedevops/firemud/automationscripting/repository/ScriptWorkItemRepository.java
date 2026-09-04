@@ -71,6 +71,10 @@ public class ScriptWorkItemRepository {
           long scriptPinEpoch,
           String scriptEventId,
           boolean dryRun) {
+    if (scriptPinEpoch > 0L) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for pinned work-item lookups");
+    }
     return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
         tenantId,
         gameInstanceId,
@@ -428,9 +432,14 @@ public class ScriptWorkItemRepository {
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
     // from the existing row returned by the no-op conflict update, avoiding a
     // race between DO NOTHING and a separate readback query.
-    return dsl.insertInto(SCRIPT_WORK_ITEMS)
-        .set(record)
-        .onConflict(triggerConflictFields(entity))
+    var conflictTarget =
+        dsl.insertInto(SCRIPT_WORK_ITEMS).set(record).onConflict(triggerConflictFields(entity));
+    var conflictPredicate =
+        entity.getScriptPinEpoch() > 0L
+            ? SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.gt(0L)
+            : SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(0L);
+    return conflictTarget
+        .where(conflictPredicate)
         .doUpdate()
         .set(SCRIPT_WORK_ITEMS.ID, SCRIPT_WORK_ITEMS.ID)
         .returningResult(returningFields)
@@ -458,9 +467,11 @@ public class ScriptWorkItemRepository {
                 SCRIPT_WORK_ITEMS.SCRIPT_ID,
                 SCRIPT_WORK_ITEMS.EVENT_TYPE,
                 SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
-                SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
-                SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH));
-    fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+                SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    if (entity.getScriptPinEpoch() > 0L) {
+      fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
+      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    }
     fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
     return fields.toArray(Field<?>[]::new);
@@ -606,7 +617,8 @@ public class ScriptWorkItemRepository {
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId());
+    record.set(
+        SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, normalizedScriptPinControlPlaneRequestId(entity));
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -625,6 +637,25 @@ public class ScriptWorkItemRepository {
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
+  }
+
+  private static String normalizedScriptPinControlPlaneRequestId(ScriptWorkItem entity) {
+    if (entity.getScriptPinEpoch() < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    String requestId = entity.getScriptPinControlPlaneRequestId();
+    if (entity.getScriptPinEpoch() == 0L) {
+      if (requestId != null && !requestId.isBlank()) {
+        throw new IllegalArgumentException(
+            "script_pin_control_plane_request_id requires a positive script_pin_epoch");
+      }
+      return null;
+    }
+    if (requestId == null || requestId.isBlank()) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required for a positive script_pin_epoch");
+    }
+    return requestId;
   }
 
   private ScriptWorkItem toEntity(Record record) {

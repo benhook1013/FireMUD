@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameInstancesRecord;
-import net.firedevops.firemud.gamesession.service.impl.ScriptPinTupleCoherence;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -169,6 +169,9 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch) {
+    if (expectedPinKind == null || expectedPinKind.isBlank()) {
+      throw new IllegalArgumentException("expected_pin_kind is required");
+    }
     String mutationDigest =
         mutationDigest(
             tenantId,
@@ -495,6 +498,9 @@ public class GameInstanceRepository {
 
   private boolean expectedPinMatches(
       String expectedPinKind, Long expectedScriptPinEpoch, String patchVersion, Long pinEpoch) {
+    if (expectedPinKind == null) {
+      return false;
+    }
     return switch (expectedPinKind) {
       case "UNCONDITIONAL" -> true;
       case "EXPECT_UNPINNED" -> isAbsent(patchVersion) && pinEpoch == null;

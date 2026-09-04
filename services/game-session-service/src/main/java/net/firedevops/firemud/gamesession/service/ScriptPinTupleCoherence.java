@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamesession.service.impl;
+package net.firedevops.firemud.gamesession.service;
 
 public final class ScriptPinTupleCoherence {
   private ScriptPinTupleCoherence() {}
