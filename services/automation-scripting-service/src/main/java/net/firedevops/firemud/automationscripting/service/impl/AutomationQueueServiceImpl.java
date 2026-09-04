@@ -8,18 +8,20 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.AutomationQueueWorkItemPointer;
 import net.firedevops.firemud.automationscripting.service.redis.AutomationRedisKeys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -28,33 +30,67 @@ import tools.jackson.databind.ObjectMapper;
 
 /** Redis-backed implementation of {@link AutomationQueueService}. */
 @Service
-@RequiredArgsConstructor
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Service dependency is not exposed")
 public class AutomationQueueServiceImpl implements AutomationQueueService {
+  private static final Logger LOGGER = LoggerFactory.getLogger(AutomationQueueServiceImpl.class);
   private static final int POINTER_SCHEMA_VERSION = 1;
-  private static final Collection<String> INDEXABLE_STATUSES =
+  private static final Collection<String> INDEXABLE_STATUSES = List.of("PENDING_EVALUATION");
+  private static final Collection<String> INSPECTABLE_STATUSES =
       List.of("PENDING_EVALUATION", "EVALUATING");
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper;
   private final ScriptWorkItemRepository workItemRepository;
+  private final int drainPointerBudget;
+
+  /**
+   * The per-tick event ceiling also bounds direct per-entity queue drains. Redis is a derived
+   * index, so a drain must leave any suffix available for the next execution sweep.
+   */
+  AutomationQueueServiceImpl(
+      RedisTemplate<String, Object> redisTemplate,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper,
+      ScriptWorkItemRepository workItemRepository) {
+    this(redisTemplate, meterRegistry, objectMapper, workItemRepository, 50);
+  }
+
+  @Autowired
+  public AutomationQueueServiceImpl(
+      RedisTemplate<String, Object> redisTemplate,
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper,
+      ScriptWorkItemRepository workItemRepository,
+      @Value("${automation.tick-max-events:50}") int drainPointerBudget) {
+    this.redisTemplate = redisTemplate;
+    this.meterRegistry = meterRegistry;
+    this.objectMapper = objectMapper;
+    this.workItemRepository = workItemRepository;
+    this.drainPointerBudget = drainPointerBudget;
+  }
 
   private ListOperations<String, Object> listOps;
   private Counter enqueueCounter;
   private Counter drainCounter;
   private Counter rebuildCounter;
   private Counter inspectionCounter;
+  private Counter malformedEntriesCounter;
   private AtomicLong orphanedEntriesGauge = new AtomicLong();
   private AtomicLong oldestEntryAgeSecondsGauge = new AtomicLong();
 
   @PostConstruct
   void init() {
+    if (drainPointerBudget <= 0) {
+      throw new IllegalArgumentException("automation.tick-max-events must be positive");
+    }
     this.listOps = redisTemplate.opsForList();
     this.enqueueCounter = meterRegistry.counter("automation_queue_enqueued_total");
     this.drainCounter = meterRegistry.counter("automation_queue_drained_total");
     this.rebuildCounter = meterRegistry.counter("automation_queue_rebuilt_total");
     this.inspectionCounter = meterRegistry.counter("automation_queue_health_inspections_total");
+    this.malformedEntriesCounter =
+        meterRegistry.counter("automation_queue_malformed_entries_total");
     Gauge.builder("automation_queue_orphaned_entries_total", orphanedEntriesGauge, AtomicLong::get)
         .register(meterRegistry);
     Gauge.builder(
@@ -86,16 +122,19 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
   public List<AutomationQueueWorkItemPointer> drainWorkItems(
       String tenantId, String gameInstanceId, String entityId) {
     String key = AutomationRedisKeys.automationQueue(tenantId, gameInstanceId, entityId);
-    List<Object> raw = listOps.range(key, 0, -1);
-    redisTemplate.delete(key);
-    if (raw == null) {
-      return Collections.emptyList();
-    }
     LinkedHashMap<Long, AutomationQueueWorkItemPointer> deduped = new LinkedHashMap<>();
-    raw.stream()
-        .map(Object::toString)
-        .map(this::deserialize)
-        .forEach(pointer -> deduped.putIfAbsent(pointer.outboxWorkItemId(), pointer));
+    // LPOP is atomic with the producer's RPUSH. LRANGE followed by DELETE could
+    // delete a pointer enqueued between those two operations.
+    Object entry;
+    int poppedPointers = 0;
+    while (poppedPointers < drainPointerBudget && (entry = listOps.leftPop(key)) != null) {
+      poppedPointers++;
+      AutomationQueueWorkItemPointer pointer = deserializeOrNull(entry, key);
+      if (pointer == null) {
+        continue;
+      }
+      deduped.putIfAbsent(pointer.outboxWorkItemId(), pointer);
+    }
     drainCounter.increment(deduped.size());
     return List.copyOf(deduped.values());
   }
@@ -115,16 +154,19 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
       return List.of();
     }
     LinkedHashMap<Long, AutomationQueueWorkItemPointer> deduped = new LinkedHashMap<>();
+    int poppedPointers = 0;
     for (String queueKey : queueKeys.stream().sorted().limit(maxQueues).toList()) {
-      List<Object> raw = listOps.range(queueKey, 0, -1);
-      redisTemplate.delete(queueKey);
-      if (raw == null) {
-        continue;
-      }
-      for (Object entry : raw) {
-        AutomationQueueWorkItemPointer pointer = deserialize(entry.toString());
-        deduped.putIfAbsent(pointer.outboxWorkItemId(), pointer);
-        if (deduped.size() >= maxPointers) {
+      // Pop one entry at a time: unlike range+delete, this leaves the unconsumed
+      // suffix in Redis when the bounded result is full. Each LPOP is atomic with
+      // an enqueue's RPUSH, so a producer cannot have its new pointer discarded.
+      Object entry;
+      while ((entry = listOps.leftPop(queueKey)) != null) {
+        poppedPointers++;
+        AutomationQueueWorkItemPointer pointer = deserializeOrNull(entry, queueKey);
+        if (pointer != null) {
+          deduped.putIfAbsent(pointer.outboxWorkItemId(), pointer);
+        }
+        if (poppedPointers >= maxPointers) {
           drainCounter.increment(deduped.size());
           return List.copyOf(deduped.values());
         }
@@ -180,7 +222,8 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
       }
       raw.stream()
           .map(Object::toString)
-          .map(this::deserialize)
+          .map(entry -> deserializeOrNull(entry, queueKey))
+          .filter(java.util.Objects::nonNull)
           .forEach(pointer -> pointers.putIfAbsent(pointer.outboxWorkItemId(), pointer));
     }
     Map<Long, ScriptWorkItem> itemsById =
@@ -198,7 +241,7 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
       long ageSeconds =
           Math.max(0L, java.time.Duration.between(item.getCreatedAt(), now).getSeconds());
       oldestEntryAgeSeconds = Math.max(oldestEntryAgeSeconds, ageSeconds);
-      if (!INDEXABLE_STATUSES.contains(item.getStatus()) || ageSeconds > staleAfterSeconds) {
+      if (!INSPECTABLE_STATUSES.contains(item.getStatus()) || ageSeconds > staleAfterSeconds) {
         orphanedEntries++;
       }
     }
@@ -225,6 +268,18 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
     }
   }
 
+  private AutomationQueueWorkItemPointer deserializeOrNull(Object entry, String queueKey) {
+    try {
+      return deserialize(entry.toString());
+    } catch (RuntimeException ex) {
+      malformedEntriesCounter.increment();
+      LOGGER.warn(
+          "Discarding malformed automation queue pointer from key {} (reason=deserialization_failed)",
+          queueKey);
+      return null;
+    }
+  }
+
   private boolean ensurePointerIndexed(ScriptWorkItem workItem) {
     String queueKey =
         AutomationRedisKeys.automationQueue(
@@ -233,7 +288,8 @@ public class AutomationQueueServiceImpl implements AutomationQueueService {
     if (raw != null
         && raw.stream()
             .map(Object::toString)
-            .map(this::deserialize)
+            .map(entry -> deserializeOrNull(entry, queueKey))
+            .filter(java.util.Objects::nonNull)
             .anyMatch(pointer -> pointer.outboxWorkItemId() == workItem.getId())) {
       return false;
     }
