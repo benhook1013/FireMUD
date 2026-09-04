@@ -29,9 +29,6 @@ public interface ScriptWorkItemService {
       String tenantId, String gameInstanceId, String regionId);
 
   Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
-      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch);
-
-  Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
@@ -40,17 +37,8 @@ public interface ScriptWorkItemService {
 
   default Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
       String tenantId, String gameInstanceId, String scriptPatchVersion) {
-    return getPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion, 0L);
+    return getPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion, 0L, null);
   }
-
-  List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs);
 
   List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
       String tenantId,
@@ -74,20 +62,11 @@ public interface ScriptWorkItemService {
         gameInstanceId,
         scriptPatchVersion,
         0L,
+        null,
         rolloutStatus,
         changedAfterMs,
         changedBeforeMs);
   }
-
-  List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit);
 
   List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
       String tenantId,
@@ -113,6 +92,7 @@ public interface ScriptWorkItemService {
         gameInstanceId,
         scriptPatchVersion,
         0L,
+        null,
         rolloutStatus,
         changedAfterMs,
         changedBeforeMs,

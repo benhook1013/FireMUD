@@ -232,6 +232,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       WorldInstanceLifecycleSnapshot lifecycle = readWorldInstanceLifecycle(runningState);
       if (lifecycle.getStatus()
           == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
+        worldTerminationRequested = true;
         worldTerminationCompleted = true;
       } else if (lifecycle.getStatus()
           == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {

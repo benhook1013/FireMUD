@@ -606,10 +606,7 @@ public class GameInstanceRepository {
           require(
               expectedScriptPinEpoch != null && expectedScriptPinEpoch > 0L,
               "expected_script_pin_epoch must be positive for EXPECT_EPOCH");
-      default -> {
-        // Unknown tags are retained as explicit ledger outcomes; the service layer owns their
-        // semantic validation.
-      }
+      default -> throw new IllegalArgumentException("expected_pin_kind is not supported");
     }
   }
 

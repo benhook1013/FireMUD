@@ -87,6 +87,8 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getPointerVersion()).isEqualTo("7");
     assertThat(request.getEventType()).isEqualTo("onCommand");
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
     assertThat(request.getIsDryRun()).isFalse();
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");

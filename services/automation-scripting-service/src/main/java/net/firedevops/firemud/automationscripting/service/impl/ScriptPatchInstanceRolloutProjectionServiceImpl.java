@@ -52,13 +52,6 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
   @Override
   @Transactional
   public Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
-      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch) {
-    return getProjection(tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, "");
-  }
-
-  @Override
-  @Transactional
-  public Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
@@ -83,27 +76,6 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
                     || normalize(lastObservedControlPlaneRequestId)
                         .equals(normalize(value.getLastObservedControlPlaneRequestId())))
         .map(this::toSummary);
-  }
-
-  @Override
-  @Transactional
-  public List<ScriptWorkItemService.PatchInstanceRolloutSummary> listProjections(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs) {
-    return listProjections(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        "",
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs);
   }
 
   @Override
@@ -161,29 +133,6 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
                 .thenComparing(
                     ScriptWorkItemService.PatchInstanceRolloutSummary::scriptPatchVersion))
         .toList();
-  }
-
-  @Override
-  @Transactional
-  public List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit) {
-    return listEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        "",
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
   }
 
   @Override

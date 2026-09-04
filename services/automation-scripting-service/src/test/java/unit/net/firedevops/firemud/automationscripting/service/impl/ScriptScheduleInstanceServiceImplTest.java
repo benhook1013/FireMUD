@@ -262,6 +262,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
               assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
               assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
+              assertThat(instance.getScriptPinEpoch()).isEqualTo(1L);
               assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
               assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
               assertThat(instance.getWorldSlug()).isEqualTo("demo");
@@ -2765,11 +2766,11 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void legacyTimerAuditLookupRejectsPositiveEpochWithoutOwnerRequestId() {
+  void timerAuditLookupRejectsPositiveEpochWithoutOwnerRequestId() {
     assertThatThrownBy(
             () ->
                 service.listTimerAuditEvents(
-                    "1", "game-1", "patch-1", 2L, "npc-guard", "onInterval", "", 0L, 0L, 25))
+                    "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_pin_control_plane_request_id_required");
     verifyNoInteractions(eventAuditRepository);

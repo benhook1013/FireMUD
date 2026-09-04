@@ -54,48 +54,6 @@ public class ScriptWorkItemRepository {
   }
 
   public boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
-          String tenantId,
-          String gameInstanceId,
-          String regionId,
-          Long regionEpoch,
-          String entityId,
-          String playableStateScope,
-          String worldSlug,
-          String realmSlug,
-          String pointerVersion,
-          String scriptId,
-          String eventType,
-          String eventSchemaVersion,
-          String scriptPatchVersion,
-          long scriptPinEpoch,
-          String scriptEventId,
-          boolean dryRun) {
-    if (scriptPinEpoch > 0L) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id is required for pinned work-item lookups");
-    }
-    return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
-        tenantId,
-        gameInstanceId,
-        regionId,
-        regionEpoch,
-        entityId,
-        playableStateScope,
-        worldSlug,
-        realmSlug,
-        pointerVersion,
-        scriptId,
-        eventType,
-        eventSchemaVersion,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        null,
-        scriptEventId,
-        dryRun);
-  }
-
-  public boolean
       existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,

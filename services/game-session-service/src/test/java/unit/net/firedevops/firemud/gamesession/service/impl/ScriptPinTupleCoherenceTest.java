@@ -36,6 +36,20 @@ class ScriptPinTupleCoherenceTest {
   }
 
   @Test
+  void reportsZeroEpochBeforeTupleCompletenessWhenPatchAndRequestArePresent() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent("patch-1", 0L, "request-1"))
+        .withMessage("SCRIPT_PIN_STATE_INVALID: script pin epoch must be positive when present");
+  }
+
+  @Test
+  void reportsNegativeEpochBeforeTupleCompletenessWhenPatchAndRequestArePresent() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent("patch-1", -1L, "request-1"))
+        .withMessage("SCRIPT_PIN_STATE_INVALID: script pin epoch must be positive when present");
+  }
+
+  @Test
   void rejectsPatchWithoutTheCompletePinTuple() {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent("patch-1", null, null))

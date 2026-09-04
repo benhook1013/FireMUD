@@ -7,9 +7,6 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutS
 
 public interface ScriptPatchInstanceRolloutProjectionService {
   Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
-      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch);
-
-  Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
@@ -18,17 +15,8 @@ public interface ScriptPatchInstanceRolloutProjectionService {
 
   default Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
       String tenantId, String gameInstanceId, String scriptPatchVersion) {
-    return getProjection(tenantId, gameInstanceId, scriptPatchVersion, 0L);
+    return getProjection(tenantId, gameInstanceId, scriptPatchVersion, 0L, null);
   }
-
-  List<ScriptWorkItemService.PatchInstanceRolloutSummary> listProjections(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs);
 
   List<ScriptWorkItemService.PatchInstanceRolloutSummary> listProjections(
       String tenantId,
@@ -52,20 +40,11 @@ public interface ScriptPatchInstanceRolloutProjectionService {
         gameInstanceId,
         scriptPatchVersion,
         0L,
+        null,
         rolloutStatus,
         changedAfterMs,
         changedBeforeMs);
   }
-
-  List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit);
 
   List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
       String tenantId,
@@ -91,6 +70,7 @@ public interface ScriptPatchInstanceRolloutProjectionService {
         gameInstanceId,
         scriptPatchVersion,
         0L,
+        null,
         rolloutStatus,
         changedAfterMs,
         changedBeforeMs,

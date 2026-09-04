@@ -384,6 +384,50 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void ignoresSameEpochObservationWithDifferentOwnerRequestId() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setId(7L);
+    existing.setRowVersion(2);
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("patch-2");
+    existing.setScriptPinEpoch(2L);
+    existing.setLastObservedControlPlaneRequestId("req-2");
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-2")
+            .setScriptPinEpoch(2L)
+            .setScriptPatchPinnedControlPlaneRequestId("different-request")
+            .build());
+
+    assertThat(existing.getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(existing.getLastObservedControlPlaneRequestId()).isEqualTo("req-2");
+    verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
   void replacesLegacyPartialProjectionOnFirstPositiveObservation() {
     ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
     existing.setId(7L);

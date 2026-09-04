@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -306,12 +305,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
       try {
-        return executeTriggerScriptEvent(
-            root,
-            coordinator,
-            followup,
-            TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")));
+        return executeTriggerScriptEvent(root, coordinator, followup);
       } catch (IllegalArgumentException ex) {
         return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
       }
@@ -565,10 +559,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private PayloadExecution executeTriggerScriptEvent(
-      JsonNode root,
-      RemoteCommandCoordinator coordinator,
-      RemoteFollowup followup,
-      PlayableStateScope playableStateScope) {
+      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
     try {
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
@@ -576,6 +567,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
       authoritativeText(coordinator.getScriptId(), root, "scriptId");
       authoritativeText(coordinator.getPluginId(), root, "pluginId");
       authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
+      TriggerScriptEventRequestFactory.requirePlayableStateScope(
+          authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
       sourceRoutingBundle(followup, root);
       authoritativeBoolean(false, root, "isDryRun");
       requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId");
@@ -584,9 +577,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
           firstNonBlank(
               authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
               "v1");
-      if (eventSchemaVersion == null || eventSchemaVersion.isBlank()) {
-        throw new IllegalArgumentException("eventSchemaVersion is required");
-      }
       requiredAuthoritativeText(coordinator.getScriptPatchVersion(), root, "scriptPatchVersion");
       requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId");
       triggerMode(root, followup);

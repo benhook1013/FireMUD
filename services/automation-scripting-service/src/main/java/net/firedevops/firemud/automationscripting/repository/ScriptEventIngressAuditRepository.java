@@ -36,42 +36,6 @@ public class ScriptEventIngressAuditRepository {
   }
 
   public Optional<ScriptEventIngressAudit>
-      findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
-          String tenantId,
-          String gameInstanceId,
-          String regionId,
-          Long regionEpoch,
-          String entityId,
-          String playableStateScope,
-          String eventType,
-          String eventSchemaVersion,
-          String scriptPatchVersion,
-          Long scriptPinEpoch,
-          String scriptEventId,
-          boolean dryRun,
-          String sourceService) {
-    if (scriptPinEpoch != null && scriptPinEpoch > 0L) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id is required for pinned ingress lookups");
-    }
-    return findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-        tenantId,
-        gameInstanceId,
-        regionId,
-        regionEpoch,
-        entityId,
-        playableStateScope,
-        eventType,
-        eventSchemaVersion,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        null,
-        scriptEventId,
-        dryRun,
-        sourceService);
-  }
-
-  public Optional<ScriptEventIngressAudit>
       findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
           String tenantId,
           String gameInstanceId,
@@ -127,7 +91,8 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID, entity.getEntityId())
             .set(
                 SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE,
-                canonicalPlayableStateScope(entity.getGameInstanceId(), entity.getPlayableStateScope()))
+                canonicalPlayableStateScope(
+                    entity.getGameInstanceId(), entity.getPlayableStateScope()))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.WORLD_SLUG, entity.getWorldSlug())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.POINTER_VERSION, entity.getPointerVersion())

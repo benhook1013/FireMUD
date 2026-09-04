@@ -63,10 +63,8 @@ public class ScriptEventAuditRepository {
       String scriptEventId,
       boolean dryRun) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
-    String normalizedScriptPinControlPlaneRequestId =
-        blankToNull(scriptPinControlPlaneRequestId);
-    if ((normalizedScriptPinEpoch != null)
-        != (normalizedScriptPinControlPlaneRequestId != null)) {
+    String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
+    if ((normalizedScriptPinEpoch != null) != (normalizedScriptPinControlPlaneRequestId != null)) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
     }
@@ -112,48 +110,6 @@ public class ScriptEventAuditRepository {
         entity.getScriptPinControlPlaneRequestId(),
         entity.getScriptEventId(),
         entity.isDryRun());
-  }
-
-  public boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
-          String tenantId,
-          String gameInstanceId,
-          String regionId,
-          Long regionEpoch,
-          String entityId,
-          String playableStateScope,
-          String worldSlug,
-          String realmSlug,
-          String pointerVersion,
-          String scriptId,
-          String eventType,
-          String eventSchemaVersion,
-          String scriptPatchVersion,
-          Long scriptPinEpoch,
-          String scriptEventId,
-          boolean dryRun) {
-    if (scriptPinEpoch != null && scriptPinEpoch > 0L) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id is required for pinned audit lookups");
-    }
-    return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
-        tenantId,
-        gameInstanceId,
-        regionId,
-        regionEpoch,
-        entityId,
-        playableStateScope,
-        worldSlug,
-        realmSlug,
-        pointerVersion,
-        scriptId,
-        eventType,
-        eventSchemaVersion,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        null,
-        scriptEventId,
-        dryRun);
   }
 
   public boolean
@@ -293,10 +249,8 @@ public class ScriptEventAuditRepository {
       Instant changedBefore,
       Pageable pageable) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
-    String normalizedScriptPinControlPlaneRequestId =
-        blankToNull(scriptPinControlPlaneRequestId);
-    if ((normalizedScriptPinEpoch != null)
-        != (normalizedScriptPinControlPlaneRequestId != null)) {
+    String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
+    if ((normalizedScriptPinEpoch != null) != (normalizedScriptPinControlPlaneRequestId != null)) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id is required for pinned timer audit lookups");
     }
@@ -527,5 +481,4 @@ public class ScriptEventAuditRepository {
     }
     return epoch;
   }
-
 }

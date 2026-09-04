@@ -25,9 +25,8 @@ public record GameInstanceDto(
   /**
    * Legacy constructor for callers that do not provide a complete script-pin tuple.
    *
-   * <p>The script patch argument is intentionally discarded: a patch without its positive epoch and
-   * owner request ID is not a valid pinned state, so this constructor normalizes the tuple to
-   * unpinned rather than forwarding partial authority.
+   * <p>A nonblank script patch is rejected because this constructor cannot carry the complete
+   * pinned tuple. Callers with pinned state must use the canonical record constructor.
    */
   public GameInstanceDto(
       Long id,
@@ -46,7 +45,7 @@ public record GameInstanceDto(
         id,
         tenantId,
         runtimeVersion,
-        null,
+        rejectLegacyScriptPatch(scriptPatchVersion),
         null,
         gameTemplateId,
         launchDescriptorId,
@@ -57,5 +56,13 @@ public record GameInstanceDto(
         null,
         ownerAccountId,
         status);
+  }
+
+  private static String rejectLegacyScriptPatch(String scriptPatchVersion) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException(
+          "scriptPatchVersion requires scriptPinEpoch and script pin owner request id");
+    }
+    return null;
   }
 }

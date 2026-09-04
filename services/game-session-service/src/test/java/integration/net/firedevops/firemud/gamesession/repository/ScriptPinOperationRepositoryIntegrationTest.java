@@ -294,6 +294,7 @@ class ScriptPinOperationRepositoryIntegrationTest {
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
             });
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
 
   @Test
@@ -393,6 +394,25 @@ class ScriptPinOperationRepositoryIntegrationTest {
                     "UNCONDITIONAL",
                     1L))
         .withMessage("expected_script_pin_epoch must be null for UNCONDITIONAL");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
+  }
+
+  @Test
+  void unsupportedExpectedPinKindFailsBeforePersistence() {
+    org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "SET",
+                    "patch-new",
+                    "request-unsupported-kind",
+                    "operator",
+                    "pin",
+                    "UNKNOWN",
+                    null))
+        .withMessage("expected_pin_kind is not supported");
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
 

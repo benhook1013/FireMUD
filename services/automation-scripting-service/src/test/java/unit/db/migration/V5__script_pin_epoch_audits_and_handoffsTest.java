@@ -48,8 +48,9 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     int runtimeEnd = migration.indexOf(") WHERE", runtimeStart);
     assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeEnd).isGreaterThan(runtimeStart);
-    assertThat(migration.substring(runtimeStart, runtimeEnd))
-        .contains("playable_state_scope");
+    assertThat(migration.substring(runtimeStart, runtimeEnd)).contains("playable_state_scope");
+    assertThat(migration)
+        .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 
     int reconciliationStart = migration.indexOf("UPDATE script_event_ingress_audit");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
@@ -69,5 +70,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration.substring(onLoadStart, onLoadEnd))
         .contains("script_id")
         .doesNotContain("region_id", "region_epoch", "game_instance_id");
+    assertThat(migration)
+        .contains(") WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;");
   }
 }

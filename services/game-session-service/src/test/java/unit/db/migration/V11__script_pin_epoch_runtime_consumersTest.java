@@ -29,6 +29,7 @@ class V11__script_pin_epoch_runtime_consumersTest {
         .contains(
             "expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0")
         .contains("expected_pin_kind = 'UNCONDITIONAL' AND expected_script_pin_epoch IS NULL")
+        .doesNotContain("expected_pin_kind NOT IN")
         .contains("CREATE INDEX idx_script_pin_operation_instance")
         .contains(
             "ON script_pin_operation (tenant_id, game_instance_id, committed_at, control_plane_request_id)");

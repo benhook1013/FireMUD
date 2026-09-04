@@ -53,18 +53,6 @@ public interface ScriptScheduleInstanceService {
       String gameInstanceId,
       String scriptPatchVersion,
       long scriptPinEpoch,
-      String scriptId,
-      String eventType,
-      String finalReason,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit);
-
-  List<TimerAuditEventSummary> listTimerAuditEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptId,
       String eventType,
@@ -88,6 +76,7 @@ public interface ScriptScheduleInstanceService {
         gameInstanceId,
         scriptPatchVersion,
         0L,
+        null,
         scriptId,
         eventType,
         finalReason,
@@ -142,8 +131,7 @@ public interface ScriptScheduleInstanceService {
       long lastObservedTickId,
       long lastRuntimeProgressObservedAtMs,
       ScriptPatchPublicationLink publication,
-      PluginPublicationLink pluginPublication) {
-  }
+      PluginPublicationLink pluginPublication) {}
 
   record TimerAuditEventSummary(
       String tenantId,

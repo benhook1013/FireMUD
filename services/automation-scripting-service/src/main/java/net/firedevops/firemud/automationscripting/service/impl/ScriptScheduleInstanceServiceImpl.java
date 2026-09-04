@@ -619,33 +619,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String gameInstanceId,
       String scriptPatchVersion,
       long scriptPinEpoch,
-      String scriptId,
-      String eventType,
-      String finalReason,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit) {
-    return listTimerAuditEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        "",
-        scriptId,
-        eventType,
-        finalReason,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
-  }
-
-  @Override
-  @Transactional(readOnly = true)
-  public List<TimerAuditEventSummary> listTimerAuditEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptId,
       String eventType,

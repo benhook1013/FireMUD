@@ -33,8 +33,6 @@ CREATE TABLE script_pin_operation (
         (expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0)
         OR
         (expected_pin_kind = 'UNCONDITIONAL' AND expected_script_pin_epoch IS NULL)
-        OR
-        (expected_pin_kind NOT IN ('EXPECT_UNPINNED', 'EXPECT_EPOCH', 'UNCONDITIONAL'))
     )
 );
 

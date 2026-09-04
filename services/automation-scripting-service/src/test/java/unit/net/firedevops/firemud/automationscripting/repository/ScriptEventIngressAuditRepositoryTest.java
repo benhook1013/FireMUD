@@ -2,7 +2,6 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -26,32 +25,6 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptEventIngressAuditRepositoryTest {
-  @Test
-  void legacyLookupRejectsPinnedEpochWithoutOwnerRequestId() {
-    ScriptEventIngressAuditRepository repository =
-        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository
-                    .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
-                        "tenant-1",
-                        "game-1",
-                        "region-1",
-                        7L,
-                        "entity-1",
-                        "SHARED",
-                        "onCommand",
-                        "v1",
-                        "patch-1",
-                        2L,
-                        "event-1",
-                        false,
-                        "game-session-service"))
-        .withMessage("script_pin_control_plane_request_id is required for pinned ingress lookups");
-  }
-
   @Test
   void staleInProgressReclaimUsesRowVersionFenceAndRefreshesClaimLease() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
@@ -127,8 +100,7 @@ class ScriptEventIngressAuditRepositoryTest {
 
     assertThat(repository.renewClaimIfCurrent(claim, now)).isTrue();
     assertThat(sqlRef.get()).contains("update", "claim_started_at", "row_version", "source_state");
-    assertThat(bindingsRef.get())
-        .contains(postgresTimestamp(now), 12L, 4, "IN_PROGRESS");
+    assertThat(bindingsRef.get()).contains(postgresTimestamp(now), 12L, 4, "IN_PROGRESS");
   }
 
   private static String postgresTimestamp(Instant instant) {

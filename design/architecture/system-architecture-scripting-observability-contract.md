@@ -174,7 +174,7 @@ Rules:
 
 During rollback, operator views must show the handler's `finalStage`/`finalOutcome` beside the `commandHandoffDispositions[]` returned from `ListScriptHandoffEvents`. A `TICK_HANDOFF` with `finalOutcome=handoff_accepted` therefore remains visible even when one or more individual commands later receive `version_fence_dropped`; a child result must never overwrite the handler result or collapse sibling command records.
 
-Concrete example. Both child records below carry the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptEventId=evt-7f4c`, `isDryRun=false`) for correlation and diagnosis. Each child is keyed by the complete Command-Handoff Identity: complete source/target runtime scope plus `automationDispatchId` and `commandOrdinal`. Parent Trigger Identity fields, `outboxWorkItemId`, and `scriptEventId` are not child uniqueness, deduplication, or replay keys. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key. This is a same-instance, same-runtime-scope example; the optional target fields (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) are intentionally absent because no distinct target scope applies.
+Concrete example. Both child records below carry the complete `T123` Trigger Identity (`tenantId=11111111-1111-4111-8111-111111111111`, `gameInstanceId=44444444-4444-4444-8444-444444444444`, `playableStateScope=isolated`, `regionId=R2`, `regionEpoch=14`, `entityId=npc-guard-9`, `scriptId=guard-on-enter`, `eventType=onEnterRegion`, `eventSchemaVersion=1`, `scriptPatchVersion=P22`, `scriptPinEpoch=23`, `scriptPinControlPlaneRequestId=pin-req-22`, `scriptEventId=evt-7f4c`, `isDryRun=false`) for correlation and diagnosis. Each child is keyed by the complete Command-Handoff Identity: complete source/target runtime scope plus `automationDispatchId` and `commandOrdinal`. Parent Trigger Identity fields, `outboxWorkItemId`, and `scriptEventId` are not child uniqueness, deduplication, or replay keys. `automationDispatchId=dispatch-9` identifies the dispatch group, while `outboxWorkItemId=work-9` is parent correlation only. The `(automationDispatchId, commandOrdinal)` notation in the bullets is a display suffix, not a standalone key. This is a same-instance, same-runtime-scope example; the optional target fields (`targetGameInstanceId`, `targetPlayableStateScope`, `targetRegionId`, `targetRegionEpoch`) are intentionally absent because no distinct target scope applies.
 
 - `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=handoff_accepted`.
 - The handler emitted two commands. Later, Game Session rejects only the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=1)` under the same complete command-handoff scope during rollback convergence and appends a child disposition with `outcome=version_fence_dropped`, `reason=script_patch_mismatch`, `sourceService=game-session`, and `recordedAt=...`; the child ending in `(automationDispatchId=dispatch-9, commandOrdinal=0)` remains a separate sibling record.
@@ -195,6 +195,7 @@ Illustrative record shape:
   "eventSchemaVersion": 1,
   "scriptPatchVersion": "P22",
   "scriptPinEpoch": 23,
+  "scriptPinControlPlaneRequestId": "pin-req-22",
   "scriptEventId": "evt-7f4c",
   "isDryRun": false,
   "finalStage": "TICK_HANDOFF",
@@ -238,6 +239,7 @@ Illustrative record shape:
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
       "scriptPinEpoch": 23,
+      "scriptPinControlPlaneRequestId": "pin-req-22",
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 0,
@@ -266,6 +268,7 @@ Illustrative record shape:
       "eventSchemaVersion": 1,
       "scriptPatchVersion": "P22",
       "scriptPinEpoch": 23,
+      "scriptPinControlPlaneRequestId": "pin-req-22",
       "scriptEventId": "evt-7f4c",
       "isDryRun": false,
       "commandOrdinal": 1,

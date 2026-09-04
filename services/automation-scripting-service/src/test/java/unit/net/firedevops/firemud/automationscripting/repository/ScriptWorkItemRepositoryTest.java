@@ -50,36 +50,6 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
-  void legacyTriggerLookupRejectsPinnedEpochWithoutOwnerRequestId() {
-    ScriptWorkItemRepository repository =
-        new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository
-                    .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
-                        "tenant-1",
-                        "game-1",
-                        "region-1",
-                        7L,
-                        "entity-1",
-                        "SHARED",
-                        "demo",
-                        "production",
-                        "17",
-                        "script-1",
-                        "onCommand",
-                        "v1",
-                        "patch-1",
-                        2L,
-                        "event-1",
-                        false))
-        .withMessage(
-            "script_pin_control_plane_request_id is required for pinned work-item lookups");
-  }
-
-  @Test
   void insertAndHydratePositiveScriptPinEpoch() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);

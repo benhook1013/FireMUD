@@ -1027,6 +1027,59 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void rejectsPositiveEpochWithoutOwnerRequestIdOnAllFullRolloutReads() {
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        rolloutProjectionService();
+    ScriptWorkItemService service =
+        service(
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    assertThatThrownBy(
+            () -> service.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 2L, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be present exactly when script_pin_epoch is positive");
+    assertThatThrownBy(
+            () ->
+                service.listPatchInstanceRollouts(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    "   ",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be present exactly when script_pin_epoch is positive");
+    assertThatThrownBy(
+            () ->
+                service.listPatchInstanceRolloutEvents(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    2L,
+                    null,
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L,
+                    25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must be present exactly when script_pin_epoch is positive");
+    verifyNoInteractions(rolloutProjectionService);
+  }
+
+  @Test
   void getsInstanceRolloutStatusFromRuntimePin() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1042,8 +1095,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 150L, 151L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 150L, 151L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(rolloutProjectionService.getProjection("1", "game-1", "patch-1"))
@@ -1190,8 +1243,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", 2L, "req-2", 260L, 261L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-2", 2L, "req-2", 260L, 261L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(rolloutProjectionService.listProjections(
@@ -1602,8 +1655,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -1696,8 +1749,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 500L, 501L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(pluginRuntimeStateService.getStatus("1", "game-1", "plugin-1"))
@@ -1793,8 +1846,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-2", 2L, "req-2", 600L, 601L, 0L, false, "", 0L, "", "",
-                        "")),
+                        "1", "game-1", "patch-2", 2L, "req-2", 600L, 601L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     ScriptWorkItemService service =
@@ -1983,7 +2036,8 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "req-1", 100L, 100L, 0L, false, "", 0L, "", "", "")),
+                        "1", "game-1", "patch-1", 1L, "req-1", 100L, 100L, 0L, false, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     return service(

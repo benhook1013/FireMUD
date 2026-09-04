@@ -319,14 +319,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional(readOnly = true)
   public Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
-      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch) {
-    return getPatchInstanceRolloutStatus(
-        tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch, "");
-  }
-
-  @Override
-  @Transactional(readOnly = true)
-  public Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
@@ -347,27 +339,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 lastObservedControlPlaneRequestId)
             : rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
     return projection.map(summary -> withPublication(tenantId, summary));
-  }
-
-  @Override
-  @Transactional(readOnly = true)
-  public List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs) {
-    return listPatchInstanceRollouts(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        "",
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs);
   }
 
   @Override
@@ -403,28 +374,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 changedAfterMs,
                 changedBeforeMs);
     return projections.stream().map(summary -> withPublication(tenantId, summary)).toList();
-  }
-
-  @Override
-  public List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      long scriptPinEpoch,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit) {
-    return listPatchInstanceRolloutEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        scriptPinEpoch,
-        "",
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
   }
 
   @Override

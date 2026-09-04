@@ -252,17 +252,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
         .isEqualTo("SCRIPT_PATCH_NOT_READY");
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion()).isNull();
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
-        .applyScriptPin(
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.nullable(Long.class));
+    verifyNoScriptPinMutation(repository);
   }
 
   @Test
@@ -297,17 +287,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
         .isEqualTo("SCRIPT_PATCH_TENANT_MISMATCH");
     verifyNoInteractions(automation);
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
-        .applyScriptPin(
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.nullable(Long.class));
+    verifyNoScriptPinMutation(repository);
   }
 
   @Test
@@ -347,6 +327,7 @@ class GameSessionOperatorControlPlaneServiceTest {
 
     org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
         .isEqualTo("SCRIPT_PATCH_BASE_VERSION_MISMATCH");
+    verifyNoScriptPinMutation(repository);
   }
 
   @Test
@@ -533,17 +514,7 @@ class GameSessionOperatorControlPlaneServiceTest {
             "EXPECT_UNPINNED",
             null,
             "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
-    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
-        .applyScriptPin(
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.nullable(Long.class));
+    verifyNoScriptPinMutation(repository);
   }
 
   @Test
@@ -580,17 +551,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion())
         .isEqualTo("patch-old");
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPinEpoch()).isNull();
-    org.mockito.Mockito.verify(gameInstanceRepository, org.mockito.Mockito.never())
-        .applyScriptPin(
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.nullable(Long.class));
+    verifyNoScriptPinMutation(gameInstanceRepository);
     verifyNoInteractions(tickService);
   }
 
@@ -858,6 +819,20 @@ class GameSessionOperatorControlPlaneServiceTest {
         tickService,
         mock(GameDesignClient.class),
         mock(GameSessionProperties.class));
+  }
+
+  private static void verifyNoScriptPinMutation(GameInstanceRepository repository) {
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .applyScriptPin(
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(Long.class));
   }
 
   private GameSessionOperatorControlPlaneService newService(

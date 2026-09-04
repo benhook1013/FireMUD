@@ -74,35 +74,6 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
-  void legacyHandlerLookupRejectsPinnedEpochWithoutOwnerRequestId() {
-    ScriptEventAuditRepository repository =
-        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository
-                    .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
-                        "tenant-1",
-                        "game-1",
-                        "region-1",
-                        7L,
-                        "entity-1",
-                        "SHARED",
-                        "demo",
-                        "production",
-                        "17",
-                        "script-1",
-                        "onCommand",
-                        "v1",
-                        "patch-1",
-                        2L,
-                        "event-1",
-                        false))
-        .withMessage("script_pin_control_plane_request_id is required for pinned audit lookups");
-  }
-
-  @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));

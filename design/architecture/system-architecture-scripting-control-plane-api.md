@@ -644,7 +644,7 @@ Inputs:
 
 - `tenantId`
 - `gameInstanceId`
-- Optional current filter: `scriptPatchVersion`; target state additionally supports exact `scriptPinEpoch` + `scriptPinControlPlaneRequestId` tuple filtering.
+- Optional current filter: `scriptPatchVersion`; target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and the paired nonblank `scriptPinControlPlaneRequestId` together.
 - `limit` (bounded by the service)
 
 Outputs:
@@ -670,7 +670,7 @@ Inputs:
 
 - `tenantId`
 - Optional current filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
-- Optional exact observed tuple filter: `scriptPinEpoch` with `scriptPinControlPlaneRequestId` (required together when either is supplied)
+- Optional current partial observed-pin filter: `scriptPinEpoch` with `scriptPinControlPlaneRequestId` (required together when either is supplied); because `scriptPatchVersion` remains independently optional on this live surface, this is not an exact tuple filter. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and `scriptPinControlPlaneRequestId` together.
 - Optional `changedAfter` / `changedBefore`
 - `limit` (bounded by the service)
 
@@ -742,7 +742,7 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation exposes a non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The current proto/implementation accepts the requested exact `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` lookup and persists the observed owner tuple; the projection row remains keyed by instance and patch for the current read model, while exact owner tuple/readback evidence is retained on the row. Refresh combines observed Game Session pin state with local work-item/current-pin state to derive non-authoritative `PINNED`, `REPINNED`, and `ROLLED_BACK` projection statuses/events. These local rows/events are implementation drift and diagnostics, not rollout-history authority; the target projection must remain exact-tuple observed state and must not derive rollout history. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
+Implementation note: the current Automation & Scripting implementation exposes a non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The current proto/implementation accepts the requested exact `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` lookup and persists the observed owner tuple; the projection row remains keyed by instance and patch for the current read model, while exact owner tuple/readback evidence is retained on the row. Refresh combines observed Game Session pin state with local work-item/current-pin state to derive legacy/internal non-authoritative `PINNED`, `REPINNED`, and `ROLLED_BACK` diagnostic statuses/events; these are not values of the target `projectionStatus` field. These local rows/events are implementation drift and diagnostics, not rollout-history authority; the target projection must remain exact-tuple observed state and must not derive rollout history. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
 
 Inputs:
 
@@ -774,7 +774,7 @@ Read-model ownership:
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, exact tuple `scriptPinEpoch` + `lastObservedControlPlaneRequestId`, `projectionStatus`, `changedAfter`, `changedBefore`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, and the current partial observed-pin pair `scriptPinEpoch` + `lastObservedControlPlaneRequestId` (required together when either is supplied), plus `projectionStatus`, `changedAfter`, `changedBefore`. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and the paired nonblank `scriptPinControlPlaneRequestId` together.
 - `limit` (service-bounded maximum number of rows)
 - `pageToken` (opaque continuation token bound to the tenant and normalized filters)
 

@@ -3019,7 +3019,8 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    ScriptEventAuditRepository eventAuditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     AutomationQueueService queueService = Mockito.mock(AutomationQueueService.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
