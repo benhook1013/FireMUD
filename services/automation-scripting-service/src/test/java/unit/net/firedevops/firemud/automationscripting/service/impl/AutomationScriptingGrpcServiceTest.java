@@ -3,7 +3,9 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
@@ -279,6 +281,51 @@ class AutomationScriptingGrpcServiceTest {
         TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED,
         ref.get().getAdmissionOutcome());
     assertEquals(2, ref.get().getResolvedHandlerCount());
+  }
+
+  @Test
+  void triggerScriptEventReturnsInvalidArgumentAsTransportError() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressService ingressService = Mockito.mock(ScriptEventIngressService.class);
+    Mockito.when(ingressService.admit(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("payload_json exceeds input envelope limit"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            ingressService,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<TriggerScriptEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.triggerScriptEvent(
+        TriggerScriptEventRequest.getDefaultInstance(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(TriggerScriptEventResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNull(response.get());
+    assertEquals(Status.INVALID_ARGUMENT.getCode(), Status.fromThrowable(error.get()).getCode());
+    assertEquals(
+        "payload_json exceeds input envelope limit",
+        Status.fromThrowable(error.get()).getDescription());
   }
 
   @Test

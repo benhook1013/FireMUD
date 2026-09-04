@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -146,19 +147,16 @@ public class AutomationScriptingGrpcService
                 admission.reason()));
       }
     } catch (IllegalArgumentException ex) {
-      response
-          .setAdmissionReason("invalid_argument")
-          .setError(
-              GrpcAppErrors.error(
-                  meterRegistry,
-                  logger,
-                  "TriggerScriptEvent",
-                  "INVALID_ARGUMENT",
-                  ex.getMessage()));
+      GrpcAppErrors.error(
+          meterRegistry, logger, "TriggerScriptEvent", "INVALID_ARGUMENT", ex.getMessage());
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
+      return;
     } catch (AdminAuthorizationException ex) {
-      response
-          .setAdmissionReason("permission_denied")
-          .setError(authorizationError("TriggerScriptEvent", ex));
+      ErrorDetail detail = authorizationError("TriggerScriptEvent", ex);
+      responseObserver.onError(
+          Status.PERMISSION_DENIED.withDescription(detail.getMessage()).asRuntimeException());
+      return;
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();

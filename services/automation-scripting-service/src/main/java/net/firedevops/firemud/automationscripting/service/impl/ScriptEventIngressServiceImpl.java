@@ -2,12 +2,15 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
@@ -39,6 +42,7 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.json.JsonParserFactory;
@@ -59,8 +63,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name();
   private static final String OUTCOME_REGISTRY_REJECTED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED.name();
-  private static final String OUTCOME_OUTPUT_BUDGET_EXCEEDED =
-      TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED.name();
   private static final String OUTCOME_BACKPRESSURE_ROLLBACK =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK.name();
   private static final String OUTCOME_VERSION_UNAVAILABLE =
@@ -166,21 +168,73 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   @Override
   @Transactional
   public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
+    // The request envelope is bounded before event identity lookup or any domain
+    // claim.  This is transport/schema validation, not an event-scope output
+    // budget decision, so no ingress audit or admission result may be written.
+    rejectOversizedInputEnvelope(request);
+    request = normalizeRequest(request);
+    sourceService = normalize(sourceService);
     long tenantKey = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
     validateGameplayRoutingBundleShape(request, sourceService);
     String schemaVersion = schemaVersion(request);
-    ScriptEventRegistryService.EventDefinition definition =
-        eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
+    String requestFingerprint = requestFingerprint(request, schemaVersion, sourceService);
     ScriptEventIngressAudit existing = findExisting(request, schemaVersion, sourceService);
     if (existing != null) {
+      if (!sameIngressRequest(
+          existing, request, schemaVersion, sourceService, requestFingerprint)) {
+        throw new IllegalArgumentException("script_event_id already records a different request");
+      }
+      if (existing.getRequestFingerprint() == null || existing.getRequestFingerprint().isBlank()) {
+        existing.setRequestFingerprint(requestFingerprint);
+        repository.save(existing);
+      }
       return new TriggerAdmission(
           existing.isAdmitted(),
           existing.getAdmissionOutcome(),
           existing.getAdmissionReason(),
           existing.getResolvedHandlerCount());
     }
+    requiredText(request.getTenantId(), "tenant_id");
+    requiredText(request.getEventType(), "event_type");
+    requiredText(request.getScriptPatchVersion(), "script_patch_version");
+    requiredText(request.getScriptEventId(), "script_event_id");
+    ScriptEventIngressAudit audit =
+        newIngressClaim(request, schemaVersion, sourceService, requestFingerprint);
+    ScriptEventIngressAuditRepository.IdempotentInsertResult claim =
+        repository.insertIfAbsentByIdentity(audit);
+    if (claim != null) {
+      if (claim.audit() == null) {
+        throw new IllegalStateException("ingress claim did not return its durable audit row");
+      }
+      if (!claim.inserted()) {
+        ScriptEventIngressAudit existingAudit = claim.audit();
+        if (!sameIngressRequest(
+            existingAudit, request, schemaVersion, sourceService, requestFingerprint)) {
+          throw new IllegalArgumentException("script_event_id already records a different request");
+        }
+        if (existingAudit.getRequestFingerprint() == null
+            || existingAudit.getRequestFingerprint().isBlank()) {
+          existingAudit.setRequestFingerprint(requestFingerprint);
+          repository.save(existingAudit);
+        }
+        return new TriggerAdmission(
+            existingAudit.isAdmitted(),
+            existingAudit.getAdmissionOutcome(),
+            existingAudit.getAdmissionReason(),
+            existingAudit.getResolvedHandlerCount());
+      }
+      // The repository returns the persisted row (including its generated id and row version).
+      // Keep that row as the update target when finalizing the claim.
+      audit = claim.audit();
+    }
+    ScriptEventRegistryService.EventDefinition definition =
+        eventRegistryService
+            .getDefinition(normalize(request.getEventType()), schemaVersion)
+            .orElse(null);
 
-    TriggerAdmission admission = validate(request, schemaVersion, sourceService, definition);
+    AdmissionAuthority authority = new AdmissionAuthority();
+    TriggerAdmission admission =
+        validate(request, schemaVersion, sourceService, definition, authority);
     if (admission.admitted()) {
       AdmissionStateValidation stateValidation = validateAdmissionState(request);
       admission = stateValidation.admission();
@@ -195,16 +249,22 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                     definition,
                     sourceService,
                     tenantKey,
-                    stateValidation.state());
+                    stateValidation.state(),
+                    authority);
       }
     }
     HandlerScopeValues requestScopeValues = requestScopeValues(request);
-    ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
-    audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
-    audit.setGameInstanceId(normalize(request.getGameInstanceId()));
-    audit.setRegionId(normalize(request.getRegionId()));
-    audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L);
-    audit.setEntityId(requestScopeValues.entityId());
+    // Finalize the durable claim after validation and any handler work. In PostgreSQL the
+    // insert-or-read claim serializes concurrent requests on the complete event identity, so a
+    // duplicate cannot reach quota or handler effects until this outcome is committed.
+    if (audit == null) {
+      throw new IllegalStateException("ingress claim row is required");
+    }
+    audit.setTenantId(requiredText(normalize(request.getTenantId()), "tenant_id"));
+    audit.setGameInstanceId(optionalText(request.getGameInstanceId()));
+    audit.setRegionId(optionalText(request.getRegionId()));
+    audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : null);
+    audit.setEntityId(optionalText(request.getEntityId()));
     audit.setPlayableStateScope(requestScopeValues.playableStateScope());
     audit.setWorldSlug(requestScopeValues.worldSlug());
     audit.setRealmSlug(requestScopeValues.realmSlug());
@@ -212,14 +272,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setScriptId(normalize(request.getScriptId()));
     audit.setPluginId(normalize(request.getPluginId()));
     audit.setPluginVersionId(normalize(request.getPluginVersionId()));
-    audit.setEventType(requiredText(request.getEventType(), "event_type"));
+    audit.setScriptPinEpoch(currentScriptPinEpoch(request, authority));
+    setPluginFence(audit, request, authority);
+    audit.setEventType(requiredText(normalize(request.getEventType()), "event_type"));
     audit.setEventSchemaVersion(schemaVersion);
     audit.setQuotaClass(
         ScriptQuotaClasses.normalize(definition == null ? null : definition.quotaClass()));
     audit.setScriptPatchVersion(
-        requiredText(request.getScriptPatchVersion(), "script_patch_version"));
-    audit.setScriptEventId(requiredText(request.getScriptEventId(), "script_event_id"));
-    audit.setSourceService(sourceService);
+        requiredText(normalize(request.getScriptPatchVersion()), "script_patch_version"));
+    audit.setScriptEventId(requiredText(normalize(request.getScriptEventId()), "script_event_id"));
+    audit.setSourceService(normalize(sourceService));
     audit.setTriggerMode(request.getTriggerMode().name());
     audit.setSourceKind(sourceKind(request));
     audit.setSourceState(admission.admitted() ? "TRIGGER_ADMITTED" : "TRIGGER_REJECTED");
@@ -229,28 +291,114 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setDryRun(request.getIsDryRun());
     audit.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     audit.setPayloadJson(normalize(request.getPayloadJson()));
+    audit.setRequestFingerprint(requestFingerprint);
     audit.setAdmitted(admission.admitted());
     audit.setAdmissionOutcome(admission.outcome());
     audit.setAdmissionReason(admission.reason());
     audit.setResolvedHandlerCount(admission.resolvedHandlerCount());
+    // A null result is retained as a legacy adapter fallback; production's atomic implementation
+    // always returns a durable claim row, and a successful claim with no row fails above before
+    // any validation or handler side effects.
     repository.save(audit);
     return admission;
+  }
+
+  private ScriptEventIngressAudit newIngressClaim(
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String sourceService,
+      String requestFingerprint) {
+    HandlerScopeValues scopeValues = requestScopeValues(request);
+    ScriptEventIngressAudit audit = new ScriptEventIngressAudit();
+    audit.setTenantId(requiredText(normalize(request.getTenantId()), "tenant_id"));
+    audit.setGameInstanceId(optionalText(request.getGameInstanceId()));
+    audit.setRegionId(optionalText(request.getRegionId()));
+    audit.setRegionEpoch(request.getRegionEpoch() > 0 ? request.getRegionEpoch() : null);
+    audit.setEntityId(optionalText(request.getEntityId()));
+    audit.setPlayableStateScope(scopeValues.playableStateScope());
+    audit.setWorldSlug(scopeValues.worldSlug());
+    audit.setRealmSlug(scopeValues.realmSlug());
+    audit.setPointerVersion(scopeValues.pointerVersion());
+    audit.setScriptId(normalize(request.getScriptId()));
+    audit.setPluginId(normalize(request.getPluginId()));
+    audit.setPluginVersionId(normalize(request.getPluginVersionId()));
+    audit.setEventType(requiredText(normalize(request.getEventType()), "event_type"));
+    audit.setEventSchemaVersion(schemaVersion);
+    audit.setScriptPatchVersion(
+        requiredText(normalize(request.getScriptPatchVersion()), "script_patch_version"));
+    audit.setScriptEventId(requiredText(normalize(request.getScriptEventId()), "script_event_id"));
+    audit.setSourceService(normalize(sourceService));
+    audit.setTriggerMode(request.getTriggerMode().name());
+    audit.setDryRun(request.getIsDryRun());
+    audit.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
+    audit.setPayloadJson(normalize(request.getPayloadJson()));
+    audit.setRequestFingerprint(requestFingerprint);
+    audit.setAdmitted(false);
+    audit.setAdmissionOutcome("INGRESS_CLAIMED");
+    audit.setAdmissionReason("ingress_claimed");
+    audit.setSourceState("INGRESS_CLAIMED");
+    return audit;
+  }
+
+  private static boolean sameIngressRequest(
+      ScriptEventIngressAudit existing,
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      String sourceService,
+      String requestFingerprint) {
+    if (requestFingerprint.equals(normalize(existing.getRequestFingerprint()))) {
+      return true;
+    }
+    // Rows created before request fingerprints were introduced can be upgraded
+    // only after comparing every immutable input used by the digest.
+    RoutingBundleSupport.RoutingBundle storedRoutingBundle =
+        RoutingBundleSupport.normalize(
+            existing.getWorldSlug(), existing.getRealmSlug(), existing.getPointerVersion());
+    RoutingBundleSupport.RoutingBundle requestRoutingBundle =
+        RoutingBundleSupport.normalize(
+            request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
+    long existingRegionEpoch = existing.getRegionEpoch() == null ? 0L : existing.getRegionEpoch();
+    long requestRegionEpoch = request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L;
+    return normalize(existing.getRequestFingerprint()).isBlank()
+        && same(existing.getTenantId(), request.getTenantId())
+        && same(existing.getGameInstanceId(), request.getGameInstanceId())
+        && same(existing.getRegionId(), request.getRegionId())
+        && existingRegionEpoch == requestRegionEpoch
+        && same(existing.getEntityId(), request.getEntityId())
+        && same(
+            existing.getPlayableStateScope(),
+            normalizePlayableStateScope(request.getPlayableStateScope()))
+        && same(storedRoutingBundle.worldSlug(), requestRoutingBundle.worldSlug())
+        && same(storedRoutingBundle.realmSlug(), requestRoutingBundle.realmSlug())
+        && same(storedRoutingBundle.pointerVersion(), requestRoutingBundle.pointerVersion())
+        && same(existing.getScriptId(), request.getScriptId())
+        && same(existing.getPluginId(), request.getPluginId())
+        && same(existing.getPluginVersionId(), request.getPluginVersionId())
+        && same(existing.getEventType(), request.getEventType())
+        && same(existing.getEventSchemaVersion(), schemaVersion)
+        && same(existing.getScriptPatchVersion(), request.getScriptPatchVersion())
+        && same(existing.getScriptEventId(), request.getScriptEventId())
+        && same(existing.getSourceService(), sourceService)
+        && same(existing.getTriggerMode(), request.getTriggerMode().name())
+        && existing.isDryRun() == request.getIsDryRun()
+        && same(existing.getReadSnapshotToken(), request.getReadSnapshotToken())
+        && same(existing.getPayloadJson(), request.getPayloadJson());
+  }
+
+  private static boolean same(String left, String right) {
+    return normalize(left).equals(normalize(right));
   }
 
   private TriggerAdmission validate(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String sourceService,
-      ScriptEventRegistryService.EventDefinition definition) {
+      ScriptEventRegistryService.EventDefinition definition,
+      AdmissionAuthority authority) {
     requiredText(request.getTenantId(), "tenant_id");
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
     requiredText(request.getScriptEventId(), "script_event_id");
-    if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
-        > outputProperties.getMaxSerializedWorkItemBytes()) {
-      return new TriggerAdmission(
-          false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0);
-    }
     if (definition == null) {
       return rejected("unknown_event_type");
     }
@@ -285,15 +433,22 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (routingAdmission != null) {
       return routingAdmission;
     }
-    TriggerAdmission pinAdmission = validatePinnedPatch(request);
+    TriggerAdmission pinAdmission = validatePinnedPatch(request, authority);
     if (pinAdmission != null) {
       return pinAdmission;
     }
-    TriggerAdmission pluginAdmission = validatePluginRuntimeState(request);
+    TriggerAdmission pluginAdmission = validatePluginRuntimeState(request, authority);
     if (pluginAdmission != null) {
       return pluginAdmission;
     }
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
+  }
+
+  private void rejectOversizedInputEnvelope(TriggerScriptEventRequest request) {
+    if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
+        > outputProperties.getMaxSerializedWorkItemBytes()) {
+      throw new IllegalArgumentException("payload_json exceeds input envelope limit");
+    }
   }
 
   private TriggerAdmission rejected(String reason) {
@@ -301,7 +456,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private TriggerAdmission validateBuiltInPayload(TriggerScriptEventRequest request) {
-    String eventType = request.getEventType();
+    String eventType = normalize(request.getEventType());
     if ("onLoad".equals(eventType)) {
       return null;
     }
@@ -408,13 +563,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
   }
 
-  private TriggerAdmission validatePinnedPatch(TriggerScriptEventRequest request) {
+  private TriggerAdmission validatePinnedPatch(
+      TriggerScriptEventRequest request, AdmissionAuthority authority) {
     if (request.getGameInstanceId().isBlank()) {
       return null;
     }
-    var runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+    final GetGameInstanceRuntimeStateResponse runtime;
+    try {
+      runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              request.getTenantId(), request.getGameInstanceId(), request.getRegionId());
+    } catch (RuntimeException ex) {
+      return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
+    }
     if (runtime == null || (runtime.hasError() && !runtime.getError().getCode().isBlank())) {
       return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
     }
@@ -426,6 +587,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         || !request.getGameInstanceId().equals(runtimeState.getGameInstanceId())) {
       // A successful owner RPC with a different scope is not authority for this request. Do not
       // project it before rejecting the trigger.
+      return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
+    }
+    authority.runtimeState = runtime;
+    if (runtimeState.getScriptPinEpoch() <= 0) {
       return new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0);
     }
     scriptPatchPinProjectionService.observeRuntimeState(
@@ -454,7 +619,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return null;
   }
 
-  private TriggerAdmission validatePluginRuntimeState(TriggerScriptEventRequest request) {
+  private TriggerAdmission validatePluginRuntimeState(
+      TriggerScriptEventRequest request, AdmissionAuthority authority) {
     boolean hasPluginId = !request.getPluginId().isBlank();
     boolean hasPluginVersion = !request.getPluginVersionId().isBlank();
     if (!hasPluginId && !hasPluginVersion) {
@@ -463,16 +629,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!hasPluginId || !hasPluginVersion || request.getGameInstanceId().isBlank()) {
       return rejected("missing_plugin_identity");
     }
-    var status =
-        pluginRuntimeStateService.getStatus(
-            request.getTenantId(), request.getGameInstanceId(), request.getPluginId());
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> status =
+        resolvePluginStatus(authority, request, request.getPluginId());
     if (status.isEmpty()) {
       return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_not_active", 0);
     }
     if (status.get().pluginState() != PluginState.PLUGIN_STATE_ENABLED) {
       return new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "plugin_disabled", 0);
     }
-    if (!status.get().activePluginVersionId().equals(request.getPluginVersionId())) {
+    if (!normalize(status.get().activePluginVersionId())
+        .equals(normalize(request.getPluginVersionId()))) {
       return new TriggerAdmission(
           false, OUTCOME_VERSION_UNAVAILABLE, "plugin_version_unavailable", 0);
     }
@@ -486,6 +652,20 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean pluginPolicyStale(PluginRuntimeStateService.PluginRuntimeStatus status) {
     long ageMs = Instant.now().toEpochMilli() - status.lastPolicyCheckedAtMs();
     return ageMs > runtimeProperties.getPluginPolicyStaleThresholdSeconds() * 1_000L;
+  }
+
+  private boolean hasUsablePluginFence(
+      ResolvedHandler handler, TriggerScriptEventRequest request, AdmissionAuthority authority) {
+    if (handler.pluginOwner() == null) {
+      return true;
+    }
+    return resolvePluginStatus(authority, request, handler.pluginOwner().pluginId())
+        .filter(
+            status ->
+                normalize(handler.pluginOwner().pluginVersionId())
+                    .equals(normalize(status.activePluginVersionId())))
+        .filter(status -> status.pluginActivationEpoch() > 0 && status.lifecycleRevision() > 0)
+        .isPresent();
   }
 
   private AdmissionStateValidation validateAdmissionState(TriggerScriptEventRequest request) {
@@ -532,10 +712,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventRegistryService.EventDefinition definition,
       String sourceService,
       long tenantKey,
-      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      AdmissionAuthority authority) {
     if (isOnLoadRequest(request)) {
       return admissionWithOnLoadHandler(
-          request, schemaVersion, definition, sourceService, admissionState);
+          request, schemaVersion, definition, sourceService, admissionState, authority);
     }
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
     List<ScriptEventBinding> scopedBindings =
@@ -586,6 +767,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                     !filterByRequestPluginOwnership
                         || hasMatchingPluginOwner(handler.pluginOwner(), request))
             .toList();
+    if (handlers.stream().anyMatch(handler -> !hasUsablePluginFence(handler, request, authority))) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "plugin_lifecycle_unavailable", 0);
+    }
     if ((filterByRequestPluginOwnership && handlers.isEmpty())
         || (handlers.isEmpty()
             && scopedBindings.stream()
@@ -596,15 +781,21 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     handlers.forEach(
         handler ->
             admitHandler(
-                request, schemaVersion, definition, handler, sourceService, admissionState));
+                request,
+                schemaVersion,
+                definition,
+                handler,
+                sourceService,
+                admissionState,
+                authority));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
 
   private boolean hasMatchingPluginOwner(PluginOwner owner, TriggerScriptEventRequest request) {
     return owner != null
-        && owner.pluginId().equals(request.getPluginId())
-        && owner.pluginVersionId().equals(request.getPluginVersionId());
+        && normalize(owner.pluginId()).equals(normalize(request.getPluginId()))
+        && normalize(owner.pluginVersionId()).equals(normalize(request.getPluginVersionId()));
   }
 
   private PluginOwnerResolution resolvePluginOwners(
@@ -652,7 +843,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (owner == null) {
       return true;
     }
-    return owner.pluginVersionId().equals(activePluginVersions.get(owner.pluginId()));
+    return normalize(owner.pluginVersionId())
+        .equals(normalize(activePluginVersions.get(normalize(owner.pluginId()))));
   }
 
   private static boolean isPluginOwned(
@@ -684,7 +876,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         return PluginOwnerResolutionResult.firstParty();
       }
       return PluginOwnerResolutionResult.resolved(
-          new PluginOwner(owner.pluginId(), owner.pluginVersionId()));
+          new PluginOwner(normalize(owner.pluginId()), normalize(owner.pluginVersionId())));
     } catch (IllegalArgumentException ex) {
       return PluginOwnerResolutionResult.unresolvedPluginOwner();
     }
@@ -695,14 +887,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
       String sourceService,
-      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      AdmissionAuthority authority) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
     if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
         || workItemExistsForScript(request, schemaVersion, scriptId)) {
       return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
     }
     persistWorkItemForScript(
-        request, schemaVersion, definition, scriptId, "", sourceService, admissionState);
+        request, schemaVersion, definition, scriptId, "", sourceService, admissionState, authority);
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
   }
 
@@ -712,8 +905,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventRegistryService.EventDefinition definition,
       ResolvedHandler handler,
       String sourceService,
-      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
-    if (handlerAuditExists(request, schemaVersion, handler.binding())) {
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      AdmissionAuthority authority) {
+    if (handlerAuditExists(request, schemaVersion, handler.binding(), handler.pluginOwner())
+        || workItemExists(request, schemaVersion, handler.binding(), handler.pluginOwner())) {
       return;
     }
     if (!request.getIsDryRun()
@@ -724,11 +919,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           schemaVersion,
           handler.binding().getScriptId(),
           handler.pluginOwner(),
+          bindingIdentity(handler.binding()),
           sourceService,
           null,
           "ADMISSION",
           "quota_denied",
-          "script_quota_denied");
+          "script_quota_denied",
+          authority);
       return;
     }
     persistWorkItem(
@@ -736,11 +933,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         schemaVersion,
         definition,
         handler.binding().getScriptId(),
+        bindingIdentity(handler.binding()),
         handler.binding().getPriorityTag(),
         handler.pluginOwner(),
         sourceService,
         requestScopeValues(request),
-        admissionState);
+        admissionState,
+        authority);
   }
 
   private void persistWorkItem(
@@ -748,11 +947,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       ScriptEventRegistryService.EventDefinition definition,
       String scriptId,
+      String bindingId,
       String priorityTag,
       PluginOwner pluginOwner,
       String sourceService,
       HandlerScopeValues scopeValues,
-      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      AdmissionAuthority authority) {
     Long admissionEpoch = admissionState == null ? 0L : admissionState.admissionEpoch();
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(request.getTenantId());
@@ -765,8 +966,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRealmSlug(scopeValues.realmSlug());
     item.setPointerVersion(scopeValues.pointerVersion());
     item.setScriptId(scriptId);
+    item.setBindingId(bindingId);
     item.setPluginId(resolveHandlerPluginId(request, pluginOwner));
     item.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
+    setPluginFence(item, request, pluginOwner, authority);
+    item.setScriptPinEpoch(currentScriptPinEpoch(request, authority));
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
     item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
@@ -792,11 +996,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         schemaVersion,
         scriptId,
         pluginOwner,
+        bindingId,
         sourceService,
         saved,
         "ADMISSION",
         "work_item_persisted",
-        "handler_resolved");
+        "handler_resolved",
+        authority);
   }
 
   private void persistWorkItemForScript(
@@ -806,17 +1012,20 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       String priorityTag,
       String sourceService,
-      AutomationAdmissionStateService.AdmissionStateSummary admissionState) {
+      AutomationAdmissionStateService.AdmissionStateSummary admissionState,
+      AdmissionAuthority authority) {
     persistWorkItem(
         request,
         schemaVersion,
         definition,
         scriptId,
+        null,
         priorityTag,
         null,
         sourceService,
         requestScopeValues(request),
-        admissionState);
+        admissionState,
+        authority);
   }
 
   private void persistHandlerAudit(
@@ -824,11 +1033,13 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String scriptId,
       PluginOwner pluginOwner,
+      String bindingId,
       String sourceService,
       ScriptWorkItem workItem,
       String finalStage,
       String finalOutcome,
-      String finalReason) {
+      String finalReason,
+      AdmissionAuthority authority) {
     HandlerScopeValues scopeValues =
         workItem == null ? requestScopeValues(request) : workItemScopeValues(workItem);
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -842,8 +1053,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRealmSlug(scopeValues.realmSlug());
     audit.setPointerVersion(scopeValues.pointerVersion());
     audit.setScriptId(scriptId);
+    audit.setBindingId(bindingId);
     audit.setPluginId(resolveHandlerPluginId(request, pluginOwner));
     audit.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
+    audit.setScriptPinEpoch(currentScriptPinEpoch(request, authority));
+    setPluginFence(audit, request, pluginOwner, authority);
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
@@ -876,6 +1090,104 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         : pluginOwner.pluginVersionId();
   }
 
+  private static String bindingIdentity(ScriptEventBinding binding) {
+    return binding == null || binding.getId() == null ? null : binding.getId().toString();
+  }
+
+  private long currentScriptPinEpoch(
+      TriggerScriptEventRequest request, AdmissionAuthority authority) {
+    if (request.getGameInstanceId().isBlank()) {
+      return 0L;
+    }
+    GetGameInstanceRuntimeStateResponse runtime = authority.runtimeState;
+    if (runtime == null
+        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
+        || !runtime.hasRuntimeState()) {
+      return 0L;
+    }
+    return runtime.getRuntimeState().getScriptPinEpoch();
+  }
+
+  private void setPluginFence(
+      ScriptWorkItem item,
+      TriggerScriptEventRequest request,
+      PluginOwner pluginOwner,
+      AdmissionAuthority authority) {
+    String pluginId = normalize(item.getPluginId());
+    String pluginVersionId = normalize(item.getPluginVersionId());
+    PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
+    item.setPluginActivationEpoch(fence.pluginActivationEpoch());
+    item.setLifecycleRevision(fence.lifecycleRevision());
+  }
+
+  private void setPluginFence(
+      ScriptEventIngressAudit audit,
+      TriggerScriptEventRequest request,
+      AdmissionAuthority authority) {
+    setPluginFence(audit, request, null, authority);
+  }
+
+  private void setPluginFence(
+      ScriptEventAudit audit,
+      TriggerScriptEventRequest request,
+      PluginOwner pluginOwner,
+      AdmissionAuthority authority) {
+    String pluginId = resolveHandlerPluginId(request, pluginOwner);
+    String pluginVersionId = resolveHandlerPluginVersionId(request, pluginOwner);
+    PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
+    audit.setPluginActivationEpoch(fence.pluginActivationEpoch());
+    audit.setLifecycleRevision(fence.lifecycleRevision());
+  }
+
+  private void setPluginFence(
+      ScriptEventIngressAudit audit,
+      TriggerScriptEventRequest request,
+      PluginOwner owner,
+      AdmissionAuthority authority) {
+    String pluginId = resolveHandlerPluginId(request, owner);
+    String pluginVersionId = resolveHandlerPluginVersionId(request, owner);
+    PluginFence fence = resolvePluginFence(request, pluginId, pluginVersionId, authority);
+    audit.setPluginActivationEpoch(fence.pluginActivationEpoch());
+    audit.setLifecycleRevision(fence.lifecycleRevision());
+  }
+
+  private PluginFence resolvePluginFence(
+      TriggerScriptEventRequest request,
+      String pluginId,
+      String pluginVersionId,
+      AdmissionAuthority authority) {
+    if (pluginId.isBlank() || pluginVersionId.isBlank() || request.getGameInstanceId().isBlank()) {
+      return PluginFence.EMPTY;
+    }
+    return resolvePluginStatus(authority, request, pluginId)
+        .filter(
+            status -> normalize(pluginVersionId).equals(normalize(status.activePluginVersionId())))
+        .map(status -> new PluginFence(status.pluginActivationEpoch(), status.lifecycleRevision()))
+        .orElse(PluginFence.EMPTY);
+  }
+
+  private Optional<PluginRuntimeStateService.PluginRuntimeStatus> resolvePluginStatus(
+      AdmissionAuthority authority, TriggerScriptEventRequest request, String pluginId) {
+    if (pluginId.isBlank() || request.getGameInstanceId().isBlank()) {
+      return Optional.empty();
+    }
+    return authority.pluginStatuses.computeIfAbsent(
+        pluginId,
+        ignored ->
+            pluginRuntimeStateService.getStatus(
+                request.getTenantId(), request.getGameInstanceId(), pluginId));
+  }
+
+  private static final class AdmissionAuthority {
+    private GetGameInstanceRuntimeStateResponse runtimeState;
+    private final Map<String, Optional<PluginRuntimeStateService.PluginRuntimeStatus>>
+        pluginStatuses = new HashMap<>();
+  }
+
+  private record PluginFence(long pluginActivationEpoch, long lifecycleRevision) {
+    private static final PluginFence EMPTY = new PluginFence(0L, 0L);
+  }
+
   private static String sourceKind(TriggerScriptEventRequest request) {
     if (isOnLoadRequest(request)) {
       return "PATCH_READINESS_EVENT";
@@ -903,25 +1215,35 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean handlerAuditExists(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventBinding binding,
+      PluginOwner pluginOwner) {
     return handlerAuditExistsForScope(
-        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+        request,
+        schemaVersion,
+        binding.getScriptId(),
+        bindingIdentity(binding),
+        pluginOwner,
+        requestScopeValues(request));
   }
 
   private boolean handlerAuditExistsForScript(
       TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
     return handlerAuditExistsForScope(
-        request, schemaVersion, scriptId, requestScopeValues(request));
+        request, schemaVersion, scriptId, null, null, requestScopeValues(request));
   }
 
   private boolean handlerAuditExistsForScope(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String scriptId,
+      String bindingId,
+      PluginOwner pluginOwner,
       HandlerScopeValues scopeValues) {
     return eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
-            request.getTenantId(),
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+            normalize(request.getTenantId()),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
             request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
@@ -931,31 +1253,45 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             scopeValues.realmSlug(),
             scopeValues.pointerVersion(),
             scriptId,
-            request.getEventType(),
+            resolveHandlerPluginId(request, pluginOwner),
+            resolveHandlerPluginVersionId(request, pluginOwner),
+            bindingId,
+            normalize(request.getEventType()),
             schemaVersion,
-            request.getScriptPatchVersion(),
-            request.getScriptEventId(),
+            normalize(request.getScriptPatchVersion()),
+            normalize(request.getScriptEventId()),
             request.getIsDryRun());
   }
 
   private boolean workItemExists(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+      TriggerScriptEventRequest request,
+      String schemaVersion,
+      ScriptEventBinding binding,
+      PluginOwner pluginOwner) {
     return workItemExistsForScope(
-        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+        request,
+        schemaVersion,
+        binding.getScriptId(),
+        bindingIdentity(binding),
+        pluginOwner,
+        requestScopeValues(request));
   }
 
   private boolean workItemExistsForScript(
       TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
-    return workItemExistsForScope(request, schemaVersion, scriptId, requestScopeValues(request));
+    return workItemExistsForScope(
+        request, schemaVersion, scriptId, null, null, requestScopeValues(request));
   }
 
   private boolean workItemExistsForScope(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String scriptId,
+      String bindingId,
+      PluginOwner pluginOwner,
       HandlerScopeValues scopeValues) {
     return workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
@@ -966,6 +1302,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             scopeValues.realmSlug(),
             scopeValues.pointerVersion(),
             scriptId,
+            resolveHandlerPluginId(request, pluginOwner),
+            resolveHandlerPluginVersionId(request, pluginOwner),
+            bindingId,
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
@@ -1044,25 +1383,64 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
     return repository
         .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
-            request.getTenantId(),
-            normalize(request.getGameInstanceId()),
-            normalize(request.getRegionId()),
-            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
-            normalize(request.getEntityId()),
+            normalize(request.getTenantId()),
+            optionalText(request.getGameInstanceId()),
+            optionalText(request.getRegionId()),
+            request.getRegionEpoch() > 0 ? request.getRegionEpoch() : null,
+            optionalText(request.getEntityId()),
             normalizePlayableStateScope(request.getPlayableStateScope()),
-            request.getEventType(),
+            normalize(request.getEventType()),
             schemaVersion,
-            request.getScriptPatchVersion(),
-            request.getScriptEventId(),
+            normalize(request.getScriptPatchVersion()),
+            normalize(request.getScriptEventId()),
             request.getIsDryRun(),
-            sourceService)
+            normalize(sourceService))
         .orElse(null);
   }
 
   private String schemaVersion(TriggerScriptEventRequest request) {
     return request.getEventSchemaVersion().isBlank()
         ? DEFAULT_SCHEMA_VERSION
-        : request.getEventSchemaVersion();
+        : normalize(request.getEventSchemaVersion());
+  }
+
+  private static String requestFingerprint(
+      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
+    String canonical =
+        String.join(
+            "\u0000",
+            normalize(request.getTenantId()),
+            normalize(request.getGameInstanceId()),
+            normalize(request.getRegionId()),
+            Long.toString(Math.max(0L, request.getRegionEpoch())),
+            normalize(request.getEntityId()),
+            normalizePlayableStateScope(request.getPlayableStateScope()),
+            normalize(request.getWorldSlug()),
+            normalize(request.getRealmSlug()),
+            normalize(request.getPointerVersion()),
+            normalize(request.getScriptId()),
+            normalize(request.getPluginId()),
+            normalize(request.getPluginVersionId()),
+            normalize(request.getEventType()),
+            schemaVersion,
+            normalize(request.getScriptPatchVersion()),
+            normalize(request.getScriptEventId()),
+            normalize(sourceService),
+            request.getTriggerMode().name(),
+            Boolean.toString(request.getIsDryRun()),
+            normalize(request.getReadSnapshotToken()),
+            normalize(request.getPayloadJson()));
+    try {
+      byte[] digest =
+          MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+      StringBuilder hex = new StringBuilder(digest.length * 2);
+      for (byte item : digest) {
+        hex.append(String.format("%02x", item));
+      }
+      return hex.toString();
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 unavailable", ex);
+    }
   }
 
   private static String resolveSourceService() {
@@ -1116,7 +1494,33 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String normalize(String value) {
-    return value == null ? "" : value;
+    return value == null ? "" : value.strip();
+  }
+
+  private static TriggerScriptEventRequest normalizeRequest(TriggerScriptEventRequest request) {
+    return request.toBuilder()
+        .setTenantId(normalize(request.getTenantId()))
+        .setGameInstanceId(normalize(request.getGameInstanceId()))
+        .setRegionId(normalize(request.getRegionId()))
+        .setRegionEpoch(Math.max(0L, request.getRegionEpoch()))
+        .setEntityId(normalize(request.getEntityId()))
+        .setScriptId(normalize(request.getScriptId()))
+        .setPluginId(normalize(request.getPluginId()))
+        .setPluginVersionId(normalize(request.getPluginVersionId()))
+        .setEventType(normalize(request.getEventType()))
+        .setEventSchemaVersion(normalize(request.getEventSchemaVersion()))
+        .setScriptPatchVersion(normalize(request.getScriptPatchVersion()))
+        .setScriptEventId(normalize(request.getScriptEventId()))
+        .setWorldSlug(normalize(request.getWorldSlug()))
+        .setRealmSlug(normalize(request.getRealmSlug()))
+        .setPointerVersion(normalize(request.getPointerVersion()))
+        .setReadSnapshotToken(normalize(request.getReadSnapshotToken()))
+        .setPayloadJson(normalize(request.getPayloadJson()))
+        .build();
+  }
+
+  private static String optionalText(String value) {
+    return value == null || value.isBlank() ? null : value.strip();
   }
 
   private static String stringValue(Object value) {
@@ -1124,19 +1528,19 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String normalizeCommandAlias(String value) {
-    return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    return normalize(value).toLowerCase(Locale.ROOT);
   }
 
   private static String normalizeActionClassifier(String value) {
-    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    return normalize(value).toUpperCase(Locale.ROOT);
   }
 
   private static String normalizeScopeType(String value) {
-    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    return normalize(value).toUpperCase(Locale.ROOT);
   }
 
   private static boolean isOnLoadRequest(TriggerScriptEventRequest request) {
-    return "onLoad".equals(request.getEventType());
+    return "onLoad".equals(normalize(request.getEventType()));
   }
 
   private static HandlerScopeValues requestScopeValues(TriggerScriptEventRequest request) {
