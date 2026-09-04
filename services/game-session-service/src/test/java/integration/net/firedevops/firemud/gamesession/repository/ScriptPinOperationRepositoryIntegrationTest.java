@@ -205,6 +205,44 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void rollbackRequestCannotReplaySameVersionRepinDigest() {
+    ScriptPinMutationResult repinFailure =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-1",
+            "request-repin-kind-conflict",
+            "operator",
+            "repin",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    ScriptPinMutationResult rollbackReuse =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-1",
+            "request-repin-kind-conflict",
+            "operator",
+            "repin",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+
+    assertThat(repinFailure.succeeded()).isFalse();
+    assertThat(rollbackReuse.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(
+                    SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-repin-kind-conflict"))
+                .fetchOne(SCRIPT_PIN_OPERATION.OPERATION_KIND))
+        .isEqualTo("REPIN");
+  }
+
+  @Test
   void rollbackChangesVersionAndPersistsRollbackOperationKind() {
     ScriptPinMutationResult rollback =
         repository.applyScriptPin(
@@ -287,6 +325,28 @@ class ScriptPinOperationRepositoryIntegrationTest {
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
             });
+  }
+
+  @Test
+  void recordScriptPinFailureRejectsNullOrBlankTargetBeforePersistence() {
+    for (String targetScriptPatchVersion : java.util.Arrays.asList(null, " ")) {
+      org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  repository.recordScriptPinFailure(
+                      1L,
+                      7L,
+                      "SET",
+                      targetScriptPatchVersion,
+                      "request-invalid-failure-target",
+                      "operator",
+                      "authority unavailable",
+                      "EXPECT_EPOCH",
+                      1L,
+                      "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+          .withMessage("target_script_patch_version is required");
+    }
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
   }
 
   @Test

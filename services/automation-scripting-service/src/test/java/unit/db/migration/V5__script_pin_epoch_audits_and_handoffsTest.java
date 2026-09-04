@@ -20,6 +20,13 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
 
     assertThat(migration)
         .contains(
+            "UPDATE script_event_ingress_audit",
+            "SET region_id = COALESCE(region_id, ''),",
+            "region_epoch = COALESCE(region_epoch, 0),",
+            "playable_state_scope = COALESCE(playable_state_scope, '')",
+            "WHERE game_instance_id IS NOT NULL",
+            "ROW_NUMBER() OVER",
+            "DELETE FROM script_event_ingress_audit",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit",
             "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
@@ -35,5 +42,32 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration.substring(unpinnedStart, unpinnedEnd))
         .contains("script_event_id", "dry_run")
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
+
+    int runtimeStart =
+        migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity");
+    int runtimeEnd = migration.indexOf(") WHERE", runtimeStart);
+    assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
+    assertThat(runtimeEnd).isGreaterThan(runtimeStart);
+    assertThat(migration.substring(runtimeStart, runtimeEnd))
+        .contains("playable_state_scope");
+
+    int reconciliationStart = migration.indexOf("UPDATE script_event_ingress_audit");
+    assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
+    assertThat(runtimeStart).isGreaterThan(reconciliationStart);
+    assertThat(migration.substring(reconciliationStart, runtimeStart))
+        .contains(
+            "WHERE game_instance_id IS NOT NULL",
+            "script_pin_epoch IS NOT NULL",
+            "script_pin_epoch IS NULL")
+        .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
+
+    int onLoadStart =
+        migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");
+    int onLoadEnd = migration.indexOf(") WHERE", onLoadStart);
+    assertThat(onLoadStart).isGreaterThan(runtimeStart);
+    assertThat(onLoadEnd).isGreaterThan(onLoadStart);
+    assertThat(migration.substring(onLoadStart, onLoadEnd))
+        .contains("script_id")
+        .doesNotContain("region_id", "region_epoch", "game_instance_id");
   }
 }

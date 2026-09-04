@@ -288,9 +288,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setTenantId(requiredText(request.getTenantId(), "tenant_id"));
     boolean instanceScoped = !request.getGameInstanceId().isBlank();
     audit.setGameInstanceId(nullableText(request.getGameInstanceId()));
-    audit.setRegionId(instanceScoped ? nullableText(request.getRegionId()) : null);
+    // Runtime claims use the same explicit empty/zero sentinels as work items. This keeps every
+    // instance-scoped identity column non-null even when a request is rejected before its runtime
+    // scope is validated; the pre-instance onLoad branch remains nullable by design.
+    audit.setRegionId(instanceScoped ? normalize(request.getRegionId()) : null);
     audit.setRegionEpoch(
-        instanceScoped && request.getRegionEpoch() > 0 ? request.getRegionEpoch() : null);
+        instanceScoped ? (request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L) : null);
     audit.setEntityId(instanceScoped ? requestScopeValues.entityId() : null);
     audit.setPlayableStateScope(instanceScoped ? requestScopeValues.playableStateScope() : null);
     audit.setWorldSlug(instanceScoped ? requestScopeValues.worldSlug() : null);
@@ -1055,6 +1058,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     HandlerScopeValues scopeValues =
         workItem == null ? requestScopeValues(request) : workItemScopeValues(workItem);
     ScriptEventAudit audit = new ScriptEventAudit();
+    Long persistedScriptPinEpoch = scriptPinEpoch > 0L ? scriptPinEpoch : null;
     audit.setTenantId(request.getTenantId());
     audit.setGameInstanceId(normalize(request.getGameInstanceId()));
     audit.setRegionId(normalize(request.getRegionId()));
@@ -1070,8 +1074,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
-    audit.setScriptPinEpoch(scriptPinEpoch > 0L ? scriptPinEpoch : null);
-    audit.setScriptPinControlPlaneRequestId(normalize(request.getScriptPinControlPlaneRequestId()));
+    audit.setScriptPinEpoch(persistedScriptPinEpoch);
+    audit.setScriptPinControlPlaneRequestId(
+        persistedScriptPinEpoch == null
+            ? null
+            : normalize(request.getScriptPinControlPlaneRequestId()));
     audit.setScriptEventId(request.getScriptEventId());
     audit.setDryRun(request.getIsDryRun());
     audit.setSourceService(sourceService);
@@ -1151,6 +1158,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String scriptId,
       HandlerScopeValues scopeValues) {
+    Long scriptPinEpoch = request.getScriptPinEpoch() > 0L ? request.getScriptPinEpoch() : null;
+    String scriptPinControlPlaneRequestId =
+        scriptPinEpoch == null ? null : normalize(request.getScriptPinControlPlaneRequestId());
     return eventAuditRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
@@ -1166,8 +1176,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
-            request.getScriptPinEpoch(),
-            normalize(request.getScriptPinControlPlaneRequestId()),
+            scriptPinEpoch,
+            scriptPinControlPlaneRequestId,
             request.getScriptEventId(),
             request.getIsDryRun());
   }
@@ -1188,6 +1198,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String scriptId,
       HandlerScopeValues scopeValues) {
+    String scriptPinControlPlaneRequestId =
+        request.getScriptPinEpoch() > 0L
+            ? normalize(request.getScriptPinControlPlaneRequestId())
+            : null;
     return workItemRepository
         .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
@@ -1204,7 +1218,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptPinEpoch(),
-            normalize(request.getScriptPinControlPlaneRequestId()),
+            scriptPinControlPlaneRequestId,
             request.getScriptEventId(),
             request.getIsDryRun());
   }
@@ -1282,9 +1296,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return repository
         .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
             request.getTenantId(),
-            nullableText(request.getGameInstanceId()),
-            instanceScoped ? nullableText(request.getRegionId()) : null,
-            instanceScoped && request.getRegionEpoch() > 0 ? request.getRegionEpoch() : null,
+            instanceScoped ? normalize(request.getGameInstanceId()) : null,
+            instanceScoped ? normalize(request.getRegionId()) : null,
+            instanceScoped ? (request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L) : null,
             instanceScoped ? nullableText(request.getEntityId()) : null,
             instanceScoped ? normalizePlayableStateScope(request.getPlayableStateScope()) : null,
             request.getEventType(),

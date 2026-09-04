@@ -20,7 +20,6 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -312,8 +311,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
             coordinator,
             followup,
             TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")),
-            null);
+                authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")));
       } catch (IllegalArgumentException ex) {
         return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
       }
@@ -532,48 +530,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
         errorMessage);
   }
 
-  private TargetPointerResolution resolveTargetPointer(RemoteFollowup followup) {
-    if (gameplayAdmissionPointerAuthorityService == null) {
-      return TargetPointerResolution.unavailable(
-          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
-    }
-    final java.util.List<GameplayAdmissionPointerSnapshot> pointers;
-    try {
-      pointers =
-          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-              followup.getTenantId(), followup.getTargetGameInstanceId());
-    } catch (RuntimeException ex) {
-      return TargetPointerResolution.unavailable(
-          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
-    }
-    if (pointers == null
-        || pointers.size() != 1
-        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointers.getFirst())) {
-      return TargetPointerResolution.unavailable(
-          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
-    }
-    GameplayAdmissionPointerSnapshot pointer = pointers.getFirst();
-    if (pointer.tenantId() != followup.getTenantId()
-        || pointer.gameInstanceId() != followup.getTargetGameInstanceId()) {
-      return TargetPointerResolution.unavailable(
-          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
-    }
-    return TargetPointerResolution.available(pointer);
-  }
-
-  private static PayloadExecution retryableTargetPointerFailure(
-      TargetPointerResolution targetPointer) {
-    return retryablePayloadExecution(
-        targetPointer.errorCode(),
-        targetPointer.errorMessage(),
-        "{\"admissionOutcome\":\"RETRY_QUEUED\",\"errorCode\":\""
-            + jsonEscape(targetPointer.errorCode())
-            + "\",\"message\":\""
-            + jsonEscape(targetPointer.errorMessage())
-            + "\"}",
-        null);
-  }
-
   private static boolean isRetryableTargetAdmissionFailure(
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result) {
     String normalized =
@@ -612,8 +568,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       JsonNode root,
       RemoteCommandCoordinator coordinator,
       RemoteFollowup followup,
-      PlayableStateScope playableStateScope,
-      GameplayAdmissionPointerSnapshot targetPointer) {
+      PlayableStateScope playableStateScope) {
     try {
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
@@ -621,15 +576,17 @@ public final class DefaultDurableRemoteFollowupExecutionService
       authoritativeText(coordinator.getScriptId(), root, "scriptId");
       authoritativeText(coordinator.getPluginId(), root, "pluginId");
       authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
-      if (targetPointer == null) {
-        sourceRoutingBundle(followup, root);
-      }
+      sourceRoutingBundle(followup, root);
       authoritativeBoolean(false, root, "isDryRun");
       requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId");
       requiredAuthoritativeText(followup.getEventType(), root, "eventType");
-      firstNonBlank(
-          authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
-          firstNonBlank(followup.getEventSchemaVersion(), "v1"));
+      String eventSchemaVersion =
+          firstNonBlank(
+              authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
+              "v1");
+      if (eventSchemaVersion == null || eventSchemaVersion.isBlank()) {
+        throw new IllegalArgumentException("eventSchemaVersion is required");
+      }
       requiredAuthoritativeText(coordinator.getScriptPatchVersion(), root, "scriptPatchVersion");
       requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId");
       triggerMode(root, followup);
@@ -836,19 +793,4 @@ public final class DefaultDurableRemoteFollowupExecutionService
       long targetGameInstanceId,
       String targetRegionId,
       long targetRegionEpoch) {}
-
-  private record TargetPointerResolution(
-      GameplayAdmissionPointerSnapshot pointer, String errorCode, String errorMessage) {
-    private static TargetPointerResolution available(GameplayAdmissionPointerSnapshot pointer) {
-      return new TargetPointerResolution(pointer, null, null);
-    }
-
-    private static TargetPointerResolution unavailable(String errorCode, String errorMessage) {
-      return new TargetPointerResolution(null, errorCode, errorMessage);
-    }
-
-    private boolean available() {
-      return pointer != null;
-    }
-  }
 }

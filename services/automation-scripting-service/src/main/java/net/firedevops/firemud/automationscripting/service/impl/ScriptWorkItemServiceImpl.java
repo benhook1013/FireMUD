@@ -334,6 +334,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String lastObservedControlPlaneRequestId) {
     requireText(tenantId, "tenant_id");
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompletePinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
     Optional<PatchInstanceRolloutSummary> projection =
@@ -382,6 +383,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompletePinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     List<PatchInstanceRolloutSummary> projections =
         scriptPinEpoch > 0
             ? rolloutProjectionService.listProjections(
@@ -438,6 +440,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       int limit) {
     requireText(tenantId, "tenant_id");
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    requireCompletePinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     List<PatchInstanceRolloutEventSummary> events =
         scriptPinEpoch > 0
             ? rolloutProjectionService.listEvents(
@@ -598,6 +601,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
     if (scriptPinEpoch < 0) {
       throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+  }
+
+  private static void requireCompletePinTuple(long scriptPinEpoch, String requestId) {
+    boolean hasEpoch = scriptPinEpoch > 0L;
+    boolean hasRequestId = requestId != null && !requestId.isBlank();
+    if (hasEpoch != hasRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
   }
 

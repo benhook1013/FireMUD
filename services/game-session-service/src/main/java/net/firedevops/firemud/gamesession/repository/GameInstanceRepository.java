@@ -198,12 +198,14 @@ public class GameInstanceRepository {
             reason,
             expectedPinKind,
             expectedScriptPinEpoch);
+    boolean repinEligible = canDeriveRepin(operationKind);
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = org.jooq.impl.DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
+            if (!matchesMutationDigest(
+                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -227,7 +229,8 @@ public class GameInstanceRepository {
           // instead of racing its primary-key insert.
           existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
+            if (!matchesMutationDigest(
+                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -369,6 +372,9 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
+    if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("target_script_patch_version is required");
+    }
     if (expectedPinKind == null || expectedPinKind.isBlank()) {
       throw new IllegalArgumentException("expected_pin_kind is required");
     }
@@ -396,12 +402,14 @@ public class GameInstanceRepository {
             reason,
             expectedPinKind,
             expectedScriptPinEpoch);
+    boolean repinEligible = canDeriveRepin(operationKind);
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = org.jooq.impl.DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
+            if (!matchesMutationDigest(
+                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -421,7 +429,8 @@ public class GameInstanceRepository {
           }
           existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
+            if (!matchesMutationDigest(
+                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -556,12 +565,18 @@ public class GameInstanceRepository {
       Record existing, String requestedMutationDigest, String repinMutationDigest) {
     String existingDigest = existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST);
     return requestedMutationDigest.equals(existingDigest)
-        || repinMutationDigest.equals(existingDigest);
+        || (repinMutationDigest != null && repinMutationDigest.equals(existingDigest));
   }
 
   private String effectiveOperationKind(
       String requestedOperationKind, String targetScriptPatchVersion, String previousPatch) {
-    return targetScriptPatchVersion.equals(previousPatch) ? "REPIN" : requestedOperationKind;
+    return canDeriveRepin(requestedOperationKind) && targetScriptPatchVersion.equals(previousPatch)
+        ? "REPIN"
+        : requestedOperationKind;
+  }
+
+  private boolean canDeriveRepin(String operationKind) {
+    return "SET".equals(operationKind);
   }
 
   private boolean expectedPinMatches(

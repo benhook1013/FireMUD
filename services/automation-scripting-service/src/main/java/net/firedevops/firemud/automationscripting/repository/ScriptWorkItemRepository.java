@@ -343,7 +343,9 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId())
+            .set(
+                SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                normalizedScriptPinControlPlaneRequestId(entity))
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, entity.getSourceService())

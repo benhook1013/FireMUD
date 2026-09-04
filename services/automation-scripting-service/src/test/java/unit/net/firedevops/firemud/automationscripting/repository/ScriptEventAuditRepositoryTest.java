@@ -51,6 +51,29 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
+  void timerAuditLookupRejectsNegativeEpochWithoutNormalizingToUnpinned() {
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findTimerAuditEvents(
+                    "tenant-1",
+                    "game-1",
+                    "patch-1",
+                    -1L,
+                    null,
+                    "script-1",
+                    "onTimerExpire",
+                    "",
+                    null,
+                    null,
+                    PageRequest.of(0, 25)))
+        .withMessage("script_pin_epoch must be non-negative");
+  }
+
+  @Test
   void legacyHandlerLookupRejectsPinnedEpochWithoutOwnerRequestId() {
     ScriptEventAuditRepository repository =
         new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
@@ -129,7 +152,7 @@ class ScriptEventAuditRepositoryTest {
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
-          returned.set(requestIdField, "pin-request-1");
+          returned.set(requestIdField, null);
           returned.set(insertedField, true);
           result.add(returned);
           return new MockResult[] {new MockResult(1, result)};
@@ -144,6 +167,9 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.inserted()).isTrue();
     assertThat(result.audit().getId()).isEqualTo(7L);
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
         .contains("on conflict", " do update", "returning", "xmax = 0");
     String conflictClause = conflictClause(sqlRef.get());
@@ -201,7 +227,9 @@ class ScriptEventAuditRepositoryTest {
         repository.insertIfAbsentByHandlerIdentity(entity);
 
     assertThat(result.inserted()).isTrue();
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(result.audit().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     String conflictClause = conflictClause(sqlRef.get());
     assertThat(conflictClause)
         .contains(
@@ -245,6 +273,9 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.audit().getId()).isEqualTo(9L);
     assertThat(result.audit().getTenantId()).isEqualTo("tenant-1");
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
+    assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getScriptPinEpoch()).isNull();
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(result.audit().getFinalReason()).isEqualTo("original_reason");
     assertThat(result.audit().getCreatedAt()).isEqualTo(now);
     assertThat(result.audit().getUpdatedAt()).isEqualTo(now.plusSeconds(1));

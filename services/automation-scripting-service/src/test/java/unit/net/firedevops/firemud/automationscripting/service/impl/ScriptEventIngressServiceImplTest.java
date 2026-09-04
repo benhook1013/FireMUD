@@ -1947,7 +1947,7 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
-  void admitsOnLoadAsPatchReadinessWorkForOneScript() {
+  void deduplicatesUnpinnedOnLoadUsingNullOwnerTupleWithoutQueueingAgain() {
     SessionContext.setContext(
         "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
     ScriptEventIngressAuditRepository repository =
@@ -1961,7 +1961,7 @@ class ScriptEventIngressServiceImplTest {
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(workItemRepository
-            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
                 "1",
                 "",
                 "",
@@ -1975,12 +1975,13 @@ class ScriptEventIngressServiceImplTest {
                 "onLoad",
                 "v1",
                 "patch-1",
-                1L,
+                0L,
+                null,
                 "onload:1:patch-1:script-1",
                 false))
-        .thenReturn(false);
+        .thenReturn(true);
     when(eventAuditRepository
-            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
                 "1",
                 "",
                 "",
@@ -1994,7 +1995,8 @@ class ScriptEventIngressServiceImplTest {
                 "onLoad",
                 "v1",
                 "patch-1",
-                1L,
+                0L,
+                null,
                 "onload:1:patch-1:script-1",
                 false))
         .thenReturn(false);
@@ -2027,14 +2029,8 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isTrue();
     assertThat(admission.resolvedHandlerCount()).isEqualTo(1);
-    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository).save(workItemCaptor.capture());
-    assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
-    assertThat(workItemCaptor.getValue().getGameInstanceId()).isEmpty();
-    assertThat(workItemCaptor.getValue().getQuotaClass())
-        .isEqualTo(ScriptQuotaClasses.PUBLISH_READINESS);
-    assertThat(workItemCaptor.getValue().getSourceKind()).isEqualTo("PATCH_READINESS_EVENT");
-    verify(automationQueueService).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
+    verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
+    verify(automationQueueService, never()).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 
   @Test
@@ -2052,7 +2048,7 @@ class ScriptEventIngressServiceImplTest {
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(workItemRepository
-            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
                 "1",
                 "",
                 "",
@@ -2066,12 +2062,13 @@ class ScriptEventIngressServiceImplTest {
                 "onLoad",
                 "v1",
                 "patch-1",
-                1L,
+                0L,
+                null,
                 "onload:1:patch-1:script-1",
                 false))
         .thenReturn(false);
     when(eventAuditRepository
-            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
                 "1",
                 "",
                 "",
@@ -2085,7 +2082,8 @@ class ScriptEventIngressServiceImplTest {
                 "onLoad",
                 "v1",
                 "patch-1",
-                1L,
+                0L,
+                null,
                 "onload:1:patch-1:script-1",
                 false))
         .thenReturn(false);
@@ -3015,6 +3013,70 @@ class ScriptEventIngressServiceImplTest {
     verifyNoInteractions(projectionService);
   }
 
+  @Test
+  void rejectsSamePatchAndEpochWhenOwnerRequestIdDiffersWithoutEffects() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventAuditRepository eventAuditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    AutomationQueueService queueService = Mockito.mock(AutomationQueueService.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchPinProjectionService projectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            workItemRepository,
+            eventAuditRepository,
+            new BuiltInScriptEventRegistryService(),
+            queueService,
+            outputProperties(),
+            gameSessionControlPlaneClient,
+            admissionStateService(),
+            projectionService,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setScriptPinControlPlaneRequestId("different-request")
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-mismatched-owner")
+                .setReadSnapshotToken("snapshot-1")
+                .build());
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.reason()).isEqualTo("script_pin_control_plane_request_id_mismatch");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
+    verifyNoInteractions(projectionService);
+    verifyNoInteractions(eventAuditRepository);
+    verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
+    verifyNoInteractions(queueService);
+    ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
+        ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
+    verify(repository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(auditCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(auditCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo("different-request");
+  }
+
   @ParameterizedTest(name = "rejects runtime authority from {0}/{1}")
   @MethodSource("mismatchedRuntimeScopes")
   void rejectsRuntimeStateFromDifferentScopeBeforeProjection(
@@ -3635,7 +3697,7 @@ class ScriptEventIngressServiceImplTest {
     AtomicReference<ScriptEventIngressAudit> row = new AtomicReference<>();
     CountDownLatch oldOwnerEnteredResolution = new CountDownLatch(1);
     CountDownLatch releaseOldOwner = new CountDownLatch(1);
-    AtomicReference<Integer> bindingCalls = new AtomicReference<>(0);
+    AtomicInteger bindingCalls = new AtomicInteger();
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
         .thenAnswer(
             invocation -> {
@@ -3659,7 +3721,7 @@ class ScriptEventIngressServiceImplTest {
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenAnswer(
             invocation -> {
-              if (bindingCalls.getAndSet(bindingCalls.get() + 1) == 0) {
+              if (bindingCalls.getAndIncrement() == 0) {
                 oldOwnerEnteredResolution.countDown();
                 if (!releaseOldOwner.await(5, TimeUnit.SECONDS)) {
                   throw new AssertionError("timed out waiting for claim reclaim");

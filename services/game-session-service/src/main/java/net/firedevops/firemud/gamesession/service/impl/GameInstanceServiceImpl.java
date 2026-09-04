@@ -48,6 +48,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private static final String STATUS_STOPPING = "STOPPING";
   private static final String STATUS_STOPPED = "STOPPED";
   private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
+  private static final String WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE =
+      "world activation authority unavailable";
+  private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
+      "world termination authority unavailable";
+  private static final String WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL =
+      "WORLD_AUTHORITY_MALFORMED: response was null";
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
@@ -694,7 +700,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       ResolvedLaunchDescriptor resolvedLaunchDescriptor,
       StartSessionRequest request) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world activation authority unavailable");
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE);
     }
     final PrepareWorldInstanceResponse response;
     try {
@@ -714,10 +720,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               resolvedLaunchDescriptor.versionStateEpoch(),
               resolvedLaunchDescriptor.remapSetId());
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world activation authority unavailable", ex);
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, ex);
     }
     if (response == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
     }
     if (response.hasError()) {
       throw new IllegalStateException(
@@ -740,7 +746,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private void activatePreparedWorldInstance(PreparedWorldInstance preparedWorldInstance) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world activation authority unavailable");
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE);
     }
     final ActivatePreparedWorldInstanceResponse response;
     try {
@@ -750,10 +756,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               preparedWorldInstance.gameInstanceId(),
               preparedWorldInstance.lifecycleEpoch());
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world activation authority unavailable", ex);
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, ex);
     }
     if (response == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
     }
     if (response.hasError()) {
       throw new IllegalStateException(
@@ -778,10 +784,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               preparedWorldInstance.lifecycleEpoch(),
               reason);
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world activation authority unavailable", ex);
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, ex);
     }
     if (response == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
     }
     if (response.hasError()) {
       throw new IllegalStateException(
@@ -797,7 +803,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private WorldInstanceLifecycleSnapshot readWorldInstanceLifecycle(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world termination authority unavailable");
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE);
     }
     final GetWorldInstanceLifecycleResponse lifecycleResponse;
     try {
@@ -805,10 +811,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           worldManagementClient.getWorldInstanceLifecycle(
               runningState.tenantId(), runningState.id());
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world termination authority unavailable", ex);
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE, ex);
     }
     if (lifecycleResponse == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
     }
     if (lifecycleResponse.hasError()) {
       throw new IllegalStateException(
@@ -838,7 +844,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       String terminationRequestId,
       String terminationReason) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world termination authority unavailable");
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE);
     }
     final TerminateWorldInstanceResponse terminateResponse;
     try {
@@ -850,10 +856,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               terminationRequestId,
               terminationReason);
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world termination authority unavailable", ex);
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE, ex);
     }
     if (terminateResponse == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: response was null");
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
     }
     if (terminateResponse.hasError()) {
       throw new IllegalStateException(

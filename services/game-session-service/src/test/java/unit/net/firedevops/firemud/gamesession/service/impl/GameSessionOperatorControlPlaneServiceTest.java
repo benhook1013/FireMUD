@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
@@ -134,7 +136,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                     .build())
             .build();
 
-    assertThatIllegalArgumentException()
+    assertThatExceptionOfType(AdminAuthorizationException.class)
         .isThrownBy(
             () ->
                 newService(repository, tickService, gameDesign, automation)

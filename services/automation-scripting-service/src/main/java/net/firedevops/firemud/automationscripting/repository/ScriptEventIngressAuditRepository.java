@@ -125,7 +125,9 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID, entity.getRegionId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH, entity.getRegionEpoch())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID, entity.getEntityId())
-            .set(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE,
+                canonicalPlayableStateScope(entity.getGameInstanceId(), entity.getPlayableStateScope()))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.WORLD_SLUG, entity.getWorldSlug())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.POINTER_VERSION, entity.getPointerVersion())
@@ -346,7 +348,8 @@ public class ScriptEventIngressAuditRepository {
     record.setRegionId(entity.getRegionId());
     record.setRegionEpoch(entity.getRegionEpoch());
     record.setEntityId(entity.getEntityId());
-    record.setPlayableStateScope(entity.getPlayableStateScope());
+    record.setPlayableStateScope(
+        canonicalPlayableStateScope(entity.getGameInstanceId(), entity.getPlayableStateScope()));
     record.setWorldSlug(entity.getWorldSlug());
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
@@ -390,7 +393,10 @@ public class ScriptEventIngressAuditRepository {
     entity.setRegionId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID));
     entity.setRegionEpoch(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH));
     entity.setEntityId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID));
-    entity.setPlayableStateScope(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE));
+    entity.setPlayableStateScope(
+        canonicalPlayableStateScope(
+            record.get(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID),
+            record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE)));
     entity.setWorldSlug(record.get(SCRIPT_EVENT_INGRESS_AUDIT.WORLD_SLUG));
     entity.setRealmSlug(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.POINTER_VERSION));
@@ -428,5 +434,9 @@ public class ScriptEventIngressAuditRepository {
     Integer rowVersion = record.get(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
+  }
+
+  private static String canonicalPlayableStateScope(String gameInstanceId, String scope) {
+    return gameInstanceId == null ? scope : scope == null ? "" : scope;
   }
 }

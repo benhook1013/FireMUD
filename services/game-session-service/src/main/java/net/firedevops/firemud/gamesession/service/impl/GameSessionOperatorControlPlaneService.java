@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import java.time.Instant;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
@@ -37,6 +38,11 @@ import org.springframework.stereotype.Service;
 
 @Service
 final class GameSessionOperatorControlPlaneService {
+  private static final String SCRIPT_PATCH_AUTHORITY_UNAVAILABLE =
+      "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+  private static final String SCRIPT_PATCH_NOT_PUBLISHED = "SCRIPT_PATCH_NOT_PUBLISHED";
+  private static final String SCRIPT_PATCH_NOT_READY = "SCRIPT_PATCH_NOT_READY";
+
   private final GameInstanceRepository gameInstanceRepository;
   private final TickService tickService;
   private final GameDesignClient gameDesignClient;
@@ -289,7 +295,7 @@ final class GameSessionOperatorControlPlaneService {
     }
     if (expected.getKind() == ExpectedCurrentPin.Kind.UNCONDITIONAL
         && !SessionContext.getGlobalRoles().contains("platformAdmin")) {
-      throw new IllegalArgumentException("UNCONDITIONAL requires platformAdmin");
+      throw new AdminAuthorizationException("UNCONDITIONAL requires platformAdmin");
     }
     return expected;
   }
@@ -397,7 +403,7 @@ final class GameSessionOperatorControlPlaneService {
       return "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT";
     }
     if (automationScriptingControlPlaneClient == null) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
     GetPublishedScriptPatchVersionResponse publicationResponse;
@@ -407,21 +413,21 @@ final class GameSessionOperatorControlPlaneService {
               ? null
               : gameDesignClient.getPublishedScriptPatchVersion(tenantId, targetScriptPatchVersion);
     } catch (RuntimeException ex) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     if (publicationResponse == null) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     if (publicationResponse.hasError() && !publicationResponse.getError().getCode().isBlank()) {
       String code = publicationResponse.getError().getCode();
       return switch (code) {
-        case "NOT_FOUND" -> "SCRIPT_PATCH_NOT_PUBLISHED";
-        case "GAME_DESIGN_UNAVAILABLE" -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
-        default -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+        case "NOT_FOUND" -> SCRIPT_PATCH_NOT_PUBLISHED;
+        case "GAME_DESIGN_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+        default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
       };
     }
     if (!publicationResponse.hasScriptPatch()) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     PublishedScriptPatchVersion published = publicationResponse.getScriptPatch();
     if (!Long.toString(tenantId).equals(published.getTenantId())) {
@@ -430,11 +436,11 @@ final class GameSessionOperatorControlPlaneService {
     if (!targetScriptPatchVersion.equals(published.getScriptPatchVersion())
         || published.getVersionId() <= 0L
         || published.getBaseVersionId() <= 0L) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     if (published.getPublicationState()
         != VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED) {
-      return "SCRIPT_PATCH_NOT_PUBLISHED";
+      return SCRIPT_PATCH_NOT_PUBLISHED;
     }
 
     GetScriptPatchStatusResponse readiness;
@@ -443,25 +449,25 @@ final class GameSessionOperatorControlPlaneService {
           automationScriptingControlPlaneClient.getScriptPatchStatus(
               tenantId, targetScriptPatchVersion);
     } catch (RuntimeException ex) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     if (readiness == null) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
     if (readiness.hasError() && !readiness.getError().getCode().isBlank()) {
       String code = readiness.getError().getCode();
       return switch (code) {
-        case "NOT_FOUND" -> "SCRIPT_PATCH_NOT_READY";
-        case "AUTOMATION_SCRIPTING_UNAVAILABLE" -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
-        default -> "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+        case "NOT_FOUND" -> SCRIPT_PATCH_NOT_READY;
+        case "AUTOMATION_SCRIPTING_UNAVAILABLE" -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+        default -> SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
       };
     }
     if (readiness.getStatus() != ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY) {
-      return "SCRIPT_PATCH_NOT_READY";
+      return SCRIPT_PATCH_NOT_READY;
     }
     if (readiness.getBaseVersionId() <= 0L
         || readiness.getBaseVersionId() != published.getBaseVersionId()) {
-      return "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
     }
 
     Long runtimeVersionId = runtimeVersionId(instance);

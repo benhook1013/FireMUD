@@ -62,6 +62,14 @@ public class ScriptEventAuditRepository {
       String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
+    Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
+    String normalizedScriptPinControlPlaneRequestId =
+        blankToNull(scriptPinControlPlaneRequestId);
+    if ((normalizedScriptPinEpoch != null)
+        != (normalizedScriptPinControlPlaneRequestId != null)) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+    }
     return SCRIPT_EVENT_AUDIT
         .TENANT_ID
         .eq(tenantId)
@@ -77,10 +85,10 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-        .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
+        .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(normalizedScriptPinEpoch))
         .and(
             SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                scriptPinControlPlaneRequestId))
+                normalizedScriptPinControlPlaneRequestId))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
   }
@@ -284,8 +292,11 @@ public class ScriptEventAuditRepository {
       Instant changedAfter,
       Instant changedBefore,
       Pageable pageable) {
-    if ((scriptPinEpoch != null && scriptPinEpoch > 0L)
-        != (scriptPinControlPlaneRequestId != null && !scriptPinControlPlaneRequestId.isBlank())) {
+    Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
+    String normalizedScriptPinControlPlaneRequestId =
+        blankToNull(scriptPinControlPlaneRequestId);
+    if ((normalizedScriptPinEpoch != null)
+        != (normalizedScriptPinControlPlaneRequestId != null)) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id is required for pinned timer audit lookups");
     }
@@ -300,14 +311,14 @@ public class ScriptEventAuditRepository {
     if (!scriptPatchVersion.isBlank()) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
     }
-    if (scriptPinEpoch != null) {
-      condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch));
+    if (normalizedScriptPinEpoch != null) {
+      condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.eq(normalizedScriptPinEpoch));
     }
-    if (scriptPinEpoch != null || scriptPinControlPlaneRequestId != null) {
+    if (normalizedScriptPinControlPlaneRequestId != null) {
       condition =
           condition.and(
               SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                  scriptPinControlPlaneRequestId));
+                  normalizedScriptPinControlPlaneRequestId));
     }
     if (!scriptId.isBlank()) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId));
@@ -375,10 +386,10 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
-            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, normalizedScriptPinEpoch(entity))
             .set(
                 SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                entity.getScriptPinControlPlaneRequestId())
+                blankToNull(entity.getScriptPinControlPlaneRequestId()))
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
@@ -431,10 +442,10 @@ public class ScriptEventAuditRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
-    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setScriptPinEpoch(normalizedScriptPinEpoch(entity));
     record.set(
         SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-        entity.getScriptPinControlPlaneRequestId());
+        blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
@@ -474,7 +485,7 @@ public class ScriptEventAuditRepository {
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(
-        record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+        blankToNull(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID)));
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
@@ -498,4 +509,23 @@ public class ScriptEventAuditRepository {
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
   }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+
+  private static Long normalizedScriptPinEpoch(ScriptEventAudit entity) {
+    return normalizeScriptPinEpoch(entity.getScriptPinEpoch());
+  }
+
+  private static Long normalizeScriptPinEpoch(Long epoch) {
+    if (epoch == null || epoch == 0L) {
+      return null;
+    }
+    if (epoch < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    return epoch;
+  }
+
 }

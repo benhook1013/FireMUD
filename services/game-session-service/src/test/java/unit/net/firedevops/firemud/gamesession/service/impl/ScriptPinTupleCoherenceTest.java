@@ -52,6 +52,22 @@ class ScriptPinTupleCoherenceTest {
   }
 
   @Test
+  void rejectsPatchAndRequestWithoutEpoch() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent("patch-1", null, "request-1"))
+        .withMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together");
+  }
+
+  @Test
+  void rejectsEpochAndRequestWithoutPatch() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent(null, 1L, "request-1"))
+        .withMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together");
+  }
+
+  @Test
   void rejectsRequestIdWithoutTheCompletePinTuple() {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent(null, null, "request-1"))
