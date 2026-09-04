@@ -1619,7 +1619,29 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", replay.failureCode());
     verify(automationScriptingClient, never()).triggerScriptEvent(any());
     verify(pointerAuthority, never()).listByRuntimeTarget(1L, 9L);
-    verify(remoteFollowupRuntimeService).recordResult(any());
+    org.mockito.ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> resultRequestCaptor =
+        org.mockito.ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
+    verify(remoteFollowupRuntimeService).recordResult(resultRequestCaptor.capture());
+    RemoteFollowupRuntimeService.ResultRequest resultRequest = resultRequestCaptor.getValue();
+    assertEquals(1L, resultRequest.tenantId());
+    assertEquals("remote-result:trigger-followup", resultRequest.resultId());
+    assertEquals("trigger-followup", resultRequest.followupId());
+    assertEquals("coord-trigger-followup", resultRequest.coordinatorId());
+    assertEquals(7L, resultRequest.originGameInstanceId());
+    assertEquals("region-origin", resultRequest.originRegionId());
+    assertEquals(4L, resultRequest.originRegionEpoch());
+    assertEquals(9L, resultRequest.targetGameInstanceId());
+    assertEquals("region-target", resultRequest.targetRegionId());
+    assertEquals(8L, resultRequest.targetRegionEpoch());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, resultRequest.outcome());
+    assertEquals(
+        "{\"failureCode\":\"REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE\",\"message\":\"Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available\"}",
+        resultRequest.resultPayloadJson());
+    assertNull(resultRequest.resultCommandId());
+    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", resultRequest.resultErrorCode());
+    assertEquals(
+        "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available",
+        resultRequest.resultMessage());
   }
 
   static Stream<List<GameplayAdmissionPointerSnapshot>> temporarilyUnavailableTargetPointers() {

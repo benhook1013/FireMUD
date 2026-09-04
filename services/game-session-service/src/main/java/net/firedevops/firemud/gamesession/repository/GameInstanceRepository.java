@@ -171,6 +171,9 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch) {
+    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
+      throw new IllegalArgumentException("control_plane_request_id is required");
+    }
     if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
       throw new IllegalArgumentException("target_script_patch_version is required");
     }
@@ -372,6 +375,9 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
+    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
+      throw new IllegalArgumentException("control_plane_request_id is required");
+    }
     if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
       throw new IllegalArgumentException("target_script_patch_version is required");
     }

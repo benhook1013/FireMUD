@@ -398,6 +398,42 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void controlPlaneRequestIdMustBeNonBlankBeforePersistence() {
+    for (String controlPlaneRequestId : java.util.Arrays.asList(null, " ")) {
+      org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  repository.applyScriptPin(
+                      1L,
+                      7L,
+                      "SET",
+                      "patch-new",
+                      controlPlaneRequestId,
+                      "operator",
+                      "pin",
+                      "EXPECT_EPOCH",
+                      1L))
+          .withMessage("control_plane_request_id is required");
+      org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+          .isThrownBy(
+              () ->
+                  repository.recordScriptPinFailure(
+                      1L,
+                      7L,
+                      "SET",
+                      "patch-new",
+                      controlPlaneRequestId,
+                      "operator",
+                      "authority unavailable",
+                      "EXPECT_EPOCH",
+                      1L,
+                      "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+          .withMessage("control_plane_request_id is required");
+    }
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
+  }
+
+  @Test
   void unsupportedExpectedPinKindFailsBeforePersistence() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
         .isThrownBy(
