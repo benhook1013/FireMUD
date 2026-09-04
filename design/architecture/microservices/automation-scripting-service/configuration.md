@@ -36,16 +36,16 @@ These knobs are the authoritative defaults referenced by the scripting architect
 - pin and rollout convergence reads use `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` to derive the public `isProjectionStale` wire field; internal Java projection summaries use `projectionStale` and map it to that public field rather than exposing a second public field or relying on hardcoded local thresholds;
 - enabled plugin runtime states are rechecked against current publication, signer-revocation, and component-policy metadata using `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` and `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE`; plugin-trigger ingress fails closed when the last successful policy check is older than `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS`;
 - outbox cleanup and diagnosis for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` rows must follow the documented retention knobs above rather than ad hoc cleanup windows; and
-- queue rebuild cadence and scan bounds for the derived `automation:queue:*` projection must follow `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` rather than unbounded best-effort loops; and
+- **Target state only:** an owner-gated queue rebuild may define bounded cadence and scan limits for the derived `automation:queue:*` projection; no current queue-rebuild execution or configuration is bound until that owner/serialization gate exists; and
 - the durable evaluator cadence and claim bounds must follow `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS` and `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE` rather than ad hoc polling loops.
 
 ## Implementation Status
 
-The formation REST family is currently exposed under the service's HTTP auth configuration without a route-specific tenant binding; with the source OpenAPI's `security: []` and no controller guard, it is publicly reachable wherever the service is exposed. Configuration must not be treated as a substitute for domain authorization: the target removes public exposure and requires exact internal/admin route policy plus caller-to-tenant and Entity-owned NPC ownership checks, with denial proof for unauthenticated and cross-tenant formation operations.
+Formation REST handlers are absent from the runtime and authoritative OpenAPI, so no HTTP route or HTTP auth configuration exists for that family. The remaining authenticated internal gRPC operations retain their admin guard, but configuration does not establish Entity-owned NPC namespace or ownership proof; see the [API Contracts implementation status](./api-contracts.md#implementation-status) for the canonical boundary.
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 
-- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, and dead-letter size/age knobs listed below;
 - the current runtime does not implement artifact-estimate ordered-prefix reservation;
 - live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention and `DEAD_LETTERED` rows by max age plus a row-count cap; stage-aware recovery and a coherent retained-evidence bundle remain unimplemented;
 - live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission;
@@ -82,8 +82,8 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_OUTBOX_HANDED_OFF_RETENTION_DAYS` | Retention window for successfully handed-off outbox rows needed for rollback and replay diagnosis | `7` | Stable operator knob |
 | `SCRIPT_OUTBOX_CANCELED_RETENTION_DAYS` | Retention window for canceled outbox rows needed for rollback and drain diagnosis | `7` | Stable operator knob |
 | `SCRIPT_OUTBOX_TERMINAL_CLEANUP_INTERVAL_SECONDS` | Cleanup sweep interval for terminal outbox rows (`HANDED_OFF`, `CANCELED`, `DEAD_LETTERED`) | `300` | Stable operator knob |
-| `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` | Scheduled interval for the target bounded rebuild of missing `automation:queue:*` pointer entries from durable pending work items; current implementation also selects `EVALUATING` without a stale/owner/CAS gate, so reset/resume is unavailable and must fail closed; a non-atomic status preflight cannot authorize the target PENDING-only path | `60` | Stable operator knob |
-| `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` | Maximum durable work items inspected per target queue-rebuild sweep; the current query also includes `EVALUATING` rows | `200` | Stable operator knob |
+| `SCRIPT_OUTBOX_QUEUE_REBUILD_INTERVAL_SECONDS` | Target-state-only cadence for an owner-gated bounded rebuild; no current scheduled rebuild is bound | `60` | Target-only |
+| `SCRIPT_OUTBOX_QUEUE_REBUILD_BATCH_SIZE` | Target-state-only maximum durable work items inspected per owner-gated rebuild sweep | `200` | Target-only |
 | `SCRIPT_OUTBOX_EXECUTION_INTERVAL_SECONDS` | Scheduled interval for the durable work-item execution loop that claims and evaluates pending work | `5` | Stable operator knob |
 | `SCRIPT_OUTBOX_EXECUTION_BATCH_SIZE` | Maximum claimed work items processed per execution sweep | `50` | Stable operator knob |
 | `SCRIPT_DEAD_LETTER_MAX_ROWS` | Maximum dead-lettered automation work items retained before cleanup | `100000` | Stable operator knob |

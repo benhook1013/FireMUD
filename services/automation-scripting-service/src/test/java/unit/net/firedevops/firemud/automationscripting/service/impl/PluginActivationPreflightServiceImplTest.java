@@ -154,7 +154,7 @@ class PluginActivationPreflightServiceImplTest {
             List.of(
                 binding("plugin-market-bell", "onEnterRegion", "REGION", "market-square", false),
                 binding("plugin-town-crier", "onEnterRegion", "REGION", "market-square", true)));
-    PluginRuntimeState activePlugin = activePlugin("market-bell", "market-bell-v1");
+    PluginRuntimeState activePlugin = activePlugin("market-bell", " market-bell-v1 ");
     when(runtimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
         .thenReturn(List.of(activePlugin, disabledPlugin("town-crier")));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))

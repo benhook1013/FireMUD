@@ -40,6 +40,7 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstances
 import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsResponse;
 import net.firedevops.firemud.automationscripting.v1.PluginPublicationLink;
+import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemResult;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsRequest;
 import net.firedevops.firemud.automationscripting.v1.ReplayDeadLetteredWorkItemsResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptDeadLetterEntry;
@@ -167,8 +168,14 @@ final class AutomationPatchControlPlaneService {
         .setTenantId(summary.tenantId())
         .setGameInstanceId(summary.gameInstanceId())
         .setRegionId(summary.regionId())
+        .setStatePresent(summary.statePresent())
         .setAdmissionMode(AutomationControlPlaneSupport.toProtoMode(summary.admissionMode()))
         .setAdmissionEpoch(summary.admissionEpoch())
+        .setControlPlaneRequestId(summary.controlPlaneRequestId())
+        .setTargetMode(AutomationControlPlaneSupport.toProtoMode(summary.targetMode()))
+        .setOutcome(summary.outcome())
+        .setRequestFingerprint(summary.requestFingerprint())
+        .setAcknowledgedAtMs(summary.acknowledgedAtMs())
         .setActiveExecutionCount(summary.activeExecutionCount())
         .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
         .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
@@ -409,10 +416,23 @@ final class AutomationPatchControlPlaneService {
                 request.getControlPlaneRequestId(),
                 request.getActorPrincipal(),
                 request.getReason()));
-    return ReplayDeadLetteredWorkItemsResponse.newBuilder()
-        .setReplayedCount(result.replayedCount())
-        .setRejectedCount(result.rejectedCount())
-        .build();
+    ReplayDeadLetteredWorkItemsResponse.Builder response =
+        ReplayDeadLetteredWorkItemsResponse.newBuilder()
+            .setReplayedCount(result.replayedCount())
+            .setRejectedCount(result.rejectedCount())
+            .setRequestFingerprint(result.requestFingerprint());
+    result.results().stream()
+        .map(
+            item ->
+                ReplayDeadLetteredWorkItemResult.newBuilder()
+                    .setWorkItemId(item.workItemId())
+                    .setOutcome(item.outcome())
+                    .setRejectionReason(item.rejectionReason())
+                    .setFailureReason(item.failureReason())
+                    .setFailureGeneration(item.failureGeneration())
+                    .build())
+        .forEach(response::addResults);
+    return response.build();
   }
 
   CancelPendingWorkItemsForPatchResponse cancelPendingWorkItemsForPatch(

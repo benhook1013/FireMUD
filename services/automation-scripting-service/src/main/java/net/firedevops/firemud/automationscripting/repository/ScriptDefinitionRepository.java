@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -68,10 +69,7 @@ public class ScriptDefinitionRepository {
 
   public ScriptDefinition save(ScriptDefinition entity) {
     if (entity.getId() == null) {
-      ScriptsRecord record = dsl.newRecord(SCRIPTS);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      return upsertByIdentity(entity);
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
@@ -89,6 +87,31 @@ public class ScriptDefinitionRepository {
     }
     entity.setRowVersion(nextRowVersion);
     return findById(entity.getId()).orElseThrow();
+  }
+
+  /**
+   * Inserts or replaces the one definition identified by tenant, patch version, and script name.
+   *
+   * <p>The natural-key conflict is resolved by PostgreSQL's unique index in the same statement.
+   * This is intentionally an update rather than a read-then-insert sequence: transport retries and
+   * concurrent publication attempts therefore retain one stable definition row and ID.
+   */
+  private ScriptDefinition upsertByIdentity(ScriptDefinition entity) {
+    ScriptsRecord record = dsl.newRecord(SCRIPTS);
+    populate(record, entity);
+    return dsl.insertInto(SCRIPTS)
+        .set(record)
+        .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
+        .doUpdate()
+        .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
+        // An exact transport retry is a logical no-op. Keep the optimistic-lock
+        // version stable unless the definition content actually changed.
+        .set(
+            SCRIPTS.ROW_VERSION,
+            DSL.when(SCRIPTS.DEFINITION.eq(DSL.excluded(SCRIPTS.DEFINITION)), SCRIPTS.ROW_VERSION)
+                .otherwise(SCRIPTS.ROW_VERSION.plus(1)))
+        .returning()
+        .fetchOne(this::toEntity);
   }
 
   public List<ScriptDefinition> saveAll(Collection<ScriptDefinition> entities) {
