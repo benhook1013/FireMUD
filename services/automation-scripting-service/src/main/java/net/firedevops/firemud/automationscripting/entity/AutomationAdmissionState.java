@@ -12,6 +12,7 @@ public class AutomationAdmissionState {
   private String mode = "NORMAL";
   private long admissionEpoch = 1L;
   private String controlPlaneRequestId;
+  private String controlPlaneRequestFingerprint = "";
   private String actorPrincipal;
   private String reason;
   private Instant createdAt = Instant.now();

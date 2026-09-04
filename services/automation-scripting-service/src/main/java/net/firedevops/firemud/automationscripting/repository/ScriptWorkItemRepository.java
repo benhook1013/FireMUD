@@ -1,14 +1,20 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.notExists;
+import static org.jooq.impl.DSL.selectOne;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -30,8 +36,11 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
+  private static final int MAX_CANCELLATION_ROWS = 100;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
+  private static final Field<LocalDateTime> CURRENT_TIMESTAMP =
+      field("CURRENT_TIMESTAMP", LocalDateTime.class);
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
@@ -80,6 +89,53 @@ public class ScriptWorkItemRepository {
             realmSlug,
             pointerVersion,
             scriptId,
+            null,
+            null,
+            null,
+            eventType,
+            eventSchemaVersion,
+            scriptPatchVersion,
+            scriptEventId,
+            dryRun,
+            false));
+  }
+
+  public boolean
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+          String tenantId,
+          String gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
+          String scriptId,
+          String pluginId,
+          String pluginVersionId,
+          String bindingId,
+          String eventType,
+          String eventSchemaVersion,
+          String scriptPatchVersion,
+          String scriptEventId,
+          boolean dryRun) {
+    return dsl.fetchExists(
+        SCRIPT_WORK_ITEMS,
+        triggerIdentityCondition(
+            tenantId,
+            gameInstanceId,
+            regionId,
+            regionEpoch,
+            entityId,
+            playableStateScope,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            scriptId,
+            pluginId,
+            pluginVersionId,
+            bindingId,
             eventType,
             eventSchemaVersion,
             scriptPatchVersion,
@@ -112,6 +168,33 @@ public class ScriptWorkItemRepository {
   }
 
   public List<ScriptWorkItem>
+      findByTenantIdAndScriptPatchVersionAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+          String tenantId,
+          String scriptPatchVersion,
+          String gameInstanceId,
+          String regionId,
+          Collection<String> statuses) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (regionId != null && !regionId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(MAX_CANCELLATION_ROWS)
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
+  public List<ScriptWorkItem>
       findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
           String tenantId, String pluginId, String pluginVersionId, Collection<String> statuses) {
     return fetchMany(
@@ -123,6 +206,35 @@ public class ScriptWorkItemRepository {
             .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
+  }
+
+  public List<ScriptWorkItem>
+      findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+          String tenantId,
+          String pluginId,
+          String pluginVersionId,
+          String gameInstanceId,
+          String regionId,
+          Collection<String> statuses) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(pluginId))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(pluginVersionId))
+            .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (regionId != null && !regionId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId));
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(MAX_CANCELLATION_ROWS)
+        .forUpdate()
+        .fetch(this::toEntity);
   }
 
   public List<ScriptWorkItem> findByTenantIdAndScriptPatchVersion(
@@ -182,10 +294,10 @@ public class ScriptWorkItemRepository {
   public List<ScriptPatchInstanceProjection> findDistinctInstancePatchPairs(
       String tenantId, String gameInstanceId, String scriptPatchVersion) {
     Condition condition = SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId);
-    if (!gameInstanceId.isBlank()) {
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
       condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
     }
-    if (!scriptPatchVersion.isBlank()) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
       condition = condition.and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
     }
     return dsl.selectDistinct(
@@ -208,6 +320,21 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
+  public List<ScriptWorkItem> findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+      String status, Pageable pageable) {
+    Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
+    if ("PENDING_EVALUATION".equals(status)) {
+      condition = condition.and(retryEligibilityCondition());
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(limitOrDefault(pageable, 100))
+        .forUpdate()
+        .skipLocked()
+        .fetch(this::toEntity);
+  }
+
   public List<ScriptWorkItem> findByIdInAndStatusOrderByCreatedAtAscIdAsc(
       Collection<Long> ids, String status, Pageable pageable) {
     if (ids == null || ids.isEmpty()) {
@@ -218,6 +345,24 @@ public class ScriptWorkItemRepository {
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
+  }
+
+  public List<ScriptWorkItem> findByIdInAndStatusForUpdateOrderByCreatedAtAscIdAsc(
+      Collection<Long> ids, String status, Pageable pageable) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    Condition condition = SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status));
+    if ("PENDING_EVALUATION".equals(status)) {
+      condition = condition.and(retryEligibilityCondition());
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(limitOrDefault(pageable, 100))
+        .forUpdate()
+        .skipLocked()
+        .fetch(this::toEntity);
   }
 
   public List<ScriptWorkItem> findByStatusInOrderByCreatedAtAscIdAsc(
@@ -238,6 +383,35 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.asc());
   }
 
+  /**
+   * Reads an oldest-first page after a stable update-time/id cursor. Keyset paging lets cleanup
+   * delete rows as it scans without skipping rows that shift into an earlier offset.
+   */
+  public List<ScriptWorkItem> findByStatusOrderByUpdatedAtAscIdAscAfter(
+      String status, Instant afterUpdatedAt, Long afterId, int limit) {
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be positive");
+    }
+    Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
+    if (afterUpdatedAt != null && afterId != null) {
+      condition =
+          condition.and(
+              SCRIPT_WORK_ITEMS
+                  .UPDATED_AT
+                  .gt(toLocalDateTime(afterUpdatedAt))
+                  .or(
+                      SCRIPT_WORK_ITEMS
+                          .UPDATED_AT
+                          .eq(toLocalDateTime(afterUpdatedAt))
+                          .and(SCRIPT_WORK_ITEMS.ID.gt(afterId))));
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(condition)
+        .orderBy(SCRIPT_WORK_ITEMS.UPDATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+        .limit(limit)
+        .fetch(this::toEntity);
+  }
+
   public List<ScriptWorkItem> findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
       String tenantId, String status, Pageable pageable) {
     return fetchManyPaged(
@@ -247,8 +421,40 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.desc());
   }
 
+  public List<ScriptWorkItem> findDeadLetters(
+      String tenantId,
+      String status,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      Pageable pageable) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.STATUS.eq(status));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    return fetchManyPaged(
+        condition, pageable, SCRIPT_WORK_ITEMS.UPDATED_AT.desc(), SCRIPT_WORK_ITEMS.ID.desc());
+  }
+
   public long countByStatus(String status) {
     return dsl.fetchCount(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.STATUS.eq(status));
+  }
+
+  /**
+   * Counts old terminal rows across all tenants that could not be swept because retained evidence
+   * still exists. The scheduled maintenance sweep and its blocked-row gauge are deployment-wide.
+   */
+  public long countTerminalRowsBlockedByEvidence(String status, Instant safeWatermark) {
+    return dsl.fetchCount(
+        SCRIPT_WORK_ITEMS,
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(safeWatermark)))
+            .and(noRetainedEvidence().not()));
   }
 
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
@@ -257,8 +463,54 @@ public class ScriptWorkItemRepository {
             SCRIPT_WORK_ITEMS
                 .STATUS
                 .eq(status)
-                .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
+                .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)))
+                .and(noRetainedEvidence()))
         .execute();
+  }
+
+  /** Deletes a terminal parent only when no audit or handoff evidence still references it. */
+  public boolean deleteDeadLetteredIfNoRetainedEvidence(String tenantId, Long id) {
+    return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
+            .where(
+                SCRIPT_WORK_ITEMS
+                    .ID
+                    .eq(id)
+                    .and(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId))
+                    .and(SCRIPT_WORK_ITEMS.STATUS.eq("DEAD_LETTERED"))
+                    .and(noRetainedEvidence()))
+            .execute()
+        == 1;
+  }
+
+  private Condition noRetainedEvidence() {
+    return notExists(
+            selectOne()
+                .from(SCRIPT_EVENT_AUDIT)
+                .where(
+                    SCRIPT_EVENT_AUDIT
+                        .TENANT_ID
+                        .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                        .and(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID))))
+        .and(
+            notExists(
+                selectOne()
+                    .from(SCRIPT_HANDOFF_EVENTS)
+                    .where(
+                        SCRIPT_HANDOFF_EVENTS
+                            .TENANT_ID
+                            .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                            .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID)))))
+        .and(
+            notExists(
+                selectOne()
+                    .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
+                    .where(
+                        SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                            .TENANT_ID
+                            .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                            .and(
+                                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
+                                    SCRIPT_WORK_ITEMS.ID)))));
   }
 
   public List<ScriptWorkItem> findAllById(Collection<Long> ids) {
@@ -292,10 +544,14 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_WORK_ITEMS.BINDING_ID, entity.getBindingId())
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_WORK_ITEMS.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, entity.getSourceService())
@@ -309,6 +565,14 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.READ_SNAPSHOT_TOKEN, entity.getReadSnapshotToken())
             .set(SCRIPT_WORK_ITEMS.PAYLOAD_JSON, entity.getPayloadJson())
             .set(SCRIPT_WORK_ITEMS.ADMISSION_EPOCH, entity.getAdmissionEpoch())
+            .set(SCRIPT_WORK_ITEMS.FAILURE_GENERATION, entity.getFailureGeneration())
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE,
+                toLocalDateTime(entity.getAuthorityUnavailableSince()))
+            .set(
+                SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT,
+                entity.getAuthorityUnavailableCount())
+            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.STATUS, entity.getStatus())
             .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, entity.getCancelReason())
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
@@ -359,6 +623,9 @@ public class ScriptWorkItemRepository {
               entity.getRealmSlug(),
               entity.getPointerVersion(),
               entity.getScriptId(),
+              entity.getPluginId(),
+              entity.getPluginVersionId(),
+              entity.getBindingId(),
               entity.getEventType(),
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
@@ -394,6 +661,9 @@ public class ScriptWorkItemRepository {
             SCRIPT_WORK_ITEMS.REALM_SLUG,
             SCRIPT_WORK_ITEMS.POINTER_VERSION,
             SCRIPT_WORK_ITEMS.SCRIPT_ID,
+            SCRIPT_WORK_ITEMS.PLUGIN_ID,
+            SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID,
+            SCRIPT_WORK_ITEMS.BINDING_ID,
             SCRIPT_WORK_ITEMS.EVENT_TYPE,
             SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
             SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
@@ -421,6 +691,9 @@ public class ScriptWorkItemRepository {
       String realmSlug,
       String pointerVersion,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String bindingId,
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
@@ -439,6 +712,9 @@ public class ScriptWorkItemRepository {
                 realmSlug,
                 pointerVersion,
                 scriptId,
+                pluginId,
+                pluginVersionId,
+                bindingId,
                 eventType,
                 eventSchemaVersion,
                 scriptPatchVersion,
@@ -458,28 +734,82 @@ public class ScriptWorkItemRepository {
       String realmSlug,
       String pointerVersion,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String bindingId,
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
       String scriptEventId,
       boolean dryRun) {
-    return SCRIPT_WORK_ITEMS
-        .TENANT_ID
-        .eq(tenantId)
-        .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
-        .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
-        .and(SCRIPT_WORK_ITEMS.REGION_EPOCH.eq(regionEpoch))
-        .and(SCRIPT_WORK_ITEMS.ENTITY_ID.eq(entityId))
-        .and(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
-        .and(SCRIPT_WORK_ITEMS.WORLD_SLUG.eq(worldSlug))
-        .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
-        .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
-        .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
-        .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
-        .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
-        .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-        .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
-        .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
+    return triggerIdentityCondition(
+        tenantId,
+        gameInstanceId,
+        regionId,
+        regionEpoch,
+        entityId,
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        scriptId,
+        pluginId,
+        pluginVersionId,
+        bindingId,
+        eventType,
+        eventSchemaVersion,
+        scriptPatchVersion,
+        scriptEventId,
+        dryRun,
+        true);
+  }
+
+  private Condition triggerIdentityCondition(
+      String tenantId,
+      String gameInstanceId,
+      String regionId,
+      Long regionEpoch,
+      String entityId,
+      String playableStateScope,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion,
+      String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String bindingId,
+      String eventType,
+      String eventSchemaVersion,
+      String scriptPatchVersion,
+      String scriptEventId,
+      boolean dryRun,
+      boolean constrainPluginIdentity) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_WORK_ITEMS.REGION_ID.eq(regionId))
+            .and(SCRIPT_WORK_ITEMS.REGION_EPOCH.eq(regionEpoch))
+            .and(SCRIPT_WORK_ITEMS.ENTITY_ID.eq(entityId))
+            .and(SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
+            .and(SCRIPT_WORK_ITEMS.WORLD_SLUG.eq(worldSlug))
+            .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
+            .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
+            .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
+            .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
+            .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
+    if (constrainPluginIdentity) {
+      condition =
+          condition
+              .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.isNotDistinctFrom(pluginId))
+              .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.isNotDistinctFrom(pluginVersionId))
+              .and(SCRIPT_WORK_ITEMS.BINDING_ID.isNotDistinctFrom(bindingId));
+    }
+    return condition;
   }
 
   public List<ScriptWorkItem> saveAll(Collection<ScriptWorkItem> entities) {
@@ -492,6 +822,39 @@ public class ScriptWorkItemRepository {
   public Optional<ScriptWorkItem> findById(Long id) {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(SCRIPT_WORK_ITEMS.ID.eq(id))
+        .fetchOptional(this::toEntity);
+  }
+
+  /**
+   * Claims one dead-letter item for replay using its observed failure generation and row version.
+   * The status, generation, and row version predicates make competing replay requests
+   * deterministic: exactly one request can move the item out of DEAD_LETTERED, while all other
+   * requests receive an empty result and record recovery_in_progress rather than racing through a
+   * stale entity write.
+   */
+  public Optional<ScriptWorkItem> claimDeadLetterForReplay(
+      Long id,
+      String tenantId,
+      int expectedRowVersion,
+      long expectedFailureGeneration,
+      Instant now) {
+    return dsl.update(SCRIPT_WORK_ITEMS)
+        .set(SCRIPT_WORK_ITEMS.STATUS, "PENDING_EVALUATION")
+        .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, "")
+        .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE, (LocalDateTime) null)
+        .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT, 0)
+        .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, (LocalDateTime) null)
+        .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(now))
+        .set(SCRIPT_WORK_ITEMS.ROW_VERSION, expectedRowVersion + 1)
+        .where(
+            SCRIPT_WORK_ITEMS
+                .ID
+                .eq(id)
+                .and(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId))
+                .and(SCRIPT_WORK_ITEMS.STATUS.eq("DEAD_LETTERED"))
+                .and(SCRIPT_WORK_ITEMS.ROW_VERSION.eq(expectedRowVersion))
+                .and(SCRIPT_WORK_ITEMS.FAILURE_GENERATION.eq(expectedFailureGeneration)))
+        .returningResult(SCRIPT_WORK_ITEMS.fields())
         .fetchOptional(this::toEntity);
   }
 
@@ -512,6 +875,13 @@ public class ScriptWorkItemRepository {
         .where(condition)
         .orderBy(orderBy)
         .fetch(this::toEntity);
+  }
+
+  private static Condition retryEligibilityCondition() {
+    return SCRIPT_WORK_ITEMS
+        .NEXT_ELIGIBLE_AT
+        .isNull()
+        .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(CURRENT_TIMESTAMP));
   }
 
   private List<ScriptWorkItem> fetchManyPaged(
@@ -537,10 +907,18 @@ public class ScriptWorkItemRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setBindingId(entity.getBindingId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
+    record.setFailureGeneration(entity.getFailureGeneration());
+    record.setAuthorityUnavailableSince(toLocalDateTime(entity.getAuthorityUnavailableSince()));
+    record.setAuthorityUnavailableCount(entity.getAuthorityUnavailableCount());
+    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -576,10 +954,25 @@ public class ScriptWorkItemRepository {
     entity.setScriptId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID));
+    entity.setBindingId(record.get(SCRIPT_WORK_ITEMS.BINDING_ID));
+    Long pluginActivationEpoch = record.get(SCRIPT_WORK_ITEMS.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_WORK_ITEMS.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
+    Long failureGeneration = record.get(SCRIPT_WORK_ITEMS.FAILURE_GENERATION);
+    entity.setFailureGeneration(failureGeneration == null ? 1L : failureGeneration);
+    entity.setAuthorityUnavailableSince(
+        toInstant(record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE)));
+    Integer authorityUnavailableCount = record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT);
+    entity.setAuthorityUnavailableCount(
+        authorityUnavailableCount == null ? 0 : authorityUnavailableCount);
+    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_WORK_ITEMS.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
     entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));
     entity.setSourceService(record.get(SCRIPT_WORK_ITEMS.SOURCE_SERVICE));

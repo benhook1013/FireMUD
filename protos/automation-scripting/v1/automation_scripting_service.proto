@@ -317,6 +317,17 @@ message ReplayDeadLetteredWorkItemsResponse {
   int64 replayed_count = 1;
   int64 rejected_count = 2;
   shared.v1.ErrorDetail error = 3;
+  repeated ReplayDeadLetteredWorkItemResult results = 4;
+  string request_fingerprint = 5;
+}
+
+message ReplayDeadLetteredWorkItemResult {
+  string work_item_id = 1;
+  string outcome = 2;
+  string rejection_reason = 3;
+  int64 failure_generation = 4;
+  // Present only for outcome=recovery_failed; rejection_reason is reserved for outcome=rejected.
+  string failure_reason = 5;
 }
 
 enum TriggerMode {
@@ -521,6 +532,12 @@ message GetAutomationDrainStatusResponse {
   int64 observed_at_ms = 9;
   bool is_stale = 10;
   shared.v1.ErrorDetail error = 11;
+  bool state_present = 12;
+  string control_plane_request_id = 13;
+  AutomationAdmissionMode target_mode = 14;
+  string outcome = 15;
+  string request_fingerprint = 16;
+  int64 acknowledged_at_ms = 17;
 }
 
 message GetAutomationPinConvergenceRequest {

@@ -1,20 +1,108 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import org.junit.jupiter.api.Test;
 
 class GameSessionOperatorControlPlaneServiceTest {
+  @Test
+  void rejectsScriptPinEpochExhaustionAsDurableStateFailureWithoutMutation() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-old");
+    instance.setScriptPinEpoch(Long.MAX_VALUE);
+    when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    GameSessionOperatorControlPlaneService service =
+        service(gameInstanceRepository, mock(TickService.class));
+
+    assertThatIllegalStateException()
+        .isThrownBy(
+            () ->
+                service.setPinnedScriptPatchVersion(
+                    1L,
+                    7L,
+                    SetPinnedScriptPatchVersionRequest.newBuilder()
+                        .setTargetScriptPatchVersion("patch-new")
+                        .setControlPlaneRequestId("request-1")
+                        .build()))
+        .withMessage("script pin epoch exhausted");
+
+    org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion())
+        .isEqualTo("patch-old");
+    org.assertj.core.api.Assertions.assertThat(instance.getScriptPinEpoch())
+        .isEqualTo(Long.MAX_VALUE);
+  }
+
+  @Test
+  void rejectsBlankScriptPatchPinTargetBeforeRepositoryReadOrMutation() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    GameSessionProperties gameSessionProperties = mock(GameSessionProperties.class);
+    GameSessionOperatorControlPlaneService service =
+        new GameSessionOperatorControlPlaneService(
+            gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.setPinnedScriptPatchVersion(
+                    1L,
+                    7L,
+                    SetPinnedScriptPatchVersionRequest.newBuilder()
+                        .setTargetScriptPatchVersion("   ")
+                        .setControlPlaneRequestId("request-1")
+                        .build()))
+        .withMessage("target_script_patch_version is required");
+
+    verifyNoInteractions(
+        gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+  }
+
+  @Test
+  void rejectsBlankScriptPatchRollbackTargetBeforeRepositoryReadOrMutation() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    GameSessionProperties gameSessionProperties = mock(GameSessionProperties.class);
+    GameSessionOperatorControlPlaneService service =
+        new GameSessionOperatorControlPlaneService(
+            gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.rollbackScriptPatchVersion(
+                    1L,
+                    7L,
+                    RollbackScriptPatchVersionRequest.newBuilder()
+                        .setTargetScriptPatchVersion("")
+                        .setControlPlaneRequestId("request-1")
+                        .build()))
+        .withMessage("target_script_patch_version is required");
+
+    verifyNoInteractions(
+        gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+  }
+
   @Test
   void rejectsBlankScriptPatchRollbackPurgeReasonBeforePersistence() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);

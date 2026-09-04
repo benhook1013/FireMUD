@@ -19,10 +19,25 @@ public class ScriptWorkItem {
   private String scriptId;
   private String pluginId;
   private String pluginVersionId;
+  private String bindingId;
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
+  private long failureGeneration = 1L;
+
+  /** First time this item observed a transient authority-unavailable fence result. */
+  private Instant authorityUnavailableSince;
+
+  /** Number of transient authority-unavailable outcomes in the current execution attempt. */
+  private int authorityUnavailableCount;
+
+  /** Earliest instant at which the durable scanner may claim this item again. */
+  private Instant nextEligibleAt;
+
   private String eventType;
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
+  private long scriptPinEpoch;
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

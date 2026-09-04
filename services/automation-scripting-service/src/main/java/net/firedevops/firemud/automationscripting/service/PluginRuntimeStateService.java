@@ -103,7 +103,40 @@ public interface PluginRuntimeStateService {
       String actorPrincipal,
       long lastPolicyCheckedAtMs,
       PluginPublicationLink activePublication,
-      PluginPublicationLink pendingPublication) {}
+      PluginPublicationLink pendingPublication,
+      long pluginActivationEpoch,
+      long lifecycleRevision) {
+    /** Compatibility constructor for callers that predate lifecycle-fence readback. */
+    public PluginRuntimeStatus(
+        String activePluginVersionId,
+        String pendingPluginVersionId,
+        String runtimeRegionId,
+        long runtimeRegionEpoch,
+        PluginState pluginState,
+        String statusReason,
+        long lastChangedAtMs,
+        String controlPlaneRequestId,
+        String actorPrincipal,
+        long lastPolicyCheckedAtMs,
+        PluginPublicationLink activePublication,
+        PluginPublicationLink pendingPublication) {
+      this(
+          activePluginVersionId,
+          pendingPluginVersionId,
+          runtimeRegionId,
+          runtimeRegionEpoch,
+          pluginState,
+          statusReason,
+          lastChangedAtMs,
+          controlPlaneRequestId,
+          actorPrincipal,
+          lastPolicyCheckedAtMs,
+          activePublication,
+          pendingPublication,
+          0L,
+          0L);
+    }
+  }
 
   record PluginPublicationLink(
       String pluginVersionId,
