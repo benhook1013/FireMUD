@@ -244,12 +244,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
     PinEpochHolder pinEpoch = new PinEpochHolder();
     TriggerAdmission admission =
-        validate(request, schemaVersion, sourceService, definition, pinEpoch);
+        validate(request, schemaVersion, sourceService, definition, pinEpoch, claimRequest);
     if (admission.admitted()) {
       AdmissionStateValidation stateValidation = validateAdmissionState(request);
       admission = stateValidation.admission();
       if (admission.admitted()) {
-        TriggerAdmission dryRunAdmission = validateDryRunBudget(request);
+        TriggerAdmission dryRunAdmission = validateDryRunBudget(request, claimRequest);
         admission =
             dryRunAdmission != null
                 ? dryRunAdmission
@@ -260,7 +260,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                     sourceService,
                     tenantKey,
                     stateValidation.state(),
-                    pinEpoch.value);
+                    pinEpoch.value,
+                    claimRequest);
       }
     }
     ScriptEventIngressAudit audit = claimRequest;
@@ -355,7 +356,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String sourceService,
       ScriptEventRegistryService.EventDefinition definition,
-      PinEpochHolder pinEpoch) {
+      PinEpochHolder pinEpoch,
+      ScriptEventIngressAudit claim) {
     requiredText(request.getTenantId(), "tenant_id");
     requiredText(request.getEventType(), "event_type");
     requiredText(request.getScriptPatchVersion(), "script_patch_version");
@@ -399,7 +401,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (routingAdmission != null) {
       return routingAdmission;
     }
-    PinValidation pinValidation = validatePinnedPatch(request);
+    PinValidation pinValidation = validatePinnedPatch(request, claim);
     TriggerAdmission pinAdmission = pinValidation.admission();
     pinEpoch.value = pinValidation.scriptPinEpoch();
     if (pinAdmission != null) {
@@ -545,7 +547,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     }
   }
 
-  private PinValidation validatePinnedPatch(TriggerScriptEventRequest request) {
+  private PinValidation validatePinnedPatch(
+      TriggerScriptEventRequest request, ScriptEventIngressAudit claim) {
     if (request.getGameInstanceId().isBlank()) {
       return new PinValidation(null, 0L);
     }
@@ -601,6 +604,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
               0),
           request.getScriptPinEpoch());
     }
+    requireCurrentClaim(claim);
     scriptPatchPinProjectionService.observeRuntimeState(
         request.getTenantId(), request.getGameInstanceId(), runtimeState);
     if (request.getPlayableStateScopeValue() != 0
@@ -687,7 +691,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return "NORMAL".equals(mode) || "PAUSED_FOR_ROLLBACK".equals(mode);
   }
 
-  private TriggerAdmission validateDryRunBudget(TriggerScriptEventRequest request) {
+  private TriggerAdmission validateDryRunBudget(
+      TriggerScriptEventRequest request, ScriptEventIngressAudit claim) {
     if (!request.getIsDryRun()) {
       return null;
     }
@@ -695,6 +700,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (principalKey.isBlank()) {
       return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_principal_missing", 0);
     }
+    requireCurrentClaim(claim);
     if (!dryRunQuotaService.tryAcquire(
         request.getTenantId(), request.getScriptId(), principalKey)) {
       return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_budget_exceeded", 0);
@@ -709,10 +715,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String sourceService,
       long tenantKey,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
     if (isOnLoadRequest(request)) {
       return admissionWithOnLoadHandler(
-          request, schemaVersion, definition, sourceService, admissionState, scriptPinEpoch);
+          request, schemaVersion, definition, sourceService, admissionState, scriptPinEpoch, claim);
     }
     Map<String, Object> payload = parsePayloadObject(request.getPayloadJson());
     List<ScriptEventBinding> scopedBindings =
@@ -779,7 +786,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                 handler,
                 sourceService,
                 admissionState,
-                scriptPinEpoch));
+                scriptPinEpoch,
+                claim));
     String reason = handlers.isEmpty() ? "admitted_no_handlers" : "admitted_handlers_resolved";
     return new TriggerAdmission(true, OUTCOME_ADMITTED, reason, handlers.size());
   }
@@ -879,7 +887,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventRegistryService.EventDefinition definition,
       String sourceService,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
     if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
         || workItemExistsForScript(request, schemaVersion, scriptId)) {
@@ -893,7 +902,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         "",
         sourceService,
         admissionState,
-        scriptPinEpoch);
+        scriptPinEpoch,
+        claim);
     return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
   }
 
@@ -904,7 +914,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ResolvedHandler handler,
       String sourceService,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
+    requireCurrentClaim(claim);
     if (handlerAuditExists(request, schemaVersion, handler.binding())) {
       return;
     }
@@ -921,7 +933,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           "ADMISSION",
           "quota_denied",
           "script_quota_denied",
-          scriptPinEpoch);
+          scriptPinEpoch,
+          claim);
       return;
     }
     persistWorkItem(
@@ -934,7 +947,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         sourceService,
         requestScopeValues(request),
         admissionState,
-        scriptPinEpoch);
+        scriptPinEpoch,
+        claim);
   }
 
   private void persistWorkItem(
@@ -947,7 +961,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String sourceService,
       HandlerScopeValues scopeValues,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
     Long admissionEpoch = admissionState == null ? 0L : admissionState.admissionEpoch();
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId(request.getTenantId());
@@ -981,8 +996,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
     item.setAdmissionEpoch(admissionEpoch);
+    requireCurrentClaim(claim);
     ScriptWorkItem saved = workItemRepository.save(item);
+    requireCurrentClaim(claim);
     rolloutProjectionService.refreshForWorkItem(saved);
+    requireCurrentClaim(claim);
     AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, saved, LOGGER);
     persistHandlerAudit(
         request,
@@ -994,7 +1012,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         "ADMISSION",
         "work_item_persisted",
         "handler_resolved",
-        scriptPinEpoch);
+        scriptPinEpoch,
+        claim);
   }
 
   private void persistWorkItemForScript(
@@ -1005,7 +1024,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String priorityTag,
       String sourceService,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
     persistWorkItem(
         request,
         schemaVersion,
@@ -1016,7 +1036,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         sourceService,
         requestScopeValues(request),
         admissionState,
-        scriptPinEpoch);
+        scriptPinEpoch,
+        claim);
   }
 
   private void persistHandlerAudit(
@@ -1029,7 +1050,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String finalStage,
       String finalOutcome,
       String finalReason,
-      long scriptPinEpoch) {
+      long scriptPinEpoch,
+      ScriptEventIngressAudit claim) {
     HandlerScopeValues scopeValues =
         workItem == null ? requestScopeValues(request) : workItemScopeValues(workItem);
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -1064,7 +1086,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setFinalStage(finalStage);
     audit.setFinalOutcome(finalOutcome);
     audit.setFinalReason(finalReason);
+    requireCurrentClaim(claim);
     eventAuditRepository.save(audit);
+  }
+
+  private void requireCurrentClaim(ScriptEventIngressAudit claim) {
+    if (claim.getId() != null && !repository.renewClaimIfCurrent(claim, Instant.now())) {
+      throw new IllegalStateException("stale script ingress claim");
+    }
   }
 
   private static String resolveHandlerPluginId(
@@ -1262,7 +1291,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             instanceScoped && request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
-            normalize(request.getScriptPinControlPlaneRequestId()),
+            instanceScoped ? normalize(request.getScriptPinControlPlaneRequestId()) : null,
             request.getScriptEventId(),
             request.getIsDryRun(),
             sourceService)

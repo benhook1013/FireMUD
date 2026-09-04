@@ -6,7 +6,6 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -29,8 +28,6 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventAuditRepository {
-  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
-      field(name("script_pin_control_plane_request_id"), String.class);
   private static final String SOURCE_KIND_SCHEDULE_TIMER = "SCHEDULE_TIMER";
   private static final int MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
@@ -81,7 +78,9 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
-        .and(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(scriptPinControlPlaneRequestId))
+        .and(
+            SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                scriptPinControlPlaneRequestId))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
   }
@@ -217,7 +216,6 @@ public class ScriptEventAuditRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_EVENT_AUDIT.fields());
-    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
@@ -261,7 +259,7 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
     if (entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L) {
       fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+      fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_AUDIT.DRY_RUN);
@@ -308,7 +306,7 @@ public class ScriptEventAuditRepository {
     if (scriptPinEpoch != null || scriptPinControlPlaneRequestId != null) {
       condition =
           condition.and(
-              SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+              SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
                   scriptPinControlPlaneRequestId));
     }
     if (!scriptId.isBlank()) {
@@ -378,7 +376,9 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId())
+            .set(
+                SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                entity.getScriptPinControlPlaneRequestId())
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
@@ -432,7 +432,9 @@ public class ScriptEventAuditRepository {
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId());
+    record.set(
+        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+        entity.getScriptPinControlPlaneRequestId());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
@@ -471,7 +473,8 @@ public class ScriptEventAuditRepository {
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
-    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setScriptPinControlPlaneRequestId(
+        record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));

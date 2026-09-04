@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -57,6 +58,7 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -215,12 +217,7 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      StartSessionResponse response =
-          StartSessionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      onInternalFailure(responseObserver, "startSession", ex);
     }
   }
 
@@ -271,13 +268,7 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      StopSessionResponse response =
-          StopSessionResponse.newBuilder()
-              .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      onInternalFailure(responseObserver, "stopSession", ex);
     }
   }
 
@@ -310,14 +301,15 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      RestartSessionResponse response =
-          RestartSessionResponse.newBuilder()
-              .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      onInternalFailure(responseObserver, "restartSession", ex);
     }
+  }
+
+  private void onInternalFailure(
+      StreamObserver<?> responseObserver, String operation, IllegalStateException cause) {
+    ErrorDetail detail = GrpcAppErrors.internal(meterRegistry, LOG, operation, cause);
+    responseObserver.onError(
+        Status.INTERNAL.withDescription(detail.getMessage()).asRuntimeException());
   }
 
   @Override

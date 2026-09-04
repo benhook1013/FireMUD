@@ -99,6 +99,27 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void renewClaimIfCurrentUsesRowVersionAndStateFence() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit claim = new ScriptEventIngressAudit();
+    claim.setId(12L);
+    claim.setRowVersion(4);
+    claim.setSourceState("IN_PROGRESS");
+    claim.setClaimStartedAt(Instant.now());
+
+    assertThat(repository.renewClaimIfCurrent(claim, Instant.now())).isTrue();
+    assertThat(sqlRef.get()).contains("update", "claim_started_at", "row_version", "source_state");
+  }
+
+  @Test
   void insertIfAbsentByIdentityClaimsNullEpochBranchAtomically() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
@@ -149,6 +170,70 @@ class ScriptEventIngressAuditRepositoryTest {
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(11L);
     assertThat(sqlRef.get()).contains("on conflict", "do update", "script_pin_epoch is null");
+  }
+
+  @Test
+  void insertIfAbsentByIdentityClaimsPinnedBranchWithMatchingConflictPredicate() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    ScriptEventIngressAuditRecord row = new ScriptEventIngressAuditRecord();
+    row.setId(13L);
+    row.setTenantId("tenant-1");
+    row.setGameInstanceId("game-1");
+    row.setRegionId("region-1");
+    row.setRegionEpoch(7L);
+    row.setEntityId("entity-1");
+    row.setEventType("onCommand");
+    row.setEventSchemaVersion("v1");
+    row.setScriptPatchVersion("patch-1");
+    row.setScriptPinEpoch(2L);
+    row.setScriptPinControlPlaneRequestId("pin-request-1");
+    row.setScriptEventId("event-1");
+    row.setSourceService("game-session-service");
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setTenantId("tenant-1");
+    entity.setGameInstanceId("game-1");
+    entity.setRegionId("region-1");
+    entity.setRegionEpoch(7L);
+    entity.setEntityId("entity-1");
+    entity.setEventType("onCommand");
+    entity.setEventSchemaVersion("v1");
+    entity.setScriptPatchVersion("patch-1");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    entity.setScriptEventId("event-1");
+    entity.setSourceService("game-session-service");
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isTrue();
+    assertThat(result.audit().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
+    assertThat(sqlRef.get())
+        .contains(
+            "on conflict",
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "game_instance_id\" is not null",
+            "script_pin_epoch\" is not null");
   }
 
   @Test

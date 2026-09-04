@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -26,9 +27,15 @@ import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class GameSessionOperatorControlPlaneServiceTest {
+  @AfterEach
+  void clearSessionContext() {
+    SessionContext.clear();
+  }
+
   @Test
   void readyPublishedBaseCompatiblePatchIsPinnedAfterBothOwnerReads() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
@@ -108,6 +115,100 @@ class GameSessionOperatorControlPlaneServiceTest {
                     .setPinnedScriptPatchVersion(1L, 7L, request))
         .withMessage("expected_current_pin script_pin_epoch must be absent for UNCONDITIONAL");
     verifyNoInteractions(repository, gameDesign, automation);
+  }
+
+  @Test
+  void unconditionalRequiresPlatformAdminBeforeOwnerReads() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    SessionContext.setContext(
+        "42", java.util.List.of(), java.util.Map.of("1", java.util.List.of("tenantAdmin")));
+    SetPinnedScriptPatchVersionRequest request =
+        setRequest("request-1").toBuilder()
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.UNCONDITIONAL)
+                    .build())
+            .build();
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                newService(repository, tickService, gameDesign, automation)
+                    .setPinnedScriptPatchVersion(1L, 7L, request))
+        .withMessage("UNCONDITIONAL requires platformAdmin");
+    verifyNoInteractions(repository, gameDesign, automation);
+  }
+
+  @Test
+  void rollbackToCurrentPatchIsLedgeredAsDeterministicFailure() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setVersionId(100L);
+    instance.setScriptPatchVersion("patch-current");
+    instance.setScriptPinEpoch(3L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-current",
+            "request-1",
+            "operator",
+            "rollback",
+            "EXPECT_EPOCH",
+            3L,
+            "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT"))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                "patch-current",
+                3L,
+                "patch-current",
+                3L,
+                "request-1",
+                "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT"));
+    RollbackScriptPatchVersionRequest request =
+        RollbackScriptPatchVersionRequest.newBuilder()
+            .setTargetScriptPatchVersion("patch-current")
+            .setControlPlaneRequestId("request-1")
+            .setActorPrincipal("operator")
+            .setReason("rollback")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setScriptPinEpoch(3L)
+                    .build())
+            .build();
+
+    var response =
+        newService(repository, tickService, gameDesign, automation)
+            .rollbackScriptPatchVersion(1L, 7L, request);
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT");
+    org.mockito.Mockito.verify(repository)
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-current",
+            "request-1",
+            "operator",
+            "rollback",
+            "EXPECT_EPOCH",
+            3L,
+            "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT");
+    verifyNoInteractions(gameDesign, automation);
   }
 
   @Test

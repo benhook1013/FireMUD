@@ -15,7 +15,7 @@ CREATE TABLE script_pin_operation (
     previous_script_pin_epoch bigint,
     resulting_script_patch_version character varying(100),
     resulting_script_pin_epoch bigint,
-    committed_at timestamp without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id),
     CHECK (
         (previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL)

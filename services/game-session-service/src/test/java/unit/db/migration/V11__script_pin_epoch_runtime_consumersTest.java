@@ -21,6 +21,7 @@ class V11__script_pin_epoch_runtime_consumersTest {
     assertThat(migration)
         .contains("CREATE TABLE script_pin_operation")
         .contains("mutation_digest")
+        .contains("committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP")
         .contains("PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id)")
         .contains("previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL")
         .contains("resulting_script_patch_version IS NULL AND resulting_script_pin_epoch IS NULL")

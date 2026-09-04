@@ -156,8 +156,10 @@ public class GameInstanceRepository {
    * Applies a script-pin transition under one database transaction and row lock.
    *
    * <p>The request ledger is checked before reading mutable instance state, so an exact retry
-   * replays its original result even after a later pin. A request-id reuse with a different
-   * normalized request digest fails before any state mutation.
+   * replays its original result even after a later pin. A new request derives {@code REPIN} under
+   * the instance row lock when its target equals the current patch; the derived kind and digest are
+   * persisted together. A request-id reuse with a different normalized request digest fails before
+   * any state mutation.
    */
   public ScriptPinMutationResult applyScriptPin(
       Long tenantId,
@@ -176,11 +178,21 @@ public class GameInstanceRepository {
       throw new IllegalArgumentException("expected_pin_kind is required");
     }
     validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
-    String mutationDigest =
+    String requestedMutationDigest =
         mutationDigest(
             tenantId,
             gameInstanceId,
             operationKind,
+            targetScriptPatchVersion,
+            actorPrincipal,
+            reason,
+            expectedPinKind,
+            expectedScriptPinEpoch);
+    String repinMutationDigest =
+        mutationDigest(
+            tenantId,
+            gameInstanceId,
+            "REPIN",
             targetScriptPatchVersion,
             actorPrincipal,
             reason,
@@ -191,7 +203,7 @@ public class GameInstanceRepository {
           DSLContext tx = org.jooq.impl.DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -215,7 +227,7 @@ public class GameInstanceRepository {
           // instead of racing its primary-key insert.
           existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -225,6 +237,18 @@ public class GameInstanceRepository {
           String previousRequestId =
               current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
           ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
+          String effectiveOperationKind =
+              effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
+          String effectiveMutationDigest =
+              mutationDigest(
+                  tenantId,
+                  gameInstanceId,
+                  effectiveOperationKind,
+                  targetScriptPatchVersion,
+                  actorPrincipal,
+                  reason,
+                  expectedPinKind,
+                  expectedScriptPinEpoch);
 
           long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
           if (!expectedPinMatches(
@@ -241,13 +265,13 @@ public class GameInstanceRepository {
                 tx,
                 tenantId,
                 gameInstanceId,
-                operationKind,
+                effectiveOperationKind,
                 targetScriptPatchVersion,
                 expectedPinKind,
                 expectedScriptPinEpoch,
                 actorPrincipal,
                 reason,
-                mutationDigest,
+                effectiveMutationDigest,
                 result);
             return result;
           }
@@ -265,13 +289,13 @@ public class GameInstanceRepository {
                 tx,
                 tenantId,
                 gameInstanceId,
-                operationKind,
+                effectiveOperationKind,
                 targetScriptPatchVersion,
                 expectedPinKind,
                 expectedScriptPinEpoch,
                 actorPrincipal,
                 reason,
-                mutationDigest,
+                effectiveMutationDigest,
                 result);
             return result;
           }
@@ -314,13 +338,13 @@ public class GameInstanceRepository {
               tx,
               tenantId,
               gameInstanceId,
-              operationKind,
+              effectiveOperationKind,
               targetScriptPatchVersion,
               expectedPinKind,
               expectedScriptPinEpoch,
               actorPrincipal,
               reason,
-              mutationDigest,
+              effectiveMutationDigest,
               result);
           return result;
         });
@@ -330,7 +354,9 @@ public class GameInstanceRepository {
    * Records a deterministic pre-commit pin validation failure without changing the instance tuple.
    *
    * <p>The operation ledger is checked before the current row is read, so an exact retry replays
-   * the original result even if the external authority has since changed or recovered.
+   * the original result even if the external authority has since changed or recovered. New failures
+   * derive {@code REPIN} under the instance row lock when the target equals the current patch,
+   * using the same digest and operation-kind rules as successful mutations.
    */
   public ScriptPinMutationResult recordScriptPinFailure(
       Long tenantId,
@@ -350,11 +376,21 @@ public class GameInstanceRepository {
       throw new IllegalArgumentException("errorCode is required");
     }
     validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
-    String mutationDigest =
+    String requestedMutationDigest =
         mutationDigest(
             tenantId,
             gameInstanceId,
             operationKind,
+            targetScriptPatchVersion,
+            actorPrincipal,
+            reason,
+            expectedPinKind,
+            expectedScriptPinEpoch);
+    String repinMutationDigest =
+        mutationDigest(
+            tenantId,
+            gameInstanceId,
+            "REPIN",
             targetScriptPatchVersion,
             actorPrincipal,
             reason,
@@ -365,7 +401,7 @@ public class GameInstanceRepository {
           DSLContext tx = org.jooq.impl.DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -385,7 +421,7 @@ public class GameInstanceRepository {
           }
           existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+            if (!matchesMutationDigest(existing, requestedMutationDigest, repinMutationDigest)) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -395,6 +431,18 @@ public class GameInstanceRepository {
           String previousRequestId =
               current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
           ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
+          String effectiveOperationKind =
+              effectiveOperationKind(operationKind, targetScriptPatchVersion, previousPatch);
+          String effectiveMutationDigest =
+              mutationDigest(
+                  tenantId,
+                  gameInstanceId,
+                  effectiveOperationKind,
+                  targetScriptPatchVersion,
+                  actorPrincipal,
+                  reason,
+                  expectedPinKind,
+                  expectedScriptPinEpoch);
           ScriptPinMutationResult result =
               new ScriptPinMutationResult(
                   previousPatch,
@@ -407,13 +455,13 @@ public class GameInstanceRepository {
               tx,
               tenantId,
               gameInstanceId,
-              operationKind,
+              effectiveOperationKind,
               targetScriptPatchVersion,
               expectedPinKind,
               expectedScriptPinEpoch,
               actorPrincipal,
               reason,
-              mutationDigest,
+              effectiveMutationDigest,
               result);
           return result;
         });
@@ -502,6 +550,18 @@ public class GameInstanceRepository {
   private ScriptPinMutationResult idempotencyConflict(String controlPlaneRequestId) {
     return new ScriptPinMutationResult(
         null, null, null, null, controlPlaneRequestId, "IDEMPOTENCY_CONFLICT");
+  }
+
+  private boolean matchesMutationDigest(
+      Record existing, String requestedMutationDigest, String repinMutationDigest) {
+    String existingDigest = existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST);
+    return requestedMutationDigest.equals(existingDigest)
+        || repinMutationDigest.equals(existingDigest);
+  }
+
+  private String effectiveOperationKind(
+      String requestedOperationKind, String targetScriptPatchVersion, String previousPatch) {
+    return targetScriptPatchVersion.equals(previousPatch) ? "REPIN" : requestedOperationKind;
   }
 
   private boolean expectedPinMatches(

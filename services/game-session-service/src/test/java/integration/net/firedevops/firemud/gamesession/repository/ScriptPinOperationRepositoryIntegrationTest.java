@@ -122,6 +122,115 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void sameVersionSuccessIsRepinAndReplayAndConflictUseItsDigest() {
+    ScriptPinMutationResult repin =
+        repository.applyScriptPin(
+            1L, 7L, "SET", "patch-1", "request-repin", "operator", "repin", "EXPECT_EPOCH", 1L);
+    ScriptPinMutationResult laterPin =
+        repository.applyScriptPin(
+            1L, 7L, "SET", "patch-2", "request-later", "operator", "later", "EXPECT_EPOCH", 2L);
+    ScriptPinMutationResult retry =
+        repository.applyScriptPin(
+            1L, 7L, "SET", "patch-1", "request-repin", "operator", "repin", "EXPECT_EPOCH", 1L);
+    ScriptPinMutationResult conflict =
+        repository.applyScriptPin(
+            1L, 7L, "SET", "patch-other", "request-repin", "operator", "repin", "EXPECT_EPOCH", 1L);
+
+    assertThat(repin.succeeded()).isTrue();
+    assertThat(laterPin.succeeded()).isTrue();
+    assertThat(repin.resultingScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(repin.resultingScriptPinEpoch()).isEqualTo(2L);
+    assertThat(retry).isEqualTo(repin);
+    assertThat(conflict.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-repin"))
+                .fetchOne(SCRIPT_PIN_OPERATION.OPERATION_KIND))
+        .isEqualTo("REPIN");
+  }
+
+  @Test
+  void sameVersionFailureIsRepinAndReplayAndConflictUseItsDigest() {
+    ScriptPinMutationResult failure =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-1",
+            "request-repin-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    ScriptPinMutationResult laterPin =
+        repository.applyScriptPin(
+            1L, 7L, "SET", "patch-2", "request-later", "operator", "later", "EXPECT_EPOCH", 1L);
+    ScriptPinMutationResult retry =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-1",
+            "request-repin-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    ScriptPinMutationResult conflict =
+        repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-other",
+            "request-repin-failure",
+            "operator",
+            "authority unavailable",
+            "EXPECT_EPOCH",
+            1L,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+
+    assertThat(failure.succeeded()).isFalse();
+    assertThat(laterPin.succeeded()).isTrue();
+    assertThat(retry).isEqualTo(failure);
+    assertThat(conflict.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-repin-failure"))
+                .fetchOne(SCRIPT_PIN_OPERATION.OPERATION_KIND))
+        .isEqualTo("REPIN");
+  }
+
+  @Test
+  void rollbackChangesVersionAndPersistsRollbackOperationKind() {
+    ScriptPinMutationResult rollback =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-0",
+            "request-rollback",
+            "operator",
+            "rollback",
+            "EXPECT_EPOCH",
+            1L);
+
+    assertThat(rollback.succeeded()).isTrue();
+    assertThat(rollback.previousScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(rollback.resultingScriptPatchVersion()).isEqualTo("patch-0");
+    assertThat(rollback.resultingScriptPinEpoch()).isEqualTo(2L);
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-rollback"))
+                .fetchOne(SCRIPT_PIN_OPERATION.OPERATION_KIND))
+        .isEqualTo("ROLLBACK");
+  }
+
+  @Test
   void nullExpectedPinKindFailsClosedWithoutMutatingTheInstance() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
         .isThrownBy(

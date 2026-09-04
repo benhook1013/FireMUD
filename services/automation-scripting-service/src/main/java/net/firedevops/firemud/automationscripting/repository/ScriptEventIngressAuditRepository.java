@@ -6,11 +6,9 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static org.jooq.impl.DSL.condition;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -29,10 +27,6 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventIngressAuditRepository {
-  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
-      field(name("script_pin_control_plane_request_id"), String.class);
-  private static final Field<OffsetDateTime> CLAIM_STARTED_AT =
-      field(name("claim_started_at"), OffsetDateTime.class);
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
   private final DSLContext dsl;
@@ -111,8 +105,8 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
                 .and(
-                    SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                        scriptPinControlPlaneRequestId))
+                    SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
+                        .isNotDistinctFrom(scriptPinControlPlaneRequestId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
@@ -139,7 +133,9 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId())
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                entity.getScriptPinControlPlaneRequestId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
@@ -180,9 +176,10 @@ public class ScriptEventIngressAuditRepository {
    * Reclaims a stale in-progress claim under the same event identity.
    *
    * <p>The expected row version is the abandoned owner's fence. A successful compare-and-set
-   * advances that fence before the new owner can resolve or materialize handlers; the abandoned
-   * owner's later final save therefore fails closed as a stale write. A zero-row update means a
-   * concurrent owner already reclaimed or finalized the claim.
+   * advances that fence before the new owner can resolve or materialize handlers; owner-local lease
+   * renewals then fence the abandoned owner before quota or fan-out effects, and its later final
+   * save fails closed as a stale write. A zero-row update means a concurrent owner already
+   * reclaimed or finalized the claim.
    */
   public Optional<ScriptEventIngressAudit> reclaimStaleInProgress(
       ScriptEventIngressAudit claim, Instant staleBefore, Instant now) {
@@ -191,7 +188,8 @@ public class ScriptEventIngressAuditRepository {
     }
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
-            .set(CLAIM_STARTED_AT, now.atOffset(java.time.ZoneOffset.UTC))
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(java.time.ZoneOffset.UTC))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, "ingress_reclaimed_stale")
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION, claim.getRowVersion() + 1)
             .where(
@@ -200,12 +198,37 @@ public class ScriptEventIngressAuditRepository {
                     .eq(claim.getId())
                     .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(claim.getRowVersion()))
                     .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE.eq("IN_PROGRESS"))
-                    .and(CLAIM_STARTED_AT.le(staleBefore.atOffset(java.time.ZoneOffset.UTC))))
+                    .and(
+                        SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT.le(
+                            staleBefore.atOffset(java.time.ZoneOffset.UTC))))
             .execute();
     if (updated != 1) {
       return Optional.empty();
     }
     return findById(claim.getId());
+  }
+
+  /**
+   * Renews the current owner's claim lease while retaining its row-version fence.
+   *
+   * <p>The compare-and-set update also takes the row lock until the enclosing transaction ends,
+   * preventing a stale reclaim from interleaving with the owner's immediately following effect.
+   */
+  public boolean renewClaimIfCurrent(ScriptEventIngressAudit claim, Instant now) {
+    if (claim.getId() == null || claim.getRowVersion() < 0 || claim.getClaimStartedAt() == null) {
+      return false;
+    }
+    return dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(java.time.ZoneOffset.UTC))
+            .where(
+                SCRIPT_EVENT_INGRESS_AUDIT
+                    .ID
+                    .eq(claim.getId())
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(claim.getRowVersion()))
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE.eq("IN_PROGRESS")))
+            .execute()
+        == 1;
   }
 
   /** Atomically claims the event-scope identity, including its nullable pre-instance branch. */
@@ -217,8 +240,6 @@ public class ScriptEventIngressAuditRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
-    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
-    returningFields.add(CLAIM_STARTED_AT);
     returningFields.add(INSERTED_ROW);
     boolean instanceScoped = entity.getGameInstanceId() != null;
     Field<?>[] conflictFields =
@@ -270,8 +291,6 @@ public class ScriptEventIngressAuditRepository {
   private static List<SelectFieldOrAsterisk> selectFields() {
     List<SelectFieldOrAsterisk> fields = new ArrayList<>();
     Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
-    fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
-    fields.add(CLAIM_STARTED_AT);
     return fields;
   }
 
@@ -293,7 +312,7 @@ public class ScriptEventIngressAuditRepository {
       fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
     }
     if (includeScriptPinControlPlaneRequestId) {
-      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+      fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN);
@@ -335,8 +354,11 @@ public class ScriptEventIngressAuditRepository {
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId());
-    record.set(CLAIM_STARTED_AT, toOffsetDateTime(entity.getClaimStartedAt()));
+    record.set(
+        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+        entity.getScriptPinControlPlaneRequestId());
+    record.set(
+        SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, toOffsetDateTime(entity.getClaimStartedAt()));
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
@@ -377,8 +399,9 @@ public class ScriptEventIngressAuditRepository {
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
-    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
-    entity.setClaimStartedAt(toInstant(record.get(CLAIM_STARTED_AT)));
+    entity.setScriptPinControlPlaneRequestId(
+        record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setClaimStartedAt(toInstant(record.get(SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT)));
     entity.setEventType(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS));

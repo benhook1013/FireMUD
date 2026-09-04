@@ -12,9 +12,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -3472,6 +3474,7 @@ class ScriptEventIngressServiceImplTest {
               }
               return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
             });
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
@@ -3567,6 +3570,7 @@ class ScriptEventIngressServiceImplTest {
         .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(stale, false));
     when(repository.reclaimStaleInProgress(Mockito.eq(stale), Mockito.any(), Mockito.any()))
         .thenReturn(Optional.of(reclaimed));
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
@@ -3611,6 +3615,118 @@ class ScriptEventIngressServiceImplTest {
     assertThat(result.reason()).isEqualTo("admitted_no_handlers");
     verify(repository).reclaimStaleInProgress(Mockito.eq(stale), Mockito.any(), Mockito.any());
     verify(repository).save(Mockito.argThat(audit -> audit.getRowVersion() == 4));
+  }
+
+  @Test
+  void reclaimedClaimFencesStalledOwnerBeforeQuotaOrWorkItemEffects() throws Exception {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptQuotaService quotaService = allowingQuotaService();
+    ScriptEventIngressAudit reclaimed = new ScriptEventIngressAudit();
+    reclaimed.setId(11L);
+    reclaimed.setRowVersion(1);
+    reclaimed.setSourceState("IN_PROGRESS");
+    reclaimed.setClaimStartedAt(java.time.Instant.now());
+    AtomicReference<ScriptEventIngressAudit> row = new AtomicReference<>();
+    CountDownLatch oldOwnerEnteredResolution = new CountDownLatch(1);
+    CountDownLatch releaseOldOwner = new CountDownLatch(1);
+    AtomicReference<Integer> bindingCalls = new AtomicReference<>(0);
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptEventIngressAudit candidate = invocation.getArgument(0);
+              if (row.compareAndSet(null, candidate)) {
+                candidate.setId(11L);
+                candidate.setClaimStartedAt(java.time.Instant.now().minusSeconds(60));
+                return new ScriptEventIngressAuditRepository.IdempotentInsertResult(
+                    candidate, true);
+              }
+              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
+            });
+    when(repository.reclaimStaleInProgress(Mockito.any(), Mockito.any(), Mockito.any()))
+        .thenReturn(Optional.of(reclaimed));
+    AtomicInteger renewals = new AtomicInteger();
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any()))
+        .thenAnswer(invocation -> renewals.getAndIncrement() < 2);
+    when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
+                Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenAnswer(
+            invocation -> {
+              if (bindingCalls.getAndSet(bindingCalls.get() + 1) == 0) {
+                oldOwnerEnteredResolution.countDown();
+                if (!releaseOldOwner.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError("timed out waiting for claim reclaim");
+                }
+                return List.of(binding("script-1", "ENTITY", "entity-1", "normal"));
+              }
+              return List.of();
+            });
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    ScriptEventIngressService oldOwner =
+        claimTestService(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            Mockito.mock(AutomationQueueService.class),
+            gameSessionClient,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            quotaService,
+            allowingDryRunQuotaService());
+    ScriptEventIngressService reclaimer =
+        claimTestService(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            Mockito.mock(AutomationQueueService.class),
+            gameSessionClient,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            quotaService,
+            allowingDryRunQuotaService());
+    TriggerScriptEventRequest request =
+        gameplayRequestBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(7)
+            .setEntityId("entity-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEventType("onCommand")
+            .setScriptPatchVersion("patch-1")
+            .setScriptEventId("reclaimed-owner-event")
+            .setReadSnapshotToken("snapshot-1")
+            .build();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<ScriptEventIngressService.TriggerAdmission> oldOwnerResult =
+          executor.submit(() -> oldOwner.admit(request, "game-session-service"));
+      assertThat(oldOwnerEnteredResolution.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(reclaimer.admit(request, "game-session-service").reason())
+          .isEqualTo("admitted_no_handlers");
+      releaseOldOwner.countDown();
+      ExecutionException failure =
+          assertThrows(ExecutionException.class, () -> oldOwnerResult.get(5, TimeUnit.SECONDS));
+      assertThat(failure).hasCauseInstanceOf(IllegalStateException.class);
+      verifyNoInteractions(quotaService, workItemRepository, eventAuditRepository);
+    } finally {
+      releaseOldOwner.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test

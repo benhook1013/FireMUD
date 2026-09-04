@@ -88,11 +88,9 @@ class ScriptEventAuditRepositoryTest {
     MockDataProvider provider =
         context -> {
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
-          Field<String> requestIdField =
-              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
@@ -124,11 +122,9 @@ class ScriptEventAuditRepositoryTest {
         context -> {
           sqlRef.set(context.sql());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
-          Field<String> requestIdField =
-              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
@@ -182,11 +178,9 @@ class ScriptEventAuditRepositoryTest {
         context -> {
           sqlRef.set(context.sql());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
-          Field<String> requestIdField =
-              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<String> requestIdField = SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
@@ -211,7 +205,10 @@ class ScriptEventAuditRepositoryTest {
     String conflictClause = conflictClause(sqlRef.get());
     assertThat(conflictClause)
         .contains(
-            "script_pin_epoch", "script_pin_control_plane_request_id", "script_event_id", "dry_run");
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "script_event_id",
+            "dry_run");
     assertThat(conflictClause).contains("where", "script_pin_epoch", "> 0");
     assertThat(conflictClause).doesNotContain("is not null");
   }
