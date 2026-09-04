@@ -3516,12 +3516,13 @@ class ScriptEventIngressServiceImplTest {
     CountDownLatch claimInserted = new CountDownLatch(1);
     CountDownLatch allowWinnerToContinue = new CountDownLatch(1);
     AtomicReference<ScriptEventIngressAudit> row = new AtomicReference<>();
+    Object claimLock = new Object();
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
         .thenAnswer(
             invocation -> {
               ScriptEventIngressAudit candidate = invocation.getArgument(0);
               boolean inserted;
-              synchronized (row) {
+              synchronized (claimLock) {
                 inserted = row.compareAndSet(null, candidate);
                 if (inserted) {
                   candidate.setId(1L);

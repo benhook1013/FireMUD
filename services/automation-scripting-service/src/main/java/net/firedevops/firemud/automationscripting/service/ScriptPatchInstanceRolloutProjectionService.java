@@ -13,11 +13,6 @@ public interface ScriptPatchInstanceRolloutProjectionService {
       long scriptPinEpoch,
       String lastObservedControlPlaneRequestId);
 
-  default Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> getProjection(
-      String tenantId, String gameInstanceId, String scriptPatchVersion) {
-    return getProjection(tenantId, gameInstanceId, scriptPatchVersion, 0L, null);
-  }
-
   List<ScriptWorkItemService.PatchInstanceRolloutSummary> listProjections(
       String tenantId,
       String gameInstanceId,
@@ -27,24 +22,6 @@ public interface ScriptPatchInstanceRolloutProjectionService {
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs);
-
-  default List<ScriptWorkItemService.PatchInstanceRolloutSummary> listProjections(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs) {
-    return listProjections(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        0L,
-        null,
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs);
-  }
 
   List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
       String tenantId,
@@ -56,26 +33,6 @@ public interface ScriptPatchInstanceRolloutProjectionService {
       long changedAfterMs,
       long changedBeforeMs,
       int limit);
-
-  default List<ScriptWorkItemService.PatchInstanceRolloutEventSummary> listEvents(
-      String tenantId,
-      String gameInstanceId,
-      String scriptPatchVersion,
-      ScriptPatchInstanceRolloutStatus rolloutStatus,
-      long changedAfterMs,
-      long changedBeforeMs,
-      int limit) {
-    return listEvents(
-        tenantId,
-        gameInstanceId,
-        scriptPatchVersion,
-        0L,
-        null,
-        rolloutStatus,
-        changedAfterMs,
-        changedBeforeMs,
-        limit);
-  }
 
   void refreshForWorkItem(ScriptWorkItem workItem);
 

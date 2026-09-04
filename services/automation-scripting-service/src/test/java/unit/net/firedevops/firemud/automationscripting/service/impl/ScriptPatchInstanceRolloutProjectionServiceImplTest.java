@@ -128,7 +128,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptRuntimeProperties());
 
     Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
-        service.getProjection("1", "game-1", "patch-1");
+        service.getProjection("1", "game-1", "patch-1", 0L, null);
 
     assertThat(summary).isPresent();
     assertThat(summary.get().rolloutStatus())

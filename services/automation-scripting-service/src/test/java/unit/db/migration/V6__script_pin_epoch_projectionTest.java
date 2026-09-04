@@ -23,5 +23,15 @@ class V6__script_pin_epoch_projectionTest {
         .containsPattern(
             Pattern.quote("ALTER TABLE script_patch_pin_projections")
                 + "\\s+ADD COLUMN script_pin_epoch BIGINT;");
+
+    assertThat(migration)
+        .contains(
+            "UPDATE script_patch_pin_projections",
+            "SET last_observed_control_plane_request_id = ''",
+            "ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple CHECK",
+            "script_pin_epoch IS NULL OR script_pin_epoch = 0",
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
+            "script_pin_epoch > 0",
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
   }
 }
