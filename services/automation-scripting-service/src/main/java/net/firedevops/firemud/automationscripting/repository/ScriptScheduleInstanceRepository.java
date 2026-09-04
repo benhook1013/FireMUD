@@ -109,6 +109,7 @@ public class ScriptScheduleInstanceRepository {
             .set(SCRIPT_SCHEDULE_INSTANCES.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_SCHEDULE_INSTANCES.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
             .set(SCRIPT_SCHEDULE_INSTANCES.WORLD_SLUG, entity.getWorldSlug())
@@ -116,6 +117,10 @@ public class ScriptScheduleInstanceRepository {
             .set(SCRIPT_SCHEDULE_INSTANCES.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(
+                SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ACTIVATION_EPOCH,
+                entity.getPluginActivationEpoch())
+            .set(SCRIPT_SCHEDULE_INSTANCES.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_SCHEDULE_INSTANCES.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_DEFINITION_ID, entity.getScheduleDefinitionId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_KIND, entity.getScheduleKind())
@@ -180,6 +185,7 @@ public class ScriptScheduleInstanceRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setScriptId(entity.getScriptId());
     record.setPlayableStateScope(entity.getPlayableStateScope());
     record.setWorldSlug(entity.getWorldSlug());
@@ -187,6 +193,8 @@ public class ScriptScheduleInstanceRepository {
     record.setPointerVersion(entity.getPointerVersion());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setEventType(entity.getEventType());
     record.setScheduleDefinitionId(entity.getScheduleDefinitionId());
     record.setScheduleKind(entity.getScheduleKind());
@@ -221,6 +229,8 @@ public class ScriptScheduleInstanceRepository {
     entity.setTenantId(record.get(SCRIPT_SCHEDULE_INSTANCES.TENANT_ID));
     entity.setGameInstanceId(record.get(SCRIPT_SCHEDULE_INSTANCES.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setScriptId(record.get(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_ID));
     entity.setPlayableStateScope(record.get(SCRIPT_SCHEDULE_INSTANCES.PLAYABLE_STATE_SCOPE));
     entity.setWorldSlug(record.get(SCRIPT_SCHEDULE_INSTANCES.WORLD_SLUG));
@@ -228,6 +238,10 @@ public class ScriptScheduleInstanceRepository {
     entity.setPointerVersion(record.get(SCRIPT_SCHEDULE_INSTANCES.POINTER_VERSION));
     entity.setPluginId(record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_VERSION_ID));
+    Long pluginActivationEpoch = record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_SCHEDULE_INSTANCES.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setEventType(record.get(SCRIPT_SCHEDULE_INSTANCES.EVENT_TYPE));
     entity.setScheduleDefinitionId(record.get(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_DEFINITION_ID));
     entity.setScheduleKind(record.get(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_KIND));

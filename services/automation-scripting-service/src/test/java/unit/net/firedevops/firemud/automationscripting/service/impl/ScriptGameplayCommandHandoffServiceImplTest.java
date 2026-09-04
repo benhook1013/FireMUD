@@ -362,10 +362,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
+    ScriptWorkItem item = workItem();
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(),
-            emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+            item, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isTrue();
     assertThat(result.outcome()).isEqualTo("ENQUEUED");
@@ -409,6 +409,53 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getSourceOrdinal()).isEqualTo(5000L);
     assertThat(handoffCaptor.getValue().getEmittedCommandText()).isEqualTo("say hello");
     assertThat(handoffCaptor.getValue().getHandoffOutcome()).isEqualTo("enqueued");
+  }
+
+  @Test
+  void reusedHandoffIdentityCarriesExistingRowVersionIntoOptimisticSave() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("auto-retry")
+                .build());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("7")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L))
+                .build());
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptHandoffEvent existing = new ScriptHandoffEvent();
+    existing.setId(44L);
+    existing.setRowVersion(7);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(existing));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    service.handoff(
+        workItem(), emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getId()).isEqualTo(44L);
+    assertThat(handoffCaptor.getValue().getRowVersion()).isEqualTo(7);
   }
 
   @Test
@@ -568,13 +615,14 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
+    ScriptWorkItem item = workItem();
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(),
-            emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+            item, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    assertThat(item.getFailureGeneration()).isEqualTo(2L);
     assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
     assertThat(audit.getFinalStage()).isEqualTo("TICK_HANDOFF");
     assertThat(audit.getFinalOutcome()).isEqualTo("infrastructure_error");

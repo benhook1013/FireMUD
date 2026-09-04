@@ -13,6 +13,9 @@ public class ScriptHandoffEvent {
   private String scriptId;
   private String pluginId;
   private String pluginVersionId;
+  private long scriptPinEpoch;
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
   private Long workItemId;
   private int commandOrdinal;
   private String automationDispatchId;

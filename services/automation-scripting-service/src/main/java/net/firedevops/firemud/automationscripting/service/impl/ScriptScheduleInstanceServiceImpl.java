@@ -159,7 +159,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
       return;
     }
-    if (runtimeState.getRegionId().isBlank()
+    if (runtimeState.getScriptPinEpoch() <= 0
+        || runtimeState.getRegionId().isBlank()
         || runtimeState.getRegionEpoch() <= 0
         || !hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())
         || !RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()) {
@@ -178,12 +179,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 tenantKey, scriptPatchVersion);
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
         bindingsByScriptEvent(tenantKey, scriptPatchVersion);
-    Map<String, String> activePluginVersions =
-        activePluginVersions(
+    Map<String, PluginRuntimeState> activePluginStates =
+        activePluginStates(
             tenantId,
             gameInstanceId,
             new AutomationRuntimeScopeSupport.RuntimeScope(
                 blankToEmpty(runtimeState.getRegionId()), runtimeState.getRegionEpoch()));
+    Map<String, String> activePluginVersions = activePluginVersions(activePluginStates);
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
@@ -232,6 +234,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               definition,
               binding,
               runtimeState,
+              activePluginStates,
               pinObservedAt,
               shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
                   ? nonPinTransitionSeed
@@ -291,6 +294,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setScriptPinEpoch(projection.getScriptPinEpoch())
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
@@ -300,9 +304,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli());
-      if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
+      if (runtimeState.getRegionId().isBlank()
+          || runtimeState.getRegionEpoch() <= 0
+          || runtimeState.getScriptPinEpoch() <= 0) {
         // A pin projection without a complete runtime scope is not authoritative enough to
-        // reconcile or delete schedule rows. The next complete projection will retry it.
+        // reconcile or delete schedule rows. The next complete projection will retry it. Epoch
+        // zero is likewise an older/absent projection and must not materialize a fenced schedule
+        // generation.
         markRetainedSchedulesPending(tenantId, projection.getGameInstanceId());
         continue;
       }
@@ -612,11 +620,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .toList();
   }
 
-  private Map<String, String> activePluginVersions(
+  private Map<String, PluginRuntimeState> activePluginStates(
       String tenantId,
       String gameInstanceId,
       AutomationRuntimeScopeSupport.RuntimeScope runtimeScope) {
-    Map<String, String> active = new HashMap<>();
+    Map<String, PluginRuntimeState> active = new HashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
@@ -626,12 +634,23 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
-      String activePluginVersionId = blankToEmpty(state.getActivePluginVersionId());
-      if (!pluginId.isBlank() && !activePluginVersionId.isBlank()) {
-        active.put(pluginId, activePluginVersionId);
+      if (!pluginId.isBlank()) {
+        active.put(pluginId, state);
       }
     }
     return active;
+  }
+
+  private static Map<String, String> activePluginVersions(
+      Map<String, PluginRuntimeState> activePluginStates) {
+    Map<String, String> activeVersions = new HashMap<>();
+    for (Map.Entry<String, PluginRuntimeState> entry : activePluginStates.entrySet()) {
+      String activePluginVersionId = blankToEmpty(entry.getValue().getActivePluginVersionId());
+      if (!activePluginVersionId.isBlank()) {
+        activeVersions.put(entry.getKey(), activePluginVersionId);
+      }
+    }
+    return activeVersions;
   }
 
   private static boolean shouldMaterialize(
@@ -679,6 +698,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleDefinition definition,
       ScriptEventBinding binding,
       GameInstanceRuntimeState runtimeState,
+      Map<String, PluginRuntimeState> activePluginStates,
       Instant pinObservedAt,
       Instant nonPinTransitionSeed,
       Instant now) {
@@ -692,6 +712,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
+    instance.setScriptPinEpoch(runtimeState.getScriptPinEpoch());
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
@@ -700,6 +721,23 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPointerVersion(routingBundle.pointerVersion());
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
+    if (!instance.getPluginId().isBlank()) {
+      PluginRuntimeState pluginState = activePluginStates.get(instance.getPluginId());
+      if (pluginState != null
+          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
+          && instance
+              .getPluginVersionId()
+              .equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
+        instance.setPluginActivationEpoch(pluginState.getPluginActivationEpoch());
+        instance.setLifecycleRevision(pluginState.getLifecycleRevision());
+      } else {
+        instance.setPluginActivationEpoch(0L);
+        instance.setLifecycleRevision(0L);
+      }
+    } else {
+      instance.setPluginActivationEpoch(0L);
+      instance.setLifecycleRevision(0L);
+    }
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -761,6 +799,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     // The durable observed runtime tuple is the generation boundary. A semantics hash is
     // diagnostic only and cannot infer continuity across a new pin/reset with identical text.
     return Objects.equals(instance.getScriptPatchVersion(), definition.getScriptPatchVersion())
+        && instance.getScriptPinEpoch() == runtimeState.getScriptPinEpoch()
         && Objects.equals(
             blankToEmpty(instance.getObservedRuntimeVersionId()),
             blankToEmpty(runtimeState.getRuntimeVersionId()))
@@ -1093,6 +1132,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(instance.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
+    audit.setPluginActivationEpoch(instance.getPluginActivationEpoch());
+    audit.setLifecycleRevision(instance.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1241,10 +1283,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    item.setPluginActivationEpoch(instance.getPluginActivationEpoch());
+    item.setLifecycleRevision(instance.getLifecycleRevision());
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
+    item.setScriptPinEpoch(instance.getScriptPinEpoch());
     item.setScriptEventId(scriptEventId);
     item.setDryRun(SCHEDULER_IS_DRY_RUN);
     item.setSourceService(SOURCE_SERVICE);
@@ -1343,6 +1388,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         runtimeState.getPinnedScriptPatchVersion(), instance.getScriptPatchVersion())) {
       return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
     }
+    if (runtimeState.getScriptPinEpoch() <= 0
+        || instance.getScriptPinEpoch() <= 0
+        || runtimeState.getScriptPinEpoch() != instance.getScriptPinEpoch()) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
+    }
     if (!Objects.equals(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
         blankToEmpty(instance.getPlayableStateScope()))) {
@@ -1374,6 +1424,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
               && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
+              && instance.getPluginActivationEpoch() > 0
+              && instance.getLifecycleRevision() > 0
+              && state.getPluginActivationEpoch() == instance.getPluginActivationEpoch()
+              && state.getLifecycleRevision() == instance.getLifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,
                   new AutomationRuntimeScopeSupport.RuntimeScope(
@@ -1522,6 +1576,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(workItem.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
+    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    audit.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
+    audit.setLifecycleRevision(workItem.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -2047,9 +2104,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance.getScriptId(),
           blankToEmpty(instance.getPluginId()),
           blankToEmpty(instance.getPluginVersionId()),
+          "pluginActivationEpoch:" + instance.getPluginActivationEpoch(),
           instance.getEventType(),
           DEFAULT_SCHEMA_VERSION,
           instance.getScriptPatchVersion(),
+          "scriptPinEpoch:" + instance.getScriptPinEpoch(),
           instance.getScheduleDefinitionId(),
           wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
           Boolean.toString(SCHEDULER_IS_DRY_RUN),
