@@ -35,7 +35,13 @@ public class FactionServiceImpl implements FactionService {
                 tenantId, characterId, playableStateKey, factionId)
             .orElseGet(
                 () -> {
-                  Faction faction = factionRepository.findById(factionId).orElseThrow();
+                  Faction faction =
+                      factionRepository
+                          .findByTenantIdAndId(tenantId, factionId)
+                          .orElseThrow(
+                              () ->
+                                  new IllegalArgumentException(
+                                      "faction not found or not owned by tenant"));
                   FactionStanding fs = new FactionStanding();
                   fs.setTenantId(tenantId);
                   fs.setCharacterId(characterId);

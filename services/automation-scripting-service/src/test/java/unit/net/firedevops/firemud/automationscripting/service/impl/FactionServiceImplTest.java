@@ -1,6 +1,10 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -22,7 +26,7 @@ class FactionServiceImplTest {
 
     Faction faction = new Faction();
     faction.setId(1L);
-    when(factionRepository.findById(1L)).thenReturn(Optional.of(faction));
+    when(factionRepository.findByTenantIdAndId(1L, 1L)).thenReturn(Optional.of(faction));
     when(standingRepository.findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
             1L, 2L, "shared-live", 1L))
         .thenReturn(Optional.empty());
@@ -37,5 +41,23 @@ class FactionServiceImplTest {
     assertEquals(5, result);
     assertEquals(5, captor.getValue().getReputation());
     assertEquals("shared-live", captor.getValue().getPlayableStateKey());
+  }
+
+  @Test
+  void adjustReputationRejectsFactionFromAnotherTenant() {
+    FactionRepository factionRepository = Mockito.mock(FactionRepository.class);
+    FactionStandingRepository standingRepository = Mockito.mock(FactionStandingRepository.class);
+    FactionServiceImpl service = new FactionServiceImpl(factionRepository, standingRepository);
+    when(standingRepository.findByTenantIdAndCharacterIdAndPlayableStateKeyAndFaction_Id(
+            2L, 2L, "shared-live", 1L))
+        .thenReturn(Optional.empty());
+    when(factionRepository.findByTenantIdAndId(2L, 1L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.adjustReputation(
+                2L, 2L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, 1L, 5));
+    verify(standingRepository, never()).save(any(FactionStanding.class));
   }
 }
