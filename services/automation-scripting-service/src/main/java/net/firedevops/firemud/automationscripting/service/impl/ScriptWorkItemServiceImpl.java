@@ -319,13 +319,17 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   @Override
   @Transactional(readOnly = true)
   public Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
-      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch) {
     requireText(tenantId, "tenant_id");
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
-    return rolloutProjectionService
-        .getProjection(tenantId, gameInstanceId, scriptPatchVersion)
-        .map(summary -> withPublication(tenantId, summary));
+    Optional<PatchInstanceRolloutSummary> projection =
+        scriptPinEpoch > 0
+            ? rolloutProjectionService.getProjection(
+                tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch)
+            : rolloutProjectionService.getProjection(tenantId, gameInstanceId, scriptPatchVersion);
+    return projection.map(summary -> withPublication(tenantId, summary));
   }
 
   @Override
@@ -334,21 +338,30 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
-    return rolloutProjectionService
-        .listProjections(
-            tenantId,
-            gameInstanceId,
-            scriptPatchVersion,
-            rolloutStatus,
-            changedAfterMs,
-            changedBeforeMs)
-        .stream()
-        .map(summary -> withPublication(tenantId, summary))
-        .toList();
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    List<PatchInstanceRolloutSummary> projections =
+        scriptPinEpoch > 0
+            ? rolloutProjectionService.listProjections(
+                tenantId,
+                gameInstanceId,
+                scriptPatchVersion,
+                scriptPinEpoch,
+                rolloutStatus,
+                changedAfterMs,
+                changedBeforeMs)
+            : rolloutProjectionService.listProjections(
+                tenantId,
+                gameInstanceId,
+                scriptPatchVersion,
+                rolloutStatus,
+                changedAfterMs,
+                changedBeforeMs);
+    return projections.stream().map(summary -> withPublication(tenantId, summary)).toList();
   }
 
   @Override
@@ -356,22 +369,32 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs,
       int limit) {
-    return rolloutProjectionService
-        .listEvents(
-            tenantId,
-            gameInstanceId,
-            scriptPatchVersion,
-            rolloutStatus,
-            changedAfterMs,
-            changedBeforeMs,
-            limit)
-        .stream()
-        .map(summary -> withPublication(tenantId, summary))
-        .toList();
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    List<PatchInstanceRolloutEventSummary> events =
+        scriptPinEpoch > 0
+            ? rolloutProjectionService.listEvents(
+                tenantId,
+                gameInstanceId,
+                scriptPatchVersion,
+                scriptPinEpoch,
+                rolloutStatus,
+                changedAfterMs,
+                changedBeforeMs,
+                limit)
+            : rolloutProjectionService.listEvents(
+                tenantId,
+                gameInstanceId,
+                scriptPatchVersion,
+                rolloutStatus,
+                changedAfterMs,
+                changedBeforeMs,
+                limit);
+    return events.stream().map(summary -> withPublication(tenantId, summary)).toList();
   }
 
   @Override
@@ -497,6 +520,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.rolloutStatus(),
         summary.statusReason(),
         summary.lastChangedAtMs(),
@@ -506,6 +530,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
   }
 
+  private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+  }
+
   private PatchInstanceRolloutEventSummary withPublication(
       String tenantId, PatchInstanceRolloutEventSummary summary) {
     return new PatchInstanceRolloutEventSummary(
@@ -513,6 +543,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.rolloutStatus(),
         summary.statusReason(),
         summary.observedAtMs(),
@@ -840,7 +871,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     if (pluginId.isBlank()) {
       Optional<ScriptEventIngressAudit> audit =
           ingressAuditRepository
-              .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRunAndSourceService(
+              .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
                   item.getTenantId(),
                   item.getGameInstanceId(),
                   item.getRegionId(),
@@ -850,6 +881,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                   item.getEventType(),
                   item.getEventSchemaVersion(),
                   item.getScriptPatchVersion(),
+                  item.getScriptPinEpoch(),
                   item.getScriptEventId(),
                   item.isDryRun(),
                   blankToEmpty(item.getSourceService()));

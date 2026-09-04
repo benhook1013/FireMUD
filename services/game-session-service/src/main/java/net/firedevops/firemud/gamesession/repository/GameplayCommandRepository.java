@@ -539,6 +539,13 @@ public class GameplayCommandRepository {
     record.setExecutionHook(entity.getExecutionHook());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setScriptPinControlPlaneRequestId(entity.getScriptPinControlPlaneRequestId());
+    record.setSourceScriptPatchVersion(entity.getSourceScriptPatchVersion());
+    record.setSourceScriptPinEpoch(entity.getSourceScriptPinEpoch());
+    record.setSourceScriptPinControlPlaneRequestId(entity.getSourceScriptPinControlPlaneRequestId());
+    record.setTargetScriptPatchVersion(entity.getTargetScriptPatchVersion());
+    record.setTargetScriptPinEpoch(entity.getTargetScriptPinEpoch());
+    record.setTargetScriptPinControlPlaneRequestId(entity.getTargetScriptPinControlPlaneRequestId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setPlayableStateScope(entity.getPlayableStateScope());
@@ -597,6 +604,16 @@ public class GameplayCommandRepository {
     entity.setExecutionHook(record.get(GAMEPLAY_COMMAND.EXECUTION_HOOK));
     entity.setScriptPatchVersion(record.get(GAMEPLAY_COMMAND.SCRIPT_PATCH_VERSION));
     entity.setScriptPinEpoch(record.get(GAMEPLAY_COMMAND.SCRIPT_PIN_EPOCH));
+    entity.setScriptPinControlPlaneRequestId(
+        record.get(GAMEPLAY_COMMAND.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setSourceScriptPatchVersion(record.get(GAMEPLAY_COMMAND.SOURCE_SCRIPT_PATCH_VERSION));
+    entity.setSourceScriptPinEpoch(record.get(GAMEPLAY_COMMAND.SOURCE_SCRIPT_PIN_EPOCH));
+    entity.setSourceScriptPinControlPlaneRequestId(
+        record.get(GAMEPLAY_COMMAND.SOURCE_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setTargetScriptPatchVersion(record.get(GAMEPLAY_COMMAND.TARGET_SCRIPT_PATCH_VERSION));
+    entity.setTargetScriptPinEpoch(record.get(GAMEPLAY_COMMAND.TARGET_SCRIPT_PIN_EPOCH));
+    entity.setTargetScriptPinControlPlaneRequestId(
+        record.get(GAMEPLAY_COMMAND.TARGET_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setPluginId(record.get(GAMEPLAY_COMMAND.PLUGIN_ID));
     entity.setPluginVersionId(record.get(GAMEPLAY_COMMAND.PLUGIN_VERSION_ID));
     entity.setPlayableStateScope(record.get(GAMEPLAY_COMMAND.PLAYABLE_STATE_SCOPE));

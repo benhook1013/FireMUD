@@ -104,6 +104,7 @@ class ScriptEventAuditRepositoryTest {
             "event_type",
             "event_schema_version",
             "script_patch_version",
+            "script_pin_epoch",
             "script_event_id",
             "dry_run");
   }
@@ -161,6 +162,7 @@ class ScriptEventAuditRepositoryTest {
             "event_type",
             "event_schema_version",
             "script_patch_version",
+            "script_pin_epoch",
             "script_event_id",
             "dry_run");
   }

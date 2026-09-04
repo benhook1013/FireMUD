@@ -28,6 +28,8 @@ public class ScriptEventIngressAudit {
   /** Null for pre-instance tenant-readiness ingress, positive for instance-scoped events. */
   private Long scriptPinEpoch;
 
+  private String scriptPinControlPlaneRequestId;
+
   private String scriptEventId;
   private String sourceService;
   private String triggerMode;

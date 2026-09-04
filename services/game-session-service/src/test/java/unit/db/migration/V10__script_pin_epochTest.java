@@ -6,12 +6,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
-class V8__script_pin_epochTest {
+class V10__script_pin_epochTest {
   @Test
   void addsEpochAndEnforcesCompleteTuple() throws IOException {
     String migration;
     try (var stream =
-        getClass().getClassLoader().getResourceAsStream("db/migration/V8__script_pin_epoch.sql")) {
+        getClass().getClassLoader().getResourceAsStream("db/migration/V10__script_pin_epoch.sql")) {
       assertThat(stream).isNotNull();
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }

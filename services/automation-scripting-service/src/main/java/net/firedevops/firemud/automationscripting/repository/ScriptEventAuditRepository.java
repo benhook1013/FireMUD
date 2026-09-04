@@ -6,6 +6,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -28,6 +29,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventAuditRepository {
+  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
+      field(name("script_pin_control_plane_request_id"), String.class);
   private static final String SOURCE_KIND_SCHEDULE_TIMER = "SCHEDULE_TIMER";
   private static final int MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
@@ -58,6 +61,7 @@ public class ScriptEventAuditRepository {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      Long scriptPinEpoch,
       String scriptEventId,
       boolean dryRun) {
     return SCRIPT_EVENT_AUDIT
@@ -75,6 +79,7 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+        .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
   }
@@ -94,12 +99,13 @@ public class ScriptEventAuditRepository {
         entity.getEventType(),
         entity.getEventSchemaVersion(),
         entity.getScriptPatchVersion(),
+        entity.getScriptPinEpoch(),
         entity.getScriptEventId(),
         entity.isDryRun());
   }
 
   public boolean
-      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
           String tenantId,
           String gameInstanceId,
           String regionId,
@@ -113,6 +119,7 @@ public class ScriptEventAuditRepository {
           String eventType,
           String eventSchemaVersion,
           String scriptPatchVersion,
+          Long scriptPinEpoch,
           String scriptEventId,
           boolean dryRun) {
     return dsl.fetchExists(
@@ -131,6 +138,7 @@ public class ScriptEventAuditRepository {
             eventType,
             eventSchemaVersion,
             scriptPatchVersion,
+            scriptPinEpoch,
             scriptEventId,
             dryRun));
   }
@@ -183,6 +191,7 @@ public class ScriptEventAuditRepository {
             SCRIPT_EVENT_AUDIT.EVENT_TYPE,
             SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
             SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION,
+            SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH,
             SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID,
             SCRIPT_EVENT_AUDIT.DRY_RUN)
         .doUpdate()
@@ -206,6 +215,7 @@ public class ScriptEventAuditRepository {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      Long scriptPinEpoch,
       String scriptId,
       String eventType,
       String finalReason,
@@ -222,6 +232,9 @@ public class ScriptEventAuditRepository {
     }
     if (!scriptPatchVersion.isBlank()) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    if (scriptPinEpoch != null) {
+      condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch));
     }
     if (!scriptId.isBlank()) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId));
@@ -246,12 +259,32 @@ public class ScriptEventAuditRepository {
         .fetch(this::toEntity);
   }
 
+  public List<ScriptEventAudit> findTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      Instant changedAfter,
+      Instant changedBefore,
+      Pageable pageable) {
+    return findTimerAuditEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        null,
+        scriptId,
+        eventType,
+        finalReason,
+        changedAfter,
+        changedBefore,
+        pageable);
+  }
+
   public ScriptEventAudit save(ScriptEventAudit entity) {
     if (entity.getId() == null) {
-      ScriptEventAuditRecord record = dsl.newRecord(SCRIPT_EVENT_AUDIT);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      return insertIfAbsentByHandlerIdentity(entity).audit();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
@@ -269,6 +302,7 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId())
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
@@ -360,6 +394,7 @@ public class ScriptEventAuditRepository {
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
+    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));

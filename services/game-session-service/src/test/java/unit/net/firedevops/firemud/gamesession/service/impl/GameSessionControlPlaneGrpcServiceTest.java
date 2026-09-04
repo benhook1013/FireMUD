@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
@@ -47,6 +48,7 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
+import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
@@ -194,6 +196,19 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setOwnerAccountId(99L);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    Mockito.when(
+            repository.applyScriptPin(
+                Mockito.anyLong(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.nullable(Long.class)))
+        .thenReturn(
+            new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service = newService(repository);
@@ -207,6 +222,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setActorPrincipal("tester")
             .setReason("test")
             .setControlPlaneRequestId("req-1")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setScriptPinEpoch(1L)
+                    .build())
             .build(),
         new NoopObserver<>() {
           @Override
@@ -217,8 +237,19 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("patch-1", responseRef.get().getPreviousScriptPatchVersion());
     assertEquals("patch-2", responseRef.get().getPinnedScriptPatchVersion());
-    assertEquals("req-1", instance.getScriptPatchPinnedControlPlaneRequestId());
-    Mockito.verify(repository).save(Mockito.any(GameInstance.class));
+    assertEquals(1L, responseRef.get().getPreviousScriptPinEpoch());
+    assertEquals(2L, responseRef.get().getScriptPinEpoch());
+    Mockito.verify(repository)
+        .applyScriptPin(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.eq("SET"),
+            Mockito.eq("patch-2"),
+            Mockito.eq("req-1"),
+            Mockito.eq("tester"),
+            Mockito.eq("test"),
+            Mockito.eq("EXPECT_EPOCH"),
+            Mockito.eq(1L));
   }
 
   @Test
@@ -228,10 +259,22 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-2");
-    instance.setScriptPinEpoch(2L);
     instance.setScriptPinEpoch(7L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    Mockito.when(
+            repository.applyScriptPin(
+                Mockito.anyLong(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.nullable(Long.class)))
+        .thenReturn(
+            new ScriptPinMutationResult("patch-2", 7L, "patch-1", 8L, "req-rollback-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service = newService(repository);
@@ -245,6 +288,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setActorPrincipal("tester")
             .setReason("rollback")
             .setControlPlaneRequestId("req-rollback-1")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setScriptPinEpoch(7L)
+                    .build())
             .build(),
         new NoopObserver<>() {
           @Override
@@ -255,9 +303,19 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("patch-2", responseRef.get().getPreviousScriptPatchVersion());
     assertEquals("patch-1", responseRef.get().getPinnedScriptPatchVersion());
-    assertEquals(8L, instance.getScriptPinEpoch());
-    assertEquals("req-rollback-1", instance.getScriptPatchPinnedControlPlaneRequestId());
-    Mockito.verify(repository).save(Mockito.any(GameInstance.class));
+    assertEquals(7L, responseRef.get().getPreviousScriptPinEpoch());
+    assertEquals(8L, responseRef.get().getScriptPinEpoch());
+    Mockito.verify(repository)
+        .applyScriptPin(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.eq("ROLLBACK"),
+            Mockito.eq("patch-1"),
+            Mockito.eq("req-rollback-1"),
+            Mockito.eq("tester"),
+            Mockito.eq("rollback"),
+            Mockito.eq("EXPECT_EPOCH"),
+            Mockito.eq(7L));
   }
 
   @Test
@@ -336,7 +394,6 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
     instance.setScriptPatchVersion("patch-2");
-    instance.setScriptPinEpoch(2L);
     instance.setScriptPinEpoch(7L);
     instance.setLaunchDescriptorId("ld-9");
     instance.setStatus("RUNNING");

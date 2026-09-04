@@ -475,7 +475,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
             null,
             "say hello",
             false,
-            null);
+            null,
+            1L);
 
     AdmissionResult result =
         admitWithCurrentPointers(List.of(currentPointer("demo", "production", 17L)), request);
@@ -603,7 +604,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
             null,
             "say hello",
             false,
-            null);
+            null,
+            1L);
 
     AdmissionResult result =
         admitWithCurrentPointers(List.of(currentPointer("demo", "production", 17L)), request);
@@ -1386,37 +1388,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static AdmissionResult admitWithCurrentPointers(
       List<GameplayAdmissionPointerSnapshot> currentPointers, AdmissionRequest request) {
-    AdmissionRequest effectiveRequest =
-        request.scriptPinEpoch() == null && "AUTOMATION".equals(request.sourceType())
-            ? new AdmissionRequest(
-                request.tenantId(),
-                request.gameInstanceId(),
-                request.regionId(),
-                request.regionEpoch(),
-                request.sourceType(),
-                request.automationDispatchId(),
-                request.automationWorkItemId(),
-                request.scriptId(),
-                request.scriptPatchVersion(),
-                request.pluginId(),
-                request.pluginVersionId(),
-                request.playableStateScope(),
-                request.worldSlug(),
-                request.realmSlug(),
-                request.pointerVersion(),
-                request.originSourceKind(),
-                request.originSourceState(),
-                request.originSourceOrdinal(),
-                request.originSourceDueTickId(),
-                request.originSourceDueAtMs(),
-                request.targetEntityId(),
-                request.remoteCoordinatorId(),
-                request.remoteFollowupId(),
-                request.command(),
-                request.requiresSoloTick(),
-                request.dueTickId(),
-                1L)
-            : request;
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -1426,21 +1397,21 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(GameplayAdmissionPointerAuthorityService.class);
 
     GameInstance instance = new GameInstance();
-    instance.setId(effectiveRequest.gameInstanceId());
-    instance.setTenantId(effectiveRequest.tenantId());
-    instance.setScriptPatchVersion(effectiveRequest.scriptPatchVersion());
-    instance.setScriptPinEpoch(effectiveRequest.scriptPinEpoch());
-    when(gameInstanceRepository.findById(effectiveRequest.gameInstanceId()))
+    instance.setId(request.gameInstanceId());
+    instance.setTenantId(request.tenantId());
+    instance.setScriptPatchVersion(request.scriptPatchVersion());
+    instance.setScriptPinEpoch(request.scriptPinEpoch());
+    when(gameInstanceRepository.findById(request.gameInstanceId()))
         .thenReturn(Optional.of(instance));
     when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))
         .thenReturn(currentPointers);
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
-                effectiveRequest.tenantId(),
-                effectiveRequest.gameInstanceId(),
-                effectiveRequest.regionId(),
-                effectiveRequest.regionEpoch(),
-                effectiveRequest.automationDispatchId()))
+                request.tenantId(),
+                request.gameInstanceId(),
+                request.regionId(),
+                request.regionEpoch(),
+                request.automationDispatchId()))
         .thenReturn(Optional.empty());
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
         .thenAnswer(
@@ -1453,11 +1424,11 @@ class AutomationGameplayCommandAdmissionSupportTest {
     ownership.setRegionId(request.regionId());
     ownership.setRegionEpoch(request.regionEpoch());
     when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(
-        effectiveRequest.tenantId(), effectiveRequest.regionId()))
+        request.tenantId(), request.regionId()))
         .thenReturn(Optional.of(ownership));
 
     return AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
-        effectiveRequest,
+        request,
         gameInstanceRepository,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,

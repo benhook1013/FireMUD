@@ -566,7 +566,6 @@ class GameInstanceServiceImplTest {
   void startSessionWithReplacementRestoresExistingRunningStateWhenNewStateSaveFails() {
     StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-5", 42L);
     GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
-    existing.setScriptPinEpoch(42L);
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
         .thenReturn(Optional.of(existing));
     AtomicInteger saveCount = new AtomicInteger();

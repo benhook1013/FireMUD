@@ -1623,11 +1623,13 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     // Golden identity: SHA-256 (first 60 hex chars) of length-prefixed UTF-8 values in
     // TimerFiringCandidate.identity(): tenant, instance, playable scope, region/epoch, target
-    // scope/entity, script/plugin identity, event/schema, patch, schedule, dueTickId, dry-run,
-    // and trigger mode. Changing any value, order, or framing changes persisted scriptEventId
+    // scope/entity, script/plugin identity, event/schema, patch/ pin epoch, schedule, dueTickId,
+    // dry-run, and trigger mode. Changing any value, order, or framing changes persisted
+    // scriptEventId
     // dedupe keys, so a migration must backfill existing scheduler work/audit identities together.
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-5275f68bb3d1eb74ff051bcd5b13164834f407ba6530955160ae0c1e8576");
+        .isEqualTo("timer-2fa3c269c66c6643d96d8d89d264081192fdc44fe8667ea0575845b6c9f3");
+    assertThat(workItem.getScriptPinEpoch()).isEqualTo(1L);
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
@@ -1707,6 +1709,64 @@ class ScriptScheduleInstanceServiceImplTest {
         .extracting(ScriptWorkItem::getScriptEventId)
         .doesNotHaveDuplicates()
         .allMatch(scriptEventId -> scriptEventId.matches("timer-[0-9a-f]{60}"));
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesSameVersionTimerIdentityByPinEpoch() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setScriptPinEpoch(2L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first), List.of(second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of());
+    GetGameInstanceRuntimeStateResponse runtimeEpochTwo =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setPinnedScriptPatchVersion("patch-1")
+                    .setScriptPinEpoch(2L)
+                    .setRegionId("region-1")
+                    .setRegionEpoch(12L)
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
+                    .build())
+            .build();
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
+                        .build())
+                .build(),
+            runtimeEpochTwo);
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates();
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptPinEpoch)
+        .containsExactly(1L, 2L);
   }
 
   @Test
@@ -2064,9 +2124,7 @@ class ScriptScheduleInstanceServiceImplTest {
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
                 .setRuntimeState(
-                    runtimeStateResponse("patch-1")
-                        .getRuntimeState()
-                        .toBuilder()
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
                         .setScriptPinEpoch(2L)
                         .build())
                 .build());

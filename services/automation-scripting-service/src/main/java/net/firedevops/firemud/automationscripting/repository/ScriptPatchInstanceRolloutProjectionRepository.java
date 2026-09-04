@@ -39,6 +39,22 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public Optional<ScriptPatchInstanceRolloutProjection>
+      findByTenantIdAndGameInstanceIdAndScriptPatchVersionAndScriptPinEpoch(
+          String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch) {
+    return dsl.selectFrom(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS)
+        .where(
+            SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(
+                    SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION.eq(
+                        scriptPatchVersion))
+                .and(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch)))
+        .fetchOptional(this::toEntity);
+  }
+
   public List<ScriptPatchInstanceRolloutProjection>
       findByTenantIdOrderByLastChangedAtDescGameInstanceIdAscScriptPatchVersionAsc(
           String tenantId) {

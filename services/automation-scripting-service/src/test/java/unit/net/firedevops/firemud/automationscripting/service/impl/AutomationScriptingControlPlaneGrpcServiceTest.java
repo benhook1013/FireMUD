@@ -859,6 +859,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "1",
                         "game-1",
                         "patch-2",
+                        2L,
                         "req-22",
                         222L,
                         230L,

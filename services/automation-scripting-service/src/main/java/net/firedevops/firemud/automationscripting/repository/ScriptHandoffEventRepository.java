@@ -5,6 +5,8 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -14,6 +16,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptHandoffEventsRecord;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
@@ -23,6 +26,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptHandoffEventRepository {
+  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
+      field(name("script_pin_control_plane_request_id"), String.class);
   private final DSLContext dsl;
 
   public ScriptHandoffEventRepository(DSLContext dsl) {
@@ -150,6 +155,7 @@ public class ScriptHandoffEventRepository {
             .set(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
@@ -203,6 +209,7 @@ public class ScriptHandoffEventRepository {
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId());
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
@@ -241,6 +248,7 @@ public class ScriptHandoffEventRepository {
     entity.setScriptPatchVersion(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION));
     Long scriptPinEpoch = record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setScriptId(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID));

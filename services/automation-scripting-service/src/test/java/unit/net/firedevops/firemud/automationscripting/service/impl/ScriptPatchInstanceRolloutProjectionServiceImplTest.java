@@ -100,7 +100,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
   }
 
   @Test
-  void preservesExistingProjectionWhenRuntimePinEpochIsUnavailable() {
+  void preservesExistingProjectionWhenRuntimePinProjectionIsStale() {
     ScriptPatchInstanceRolloutProjectionRepository repository =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
     ScriptPatchInstanceRolloutEventRepository eventRepository =
@@ -126,7 +126,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 0L, "", 0L, 100L, 0L, false, "", 0L, "", "", "")),
+                        "1", "game-1", "patch-1", 2L, "req-2", 200L, 100L, 100L, true, "", 0L, "",
+                        "", "")),
                 "",
                 ""));
     when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))

@@ -180,6 +180,7 @@ class GameplayCommandExecutionFenceServiceTest {
     instance.setTenantId(1L);
     instance.setScriptPatchVersion(scriptPatchVersion);
     instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
     return instance;
   }
 }

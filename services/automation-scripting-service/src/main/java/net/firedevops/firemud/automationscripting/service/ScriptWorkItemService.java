@@ -29,24 +29,67 @@ public interface ScriptWorkItemService {
       String tenantId, String gameInstanceId, String regionId);
 
   Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
-      String tenantId, String gameInstanceId, String scriptPatchVersion);
+      String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch);
+
+  default Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
+      String tenantId, String gameInstanceId, String scriptPatchVersion) {
+    return getPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion, 0L);
+  }
 
   List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs);
 
+  default List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs) {
+    return listPatchInstanceRollouts(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        0L,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs);
+  }
+
   List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      long scriptPinEpoch,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit);
+
+  default List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs,
-      int limit);
+      int limit) {
+    return listPatchInstanceRolloutEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        0L,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
 
   List<HandoffEventSummary> listHandoffEvents(
       String tenantId,
@@ -155,24 +198,74 @@ public interface ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long lastChangedAtMs,
       long projectionAsOfMs,
       long projectionLagMs,
       boolean projectionStale,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication) {
+    public PatchInstanceRolloutSummary(
+        String tenantId,
+        String gameInstanceId,
+        String scriptPatchVersion,
+        ScriptPatchInstanceRolloutStatus rolloutStatus,
+        String statusReason,
+        long lastChangedAtMs,
+        long projectionAsOfMs,
+        long projectionLagMs,
+        boolean projectionStale,
+        ScriptPatchPublicationLink publication) {
+      this(
+          tenantId,
+          gameInstanceId,
+          scriptPatchVersion,
+          0L,
+          rolloutStatus,
+          statusReason,
+          lastChangedAtMs,
+          projectionAsOfMs,
+          projectionLagMs,
+          projectionStale,
+          publication);
+    }
+  }
 
   record PatchInstanceRolloutEventSummary(
       String eventId,
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long observedAtMs,
       long projectionAsOfMs,
-      ScriptPatchPublicationLink publication) {}
+      ScriptPatchPublicationLink publication) {
+    public PatchInstanceRolloutEventSummary(
+        String eventId,
+        String tenantId,
+        String gameInstanceId,
+        String scriptPatchVersion,
+        ScriptPatchInstanceRolloutStatus rolloutStatus,
+        String statusReason,
+        long observedAtMs,
+        long projectionAsOfMs,
+        ScriptPatchPublicationLink publication) {
+      this(
+          eventId,
+          tenantId,
+          gameInstanceId,
+          scriptPatchVersion,
+          0L,
+          rolloutStatus,
+          statusReason,
+          observedAtMs,
+          projectionAsOfMs,
+          publication);
+    }
+  }
 
   record HandoffEventSummary(
       String eventId,

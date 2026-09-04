@@ -21,6 +21,11 @@ final class TriggerScriptEventRequestFactory {
             .setEventType(commonFields.eventType())
             .setEventSchemaVersion(commonFields.eventSchemaVersion())
             .setScriptPatchVersion(commonFields.scriptPatchVersion())
+            .setScriptPinEpoch(commonFields.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(
+                commonFields.scriptPinControlPlaneRequestId() == null
+                    ? ""
+                    : commonFields.scriptPinControlPlaneRequestId())
             .setScriptEventId(commonFields.scriptEventId())
             .setIsDryRun(commonFields.isDryRun())
             .setTriggerMode(commonFields.triggerMode())
@@ -70,6 +75,8 @@ final class TriggerScriptEventRequestFactory {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean isDryRun,
       TriggerMode triggerMode,

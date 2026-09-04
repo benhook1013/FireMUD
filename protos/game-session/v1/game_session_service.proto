@@ -772,6 +772,16 @@ message ScheduleRemoteFollowupRequest {
   string read_snapshot_token = 40;
   string event_payload_json = 41;
   int64 script_pin_epoch = 42;
+  // The immutable source pin tuple captured at origin admission. The legacy
+  // script_patch_version/script_pin_epoch fields remain source aliases for
+  // callers that have not yet been upgraded.
+  string source_script_patch_version = 43;
+  int64 source_script_pin_epoch = 44;
+  string source_script_pin_control_plane_request_id = 45;
+  // The exact target pin tuple frozen from the target owner at scheduling.
+  string target_script_patch_version = 46;
+  int64 target_script_pin_epoch = 47;
+  string target_script_pin_control_plane_request_id = 48;
 }
 
 message ScheduleRemoteFollowupResponse {
@@ -1115,6 +1125,7 @@ message SetPinnedScriptPatchVersionRequest {
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
+  ExpectedCurrentPin expected_current_pin = 7;
 }
 
 message SetPinnedScriptPatchVersionResponse {
@@ -1122,6 +1133,8 @@ message SetPinnedScriptPatchVersionResponse {
   string pinned_script_patch_version = 2;
   string control_plane_request_id = 3;
   shared.v1.ErrorDetail error = 4;
+  int64 previous_script_pin_epoch = 5;
+  int64 script_pin_epoch = 6;
 }
 
 message RollbackScriptPatchVersionRequest {
@@ -1131,6 +1144,7 @@ message RollbackScriptPatchVersionRequest {
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
+  ExpectedCurrentPin expected_current_pin = 7;
 }
 
 message RollbackScriptPatchVersionResponse {
@@ -1138,6 +1152,20 @@ message RollbackScriptPatchVersionResponse {
   string pinned_script_patch_version = 2;
   string control_plane_request_id = 3;
   shared.v1.ErrorDetail error = 4;
+  int64 previous_script_pin_epoch = 5;
+  int64 script_pin_epoch = 6;
+}
+
+message ExpectedCurrentPin {
+  enum Kind {
+    EXPECTED_CURRENT_PIN_KIND_UNSPECIFIED = 0;
+    UNCONDITIONAL = 1;
+    EXPECT_UNPINNED = 2;
+    EXPECT_EPOCH = 3;
+  }
+
+  Kind kind = 1;
+  int64 script_pin_epoch = 2;
 }
 
 message PauseTicksForScopeRequest {
@@ -1281,6 +1309,7 @@ message EnqueueAutomationCommandIfAbsentRequest {
   int64 origin_source_due_tick_id = 22;
   int64 origin_source_due_at_ms = 23;
   int64 script_pin_epoch = 24;
+  string script_pin_control_plane_request_id = 25;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {

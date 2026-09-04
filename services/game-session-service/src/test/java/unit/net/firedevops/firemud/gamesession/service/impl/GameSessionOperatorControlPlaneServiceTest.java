@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForPluginVersionRequest;
 import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPatchRequest;
@@ -24,6 +25,7 @@ class GameSessionOperatorControlPlaneServiceTest {
   @Test
   void rejectsScriptPinEpochExhaustionAsDurableStateFailureWithoutMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
@@ -31,8 +33,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setScriptPinEpoch(Long.MAX_VALUE);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
     when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
-    GameSessionOperatorControlPlaneService service =
-        service(gameInstanceRepository, mock(TickService.class));
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalStateException()
         .isThrownBy(
@@ -45,6 +46,11 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setControlPlaneRequestId("request-1")
                         .setActorPrincipal("operator")
                         .setReason("pin")
+                        .setExpectedCurrentPin(
+                            ExpectedCurrentPin.newBuilder()
+                                .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                                .setScriptPinEpoch(Long.MAX_VALUE)
+                                .build())
                         .build()))
         .withMessage("script pin epoch exhausted");
 
@@ -52,6 +58,9 @@ class GameSessionOperatorControlPlaneServiceTest {
         .isEqualTo("patch-old");
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPinEpoch())
         .isEqualTo(Long.MAX_VALUE);
+    org.mockito.Mockito.verify(gameInstanceRepository, org.mockito.Mockito.never())
+        .save(org.mockito.Mockito.any(GameInstance.class));
+    verifyNoInteractions(tickService);
   }
 
   @Test
@@ -63,8 +72,7 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-old");
     when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
-    GameSessionOperatorControlPlaneService service =
-        service(gameInstanceRepository, tickService);
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
     assertThatIllegalArgumentException()
         .isThrownBy(
@@ -77,6 +85,10 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setControlPlaneRequestId("request-1")
                         .setActorPrincipal("operator")
                         .setReason("pin")
+                        .setExpectedCurrentPin(
+                            ExpectedCurrentPin.newBuilder()
+                                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                                .build())
                         .build()))
         .withMessage(
             "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together");

@@ -402,6 +402,13 @@ message TriggerScriptEventRequest {
   string world_slug = 20;
   string realm_slug = 21;
   string pointer_version = 22;
+
+  // Exact Game Session source pin generation captured when this trigger was created. Required
+  // for instance-scoped gameplay/runtime triggers; omitted for tenant-readiness onLoad ingress.
+  int64 script_pin_epoch = 23;
+
+  // Canonical control-plane request identity paired with script_pin_epoch when available.
+  string script_pin_control_plane_request_id = 24;
 }
 
 message TriggerScriptEventResponse {
@@ -558,6 +565,7 @@ message GetScriptPatchInstanceRolloutStatusRequest {
   string tenant_id = 1;
   string game_instance_id = 2;
   string script_patch_version = 3;
+  int64 script_pin_epoch = 4;
 }
 
 message GetScriptPatchInstanceRolloutStatusResponse {
@@ -572,6 +580,7 @@ message GetScriptPatchInstanceRolloutStatusResponse {
   bool is_projection_stale = 9;
   shared.v1.ErrorDetail error = 10;
   ScriptPatchPublicationLink publication = 11;
+  int64 script_pin_epoch = 12;
 }
 
 message ListScriptScheduleInstancesRequest {
@@ -645,6 +654,7 @@ message ListScriptTimerAuditEventsRequest {
   int64 changed_after_ms = 7;
   int64 changed_before_ms = 8;
   int32 limit = 9;
+  int64 script_pin_epoch = 10;
 }
 
 message ScriptTimerAuditEventEntry {
@@ -685,6 +695,7 @@ message ScriptTimerAuditEventEntry {
   string current_runtime_realm_slug = 35;
   string current_runtime_pointer_version = 36;
   bool is_routing_bundle_stale = 37;
+  int64 script_pin_epoch = 38;
 }
 
 message ListScriptTimerAuditEventsResponse {
@@ -699,6 +710,7 @@ message ListScriptPatchInstanceRolloutsRequest {
   ScriptPatchInstanceRolloutStatus rollout_status = 4;
   int64 changed_after_ms = 5;
   int64 changed_before_ms = 6;
+  int64 script_pin_epoch = 7;
 }
 
 message ScriptPatchInstanceRolloutEntry {
@@ -712,6 +724,7 @@ message ScriptPatchInstanceRolloutEntry {
   int64 projection_lag_ms = 8;
   bool is_projection_stale = 9;
   ScriptPatchPublicationLink publication = 10;
+  int64 script_pin_epoch = 11;
 }
 
 message ListScriptPatchInstanceRolloutsResponse {
@@ -727,6 +740,7 @@ message ListScriptPatchInstanceRolloutEventsRequest {
   int64 changed_after_ms = 5;
   int64 changed_before_ms = 6;
   int32 limit = 7;
+  int64 script_pin_epoch = 8;
 }
 
 message ScriptPatchInstanceRolloutEventEntry {
@@ -739,6 +753,7 @@ message ScriptPatchInstanceRolloutEventEntry {
   int64 observed_at_ms = 7;
   int64 projection_as_of_ms = 8;
   ScriptPatchPublicationLink publication = 9;
+  int64 script_pin_epoch = 10;
 }
 
 message ListScriptPatchInstanceRolloutEventsResponse {

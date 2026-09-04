@@ -2937,7 +2937,20 @@ class RemoteFollowupRuntimeServiceImplTest {
         "TARGET_REGION_EXECUTED",
         44L,
         22L,
-        1700L);
+        1700L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        9L,
+        "patch-1",
+        9L,
+        null,
+        "patch-1",
+        9L,
+        null);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest scheduleRequestWithEpoch() {
@@ -2983,7 +2996,13 @@ class RemoteFollowupRuntimeServiceImplTest {
         null,
         null,
         null,
-        9L);
+        9L,
+        "patch-1",
+        9L,
+        null,
+        "patch-1",
+        9L,
+        null);
   }
 
   private static RemoteFollowupRuntimeService.ScheduleRequest triggerScriptEventScheduleRequest() {
@@ -3022,7 +3041,20 @@ class RemoteFollowupRuntimeServiceImplTest {
         "TARGET_REGION_EXECUTED",
         44L,
         22L,
-        1700L);
+        1700L,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        9L,
+        "patch-1",
+        9L,
+        null,
+        "patch-1",
+        9L,
+        null);
   }
 
   private static RemoteFollowupRuntimeService.ResultRequest resultRequest(String outcome) {
@@ -3069,6 +3101,11 @@ class RemoteFollowupRuntimeServiceImplTest {
     coordinator.setAutomationWorkItemId("work-1");
     coordinator.setScriptId("script-1");
     coordinator.setScriptPatchVersion("patch-1");
+    coordinator.setScriptPinEpoch(9L);
+    coordinator.setSourceScriptPatchVersion("patch-1");
+    coordinator.setSourceScriptPinEpoch(9L);
+    coordinator.setTargetScriptPatchVersion("patch-1");
+    coordinator.setTargetScriptPinEpoch(9L);
     coordinator.setPluginId("plugin-1");
     coordinator.setPluginVersionId("plugin-v1");
     coordinator.setUpdatedAt(NOW);
@@ -3117,6 +3154,11 @@ class RemoteFollowupRuntimeServiceImplTest {
     followup.setAutomationWorkItemId("work-1");
     followup.setScriptId("script-1");
     followup.setScriptPatchVersion("patch-1");
+    followup.setScriptPinEpoch(9L);
+    followup.setSourceScriptPatchVersion("patch-1");
+    followup.setSourceScriptPinEpoch(9L);
+    followup.setTargetScriptPatchVersion("patch-1");
+    followup.setTargetScriptPinEpoch(9L);
     followup.setPluginId("plugin-1");
     followup.setPluginVersionId("plugin-v1");
     followup.setCreatedAt(NOW);

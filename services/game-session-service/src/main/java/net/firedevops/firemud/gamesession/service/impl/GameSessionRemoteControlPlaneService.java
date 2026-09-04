@@ -316,7 +316,13 @@ final class GameSessionRemoteControlPlaneService {
                 normalizeBlank(request.getTriggerMode()),
                 normalizeBlank(request.getReadSnapshotToken()),
                 normalizeBlank(request.getEventPayloadJson()),
-                request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null));
+                request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
+                normalizeBlank(request.getSourceScriptPatchVersion()),
+                request.getSourceScriptPinEpoch() > 0 ? request.getSourceScriptPinEpoch() : null,
+                normalizeBlank(request.getSourceScriptPinControlPlaneRequestId()),
+                normalizeBlank(request.getTargetScriptPatchVersion()),
+                request.getTargetScriptPinEpoch() > 0 ? request.getTargetScriptPinEpoch() : null,
+                normalizeBlank(request.getTargetScriptPinControlPlaneRequestId())));
     return ScheduleRemoteFollowupResponse.newBuilder()
         .setCoordinatorId(outcome.coordinatorId())
         .setFollowupId(outcome.followupId())

@@ -515,6 +515,12 @@ public class RemoteCommandCoordinatorRepository {
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setSourceScriptPatchVersion(entity.getSourceScriptPatchVersion());
+    record.setSourceScriptPinEpoch(entity.getSourceScriptPinEpoch());
+    record.setSourceScriptPinControlPlaneRequestId(entity.getSourceScriptPinControlPlaneRequestId());
+    record.setTargetScriptPatchVersion(entity.getTargetScriptPatchVersion());
+    record.setTargetScriptPinEpoch(entity.getTargetScriptPinEpoch());
+    record.setTargetScriptPinControlPlaneRequestId(entity.getTargetScriptPinControlPlaneRequestId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
@@ -550,6 +556,18 @@ public class RemoteCommandCoordinatorRepository {
     entity.setPointerVersion(record.get(REMOTE_COMMAND_COORDINATOR.POINTER_VERSION));
     entity.setScriptPatchVersion(record.get(REMOTE_COMMAND_COORDINATOR.SCRIPT_PATCH_VERSION));
     entity.setScriptPinEpoch(record.get(REMOTE_COMMAND_COORDINATOR.SCRIPT_PIN_EPOCH));
+    entity.setSourceScriptPatchVersion(
+        record.get(REMOTE_COMMAND_COORDINATOR.SOURCE_SCRIPT_PATCH_VERSION));
+    entity.setSourceScriptPinEpoch(
+        record.get(REMOTE_COMMAND_COORDINATOR.SOURCE_SCRIPT_PIN_EPOCH));
+    entity.setSourceScriptPinControlPlaneRequestId(
+        record.get(REMOTE_COMMAND_COORDINATOR.SOURCE_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setTargetScriptPatchVersion(
+        record.get(REMOTE_COMMAND_COORDINATOR.TARGET_SCRIPT_PATCH_VERSION));
+    entity.setTargetScriptPinEpoch(
+        record.get(REMOTE_COMMAND_COORDINATOR.TARGET_SCRIPT_PIN_EPOCH));
+    entity.setTargetScriptPinControlPlaneRequestId(
+        record.get(REMOTE_COMMAND_COORDINATOR.TARGET_SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setPluginId(record.get(REMOTE_COMMAND_COORDINATOR.PLUGIN_ID));
     entity.setPluginVersionId(record.get(REMOTE_COMMAND_COORDINATOR.PLUGIN_VERSION_ID));
     entity.setAutomationDispatchId(record.get(REMOTE_COMMAND_COORDINATOR.AUTOMATION_DISPATCH_ID));

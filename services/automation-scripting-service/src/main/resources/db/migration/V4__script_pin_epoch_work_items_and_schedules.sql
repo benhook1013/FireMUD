@@ -3,5 +3,31 @@
 ALTER TABLE script_work_items
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
 
+ALTER TABLE script_work_items
+    ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
+
+ALTER TABLE script_work_items
+    DROP CONSTRAINT uq_script_work_item_trigger_identity;
+
+ALTER TABLE script_work_items
+    ADD CONSTRAINT uq_script_work_item_trigger_identity UNIQUE (
+        tenant_id,
+        game_instance_id,
+        region_id,
+        region_epoch,
+        entity_id,
+        playable_state_scope,
+        world_slug,
+        realm_slug,
+        pointer_version,
+        script_id,
+        event_type,
+        event_schema_version,
+        script_patch_version,
+        script_pin_epoch,
+        script_event_id,
+        dry_run
+    );
+
 ALTER TABLE script_schedule_instances
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;

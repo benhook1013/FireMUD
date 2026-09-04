@@ -594,6 +594,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
       String scriptId,
       String eventType,
       String finalReason,
@@ -601,19 +602,44 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       long changedBeforeMs,
       int limit) {
     requireText(tenantId, "tenant_id");
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
-    return eventAuditRepository
-        .findTimerAuditEvents(
-            tenantId,
-            blankToEmpty(gameInstanceId),
-            blankToEmpty(scriptPatchVersion),
-            blankToEmpty(scriptId),
-            blankToEmpty(eventType),
-            blankToEmpty(finalReason),
-            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
-            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
-            org.springframework.data.domain.PageRequest.of(0, boundedLimit))
-        .stream()
+    String normalizedTenant = tenantId;
+    String normalizedInstance = blankToEmpty(gameInstanceId);
+    String normalizedPatch = blankToEmpty(scriptPatchVersion);
+    String normalizedScript = blankToEmpty(scriptId);
+    String normalizedEvent = blankToEmpty(eventType);
+    String normalizedReason = blankToEmpty(finalReason);
+    Instant changedAfter = changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs);
+    Instant changedBefore = changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs);
+    org.springframework.data.domain.PageRequest page =
+        org.springframework.data.domain.PageRequest.of(0, boundedLimit);
+    List<ScriptEventAudit> audits =
+        scriptPinEpoch <= 0
+            ? eventAuditRepository.findTimerAuditEvents(
+                normalizedTenant,
+                normalizedInstance,
+                normalizedPatch,
+                normalizedScript,
+                normalizedEvent,
+                normalizedReason,
+                changedAfter,
+                changedBefore,
+                page)
+            : eventAuditRepository.findTimerAuditEvents(
+                normalizedTenant,
+                normalizedInstance,
+                normalizedPatch,
+                scriptPinEpoch,
+                normalizedScript,
+                normalizedEvent,
+                normalizedReason,
+                changedAfter,
+                changedBefore,
+                page);
+    return audits.stream()
         .map(ScriptScheduleInstanceServiceImpl::toTimerAuditSummary)
         .map(summary -> withPublication(tenantId, summary))
         .toList();
@@ -1106,7 +1132,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
-    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
+    audit.setScriptPinEpoch(candidate.scriptPinEpoch());
     audit.setScriptEventId(scriptEventId);
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
@@ -1256,7 +1282,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
-    item.setScriptPinEpoch(instance.getScriptPinEpoch());
+    item.setScriptPinEpoch(candidate.scriptPinEpoch());
     item.setScriptEventId(scriptEventId);
     item.setDryRun(SCHEDULER_IS_DRY_RUN);
     item.setSourceService(SOURCE_SERVICE);
@@ -1543,7 +1569,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
-    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    audit.setScriptPinEpoch(candidate.scriptPinEpoch());
     audit.setScriptEventId(workItem.getScriptEventId());
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
@@ -1650,6 +1676,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.pluginVersionId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.scriptEventId(),
         summary.triggerMode(),
         summary.sourceState(),
@@ -1836,6 +1863,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         blankToEmpty(audit.getPluginVersionId()),
         audit.getEventType(),
         audit.getScriptPatchVersion(),
+        audit.getScriptPinEpoch() == null ? 0L : audit.getScriptPinEpoch(),
         audit.getScriptEventId(),
         audit.getTriggerMode(),
         blankToEmpty(audit.getSourceState()),
@@ -2014,6 +2042,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleInstance instance,
       String regionId,
       Long regionEpoch,
+      long scriptPinEpoch,
       Long dueTickId,
       Instant dueAt,
       boolean wallClock) {
@@ -2022,6 +2051,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance,
           blankToEmpty(instance.getRuntimeRegionId()),
           instance.getRuntimeRegionEpoch(),
+          requirePositiveScriptPinEpoch(instance),
           dueTickId,
           null,
           false);
@@ -2029,22 +2059,50 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
     private static TimerFiringCandidate tick(
         ScriptScheduleInstance instance, long dueTickId, String regionId, long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          dueTickId,
+          null,
+          false);
     }
 
     private static TimerFiringCandidate wallClock(
         ScriptScheduleInstance instance, Instant dueAt, String regionId, long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          null,
+          dueAt,
+          true);
     }
 
     private static TimerFiringCandidate suppressedTick(
         ScriptScheduleInstance instance, long dueTickId, String regionId, Long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          dueTickId,
+          null,
+          false);
     }
 
     private static TimerFiringCandidate suppressedWallClock(
         ScriptScheduleInstance instance, Instant dueAt, String regionId, Long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          null,
+          dueAt,
+          true);
     }
 
     private String duePointToken() {
@@ -2071,6 +2129,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance.getEventType(),
           DEFAULT_SCHEMA_VERSION,
           instance.getScriptPatchVersion(),
+          String.valueOf(scriptPinEpoch),
           instance.getScheduleDefinitionId(),
           wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
           Boolean.toString(SCHEDULER_IS_DRY_RUN),
@@ -2080,6 +2139,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     private String finalReason() {
       return wallClock ? "timer_due_at_" + dueAt.toEpochMilli() : "timer_due_tick_" + dueTickId;
     }
+  }
+
+  private static long requirePositiveScriptPinEpoch(ScriptScheduleInstance instance) {
+    if (instance.getScriptPinEpoch() <= 0) {
+      throw new IllegalArgumentException("script_pin_epoch_required");
+    }
+    return instance.getScriptPinEpoch();
   }
 
   private static String blankToEmpty(String value) {

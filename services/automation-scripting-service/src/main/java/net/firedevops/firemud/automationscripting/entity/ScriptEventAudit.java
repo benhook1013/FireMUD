@@ -25,6 +25,8 @@ public class ScriptEventAudit {
   /** Null for tenant-readiness onLoad audits, positive for instance-scoped execution. */
   private Long scriptPinEpoch;
 
+  private String scriptPinControlPlaneRequestId;
+
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

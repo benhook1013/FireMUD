@@ -21,6 +21,7 @@ class V7__script_pin_epoch_runtime_consumersTest {
     assertThat(migration)
         .contains(
             "ALTER TABLE script_patch_instance_rollout_projections",
-            "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;");
+            "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;",
+            "ALTER TABLE script_patch_instance_rollout_events");
   }
 }
