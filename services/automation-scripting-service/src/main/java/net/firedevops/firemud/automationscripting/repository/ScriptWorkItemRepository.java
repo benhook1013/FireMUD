@@ -71,6 +71,45 @@ public class ScriptWorkItemRepository {
           long scriptPinEpoch,
           String scriptEventId,
           boolean dryRun) {
+    return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+        tenantId,
+        gameInstanceId,
+        regionId,
+        regionEpoch,
+        entityId,
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        scriptId,
+        eventType,
+        eventSchemaVersion,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        null,
+        scriptEventId,
+        dryRun);
+  }
+
+  public boolean
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+          String tenantId,
+          String gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
+          String scriptId,
+          String eventType,
+          String eventSchemaVersion,
+          String scriptPatchVersion,
+          long scriptPinEpoch,
+          String scriptPinControlPlaneRequestId,
+          String scriptEventId,
+          boolean dryRun) {
     return dsl.fetchExists(
         SCRIPT_WORK_ITEMS,
         triggerIdentityCondition(
@@ -88,6 +127,7 @@ public class ScriptWorkItemRepository {
             eventSchemaVersion,
             scriptPatchVersion,
             scriptPinEpoch,
+            scriptPinControlPlaneRequestId,
             scriptEventId,
             dryRun));
   }
@@ -367,6 +407,7 @@ public class ScriptWorkItemRepository {
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
               entity.getScriptPinEpoch(),
+              entity.getScriptPinControlPlaneRequestId(),
               entity.getScriptEventId(),
               entity.isDryRun());
       if (existing.isPresent()) {
@@ -381,6 +422,7 @@ public class ScriptWorkItemRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_WORK_ITEMS.fields());
+    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
@@ -388,23 +430,7 @@ public class ScriptWorkItemRepository {
     // race between DO NOTHING and a separate readback query.
     return dsl.insertInto(SCRIPT_WORK_ITEMS)
         .set(record)
-        .onConflict(
-            SCRIPT_WORK_ITEMS.TENANT_ID,
-            SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID,
-            SCRIPT_WORK_ITEMS.REGION_ID,
-            SCRIPT_WORK_ITEMS.REGION_EPOCH,
-            SCRIPT_WORK_ITEMS.ENTITY_ID,
-            SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE,
-            SCRIPT_WORK_ITEMS.WORLD_SLUG,
-            SCRIPT_WORK_ITEMS.REALM_SLUG,
-            SCRIPT_WORK_ITEMS.POINTER_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_ID,
-            SCRIPT_WORK_ITEMS.EVENT_TYPE,
-            SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
-            SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH,
-            SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID,
-            SCRIPT_WORK_ITEMS.DRY_RUN)
+        .onConflict(triggerConflictFields(entity))
         .doUpdate()
         .set(SCRIPT_WORK_ITEMS.ID, SCRIPT_WORK_ITEMS.ID)
         .returningResult(returningFields)
@@ -415,6 +441,30 @@ public class ScriptWorkItemRepository {
   }
 
   private record TriggerIdentityInsertResult(ScriptWorkItem workItem, boolean inserted) {}
+
+  private static Field<?>[] triggerConflictFields(ScriptWorkItem entity) {
+    List<Field<?>> fields =
+        new ArrayList<>(
+            List.of(
+                SCRIPT_WORK_ITEMS.TENANT_ID,
+                SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID,
+                SCRIPT_WORK_ITEMS.REGION_ID,
+                SCRIPT_WORK_ITEMS.REGION_EPOCH,
+                SCRIPT_WORK_ITEMS.ENTITY_ID,
+                SCRIPT_WORK_ITEMS.PLAYABLE_STATE_SCOPE,
+                SCRIPT_WORK_ITEMS.WORLD_SLUG,
+                SCRIPT_WORK_ITEMS.REALM_SLUG,
+                SCRIPT_WORK_ITEMS.POINTER_VERSION,
+                SCRIPT_WORK_ITEMS.SCRIPT_ID,
+                SCRIPT_WORK_ITEMS.EVENT_TYPE,
+                SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION,
+                SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION,
+                SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH));
+    fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
+    fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
+    return fields.toArray(Field<?>[]::new);
+  }
 
   private Optional<ScriptWorkItem> findByTriggerIdentity(
       String tenantId,
@@ -431,6 +481,7 @@ public class ScriptWorkItemRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
@@ -450,6 +501,7 @@ public class ScriptWorkItemRepository {
                 eventSchemaVersion,
                 scriptPatchVersion,
                 scriptPinEpoch,
+                scriptPinControlPlaneRequestId,
                 scriptEventId,
                 dryRun))
         .fetchOptional(this::toEntity);
@@ -470,6 +522,7 @@ public class ScriptWorkItemRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return SCRIPT_WORK_ITEMS
@@ -488,6 +541,7 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch))
+        .and(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(scriptPinControlPlaneRequestId))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
   }

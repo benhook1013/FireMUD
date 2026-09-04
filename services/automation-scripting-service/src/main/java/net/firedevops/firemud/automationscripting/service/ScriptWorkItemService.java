@@ -32,6 +32,16 @@ public interface ScriptWorkItemService {
       String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch);
 
   default Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId) {
+    return getPatchInstanceRolloutStatus(
+        tenantId, gameInstanceId, scriptPatchVersion, scriptPinEpoch);
+  }
+
+  default Optional<PatchInstanceRolloutSummary> getPatchInstanceRolloutStatus(
       String tenantId, String gameInstanceId, String scriptPatchVersion) {
     return getPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion, 0L);
   }
@@ -44,6 +54,25 @@ public interface ScriptWorkItemService {
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       long changedAfterMs,
       long changedBeforeMs);
+
+  default List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs) {
+    return listPatchInstanceRollouts(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs);
+  }
 
   default List<PatchInstanceRolloutSummary> listPatchInstanceRollouts(
       String tenantId,
@@ -71,6 +100,27 @@ public interface ScriptWorkItemService {
       long changedAfterMs,
       long changedBeforeMs,
       int limit);
+
+  default List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
+      ScriptPatchInstanceRolloutStatus rolloutStatus,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    return listPatchInstanceRolloutEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        rolloutStatus,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
 
   default List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
       String tenantId,
@@ -199,6 +249,7 @@ public interface ScriptWorkItemService {
       String gameInstanceId,
       String scriptPatchVersion,
       long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long lastChangedAtMs,
@@ -222,6 +273,7 @@ public interface ScriptWorkItemService {
           gameInstanceId,
           scriptPatchVersion,
           0L,
+          "",
           rolloutStatus,
           statusReason,
           lastChangedAtMs,
@@ -238,6 +290,7 @@ public interface ScriptWorkItemService {
       String gameInstanceId,
       String scriptPatchVersion,
       long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       ScriptPatchInstanceRolloutStatus rolloutStatus,
       String statusReason,
       long observedAtMs,
@@ -259,6 +312,7 @@ public interface ScriptWorkItemService {
           gameInstanceId,
           scriptPatchVersion,
           0L,
+          "",
           rolloutStatus,
           statusReason,
           observedAtMs,

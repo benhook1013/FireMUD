@@ -1,9 +1,9 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
-final class ScriptPinTupleCoherence {
+public final class ScriptPinTupleCoherence {
   private ScriptPinTupleCoherence() {}
 
-  static void requireCoherent(String patchVersion, Long pinEpoch, String requestId) {
+  public static void requireCoherent(String patchVersion, Long pinEpoch, String requestId) {
     if (pinEpoch != null && pinEpoch <= 0L) {
       throw new IllegalArgumentException(
           "SCRIPT_PIN_STATE_INVALID: script pin epoch must be positive when present");

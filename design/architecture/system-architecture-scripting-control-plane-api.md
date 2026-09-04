@@ -10,7 +10,7 @@ The exact pin/epoch authority and stage-aware recovery rules used by these APIs 
 
 ## Implementation Status
 
-The API shapes below are target-state contracts. Current Automation exposes bounded readiness, convergence, rollout, schedule, plugin, dead-letter, and replay surfaces, but `GetAutomationPinConvergence` does not yet expose `observedConvergenceAttemptGeneration`, instance-rollout lookup remains patch-version-only rather than exact-epoch lookup, and replay remains aggregate parent-row requeue rather than stage-aware per-row recovery. Current `CancelPendingWorkItemsForPluginVersion` accepts only tenant/plugin-version/instance/region plus request/audit fields and returns aggregate `canceledCount`; the activation/script tuples, explicit work-item batch, deterministic per-parent results, and descriptor/child reconciliation below are target-only. A missing current/observed epoch keeps exact-tuple admission/replay fail-closed; a missing current/observed attempt generation separately prevents attempt-bound convergence proof. Game Session now carries the tagged `expectedCurrentPin` field for pin CAS and a durable request digest/result ledger; the target `currentConvergenceAttemptGeneration` read field and broader rollout-history surfaces remain implementation and proof gaps. These are implementation and proof gaps, not alternate API semantics; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) and [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status). Validation and focused runtime proof selection follows the [validation and runtime proof workflow](../developer-workflows/validation-and-runtime-proof.md).
+The API shapes below are target-state contracts. Current Automation exposes bounded readiness, convergence, rollout, schedule, plugin, dead-letter, and replay surfaces, but `GetAutomationPinConvergence` does not yet expose `observedConvergenceAttemptGeneration`, and replay remains aggregate parent-row requeue rather than stage-aware per-row recovery. Current `CancelPendingWorkItemsForPluginVersion` accepts only tenant/plugin-version/instance/region plus request/audit fields and returns aggregate `canceledCount`; the activation/script tuples, explicit work-item batch, deterministic per-parent results, and descriptor/child reconciliation below are target-only. A missing current/observed epoch keeps exact-tuple admission/replay fail-closed; a missing current/observed attempt generation separately prevents attempt-bound convergence proof. Game Session now carries the tagged `expectedCurrentPin` field for pin CAS and a durable request digest/result ledger; the target `currentConvergenceAttemptGeneration` read field and broader rollout-history surfaces remain implementation and proof gaps. These are implementation and proof gaps, not alternate API semantics; see the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) and [Game Session Runtime and Tick Coordination tracker](../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#capability-status). Validation and focused runtime proof selection follows the [validation and runtime proof workflow](../developer-workflows/validation-and-runtime-proof.md).
 
 Routing note:
 
@@ -644,7 +644,7 @@ Inputs:
 
 - `tenantId`
 - `gameInstanceId`
-- Optional current filter: `scriptPatchVersion`; target state additionally supports exact `scriptPinEpoch` filtering.
+- Optional current filter: `scriptPatchVersion`; target state additionally supports exact `scriptPinEpoch` + `scriptPinControlPlaneRequestId` tuple filtering.
 - `limit` (bounded by the service)
 
 Outputs:
@@ -670,7 +670,7 @@ Inputs:
 
 - `tenantId`
 - Optional current filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
-- Target-only filter: `scriptPinEpoch`
+- Optional exact observed tuple filter: `scriptPinEpoch` with `scriptPinControlPlaneRequestId` (required together when either is supplied)
 - Optional `changedAfter` / `changedBefore`
 - `limit` (bounded by the service)
 
@@ -742,19 +742,20 @@ Contract rules:
 
 #### `GetScriptPatchInstanceRolloutStatus`
 
-Implementation note: the current Automation & Scripting implementation exposes a non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The current proto/implementation accepts the requested exact `(scriptPatchVersion, scriptPinEpoch)` lookup and persists the observed epoch; the projection row remains keyed by instance and patch for the current read model, while exact owner tuple/readback evidence is retained on the row. Refresh combines observed Game Session pin state with local work-item/current-pin state to derive non-authoritative `PINNED`, `REPINNED`, and `ROLLED_BACK` projection statuses/events. These local rows/events are implementation drift and diagnostics, not rollout-history authority; the target projection must remain exact-tuple observed state and must not derive rollout history. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
+Implementation note: the current Automation & Scripting implementation exposes a non-authoritative pin/convergence projection from a durable local `script_patch_instance_rollout_projections` read model rather than a raw shared-runtime query. The current proto/implementation accepts the requested exact `(scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId)` lookup and persists the observed owner tuple; the projection row remains keyed by instance and patch for the current read model, while exact owner tuple/readback evidence is retained on the row. Refresh combines observed Game Session pin state with local work-item/current-pin state to derive non-authoritative `PINNED`, `REPINNED`, and `ROLLED_BACK` projection statuses/events. These local rows/events are implementation drift and diagnostics, not rollout-history authority; the target projection must remain exact-tuple observed state and must not derive rollout history. Game Session's authoritative append-only history remains the owner for `PINNED`, `ROLLED_BACK`, and `REPINNED` transition history.
 
 Inputs:
 
 - `tenantId`
 - `gameInstanceId`
 - `scriptPatchVersion`
-- `scriptPinEpoch` (required exact epoch for this status lookup)
+- `scriptPinEpoch` and `lastObservedControlPlaneRequestId` (required together as the exact observed tuple for this status lookup)
 
 Outputs:
 
 - `tenantId`, `gameInstanceId`, `scriptPatchVersion`
 - `scriptPinEpoch`
+- `lastObservedControlPlaneRequestId`
 - `projectionStatus` (`OBSERVED` or `STALE`; non-historical projection state, never `PINNED`, `ROLLED_BACK`, or `REPINNED`)
 - `statusReason` (optional)
 - `lastChangedAt`
@@ -773,7 +774,7 @@ Read-model ownership:
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`, `projectionStatus`, `changedAfter`, `changedBefore`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, exact tuple `scriptPinEpoch` + `lastObservedControlPlaneRequestId`, `projectionStatus`, `changedAfter`, `changedBefore`
 - `limit` (service-bounded maximum number of rows)
 - `pageToken` (opaque continuation token bound to the tenant and normalized filters)
 

@@ -385,9 +385,11 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             : instance.getScriptPinEpoch();
     String scriptPinControlPlaneRequestId =
         instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
-    if (!StringUtils.hasText(scriptPatchVersion) || scriptPinEpoch <= 0L) {
+    if (!StringUtils.hasText(scriptPatchVersion)
+        || scriptPinEpoch <= 0L
+        || !StringUtils.hasText(scriptPinControlPlaneRequestId)) {
       LOG.debug(
-          "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
+          "Skipping script event publish because the complete script pin tuple is unavailable tenantId={} gameInstanceId={} characterId={}",
           tenantId,
           gameInstanceId,
           entityId);

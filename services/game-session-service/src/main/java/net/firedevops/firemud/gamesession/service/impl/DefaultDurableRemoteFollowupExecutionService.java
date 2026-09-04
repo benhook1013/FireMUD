@@ -8,8 +8,6 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -639,128 +637,33 @@ public final class DefaultDurableRemoteFollowupExecutionService
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
       }
-      String scriptId = authoritativeText(coordinator.getScriptId(), root, "scriptId");
-      String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
-      String pluginVersionId =
-          authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
-      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
-          targetPointer == null
-              ? sourceRoutingBundle(followup, root)
-              : new GameplayAdmissionPointerSnapshots.RoutingBundle(
-                  targetPointer.worldSlug(),
-                  targetPointer.realmSlug(),
-                  targetPointer.pointerVersion());
-      boolean isDryRun = authoritativeBoolean(false, root, "isDryRun");
-      TriggerScriptEventRequest.Builder request =
-          TriggerScriptEventRequestFactory.builder(
-              new TriggerScriptEventRequestFactory.CommonFields(
-                  Long.toString(followup.getTenantId()),
-                  Long.toString(followup.getTargetGameInstanceId()),
-                  followup.getTargetRegionId(),
-                  followup.getTargetRegionEpoch(),
-                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId"),
-                  requiredAuthoritativeText(followup.getEventType(), root, "eventType"),
-                  firstNonBlank(
-                      authoritativeText(
-                          followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
-                      firstNonBlank(followup.getEventSchemaVersion(), "v1")),
-                  requiredAuthoritativeText(
-                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
-                  requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
-                  isDryRun,
-                  triggerMode(root, followup),
-                  playableStateScope,
-                  requiredAuthoritativeText(
-                      followup.getReadSnapshotToken(), root, "readSnapshotToken"),
-                  eventPayloadJson(root, followup)),
-              toRequestRoutingBundle(routingBundle));
-      if (scriptId != null) {
-        request.setScriptId(scriptId);
+      authoritativeText(coordinator.getScriptId(), root, "scriptId");
+      authoritativeText(coordinator.getPluginId(), root, "pluginId");
+      authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
+      if (targetPointer == null) {
+        sourceRoutingBundle(followup, root);
       }
-      if (pluginId != null) {
-        request.setPluginId(pluginId);
-      }
-      if (pluginVersionId != null) {
-        request.setPluginVersionId(pluginVersionId);
-      }
-      Long dueTickId = authoritativeLong(followup.getDueTickId(), root, "dueTickId");
-      if (dueTickId != null) {
-        request.setDueTickId(dueTickId);
-      }
-      Long dueAtMs = optionalLong(root, "dueAtMs");
-      if (dueAtMs != null) {
-        request.setDueAtMs(dueAtMs);
-      }
-      TriggerScriptEventResponse response =
-          automationScriptingClient.triggerScriptEvent(request.build());
-      String resultPayload =
-          "{\"admitted\":"
-              + response.getAdmitted()
-              + ",\"admissionOutcome\":\""
-              + jsonEscape(response.getAdmissionOutcome().name())
-              + "\""
-              + jsonStringField("admissionReason", response.getAdmissionReason())
-              + ",\"resolvedHandlerCount\":"
-              + response.getResolvedHandlerCount()
-              + "}";
-      if (!response.hasError() && response.getAdmitted()) {
-        return new PayloadExecution(
-            "APPLIED", "APPLIED", null, null, resultPayload, null, null, null);
-      }
-      String errorCode =
-          response.hasError() && !response.getError().getCode().isBlank()
-              ? response.getError().getCode()
-              : response.getAdmissionReason().isBlank()
-                  ? "REMOTE_SCRIPT_EVENT_REJECTED"
-                  : response.getAdmissionReason().toUpperCase(Locale.ROOT);
-      String errorMessage =
-          response.hasError() && !response.getError().getMessage().isBlank()
-              ? response.getError().getMessage()
-              : response.getAdmissionReason().isBlank()
-                  ? "Target-side remote script event was not admitted"
-                  : response.getAdmissionReason();
-      if (isRetryableTriggerAdmissionFailure(response, errorCode)) {
-        return retryablePayloadExecution(errorCode, errorMessage, resultPayload, null);
-      }
-      return new PayloadExecution(
-          "ABANDONED",
-          "ABANDONED",
-          errorCode,
-          errorMessage,
-          resultPayload,
-          null,
-          errorCode,
-          errorMessage);
+      authoritativeBoolean(false, root, "isDryRun");
+      requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId");
+      requiredAuthoritativeText(followup.getEventType(), root, "eventType");
+      firstNonBlank(
+          authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
+          firstNonBlank(followup.getEventSchemaVersion(), "v1"));
+      requiredAuthoritativeText(coordinator.getScriptPatchVersion(), root, "scriptPatchVersion");
+      requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId");
+      triggerMode(root, followup);
+      requiredAuthoritativeText(followup.getReadSnapshotToken(), root, "readSnapshotToken");
+      eventPayloadJson(root, followup);
+      authoritativeLong(followup.getDueTickId(), root, "dueTickId");
+      optionalLong(root, "dueAtMs");
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
     }
-  }
-
-  private static boolean isRetryableTriggerAdmissionFailure(
-      TriggerScriptEventResponse response, String errorCode) {
-    String normalizedErrorCode = errorCode == null ? "" : errorCode.trim().toUpperCase(Locale.ROOT);
-    if (switch (normalizedErrorCode) {
-      case "AUTOMATION_SCRIPTING_UNAVAILABLE",
-          "AUTH_UNAVAILABLE",
-          "AUTHORITY_UNAVAILABLE",
-          "INFRASTRUCTURE_ERROR",
-          "PIN_STATE_UNAVAILABLE",
-          "SIGNER_POLICY_UNAVAILABLE",
-          "UNAVAILABLE" ->
-          true;
-      default -> false;
-    }) {
-      return true;
-    }
-    return switch (response.getAdmissionOutcome()) {
-      case TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING,
-          TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK,
-          TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR,
-          TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE,
-          TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE ->
-          true;
-      default -> false;
-    };
+    // The split intentionally removed durable remote source/target pin tuples. Do not derive a
+    // target Trigger ingress tuple from the mutable target instance or generic patch metadata.
+    return failure(
+        "REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE",
+        "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");
   }
 
   private PayloadExecution failure(String failureCode, String failureMessage) {
@@ -917,17 +820,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
 
   private static Long firstNonNull(Long primary, Long fallback) {
     return primary != null ? primary : fallback;
-  }
-
-  private static TriggerScriptEventRequestFactory.RoutingBundle toRequestRoutingBundle(
-      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle) {
-    if (routingBundle == null) {
-      return null;
-    }
-    return new TriggerScriptEventRequestFactory.RoutingBundle(
-        routingBundle.worldSlug(),
-        routingBundle.realmSlug(),
-        Long.toString(routingBundle.pointerVersion()));
   }
 
   private static String jsonStringField(String fieldName, String value) {

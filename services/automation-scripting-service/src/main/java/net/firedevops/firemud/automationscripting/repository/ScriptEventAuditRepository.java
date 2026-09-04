@@ -62,6 +62,7 @@ public class ScriptEventAuditRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       Long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return SCRIPT_EVENT_AUDIT
@@ -80,6 +81,7 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
+        .and(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(scriptPinControlPlaneRequestId))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
   }
@@ -100,6 +102,7 @@ public class ScriptEventAuditRepository {
         entity.getEventSchemaVersion(),
         entity.getScriptPatchVersion(),
         entity.getScriptPinEpoch(),
+        entity.getScriptPinControlPlaneRequestId(),
         entity.getScriptEventId(),
         entity.isDryRun());
   }
@@ -122,6 +125,45 @@ public class ScriptEventAuditRepository {
           Long scriptPinEpoch,
           String scriptEventId,
           boolean dryRun) {
+    return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+        tenantId,
+        gameInstanceId,
+        regionId,
+        regionEpoch,
+        entityId,
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        scriptId,
+        eventType,
+        eventSchemaVersion,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        null,
+        scriptEventId,
+        dryRun);
+  }
+
+  public boolean
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+          String tenantId,
+          String gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
+          String scriptId,
+          String eventType,
+          String eventSchemaVersion,
+          String scriptPatchVersion,
+          Long scriptPinEpoch,
+          String scriptPinControlPlaneRequestId,
+          String scriptEventId,
+          boolean dryRun) {
     return dsl.fetchExists(
         SCRIPT_EVENT_AUDIT,
         handlerIdentityCondition(
@@ -139,6 +181,7 @@ public class ScriptEventAuditRepository {
             eventSchemaVersion,
             scriptPatchVersion,
             scriptPinEpoch,
+            scriptPinControlPlaneRequestId,
             scriptEventId,
             dryRun));
   }
@@ -170,6 +213,7 @@ public class ScriptEventAuditRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_EVENT_AUDIT.fields());
+    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
@@ -177,23 +221,7 @@ public class ScriptEventAuditRepository {
     // race between DO NOTHING and a separate readback query.
     return dsl.insertInto(SCRIPT_EVENT_AUDIT)
         .set(record)
-        .onConflict(
-            SCRIPT_EVENT_AUDIT.TENANT_ID,
-            SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID,
-            SCRIPT_EVENT_AUDIT.REGION_ID,
-            SCRIPT_EVENT_AUDIT.REGION_EPOCH,
-            SCRIPT_EVENT_AUDIT.ENTITY_ID,
-            SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE,
-            SCRIPT_EVENT_AUDIT.WORLD_SLUG,
-            SCRIPT_EVENT_AUDIT.REALM_SLUG,
-            SCRIPT_EVENT_AUDIT.POINTER_VERSION,
-            SCRIPT_EVENT_AUDIT.SCRIPT_ID,
-            SCRIPT_EVENT_AUDIT.EVENT_TYPE,
-            SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
-            SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION,
-            SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH,
-            SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID,
-            SCRIPT_EVENT_AUDIT.DRY_RUN)
+        .onConflict(handlerConflictFields(entity))
         .doUpdate()
         .set(SCRIPT_EVENT_AUDIT.ID, SCRIPT_EVENT_AUDIT.ID)
         .returningResult(returningFields)
@@ -204,6 +232,30 @@ public class ScriptEventAuditRepository {
   }
 
   private record HandlerIdentityInsertResult(ScriptEventAudit audit, boolean inserted) {}
+
+  private static Field<?>[] handlerConflictFields(ScriptEventAudit entity) {
+    List<Field<?>> fields =
+        new ArrayList<>(
+            List.of(
+                SCRIPT_EVENT_AUDIT.TENANT_ID,
+                SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID,
+                SCRIPT_EVENT_AUDIT.REGION_ID,
+                SCRIPT_EVENT_AUDIT.REGION_EPOCH,
+                SCRIPT_EVENT_AUDIT.ENTITY_ID,
+                SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE,
+                SCRIPT_EVENT_AUDIT.WORLD_SLUG,
+                SCRIPT_EVENT_AUDIT.REALM_SLUG,
+                SCRIPT_EVENT_AUDIT.POINTER_VERSION,
+                SCRIPT_EVENT_AUDIT.SCRIPT_ID,
+                SCRIPT_EVENT_AUDIT.EVENT_TYPE,
+                SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
+                SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
+    fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
+    fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
+    fields.add(SCRIPT_EVENT_AUDIT.DRY_RUN);
+    return fields.toArray(Field<?>[]::new);
+  }
 
   public Optional<ScriptEventAudit> findByWorkItemId(Long workItemId) {
     return dsl.selectFrom(SCRIPT_EVENT_AUDIT)
@@ -216,6 +268,7 @@ public class ScriptEventAuditRepository {
       String gameInstanceId,
       String scriptPatchVersion,
       Long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptId,
       String eventType,
       String finalReason,
@@ -235,6 +288,12 @@ public class ScriptEventAuditRepository {
     }
     if (scriptPinEpoch != null) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch));
+    }
+    if (scriptPinEpoch != null || scriptPinControlPlaneRequestId != null) {
+      condition =
+          condition.and(
+              SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                  scriptPinControlPlaneRequestId));
     }
     if (!scriptId.isBlank()) {
       condition = condition.and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId));
@@ -273,6 +332,7 @@ public class ScriptEventAuditRepository {
         tenantId,
         gameInstanceId,
         scriptPatchVersion,
+        null,
         null,
         scriptId,
         eventType,
@@ -356,6 +416,7 @@ public class ScriptEventAuditRepository {
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.set(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, entity.getScriptPinControlPlaneRequestId());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());

@@ -6,6 +6,16 @@ import org.junit.jupiter.api.Test;
 
 class ScriptPinTupleCoherenceTest {
   @Test
+  void acceptsFullyUnpinnedTuple() {
+    ScriptPinTupleCoherence.requireCoherent(null, null, null);
+  }
+
+  @Test
+  void acceptsFullyPinnedTuple() {
+    ScriptPinTupleCoherence.requireCoherent("patch-1", 1L, "request-1");
+  }
+
+  @Test
   void rejectsZeroEpochEvenWhenTheOtherPinFieldsAreAbsent() {
     assertThatIllegalArgumentException()
         .isThrownBy(() -> ScriptPinTupleCoherence.requireCoherent(null, 0L, null))

@@ -76,6 +76,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
    * handler work. The durable state is carried by sourceState=IN_PROGRESS.
    */
   private static final String IN_PROGRESS_REASON = "ingress_in_progress";
+  private static final String RECLAIMED_STALE_REASON = "ingress_reclaimed_stale";
 
   private static final String IN_PROGRESS_STATE = "IN_PROGRESS";
 
@@ -177,6 +178,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   public TriggerAdmission admit(TriggerScriptEventRequest request, String sourceService) {
     long tenantKey = RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
     validateGameplayRoutingBundleShape(request, sourceService);
+    TriggerAdmission pinTupleAdmission = validatePinTupleShape(request);
+    if (pinTupleAdmission != null) {
+      return pinTupleAdmission;
+    }
     String schemaVersion = schemaVersion(request);
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
@@ -200,10 +205,32 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       if (claimedAudit == null) {
         throw new IllegalStateException("Event identity claim returned no audit row");
       }
-      if (!claim.inserted()) {
-        return admissionFromStoredIngress(claimedAudit);
+      if (claim.inserted()) {
+        claimRequest = claimedAudit;
+      } else {
+        if (isStaleInProgress(claimedAudit)) {
+          Instant now = Instant.now();
+          ScriptEventIngressAudit reclaimed =
+              repository
+                  .reclaimStaleInProgress(
+                      claimedAudit,
+                      now.minusMillis(runtimeProperties.getIngressClaimStaleThresholdMs()),
+                      now)
+                  .orElse(null);
+          if (reclaimed != null) {
+            LOGGER.warn(
+                "Reclaimed stale script ingress claim id={} rowVersion={} reason={}",
+                claimedAudit.getId(),
+                claimedAudit.getRowVersion(),
+                RECLAIMED_STALE_REASON);
+            claimRequest = reclaimed;
+          } else {
+            return admissionFromStoredIngress(claimedAudit);
+          }
+        } else {
+          return admissionFromStoredIngress(claimedAudit);
+        }
       }
-      claimRequest = claimedAudit;
     } else {
       // Existing unit tests use a Mockito repository that predates the claim API. Keep this
       // fallback inert for the real repository (which always returns a result), while retaining
@@ -280,6 +307,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         instanceScoped && request.getScriptPinEpoch() > 0L ? request.getScriptPinEpoch() : null);
     audit.setScriptPinControlPlaneRequestId(
         instanceScoped ? normalize(request.getScriptPinControlPlaneRequestId()) : null);
+    audit.setClaimStartedAt(Instant.now());
     audit.setScriptEventId(requiredText(request.getScriptEventId(), "script_event_id"));
     audit.setSourceService(sourceService);
     audit.setTriggerMode(request.getTriggerMode().name());
@@ -309,6 +337,16 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         audit.getResolvedHandlerCount());
   }
 
+  private boolean isStaleInProgress(ScriptEventIngressAudit audit) {
+    if (!IN_PROGRESS_STATE.equals(audit.getSourceState())) {
+      return false;
+    }
+    Instant startedAt =
+        audit.getClaimStartedAt() == null ? audit.getCreatedAt() : audit.getClaimStartedAt();
+    return startedAt != null
+        && startedAt.plusMillis(runtimeProperties.getIngressClaimStaleThresholdMs()).isBefore(Instant.now());
+  }
+
   private TriggerAdmission validate(
       TriggerScriptEventRequest request,
       String schemaVersion,
@@ -321,6 +359,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getScriptEventId(), "script_event_id");
     if (!request.getGameInstanceId().isBlank() && request.getScriptPinEpoch() <= 0L) {
       return rejected("missing_script_pin_epoch");
+    }
+    if (!request.getGameInstanceId().isBlank()
+        && request.getScriptPinEpoch() > 0L
+        && request.getScriptPinControlPlaneRequestId().isBlank()) {
+      return rejected("missing_script_pin_control_plane_request_id");
     }
     if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
         > outputProperties.getMaxSerializedWorkItemBytes()) {
@@ -376,6 +419,27 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private TriggerAdmission rejected(String reason) {
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  /** Validates the nullable/unpinned branches before they can reach the durable claim. */
+  private TriggerAdmission validatePinTupleShape(TriggerScriptEventRequest request) {
+    boolean instanceScoped = !request.getGameInstanceId().isBlank();
+    boolean hasEpoch = request.getScriptPinEpoch() != 0L;
+    boolean hasRequestId = !request.getScriptPinControlPlaneRequestId().isBlank();
+    if (isOnLoadRequest(request) && instanceScoped) {
+      return rejected("on_load_must_be_pre_instance");
+    }
+    if (!instanceScoped || isOnLoadRequest(request)) {
+      if (hasEpoch || hasRequestId) {
+        return rejected("unexpected_script_pin_tuple");
+      }
+      return null;
+    }
+    if (request.getScriptPinEpoch() <= 0L) {
+      return rejected(
+          hasRequestId ? "script_pin_request_id_without_epoch" : "missing_script_pin_epoch");
+    }
+    return hasRequestId ? null : rejected("missing_script_pin_control_plane_request_id");
   }
 
   private TriggerAdmission validateBuiltInPayload(TriggerScriptEventRequest request) {
@@ -517,6 +581,12 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0),
           0L);
     }
+    String observedPinRequestId = runtimeState.getScriptPatchPinnedControlPlaneRequestId();
+    if (observedPinRequestId.isBlank()) {
+      return new PinValidation(
+          new TriggerAdmission(false, OUTCOME_PIN_STATE_UNAVAILABLE, "pin_state_unavailable", 0),
+          0L);
+    }
     if (!request.getScriptPatchVersion().equals(runtimeState.getPinnedScriptPatchVersion())) {
       return new PinValidation(
           new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "version_unavailable", 0),
@@ -525,6 +595,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (request.getScriptPinEpoch() != runtimeState.getScriptPinEpoch()) {
       return new PinValidation(
           new TriggerAdmission(false, OUTCOME_VERSION_UNAVAILABLE, "script_pin_epoch_mismatch", 0),
+          request.getScriptPinEpoch());
+    }
+    if (!request.getScriptPinControlPlaneRequestId().equals(observedPinRequestId)) {
+      return new PinValidation(
+          new TriggerAdmission(
+              false,
+              OUTCOME_VERSION_UNAVAILABLE,
+              "script_pin_control_plane_request_id_mismatch",
+              0),
           request.getScriptPinEpoch());
     }
     scriptPatchPinProjectionService.observeRuntimeState(
@@ -974,7 +1053,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
-    audit.setScriptPinEpoch(scriptPinEpoch);
+    audit.setScriptPinEpoch(scriptPinEpoch > 0L ? scriptPinEpoch : null);
     audit.setScriptPinControlPlaneRequestId(normalize(request.getScriptPinControlPlaneRequestId()));
     audit.setScriptEventId(request.getScriptEventId());
     audit.setDryRun(request.getIsDryRun());
@@ -1049,7 +1128,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       HandlerScopeValues scopeValues) {
     return eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
@@ -1064,6 +1143,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptPinEpoch(),
+            request.getScriptPinControlPlaneRequestId(),
             request.getScriptEventId(),
             request.getIsDryRun());
   }
@@ -1085,7 +1165,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       HandlerScopeValues scopeValues) {
     return workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
@@ -1100,6 +1180,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             request.getScriptPinEpoch(),
+            request.getScriptPinControlPlaneRequestId(),
             request.getScriptEventId(),
             request.getIsDryRun());
   }
@@ -1175,7 +1256,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
     boolean instanceScoped = !request.getGameInstanceId().isBlank();
     return repository
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
             request.getTenantId(),
             nullableText(request.getGameInstanceId()),
             instanceScoped ? nullableText(request.getRegionId()) : null,
@@ -1186,6 +1267,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             schemaVersion,
             request.getScriptPatchVersion(),
             instanceScoped && request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
+            request.getScriptPinControlPlaneRequestId(),
             request.getScriptEventId(),
             request.getIsDryRun(),
             sourceService)

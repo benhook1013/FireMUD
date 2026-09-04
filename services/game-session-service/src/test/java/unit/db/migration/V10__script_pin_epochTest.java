@@ -22,6 +22,8 @@ class V10__script_pin_epochTest {
         .contains("script_pin_epoch IS NULL")
         .contains("script_pin_epoch IS NOT NULL")
         .contains("script_pin_epoch > 0")
+        .contains("regexp_replace")
+        .doesNotContain("BTRIM")
         .doesNotContain("NOT VALID")
         .doesNotContain("UPDATE game_instances");
   }

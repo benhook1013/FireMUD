@@ -31,11 +31,15 @@ class ScriptWorkItemRepositoryTest {
         context -> {
           insertSql.set(context.sql().toLowerCase());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
+          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, "pin-request-1");
           returned.set(insertedField, true);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
@@ -48,12 +52,57 @@ class ScriptWorkItemRepositoryTest {
     item.setTenantId("tenant-1");
     item.setGameInstanceId("game-1");
     item.setScriptPinEpoch(7L);
+    item.setScriptPinControlPlaneRequestId("pin-request-1");
 
     ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
 
-    assertThat(insertSql).hasValueSatisfying(sql -> assertThat(sql).contains("script_pin_epoch"));
+    assertThat(insertSql)
+        .hasValueSatisfying(
+            sql ->
+                assertThat(conflictClause(sql))
+                    .contains("script_pin_epoch", "script_pin_control_plane_request_id"));
     assertThat(saved.getScriptPinEpoch()).isEqualTo(7L);
+    assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(saved.getId()).isEqualTo(9L);
+  }
+
+  @Test
+  void insertAndHydrateUnpinnedEpochUsesEpochIdentityWithoutRequestId() {
+    ScriptWorkItemsRecord row = workItemRecord(10L, 4, 0L);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> insertSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          insertSql.set(context.sql().toLowerCase());
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
+          fields.add(requestIdField);
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(requestIdField, "");
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("tenant-1");
+    item.setGameInstanceId("game-1");
+    item.setScriptPinEpoch(0L);
+
+    ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
+
+    assertThat(saved.getScriptPinEpoch()).isZero();
+    assertThat(conflictClause(insertSql.get()))
+        .contains("script_pin_epoch")
+        .contains("script_pin_control_plane_request_id");
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {
@@ -66,5 +115,14 @@ class ScriptWorkItemRepositoryTest {
     record.setUpdatedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
     record.setRowVersion(rowVersion);
     return record;
+  }
+
+  private static String conflictClause(String sql) {
+    String normalized = sql.toLowerCase();
+    int conflictStart = normalized.indexOf("on conflict");
+    assertThat(conflictStart).isGreaterThanOrEqualTo(0);
+    int actionStart = normalized.indexOf(" do update", conflictStart);
+    assertThat(actionStart).isGreaterThan(conflictStart);
+    return normalized.substring(conflictStart, actionStart);
   }
 }

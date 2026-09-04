@@ -1524,7 +1524,7 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
@@ -1535,6 +1535,7 @@ class ScriptWorkItemServiceImplTest {
                 "v1",
                 "patch-1",
                 1L,
+                "req-1",
                 "event-1",
                 false,
                 "game-session-service"))
@@ -1615,7 +1616,7 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.save(item)).thenReturn(item);
     when(auditRepository.findByWorkItemId(78L)).thenReturn(Optional.of(audit));
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
@@ -1626,6 +1627,7 @@ class ScriptWorkItemServiceImplTest {
                 "v1",
                 "patch-1",
                 1L,
+                "req-1",
                 "event-2",
                 false,
                 "game-session-service"))
@@ -1709,7 +1711,7 @@ class ScriptWorkItemServiceImplTest {
     when(workItemRepository.findById(77L)).thenReturn(Optional.of(item));
     when(auditRepository.findByWorkItemId(77L)).thenReturn(Optional.empty());
     when(ingressAuditRepository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                 "1",
                 "game-1",
                 "region-1",
@@ -1720,6 +1722,7 @@ class ScriptWorkItemServiceImplTest {
                 "v1",
                 "patch-1",
                 1L,
+                "req-1",
                 "event-1",
                 false,
                 "game-session-service"))
@@ -1911,6 +1914,7 @@ class ScriptWorkItemServiceImplTest {
     item.setTenantId("1");
     item.setScriptPatchVersion(patchVersion);
     item.setScriptPinEpoch(1L);
+    item.setScriptPinControlPlaneRequestId("req-1");
     item.setStatus(status);
     item.setUpdatedAt(updatedAt);
     return item;
@@ -1937,7 +1941,7 @@ class ScriptWorkItemServiceImplTest {
             new ScriptPatchPinProjectionService.PinConvergenceLookup(
                 Optional.of(
                     new ScriptPatchPinProjectionService.PinConvergenceSummary(
-                        "1", "game-1", "patch-1", 1L, "", 100L, 100L, 0L, false, "", 0L, "", "",
+                        "1", "game-1", "patch-1", 1L, "req-1", 100L, 100L, 0L, false, "", 0L, "", "",
                         "")),
                 "",
                 ""));

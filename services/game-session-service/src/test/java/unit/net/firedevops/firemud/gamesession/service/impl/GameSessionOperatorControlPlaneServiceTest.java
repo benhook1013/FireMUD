@@ -1,16 +1,22 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
-import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingControlPlaneClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
@@ -19,11 +25,241 @@ import net.firedevops.firemud.gamesession.v1.PurgeQueuedTickCommandsForScriptPat
 import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import org.junit.jupiter.api.Test;
 
 class GameSessionOperatorControlPlaneServiceTest {
   @Test
-  void rejectsScriptPinEpochExhaustionAsDurableStateFailureWithoutMutation() {
+  void readyPublishedBaseCompatiblePatchIsPinnedAfterBothOwnerReads() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null))
+        .thenReturn(new ScriptPinMutationResult(null, null, "patch-new", 1L, "request-1", null));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(response.hasError()).isFalse();
+    org.mockito.Mockito.verify(repository)
+        .applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null);
+  }
+
+  @Test
+  void unreadyPatchIsLedgeredAndDoesNotMutatePin() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_PENDING_VALIDATION)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_NOT_READY"))
+        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_NOT_READY"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_NOT_READY");
+    org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion()).isNull();
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .applyScriptPin(
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(Long.class));
+  }
+
+  @Test
+  void tenantMismatchIsLedgeredBeforePinMutation() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(2L, 200L, 100L));
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_TENANT_MISMATCH"))
+        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_TENANT_MISMATCH"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_TENANT_MISMATCH");
+    verifyNoInteractions(automation);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never())
+        .applyScriptPin(
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(Long.class));
+  }
+
+  @Test
+  void baseMismatchIsLedgeredBeforePinMutation() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 999L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(999L)
+                .build());
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_BASE_VERSION_MISMATCH"))
+        .thenReturn(new ScriptPinMutationResult(null, null, null, null, "request-1", "SCRIPT_PATCH_BASE_VERSION_MISMATCH"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_BASE_VERSION_MISMATCH");
+  }
+
+  @Test
+  void unavailableAuthorityIsLedgeredAndExactRetryReplaysStoredFailure() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation = mock(AutomationScriptingControlPlaneClient.class);
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(
+            GetPublishedScriptPatchVersionResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("GAME_DESIGN_UNAVAILABLE")
+                        .setMessage("down")
+                        .build())
+                .build());
+    ScriptPinMutationResult failure =
+        new ScriptPinMutationResult(
+            null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+        .thenReturn(failure);
+
+    GameSessionOperatorControlPlaneService service =
+        newService(repository, tickService, gameDesign, automation);
+    SetPinnedScriptPatchVersionResponse first =
+        service.setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+    SetPinnedScriptPatchVersionResponse retry =
+        service.setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    org.assertj.core.api.Assertions.assertThat(first.getError().getCode())
+        .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    org.assertj.core.api.Assertions.assertThat(retry).isEqualTo(first);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.times(2))
+        .recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+  }
+
+  @Test
+  void returnsLedgeredScriptPinEpochExhaustionFailureWithoutLocalMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
     GameInstance instance = new GameInstance();
@@ -33,26 +269,46 @@ class GameSessionOperatorControlPlaneServiceTest {
     instance.setScriptPinEpoch(Long.MAX_VALUE);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
     when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameInstanceRepository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                "patch-old",
+                Long.MAX_VALUE,
+                "patch-old",
+                Long.MAX_VALUE,
+                "request-1",
+                "SCRIPT_PIN_EPOCH_EXHAUSTED"));
     GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
 
-    assertThatIllegalStateException()
-        .isThrownBy(
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    1L,
-                    7L,
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTargetScriptPatchVersion("patch-new")
-                        .setControlPlaneRequestId("request-1")
-                        .setActorPrincipal("operator")
-                        .setReason("pin")
-                        .setExpectedCurrentPin(
-                            ExpectedCurrentPin.newBuilder()
-                                .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
-                                .setScriptPinEpoch(Long.MAX_VALUE)
-                                .build())
-                        .build()))
-        .withMessage("script pin epoch exhausted");
+    SetPinnedScriptPatchVersionResponse response =
+        service.setPinnedScriptPatchVersion(
+            1L,
+            7L,
+            SetPinnedScriptPatchVersionRequest.newBuilder()
+                .setTargetScriptPatchVersion("patch-new")
+                .setControlPlaneRequestId("request-1")
+                .setActorPrincipal("operator")
+                .setReason("pin")
+                .setExpectedCurrentPin(
+                    ExpectedCurrentPin.newBuilder()
+                        .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                        .setScriptPinEpoch(Long.MAX_VALUE)
+                        .build())
+                .build());
+
+    org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
+        .isEqualTo("SCRIPT_PIN_EPOCH_EXHAUSTED");
+    org.assertj.core.api.Assertions.assertThat(response.getError().getMessage())
+        .isEqualTo("script pin epoch exhausted");
 
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPatchVersion())
         .isEqualTo("patch-old");
@@ -60,6 +316,17 @@ class GameSessionOperatorControlPlaneServiceTest {
         .isEqualTo(Long.MAX_VALUE);
     org.mockito.Mockito.verify(gameInstanceRepository, org.mockito.Mockito.never())
         .save(org.mockito.Mockito.any(GameInstance.class));
+    org.mockito.Mockito.verify(gameInstanceRepository)
+        .applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE);
     verifyNoInteractions(tickService);
   }
 
@@ -97,7 +364,16 @@ class GameSessionOperatorControlPlaneServiceTest {
         .isEqualTo("patch-old");
     org.assertj.core.api.Assertions.assertThat(instance.getScriptPinEpoch()).isNull();
     org.mockito.Mockito.verify(gameInstanceRepository, org.mockito.Mockito.never())
-        .save(org.mockito.Mockito.any(GameInstance.class));
+        .applyScriptPin(
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyLong(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(Long.class));
     verifyNoInteractions(tickService);
   }
 
@@ -151,6 +427,58 @@ class GameSessionOperatorControlPlaneServiceTest {
 
     verifyNoInteractions(
         gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+  }
+
+  @Test
+  void rejectsUnrecognizedExpectedPinBeforeOwnerReadOrLedgerMutation() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.setPinnedScriptPatchVersion(
+                    1L,
+                    7L,
+                    SetPinnedScriptPatchVersionRequest.newBuilder()
+                        .setTargetScriptPatchVersion("patch-new")
+                        .setControlPlaneRequestId("request-1")
+                        .setActorPrincipal("operator")
+                        .setReason("pin")
+                        .setExpectedCurrentPin(
+                            ExpectedCurrentPin.newBuilder().setKindValue(99).build())
+                        .build()))
+        .withMessage("expected_current_pin kind is required");
+
+    verifyNoInteractions(gameInstanceRepository, tickService);
+  }
+
+  @Test
+  void rejectsOverlengthScriptPinInputsBeforeOwnerReadOrLedgerMutation() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameSessionOperatorControlPlaneService service = service(gameInstanceRepository, tickService);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                service.setPinnedScriptPatchVersion(
+                    1L,
+                    7L,
+                    SetPinnedScriptPatchVersionRequest.newBuilder()
+                        .setTargetScriptPatchVersion("x".repeat(101))
+                        .setControlPlaneRequestId("request-1")
+                        .setActorPrincipal("operator")
+                        .setReason("pin")
+                        .setExpectedCurrentPin(
+                            ExpectedCurrentPin.newBuilder()
+                                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                                .build())
+                        .build()))
+        .withMessage("target_script_patch_version must contain at most 100 characters");
+
+    verifyNoInteractions(gameInstanceRepository, tickService);
   }
 
   @Test
@@ -313,5 +641,50 @@ class GameSessionOperatorControlPlaneServiceTest {
         tickService,
         mock(GameDesignClient.class),
         mock(GameSessionProperties.class));
+  }
+
+  private GameSessionOperatorControlPlaneService newService(
+      GameInstanceRepository repository,
+      TickService tickService,
+      GameDesignClient gameDesign,
+      AutomationScriptingControlPlaneClient automation) {
+    return new GameSessionOperatorControlPlaneService(
+        repository, tickService, gameDesign, automation, mock(GameSessionProperties.class));
+  }
+
+  private static GameInstance validUnpinnedInstance() {
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("100");
+    instance.setVersionId(100L);
+    return instance;
+  }
+
+  private static GetPublishedScriptPatchVersionResponse publishedPatch(
+      long tenantId, long versionId, long baseVersionId) {
+    return GetPublishedScriptPatchVersionResponse.newBuilder()
+        .setScriptPatch(
+            PublishedScriptPatchVersion.newBuilder()
+                .setTenantId(Long.toString(tenantId))
+                .setScriptPatchVersion("patch-new")
+                .setVersionId(versionId)
+                .setBaseVersionId(baseVersionId)
+                .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                .build())
+        .build();
+  }
+
+  private static SetPinnedScriptPatchVersionRequest setRequest(String requestId) {
+    return SetPinnedScriptPatchVersionRequest.newBuilder()
+        .setTargetScriptPatchVersion("patch-new")
+        .setControlPlaneRequestId(requestId)
+        .setActorPrincipal("operator")
+        .setReason("pin")
+        .setExpectedCurrentPin(
+            ExpectedCurrentPin.newBuilder()
+                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                .build())
+        .build();
   }
 }

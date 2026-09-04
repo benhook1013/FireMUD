@@ -34,11 +34,15 @@ class ScriptEventAuditRepositoryTest {
     MockDataProvider provider =
         context -> {
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, "");
           returned.set(insertedField, false);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
@@ -66,12 +70,16 @@ class ScriptEventAuditRepositoryTest {
         context -> {
           sqlRef.set(context.sql());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(requestIdField);
           fields.add(insertedField);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, "pin-request-1");
           returned.set(insertedField, true);
           result.add(returned);
           return new MockResult[] {new MockResult(1, result)};
@@ -105,6 +113,7 @@ class ScriptEventAuditRepositoryTest {
             "event_schema_version",
             "script_patch_version",
             "script_pin_epoch",
+            "script_pin_control_plane_request_id",
             "script_event_id",
             "dry_run");
   }
@@ -163,6 +172,7 @@ class ScriptEventAuditRepositoryTest {
             "event_schema_version",
             "script_patch_version",
             "script_pin_epoch",
+            "script_pin_control_plane_request_id",
             "script_event_id",
             "dry_run");
   }

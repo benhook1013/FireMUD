@@ -3,10 +3,13 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventIngressAuditRecord;
@@ -23,6 +26,54 @@ import org.junit.jupiter.api.Test;
 
 class ScriptEventIngressAuditRepositoryTest {
   @Test
+  void staleInProgressReclaimUsesRowVersionFenceAndRefreshesClaimLease() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    ScriptEventIngressAuditRecord row = new ScriptEventIngressAuditRecord();
+    row.setId(12L);
+    row.setTenantId("tenant-1");
+    row.setSourceState("IN_PROGRESS");
+    row.setRowVersion(4);
+    MockDataProvider provider =
+        context -> {
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("update")) {
+            sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+            return new MockResult[] {new MockResult(1)};
+          }
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<OffsetDateTime> claimStartedAtField =
+              DSL.field("claim_started_at", OffsetDateTime.class);
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(requestIdField);
+          fields.add(claimStartedAtField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(claimStartedAtField, OffsetDateTime.now());
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit claim = new ScriptEventIngressAudit();
+    claim.setId(12L);
+    claim.setRowVersion(4);
+    claim.setSourceState("IN_PROGRESS");
+    claim.setClaimStartedAt(Instant.now().minusSeconds(60));
+
+    Optional<ScriptEventIngressAudit> reclaimed =
+        repository.reclaimStaleInProgress(
+            claim, Instant.now().minusSeconds(30), Instant.now());
+
+    assertThat(reclaimed).isPresent();
+    assertThat(sqlRef.get())
+        .contains("source_state", "row_version", "claim_started_at");
+  }
+
+  @Test
   void insertIfAbsentByIdentityClaimsNullEpochBranchAtomically() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
@@ -38,11 +89,18 @@ class ScriptEventIngressAuditRepositoryTest {
         context -> {
           sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          Field<String> requestIdField =
+              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<OffsetDateTime> claimStartedAtField =
+              DSL.field("claim_started_at", OffsetDateTime.class);
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(requestIdField);
+          fields.add(claimStartedAtField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
+          returned.set(requestIdField, "");
           returned.set(insertedField, false);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
@@ -84,7 +142,7 @@ class ScriptEventIngressAuditRepositoryTest {
 
     assertThat(
             repository
-                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptEventIdAndDryRunAndSourceService(
+                .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                     "tenant-1",
                     "instance-1",
                     "region-1",
@@ -95,6 +153,7 @@ class ScriptEventIngressAuditRepositoryTest {
                     "v1",
                     "patch-1",
                     4L,
+                    "pin-request-1",
                     "event-1",
                     false,
                     "game-session-service"))
@@ -108,6 +167,7 @@ class ScriptEventIngressAuditRepositoryTest {
     assertThat(whereClause)
         .contains("source_service")
         .contains("script_pin_epoch")
+        .contains("script_pin_control_plane_request_id")
         .doesNotContain("world_slug", "realm_slug", "pointer_version");
   }
 }

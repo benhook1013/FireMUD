@@ -227,7 +227,8 @@ final class AutomationPatchControlPlaneService {
                 request.getTenantId(),
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
-                request.getScriptPinEpoch())
+                request.getScriptPinEpoch(),
+                request.getLastObservedControlPlaneRequestId())
             : workItemService.getPatchInstanceRolloutStatus(
                 request.getTenantId(),
                 request.getGameInstanceId(),
@@ -239,6 +240,7 @@ final class AutomationPatchControlPlaneService {
                 .setGameInstanceId(summary.gameInstanceId())
                 .setScriptPatchVersion(summary.scriptPatchVersion())
                 .setScriptPinEpoch(summary.scriptPinEpoch())
+                .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
                 .setRolloutStatus(summary.rolloutStatus())
                 .setStatusReason(summary.statusReason())
                 .setLastChangedAtMs(summary.lastChangedAtMs())
@@ -286,6 +288,7 @@ final class AutomationPatchControlPlaneService {
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
                 request.getScriptPinEpoch(),
+                request.getScriptPinControlPlaneRequestId(),
                 request.getScriptId(),
                 request.getEventType(),
                 request.getFinalReason(),
@@ -328,6 +331,7 @@ final class AutomationPatchControlPlaneService {
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
                 request.getScriptPinEpoch(),
+                request.getLastObservedControlPlaneRequestId(),
                 request.getRolloutStatus(),
                 request.getChangedAfterMs(),
                 request.getChangedBeforeMs())
@@ -356,6 +360,7 @@ final class AutomationPatchControlPlaneService {
                 request.getGameInstanceId(),
                 request.getScriptPatchVersion(),
                 request.getScriptPinEpoch(),
+                request.getLastObservedControlPlaneRequestId(),
                 request.getRolloutStatus(),
                 request.getChangedAfterMs(),
                 request.getChangedBeforeMs(),
@@ -650,6 +655,7 @@ final class AutomationPatchControlPlaneService {
         .setGameInstanceId(summary.gameInstanceId())
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setScriptPinEpoch(summary.scriptPinEpoch())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
         .setRolloutStatus(summary.rolloutStatus())
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
@@ -668,6 +674,7 @@ final class AutomationPatchControlPlaneService {
         .setGameInstanceId(summary.gameInstanceId())
         .setScriptPatchVersion(summary.scriptPatchVersion())
         .setScriptPinEpoch(summary.scriptPinEpoch())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
         .setRolloutStatus(summary.rolloutStatus())
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
@@ -773,6 +780,7 @@ final class AutomationPatchControlPlaneService {
             .setEventType(summary.eventType())
             .setScriptPatchVersion(summary.scriptPatchVersion())
             .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptEventId(summary.scriptEventId())
             .setTriggerMode(AutomationControlPlaneSupport.toTriggerMode(summary.triggerMode()))
             .setSourceState(summary.sourceState())
@@ -827,7 +835,6 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
-            .setScriptPinEpoch(summary.scriptPinEpoch())
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())

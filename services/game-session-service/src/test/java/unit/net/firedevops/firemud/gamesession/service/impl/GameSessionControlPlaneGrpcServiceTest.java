@@ -35,9 +35,9 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
-import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -48,9 +48,9 @@ import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
-import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
@@ -207,8 +207,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.nullable(Long.class)))
-        .thenReturn(
-            new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
+        .thenReturn(new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service = newService(repository);

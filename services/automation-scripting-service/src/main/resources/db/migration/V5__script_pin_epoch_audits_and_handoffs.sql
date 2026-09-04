@@ -7,6 +7,11 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
 
+-- A bounded claim lease lets a later retry recover a crashed claimant while optimistic row
+-- versioning fences the abandoned owner. Keep created_at as the retention anchor.
+ALTER TABLE script_event_ingress_audit
+    ADD COLUMN claim_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
 ALTER TABLE script_event_ingress_audit
     ALTER COLUMN playable_state_scope DROP NOT NULL;
 ALTER TABLE script_event_ingress_audit
@@ -30,10 +35,19 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     event_schema_version,
     script_patch_version,
     script_pin_epoch,
+    script_pin_control_plane_request_id,
     script_event_id,
     dry_run,
     source_service
-) WHERE game_instance_id IS NOT NULL;
+) WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;
+
+ALTER TABLE script_event_ingress_audit
+    ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK (
+        (script_pin_epoch IS NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
+    );
 
 -- Rejected instance-scoped requests may omit the epoch; keep that explicit null branch
 -- atomically idempotent without collapsing it into a sentinel value.
@@ -89,6 +103,15 @@ ALTER TABLE script_event_audit
         event_schema_version,
         script_patch_version,
         script_pin_epoch,
+        script_pin_control_plane_request_id,
         script_event_id,
         dry_run
+    );
+
+ALTER TABLE script_event_audit
+    ADD CONSTRAINT ck_script_event_audit_pin_tuple CHECK (
+        (script_pin_epoch IS NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );

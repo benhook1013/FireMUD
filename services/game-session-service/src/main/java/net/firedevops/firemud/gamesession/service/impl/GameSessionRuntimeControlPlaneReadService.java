@@ -91,7 +91,8 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setTenantId(Long.toString(instance.getTenantId()))
         .setGameInstanceId(Long.toString(instance.getId()))
         .setRuntimeVersionId(instance.getRuntimeVersion())
-        .setPinnedScriptPatchVersion(pinnedScriptPatchVersion == null ? "" : pinnedScriptPatchVersion)
+        .setPinnedScriptPatchVersion(
+            pinnedScriptPatchVersion == null ? "" : pinnedScriptPatchVersion)
         .setScriptPinEpoch(scriptPinEpoch)
         .setLaunchDescriptorId(
             instance.getLaunchDescriptorId() == null ? "" : instance.getLaunchDescriptorId())
@@ -144,8 +145,11 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: World response was null");
     }
     if (response.hasError()) {
-      throw new IllegalStateException(
-          response.getError().getCode() + ": " + response.getError().getMessage());
+      String errorCode =
+          response.getError().getCode().isBlank()
+              ? "WORLD_AUTHORITY_UNAVAILABLE"
+              : response.getError().getCode();
+      throw new IllegalStateException(errorCode + ": " + response.getError().getMessage());
     }
     if (!response.hasWorldInstance()) {
       throw new IllegalStateException(

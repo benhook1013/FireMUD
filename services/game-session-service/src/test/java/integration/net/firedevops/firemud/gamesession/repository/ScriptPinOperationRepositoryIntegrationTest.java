@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.gamesession.jooq.tables.GameInstances.GAME_INSTANCES;
+import static net.firedevops.firemud.gamesession.jooq.tables.ScriptPinOperation.SCRIPT_PIN_OPERATION;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
@@ -79,13 +80,32 @@ class ScriptPinOperationRepositoryIntegrationTest {
 
       ScriptPinMutationResult firstResult = first.get(10, TimeUnit.SECONDS);
       ScriptPinMutationResult secondResult = second.get(10, TimeUnit.SECONDS);
-      assertThat(java.util.stream.Stream.of(firstResult, secondResult).filter(ScriptPinMutationResult::succeeded).count())
+      assertThat(
+              java.util.stream.Stream.of(firstResult, secondResult)
+                  .filter(ScriptPinMutationResult::succeeded)
+                  .count())
           .isEqualTo(1L);
-      assertThat(java.util.stream.Stream.of(firstResult, secondResult).filter(result -> !result.succeeded()).count())
+      assertThat(
+              java.util.stream.Stream.of(firstResult, secondResult)
+                  .filter(result -> !result.succeeded())
+                  .count())
           .isEqualTo(1L);
-      assertThat(dsl.fetchCount(DSL.table("script_pin_operation"))).isEqualTo(2);
+      ScriptPinMutationResult loser = firstResult.succeeded() ? secondResult : firstResult;
+      assertThat(loser.errorCode()).isEqualTo("SCRIPT_PIN_EXPECTATION_FAILED");
+      assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(2);
 
       ScriptPinMutationResult winner = firstResult.succeeded() ? firstResult : secondResult;
+      assertThat(
+              dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                  .from(GAME_INSTANCES)
+                  .where(GAME_INSTANCES.ID.eq(7L))
+                  .fetchOne())
+          .satisfies(
+              record -> {
+                assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
+                    .isEqualTo(winner.resultingScriptPatchVersion());
+                assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+              });
       ScriptPinMutationResult retry =
           repository.applyScriptPin(
               1L,
@@ -117,7 +137,7 @@ class ScriptPinOperationRepositoryIntegrationTest {
       ScriptPinMutationResult secondResult = second.get(10, TimeUnit.SECONDS);
       assertThat(firstResult).isEqualTo(secondResult);
       assertThat(firstResult.succeeded()).isTrue();
-      assertThat(dsl.fetchCount(DSL.table("script_pin_operation"))).isEqualTo(1);
+      assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
       assertThat(
               dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
                   .from(GAME_INSTANCES)
@@ -151,6 +171,130 @@ class ScriptPinOperationRepositoryIntegrationTest {
             record -> {
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-a");
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+            });
+  }
+
+  @Test
+  void exactRetryReplaysCommittedResultAtEpochExhaustion() {
+    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE - 1L).execute();
+
+    ScriptPinMutationResult committed =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-max",
+            "request-max",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE - 1L);
+    ScriptPinMutationResult retry =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-max",
+            "request-max",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE - 1L);
+
+    assertThat(committed.succeeded()).isTrue();
+    assertThat(committed.resultingScriptPinEpoch()).isEqualTo(Long.MAX_VALUE);
+    assertThat(retry).isEqualTo(committed);
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+  }
+
+  @Test
+  void newMutationAtEpochExhaustionRecordsFailureAndReplaysWithoutStateChange() {
+    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE).execute();
+
+    ScriptPinMutationResult exhausted =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-new",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE);
+    ScriptPinMutationResult retry =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-new",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE);
+    ScriptPinMutationResult digestConflict =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-different",
+            "request-new",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE);
+
+    assertThat(exhausted.succeeded()).isFalse();
+    assertThat(exhausted.errorCode()).isEqualTo("SCRIPT_PIN_EPOCH_EXHAUSTED");
+    assertThat(retry).isEqualTo(exhausted);
+    assertThat(digestConflict.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(
+                    GAME_INSTANCES.SCRIPT_PATCH_VERSION,
+                    GAME_INSTANCES.SCRIPT_PIN_EPOCH,
+                    GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID))
+                  .isEqualTo("initial");
+            });
+  }
+
+  @Test
+  void epochExhaustionDoesNotMaskExpectationMismatch() {
+    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE).execute();
+
+    ScriptPinMutationResult mismatch =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-mismatch",
+            "operator",
+            "exhaustion",
+            "EXPECT_EPOCH",
+            Long.MAX_VALUE - 1L);
+
+    assertThat(mismatch.succeeded()).isFalse();
+    assertThat(mismatch.errorCode()).isEqualTo("SCRIPT_PIN_EXPECTATION_FAILED");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
             });
   }
 

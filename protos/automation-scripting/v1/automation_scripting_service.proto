@@ -566,6 +566,7 @@ message GetScriptPatchInstanceRolloutStatusRequest {
   string game_instance_id = 2;
   string script_patch_version = 3;
   int64 script_pin_epoch = 4;
+  string last_observed_control_plane_request_id = 5;
 }
 
 message GetScriptPatchInstanceRolloutStatusResponse {
@@ -581,6 +582,7 @@ message GetScriptPatchInstanceRolloutStatusResponse {
   shared.v1.ErrorDetail error = 10;
   ScriptPatchPublicationLink publication = 11;
   int64 script_pin_epoch = 12;
+  string last_observed_control_plane_request_id = 13;
 }
 
 message ListScriptScheduleInstancesRequest {
@@ -655,6 +657,7 @@ message ListScriptTimerAuditEventsRequest {
   int64 changed_before_ms = 8;
   int32 limit = 9;
   int64 script_pin_epoch = 10;
+  string script_pin_control_plane_request_id = 11;
 }
 
 message ScriptTimerAuditEventEntry {
@@ -696,6 +699,7 @@ message ScriptTimerAuditEventEntry {
   string current_runtime_pointer_version = 36;
   bool is_routing_bundle_stale = 37;
   int64 script_pin_epoch = 38;
+  string script_pin_control_plane_request_id = 39;
 }
 
 message ListScriptTimerAuditEventsResponse {
@@ -711,6 +715,7 @@ message ListScriptPatchInstanceRolloutsRequest {
   int64 changed_after_ms = 5;
   int64 changed_before_ms = 6;
   int64 script_pin_epoch = 7;
+  string last_observed_control_plane_request_id = 8;
 }
 
 message ScriptPatchInstanceRolloutEntry {
@@ -725,6 +730,7 @@ message ScriptPatchInstanceRolloutEntry {
   bool is_projection_stale = 9;
   ScriptPatchPublicationLink publication = 10;
   int64 script_pin_epoch = 11;
+  string last_observed_control_plane_request_id = 12;
 }
 
 message ListScriptPatchInstanceRolloutsResponse {
@@ -741,6 +747,7 @@ message ListScriptPatchInstanceRolloutEventsRequest {
   int64 changed_before_ms = 6;
   int32 limit = 7;
   int64 script_pin_epoch = 8;
+  string last_observed_control_plane_request_id = 9;
 }
 
 message ScriptPatchInstanceRolloutEventEntry {
@@ -754,6 +761,7 @@ message ScriptPatchInstanceRolloutEventEntry {
   int64 projection_as_of_ms = 8;
   ScriptPatchPublicationLink publication = 9;
   int64 script_pin_epoch = 10;
+  string last_observed_control_plane_request_id = 11;
 }
 
 message ListScriptPatchInstanceRolloutEventsResponse {

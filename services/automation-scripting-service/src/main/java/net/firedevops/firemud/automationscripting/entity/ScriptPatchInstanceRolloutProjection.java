@@ -10,6 +10,7 @@ public class ScriptPatchInstanceRolloutProjection {
   private String gameInstanceId;
   private String scriptPatchVersion;
   private long scriptPinEpoch;
+  private String lastObservedControlPlaneRequestId = "";
   private String rolloutStatus;
   private String statusReason;
   private Instant lastChangedAt = Instant.EPOCH;

@@ -82,7 +82,7 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
             IllegalStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
-    assertEquals(": diagnostic only", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE: diagnostic only", error.getMessage());
   }
 
   @Test

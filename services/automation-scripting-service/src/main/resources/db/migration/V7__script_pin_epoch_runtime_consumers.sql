@@ -3,5 +3,11 @@
 ALTER TABLE script_patch_instance_rollout_projections
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
 
+ALTER TABLE script_patch_instance_rollout_projections
+    ADD COLUMN last_observed_control_plane_request_id VARCHAR(256) NOT NULL DEFAULT '';
+
 ALTER TABLE script_patch_instance_rollout_events
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE script_patch_instance_rollout_events
+    ADD COLUMN last_observed_control_plane_request_id VARCHAR(256) NOT NULL DEFAULT '';

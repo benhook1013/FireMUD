@@ -25,8 +25,17 @@ ALTER TABLE script_work_items
         event_schema_version,
         script_patch_version,
         script_pin_epoch,
+        script_pin_control_plane_request_id,
         script_event_id,
         dry_run
+    );
+
+ALTER TABLE script_work_items
+    ADD CONSTRAINT ck_script_work_items_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
 
 ALTER TABLE script_schedule_instances

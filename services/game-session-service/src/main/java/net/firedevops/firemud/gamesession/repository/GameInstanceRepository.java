@@ -3,21 +3,20 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameInstances.GAME_INSTANCES;
-import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
-import static org.jooq.impl.DSL.table;
+import static net.firedevops.firemud.gamesession.jooq.tables.ScriptPinOperation.SCRIPT_PIN_OPERATION;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameInstancesRecord;
+import net.firedevops.firemud.gamesession.service.impl.ScriptPinTupleCoherence;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SelectJoinStep;
-import org.jooq.Table;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -25,23 +24,6 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameInstanceRepository {
-  private static final Table<Record> SCRIPT_PIN_OPERATION = table(name("script_pin_operation"));
-  private static final Field<Long> OP_TENANT_ID = field(name("tenant_id"), Long.class);
-  private static final Field<Long> OP_GAME_INSTANCE_ID = field(name("game_instance_id"), Long.class);
-  private static final Field<String> OP_REQUEST_ID = field(name("control_plane_request_id"), String.class);
-  private static final Field<String> OP_KIND = field(name("operation_kind"), String.class);
-  private static final Field<String> OP_TARGET = field(name("target_script_patch_version"), String.class);
-  private static final Field<String> OP_EXPECTED_KIND = field(name("expected_pin_kind"), String.class);
-  private static final Field<Long> OP_EXPECTED_EPOCH = field(name("expected_script_pin_epoch"), Long.class);
-  private static final Field<String> OP_ACTOR = field(name("actor_principal"), String.class);
-  private static final Field<String> OP_REASON = field(name("reason"), String.class);
-  private static final Field<String> OP_DIGEST = field(name("mutation_digest"), String.class);
-  private static final Field<String> OP_OUTCOME = field(name("outcome"), String.class);
-  private static final Field<String> OP_ERROR_CODE = field(name("error_code"), String.class);
-  private static final Field<String> OP_PREVIOUS_PATCH = field(name("previous_script_patch_version"), String.class);
-  private static final Field<Long> OP_PREVIOUS_EPOCH = field(name("previous_script_pin_epoch"), Long.class);
-  private static final Field<String> OP_RESULTING_PATCH = field(name("resulting_script_patch_version"), String.class);
-  private static final Field<Long> OP_RESULTING_EPOCH = field(name("resulting_script_pin_epoch"), Long.class);
   private static final Field<?>[] SELECT_FIELDS = {
     GAME_INSTANCES.ID,
     GAME_INSTANCES.TENANT_ID,
@@ -202,7 +184,7 @@ public class GameInstanceRepository {
           DSLContext tx = org.jooq.impl.DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(OP_DIGEST))) {
+            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -211,7 +193,11 @@ public class GameInstanceRepository {
           Record current =
               tx.select(SELECT_FIELDS)
                   .from(GAME_INSTANCES)
-                  .where(GAME_INSTANCES.ID.eq(gameInstanceId).and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+                  .where(
+                      GAME_INSTANCES
+                          .ID
+                          .eq(gameInstanceId)
+                          .and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
                   .forUpdate()
                   .fetchOne();
           if (current == null) {
@@ -222,7 +208,7 @@ public class GameInstanceRepository {
           // instead of racing its primary-key insert.
           existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
-            if (!mutationDigest.equals(existing.get(OP_DIGEST))) {
+            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
               return idempotencyConflict(controlPlaneRequestId);
             }
             return operationResult(existing, controlPlaneRequestId);
@@ -231,9 +217,11 @@ public class GameInstanceRepository {
           Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
           String previousRequestId =
               current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
-          requireCoherent(previousPatch, previousEpoch, previousRequestId);
+          ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
 
-          if (!expectedPinMatches(expectedPinKind, expectedScriptPinEpoch, previousPatch, previousEpoch)) {
+          long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
+          if (!expectedPinMatches(
+              expectedPinKind, expectedScriptPinEpoch, previousPatch, previousEpoch)) {
             ScriptPinMutationResult result =
                 new ScriptPinMutationResult(
                     previousPatch,
@@ -257,20 +245,45 @@ public class GameInstanceRepository {
             return result;
           }
 
-          long currentEpoch = previousEpoch == null ? 0L : previousEpoch;
           if (currentEpoch == Long.MAX_VALUE) {
-            throw new IllegalStateException("script pin epoch exhausted");
+            ScriptPinMutationResult result =
+                new ScriptPinMutationResult(
+                    previousPatch,
+                    previousEpoch,
+                    previousPatch,
+                    previousEpoch,
+                    controlPlaneRequestId,
+                    "SCRIPT_PIN_EPOCH_EXHAUSTED");
+            insertOperation(
+                tx,
+                tenantId,
+                gameInstanceId,
+                operationKind,
+                targetScriptPatchVersion,
+                expectedPinKind,
+                expectedScriptPinEpoch,
+                actorPrincipal,
+                reason,
+                mutationDigest,
+                result);
+            return result;
           }
+
           long resultingEpoch = currentEpoch + 1L;
-          long currentRowVersion = current.get(GAME_INSTANCES.ROW_VERSION) == null ? 0L : current.get(GAME_INSTANCES.ROW_VERSION);
+          long currentRowVersion =
+              current.get(GAME_INSTANCES.ROW_VERSION) == null
+                  ? 0L
+                  : current.get(GAME_INSTANCES.ROW_VERSION);
           int updated =
               tx.update(GAME_INSTANCES)
                   .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
                   .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, resultingEpoch)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT, java.time.LocalDateTime.now())
+                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT, toLocalDateTime(Instant.now()))
                   .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_BY, actorPrincipal)
                   .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON, reason)
-                  .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID, controlPlaneRequestId)
+                  .set(
+                      GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
+                      controlPlaneRequestId)
                   .set(GAME_INSTANCES.ROW_VERSION, currentRowVersion + 1L)
                   .where(
                       GAME_INSTANCES
@@ -290,6 +303,95 @@ public class GameInstanceRepository {
                   resultingEpoch,
                   controlPlaneRequestId,
                   null);
+          insertOperation(
+              tx,
+              tenantId,
+              gameInstanceId,
+              operationKind,
+              targetScriptPatchVersion,
+              expectedPinKind,
+              expectedScriptPinEpoch,
+              actorPrincipal,
+              reason,
+              mutationDigest,
+              result);
+          return result;
+        });
+  }
+
+  /**
+   * Records a deterministic pre-commit pin validation failure without changing the instance tuple.
+   *
+   * <p>The operation ledger is checked before the current row is read, so an exact retry replays
+   * the original result even if the external authority has since changed or recovered.
+   */
+  public ScriptPinMutationResult recordScriptPinFailure(
+      Long tenantId,
+      Long gameInstanceId,
+      String operationKind,
+      String targetScriptPatchVersion,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason,
+      String expectedPinKind,
+      Long expectedScriptPinEpoch,
+      String errorCode) {
+    if (errorCode == null || errorCode.isBlank()) {
+      throw new IllegalArgumentException("errorCode is required");
+    }
+    String mutationDigest =
+        mutationDigest(
+            tenantId,
+            gameInstanceId,
+            operationKind,
+            targetScriptPatchVersion,
+            actorPrincipal,
+            reason,
+            expectedPinKind,
+            expectedScriptPinEpoch);
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext tx = org.jooq.impl.DSL.using(configuration);
+          Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (existing != null) {
+            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+              return idempotencyConflict(controlPlaneRequestId);
+            }
+            return operationResult(existing, controlPlaneRequestId);
+          }
+          Record current =
+              tx.select(SELECT_FIELDS)
+                  .from(GAME_INSTANCES)
+                  .where(
+                      GAME_INSTANCES
+                          .ID
+                          .eq(gameInstanceId)
+                          .and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+                  .forUpdate()
+                  .fetchOne();
+          if (current == null) {
+            throw new IllegalArgumentException("Game instance not found");
+          }
+          existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (existing != null) {
+            if (!mutationDigest.equals(existing.get(SCRIPT_PIN_OPERATION.MUTATION_DIGEST))) {
+              return idempotencyConflict(controlPlaneRequestId);
+            }
+            return operationResult(existing, controlPlaneRequestId);
+          }
+          String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+          Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
+          String previousRequestId =
+              current.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID);
+          ScriptPinTupleCoherence.requireCoherent(previousPatch, previousEpoch, previousRequestId);
+          ScriptPinMutationResult result =
+              new ScriptPinMutationResult(
+                  previousPatch,
+                  previousEpoch,
+                  previousPatch,
+                  previousEpoch,
+                  controlPlaneRequestId,
+                  errorCode);
           insertOperation(
               tx,
               tenantId,
@@ -331,55 +433,59 @@ public class GameInstanceRepository {
       String mutationDigest,
       ScriptPinMutationResult result) {
     tx.insertInto(SCRIPT_PIN_OPERATION)
-        .set(OP_TENANT_ID, tenantId)
-        .set(OP_GAME_INSTANCE_ID, gameInstanceId)
-        .set(OP_REQUEST_ID, result.controlPlaneRequestId())
-        .set(OP_KIND, operationKind)
-        .set(OP_TARGET, targetScriptPatchVersion)
-        .set(OP_EXPECTED_KIND, expectedPinKind)
-        .set(OP_EXPECTED_EPOCH, expectedScriptPinEpoch)
-        .set(OP_ACTOR, actorPrincipal)
-        .set(OP_REASON, reason)
-        .set(OP_DIGEST, mutationDigest)
-        .set(OP_OUTCOME, result.succeeded() ? "COMMITTED" : "FAILED")
-        .set(OP_ERROR_CODE, result.errorCode())
-        .set(OP_PREVIOUS_PATCH, result.previousScriptPatchVersion())
-        .set(OP_PREVIOUS_EPOCH, result.previousScriptPinEpoch())
-        .set(OP_RESULTING_PATCH, result.resultingScriptPatchVersion())
-        .set(OP_RESULTING_EPOCH, result.resultingScriptPinEpoch())
+        .set(SCRIPT_PIN_OPERATION.TENANT_ID, tenantId)
+        .set(SCRIPT_PIN_OPERATION.GAME_INSTANCE_ID, gameInstanceId)
+        .set(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID, result.controlPlaneRequestId())
+        .set(SCRIPT_PIN_OPERATION.OPERATION_KIND, operationKind)
+        .set(SCRIPT_PIN_OPERATION.TARGET_SCRIPT_PATCH_VERSION, targetScriptPatchVersion)
+        .set(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND, expectedPinKind)
+        .set(SCRIPT_PIN_OPERATION.EXPECTED_SCRIPT_PIN_EPOCH, expectedScriptPinEpoch)
+        .set(SCRIPT_PIN_OPERATION.ACTOR_PRINCIPAL, actorPrincipal)
+        .set(SCRIPT_PIN_OPERATION.REASON, reason)
+        .set(SCRIPT_PIN_OPERATION.MUTATION_DIGEST, mutationDigest)
+        .set(SCRIPT_PIN_OPERATION.OUTCOME, result.succeeded() ? "COMMITTED" : "FAILED")
+        .set(SCRIPT_PIN_OPERATION.ERROR_CODE, result.errorCode())
+        .set(
+            SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION, result.previousScriptPatchVersion())
+        .set(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH, result.previousScriptPinEpoch())
+        .set(
+            SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+            result.resultingScriptPatchVersion())
+        .set(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH, result.resultingScriptPinEpoch())
         .execute();
   }
 
   private Record findOperation(
       DSLContext tx, Long tenantId, Long gameInstanceId, String controlPlaneRequestId) {
     return tx.select(
-            OP_TENANT_ID,
-            OP_GAME_INSTANCE_ID,
-            OP_REQUEST_ID,
-            OP_DIGEST,
-            OP_ERROR_CODE,
-            OP_PREVIOUS_PATCH,
-            OP_PREVIOUS_EPOCH,
-            OP_RESULTING_PATCH,
-            OP_RESULTING_EPOCH)
+            SCRIPT_PIN_OPERATION.TENANT_ID,
+            SCRIPT_PIN_OPERATION.GAME_INSTANCE_ID,
+            SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID,
+            SCRIPT_PIN_OPERATION.MUTATION_DIGEST,
+            SCRIPT_PIN_OPERATION.ERROR_CODE,
+            SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION,
+            SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH,
+            SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+            SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
         .from(SCRIPT_PIN_OPERATION)
         .where(
-            OP_TENANT_ID
+            SCRIPT_PIN_OPERATION
+                .TENANT_ID
                 .eq(tenantId)
-                .and(OP_GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(OP_REQUEST_ID.eq(controlPlaneRequestId)))
+                .and(SCRIPT_PIN_OPERATION.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId)))
         .forUpdate()
         .fetchOne();
   }
 
   private ScriptPinMutationResult operationResult(Record record, String controlPlaneRequestId) {
     return new ScriptPinMutationResult(
-        record.get(OP_PREVIOUS_PATCH),
-        record.get(OP_PREVIOUS_EPOCH),
-        record.get(OP_RESULTING_PATCH),
-        record.get(OP_RESULTING_EPOCH),
+        record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PATCH_VERSION),
+        record.get(SCRIPT_PIN_OPERATION.PREVIOUS_SCRIPT_PIN_EPOCH),
+        record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION),
+        record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH),
         controlPlaneRequestId,
-        record.get(OP_ERROR_CODE));
+        record.get(SCRIPT_PIN_OPERATION.ERROR_CODE));
   }
 
   private ScriptPinMutationResult idempotencyConflict(String controlPlaneRequestId) {
@@ -395,20 +501,6 @@ public class GameInstanceRepository {
       case "EXPECT_EPOCH" -> pinEpoch != null && pinEpoch.equals(expectedScriptPinEpoch);
       default -> false;
     };
-  }
-
-  private void requireCoherent(String patchVersion, Long pinEpoch, String requestId) {
-    if (pinEpoch != null && pinEpoch <= 0L) {
-      throw new IllegalArgumentException(
-          "SCRIPT_PIN_STATE_INVALID: script pin epoch must be positive when present");
-    }
-    boolean hasPatch = patchVersion != null && !patchVersion.isBlank();
-    boolean hasEpoch = pinEpoch != null && pinEpoch > 0L;
-    boolean hasRequest = requestId != null && !requestId.isBlank();
-    if (!((hasPatch && hasEpoch && hasRequest) || (!hasPatch && !hasEpoch && !hasRequest))) {
-      throw new IllegalArgumentException(
-          "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together");
-    }
   }
 
   private String mutationDigest(
@@ -432,7 +524,9 @@ public class GameInstanceRepository {
             canonical(expectedPinKind),
             canonical(expectedScriptPinEpoch));
     try {
-      byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      byte[] digest =
+          java.security.MessageDigest.getInstance("SHA-256")
+              .digest(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8));
       StringBuilder hex = new StringBuilder(digest.length * 2);
       for (byte value : digest) {
         hex.append(String.format("%02x", value));

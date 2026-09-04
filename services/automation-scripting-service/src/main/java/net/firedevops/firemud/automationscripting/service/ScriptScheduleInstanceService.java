@@ -64,6 +64,31 @@ public interface ScriptScheduleInstanceService {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
+      String scriptId,
+      String eventType,
+      String finalReason,
+      long changedAfterMs,
+      long changedBeforeMs,
+      int limit) {
+    return listTimerAuditEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        scriptId,
+        eventType,
+        finalReason,
+        changedAfterMs,
+        changedBeforeMs,
+        limit);
+  }
+
+  default List<TimerAuditEventSummary> listTimerAuditEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
       String scriptId,
       String eventType,
       String finalReason,
@@ -220,6 +245,7 @@ public interface ScriptScheduleInstanceService {
       String eventType,
       String scriptPatchVersion,
       long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       String triggerMode,
       String sourceState,
@@ -279,6 +305,7 @@ public interface ScriptScheduleInstanceService {
           eventType,
           scriptPatchVersion,
           0L,
+          "",
           scriptEventId,
           triggerMode,
           sourceState,
