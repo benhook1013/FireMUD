@@ -81,6 +81,23 @@ public class ScriptEventBindingRepository {
         .fetch(this::toEntity);
   }
 
+  public List<ScriptEventBinding> findByTenantIdAndScriptPatchVersionAndScriptId(
+      Long tenantId, String scriptPatchVersion, String scriptId) {
+    return dsl.selectFrom(SCRIPT_EVENT_BINDINGS)
+        .where(
+            SCRIPT_EVENT_BINDINGS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_ID.eq(scriptId)))
+        .orderBy(
+            SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
+            SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
+            SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+        .fetch(this::toEntity);
+  }
+
   public List<ScriptEventBinding> saveAll(Collection<ScriptEventBinding> entities) {
     if (entities == null || entities.isEmpty()) {
       return List.of();
@@ -122,6 +139,19 @@ public class ScriptEventBindingRepository {
     }
     entity.setRowVersion(nextRowVersion);
     return findById(entity.getId());
+  }
+
+  /** Restores a deleted binding with its retained primary key; conflicts fail closed. */
+  public ScriptEventBinding restoreWithId(ScriptEventBinding entity) {
+    if (entity == null || entity.getId() == null) {
+      throw new IllegalArgumentException("binding id is required for restoration");
+    }
+    ScriptEventBindingsRecord record = dsl.newRecord(SCRIPT_EVENT_BINDINGS);
+    record.setId(entity.getId());
+    populate(record, entity);
+    ScriptEventBinding restored =
+        dsl.insertInto(SCRIPT_EVENT_BINDINGS).set(record).returning().fetchOne(this::toEntity);
+    return restored;
   }
 
   private ScriptEventBinding findById(Long id) {

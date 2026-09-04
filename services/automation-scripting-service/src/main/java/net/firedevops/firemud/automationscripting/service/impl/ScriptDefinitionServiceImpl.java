@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -37,18 +39,89 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
     validateBindings(dto);
     ScriptDefinition entity = mapper.toEntity(dto);
+    ScriptDefinition previousDefinition =
+        repository
+            .findByTenantIdAndScriptVersionAndName(dto.tenantId(), dto.version(), dto.name())
+            .orElse(null);
+    List<ScriptEventBinding> previousBindings = snapshotBindings(dto);
+    AtomicReference<ScriptDefinition> persisted = new AtomicReference<>(entity);
     var saga =
         new SagaBuilder("updateScript")
-            .step("persistScript", () -> repository.save(entity), () -> repository.delete(entity))
+            .step(
+                "persistScript",
+                () -> persisted.set(repository.save(entity)),
+                () -> compensateDefinition(previousDefinition, persisted.get()))
             .step(
                 "replaceEventBindings",
                 () -> replaceEventBindings(dto),
-                () ->
-                    bindingRepository.deleteByTenantIdAndScriptPatchVersionAndScriptId(
-                        dto.tenantId(), dto.version(), dto.name()))
+                () -> restoreBindings(dto, previousBindings))
             .build();
     sagaRunner.run(saga);
-    return mapper.toDto(entity);
+    return mapper.toDto(persisted.get());
+  }
+
+  private List<ScriptEventBinding> snapshotBindings(ScriptDefinitionDto dto) {
+    return bindingRepository.findByTenantIdAndScriptPatchVersionAndScriptId(
+        dto.tenantId(), dto.version(), dto.name());
+  }
+
+  private void compensateDefinition(
+      ScriptDefinition previousDefinition, ScriptDefinition persistedDefinition) {
+    if (previousDefinition == null) {
+      // No row existed when this request began, so only this request's newly
+      // persisted natural-key row is eligible for cleanup.
+      repository.delete(persistedDefinition);
+      return;
+    }
+    // The upsert may have advanced the row version. Restore through the row
+    // that was just persisted so optimistic locking remains valid, while
+    // retaining the pre-request definition content and identity.
+    ScriptDefinition restored = copyDefinition(previousDefinition);
+    restored.setId(persistedDefinition.getId());
+    restored.setRowVersion(persistedDefinition.getRowVersion());
+    repository.save(restored);
+  }
+
+  private void restoreBindings(ScriptDefinitionDto dto, List<ScriptEventBinding> previousBindings) {
+    bindingRepository.deleteByTenantIdAndScriptPatchVersionAndScriptId(
+        dto.tenantId(), dto.version(), dto.name());
+    if (previousBindings.isEmpty()) {
+      return;
+    }
+    // The replace step deleted the old rows. Insert value copies rather than
+    // attempting optimistic updates against those now-absent primary keys.
+    previousBindings.forEach(
+        binding -> bindingRepository.restoreWithId(copyBindingForInsert(binding)));
+  }
+
+  private static ScriptDefinition copyDefinition(ScriptDefinition source) {
+    ScriptDefinition copy = new ScriptDefinition();
+    copy.setTenantId(source.getTenantId());
+    copy.setName(source.getName());
+    copy.setScriptVersion(source.getScriptVersion());
+    copy.setDefinition(source.getDefinition());
+    copy.setRowVersion(source.getRowVersion());
+    return copy;
+  }
+
+  private static ScriptEventBinding copyBindingForInsert(ScriptEventBinding source) {
+    ScriptEventBinding copy = new ScriptEventBinding();
+    // Retain the original id so fixed-id restoration preserves durable references instead of
+    // allocating replacement binding identities.
+    copy.setId(source.getId());
+    copy.setTenantId(source.getTenantId());
+    copy.setScriptPatchVersion(source.getScriptPatchVersion());
+    copy.setEventType(source.getEventType());
+    copy.setEventSchemaVersion(source.getEventSchemaVersion());
+    copy.setScriptId(source.getScriptId());
+    copy.setTargetScopeType(source.getTargetScopeType());
+    copy.setTargetScopeId(source.getTargetScopeId());
+    copy.setPriority(source.getPriority());
+    copy.setPriorityTag(source.getPriorityTag());
+    copy.setRequiresExclusiveEvent(source.isRequiresExclusiveEvent());
+    copy.setEnabled(source.isEnabled());
+    copy.setRowVersion(source.getRowVersion());
+    return copy;
   }
 
   private void validateBindings(ScriptDefinitionDto dto) {
