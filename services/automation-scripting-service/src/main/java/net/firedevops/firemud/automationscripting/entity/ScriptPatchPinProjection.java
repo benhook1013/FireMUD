@@ -13,10 +13,8 @@ public class ScriptPatchPinProjection {
   private String worldSlug = "";
   private String realmSlug = "";
   private String pointerVersion = "";
-
   /** Null is the canonical absent/unpinned projection value; zero is legacy-only. */
   private Long scriptPinEpoch;
-
   private String runtimeRegionId = "";
   private long runtimeRegionEpoch;
   private String lastObservedControlPlaneRequestId = "";

@@ -753,6 +753,11 @@ public class ScriptGameplayCommandHandoffServiceImpl
           now);
       return;
     }
+    // This is the durable transition into DEAD_LETTERED for handoff failures. Advance the
+    // generation exactly once so replay evidence cannot be confused with a prior failure.
+    if (!STATUS_DEAD_LETTERED.equals(workItem.getStatus())) {
+      workItem.setFailureGeneration(Math.addExact(workItem.getFailureGeneration(), 1L));
+    }
     workItem.setStatus(STATUS_DEAD_LETTERED);
     String failureReason = ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
     workItem.setCancelReason(failureReason);
@@ -819,6 +824,9 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
+    event.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    event.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
+    event.setLifecycleRevision(workItem.getLifecycleRevision());
     event.setWorkItemId(workItem.getId());
     event.setCommandOrdinal(command.ordinal());
     event.setAutomationDispatchId(dispatchId);
@@ -842,6 +850,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setHandoffOutcome(outcome);
     event.setHandoffReason(reason);
     event.setObservedAt(now);
+    handoffEventRepository
+        .findByTenantIdAndWorkItemIdAndCommandOrdinal(
+            workItem.getTenantId(), workItem.getId(), command.ordinal())
+        .ifPresent(
+            existing -> {
+              event.setId(existing.getId());
+              event.setRowVersion(existing.getRowVersion());
+            });
     handoffEventRepository.save(event);
   }
 

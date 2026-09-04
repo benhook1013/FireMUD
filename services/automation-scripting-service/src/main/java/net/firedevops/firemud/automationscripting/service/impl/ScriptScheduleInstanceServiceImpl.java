@@ -200,12 +200,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 tenantKey, scriptPatchVersion);
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
         bindingsByScriptEvent(tenantKey, scriptPatchVersion);
-    Map<String, String> activePluginVersions =
-        activePluginVersions(
+    Map<String, PluginRuntimeState> activePluginStates =
+        activePluginStates(
             tenantId,
             gameInstanceId,
             new AutomationRuntimeScopeSupport.RuntimeScope(
                 blankToEmpty(runtimeState.getRegionId()), runtimeState.getRegionEpoch()));
+    Map<String, String> activePluginVersions = activePluginVersions(activePluginStates);
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
@@ -256,6 +257,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               definition,
               binding,
               runtimeState,
+              activePluginStates,
               pinObservedAt,
               shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
                   ? nonPinTransitionSeed
@@ -332,7 +334,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           || runtimeState.getRegionEpoch() <= 0
           || runtimeState.getScriptPinEpoch() <= 0) {
         // A pin projection without a complete runtime scope is not authoritative enough to
-        // reconcile or delete schedule rows. The next complete projection will retry it.
+        // reconcile or delete schedule rows. The next complete projection will retry it. Epoch
+        // zero is likewise an older/absent projection and must not materialize a fenced schedule
+        // generation.
         markRetainedSchedulesPending(tenantId, projection.getGameInstanceId());
         continue;
       }
@@ -690,11 +694,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .toList();
   }
 
-  private Map<String, String> activePluginVersions(
+  private Map<String, PluginRuntimeState> activePluginStates(
       String tenantId,
       String gameInstanceId,
       AutomationRuntimeScopeSupport.RuntimeScope runtimeScope) {
-    Map<String, String> active = new HashMap<>();
+    Map<String, PluginRuntimeState> active = new HashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
@@ -704,12 +708,23 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         continue;
       }
       String pluginId = blankToEmpty(state.getPluginId());
-      String activePluginVersionId = blankToEmpty(state.getActivePluginVersionId());
-      if (!pluginId.isBlank() && !activePluginVersionId.isBlank()) {
-        active.put(pluginId, activePluginVersionId);
+      if (!pluginId.isBlank()) {
+        active.put(pluginId, state);
       }
     }
     return active;
+  }
+
+  private static Map<String, String> activePluginVersions(
+      Map<String, PluginRuntimeState> activePluginStates) {
+    Map<String, String> activeVersions = new HashMap<>();
+    for (Map.Entry<String, PluginRuntimeState> entry : activePluginStates.entrySet()) {
+      String activePluginVersionId = blankToEmpty(entry.getValue().getActivePluginVersionId());
+      if (!activePluginVersionId.isBlank()) {
+        activeVersions.put(entry.getKey(), activePluginVersionId);
+      }
+    }
+    return activeVersions;
   }
 
   private static boolean shouldMaterialize(
@@ -757,6 +772,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleDefinition definition,
       ScriptEventBinding binding,
       GameInstanceRuntimeState runtimeState,
+      Map<String, PluginRuntimeState> activePluginStates,
       Instant pinObservedAt,
       Instant nonPinTransitionSeed,
       Instant now) {
@@ -781,6 +797,23 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
     instance.setBindingId(applicableBindingId(definition, binding));
+    if (!instance.getPluginId().isBlank()) {
+      PluginRuntimeState pluginState = activePluginStates.get(instance.getPluginId());
+      if (pluginState != null
+          && PluginState.PLUGIN_STATE_ENABLED.name().equals(pluginState.getPluginState())
+          && instance
+              .getPluginVersionId()
+              .equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
+        instance.setPluginActivationEpoch(pluginState.getPluginActivationEpoch());
+        instance.setLifecycleRevision(pluginState.getLifecycleRevision());
+      } else {
+        instance.setPluginActivationEpoch(0L);
+        instance.setLifecycleRevision(0L);
+      }
+    } else {
+      instance.setPluginActivationEpoch(0L);
+      instance.setLifecycleRevision(0L);
+    }
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -1182,6 +1215,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setBindingId(applicableBindingId(instance));
     audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
+    audit.setScriptPinEpoch(instance.getScriptPinEpoch());
+    audit.setPluginActivationEpoch(instance.getPluginActivationEpoch());
+    audit.setLifecycleRevision(instance.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1335,6 +1371,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setBindingId(applicableBindingId(instance));
     item.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
     item.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
+    item.setPluginActivationEpoch(instance.getPluginActivationEpoch());
+    item.setLifecycleRevision(instance.getLifecycleRevision());
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
@@ -1488,6 +1526,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
               && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
+              && instance.getPluginActivationEpoch() > 0
+              && instance.getLifecycleRevision() > 0
+              && state.getPluginActivationEpoch() == instance.getPluginActivationEpoch()
+              && state.getLifecycleRevision() == instance.getLifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,
                   new AutomationRuntimeScopeSupport.RuntimeScope(
@@ -1639,6 +1681,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setBindingId(applicableBindingId(workItem));
     audit.setTargetScopeType(blankToEmpty(workItem.getTargetScopeType()));
     audit.setTargetScopeId(blankToEmpty(workItem.getTargetScopeId()));
+    audit.setScriptPinEpoch(workItem.getScriptPinEpoch());
+    audit.setPluginActivationEpoch(workItem.getPluginActivationEpoch());
+    audit.setLifecycleRevision(workItem.getLifecycleRevision());
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -2242,10 +2287,13 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       values.add(blankToEmpty(instance.getScriptId()));
       values.add(blankToEmpty(instance.getPluginId()));
       values.add(blankToEmpty(instance.getPluginVersionId()));
+      values.add("pluginActivationEpoch:" + instance.getPluginActivationEpoch());
+      values.add("lifecycleRevision:" + instance.getLifecycleRevision());
       values.add(blankToEmpty(instance.getEventType()));
       values.add(DEFAULT_SCHEMA_VERSION);
       values.add(blankToEmpty(instance.getScriptPatchVersion()));
       values.add(Long.toString(scriptPinEpoch));
+      values.add("scriptPinControlPlaneRequestId:" + blankToEmpty(scriptPinControlPlaneRequestId));
       if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
         values.add(applicableBindingId(instance));
       }
