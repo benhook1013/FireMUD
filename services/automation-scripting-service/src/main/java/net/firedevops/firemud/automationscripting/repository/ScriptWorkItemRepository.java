@@ -269,8 +269,37 @@ public class ScriptWorkItemRepository {
                     .STATUS
                     .eq(status)
                     .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
+            // The cleanup service calls this method in its existing transaction. Lock the
+            // eligibility decision until child evidence and the parent are deleted so a replay
+            // cannot revive a row after this select but before the delete.
+            .forUpdate()
             .fetch(SCRIPT_WORK_ITEMS.ID);
-    return deleteByIds(ids);
+    return deleteByIds(
+        ids,
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))));
+  }
+
+  /**
+   * Deletes the oldest rows for a status while retaining the status eligibility decision through
+   * child and parent deletion. The caller must invoke this inside a transaction; row locks are
+   * deliberately held until the child evidence and parent rows are disposed.
+   */
+  public long deleteOldestByStatus(String status, int limit) {
+    if (limit <= 0) {
+      return 0L;
+    }
+    List<Long> ids =
+        dsl.select(SCRIPT_WORK_ITEMS.ID)
+            .from(SCRIPT_WORK_ITEMS)
+            .where(SCRIPT_WORK_ITEMS.STATUS.eq(status))
+            .orderBy(SCRIPT_WORK_ITEMS.UPDATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+            .limit(limit)
+            .forUpdate()
+            .fetch(SCRIPT_WORK_ITEMS.ID);
+    return deleteByIds(ids, SCRIPT_WORK_ITEMS.STATUS.eq(status));
   }
 
   public List<ScriptWorkItem> findAllById(Collection<Long> ids) {
@@ -554,6 +583,10 @@ public class ScriptWorkItemRepository {
    * cohort explicitly before removing the work-item row.
    */
   private long deleteByIds(Collection<Long> ids) {
+    return deleteByIds(ids, org.jooq.impl.DSL.noCondition());
+  }
+
+  private long deleteByIds(Collection<Long> ids, Condition parentEligibility) {
     if (ids == null || ids.isEmpty()) {
       return 0L;
     }
@@ -561,7 +594,9 @@ public class ScriptWorkItemRepository {
     dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
         .where(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.in(ids))
         .execute();
-    return dsl.deleteFrom(SCRIPT_WORK_ITEMS).where(SCRIPT_WORK_ITEMS.ID.in(ids)).execute();
+    return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.ID.in(ids).and(parentEligibility))
+        .execute();
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {

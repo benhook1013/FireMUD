@@ -454,16 +454,12 @@ class ScriptWorkItemServiceImplTest {
 
   @Test
   void deletesOldestDeadLettersWhenRowCapIsExceeded() {
-    ScriptWorkItem old = new ScriptWorkItem();
-    old.setStatus("DEAD_LETTERED");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptOutboxProperties properties = outboxProperties();
     properties.setDeadLetterMaxRows(1);
     when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(2L);
-    when(workItemRepository.findByStatusOrderByUpdatedAtAscIdAsc(
-            "DEAD_LETTERED", PageRequest.of(0, 1)))
-        .thenReturn(List.of(old));
+    when(workItemRepository.deleteOldestByStatus("DEAD_LETTERED", 1)).thenReturn(1L);
     ScriptWorkItemService service =
         service(
             workItemRepository,
@@ -480,7 +476,7 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
     assertThat(result.deadLetteredDeleted()).isEqualTo(1L);
-    verify(workItemRepository).deleteAll(List.of(old));
+    verify(workItemRepository).deleteOldestByStatus("DEAD_LETTERED", 1);
   }
 
   @Test

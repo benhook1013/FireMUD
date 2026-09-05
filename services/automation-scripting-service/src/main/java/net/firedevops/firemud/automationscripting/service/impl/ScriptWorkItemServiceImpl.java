@@ -984,11 +984,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return 0;
     }
     int batchSize = Math.toIntExact(Math.min(excess, Integer.MAX_VALUE));
-    List<ScriptWorkItem> oldest =
-        workItemRepository.findByStatusOrderByUpdatedAtAscIdAsc(
-            STATUS_DEAD_LETTERED, PageRequest.of(0, batchSize));
-    workItemRepository.deleteAll(oldest);
-    return oldest.size();
+    return workItemRepository.deleteOldestByStatus(STATUS_DEAD_LETTERED, batchSize);
   }
 
   private void cancel(ScriptWorkItem item, String reason, Instant now) {
