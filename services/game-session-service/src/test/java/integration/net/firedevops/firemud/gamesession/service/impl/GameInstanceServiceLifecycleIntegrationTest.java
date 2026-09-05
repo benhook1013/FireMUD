@@ -116,12 +116,14 @@ class GameInstanceServiceLifecycleIntegrationTest {
                   entity.getTenantId(),
                   entity.getRuntimeVersion(),
                   entity.getScriptPatchVersion(),
+                  entity.getScriptPinEpoch(),
                   entity.getGameTemplateId(),
                   entity.getLaunchDescriptorId(),
                   entity.getVersionId(),
                   entity.getReleaseBundleId(),
                   entity.getVersionStateEpoch(),
                   entity.getGenerationConfigRevision(),
+                  entity.getRemapSetId(),
                   entity.getOwnerAccountId(),
                   entity.getStatus());
             });

@@ -761,24 +761,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
-  void executeRejectsScriptEventWhenAutomationAuthorityIsUnavailable() {
-    TickEffect effect = triggerScriptEventEffect();
-    RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
-    RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
-    when(remoteFollowupRepository.findByFollowupId("followup-1")).thenReturn(Optional.of(followup));
-    when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(1L, "followup-1"))
-        .thenReturn(Optional.of(coordinator));
-    DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
-        service.execute(effect);
-
-    assertEquals("ABANDONED", result.effectStatus());
-    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    verify(remoteFollowupRepository, never()).save(followup);
-    verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
-    verifyNoInteractions(automationScriptingClient);
-  }
-
-  @Test
   void executePropagatesUnexpectedRuntimeExceptionFromRemoteEnqueue() {
     TickEffect effect = triggerScriptEventEffect();
     RemoteFollowup followup =

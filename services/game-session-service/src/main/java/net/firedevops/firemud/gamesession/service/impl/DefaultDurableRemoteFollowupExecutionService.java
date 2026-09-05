@@ -573,10 +573,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       authoritativeBoolean(false, root, "isDryRun");
       requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId");
       requiredAuthoritativeText(followup.getEventType(), root, "eventType");
-      String eventSchemaVersion =
-          firstNonBlank(
-              authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
-              "v1");
+      authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion");
       requiredAuthoritativeText(coordinator.getScriptPatchVersion(), root, "scriptPatchVersion");
       requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId");
       triggerMode(root, followup);

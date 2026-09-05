@@ -139,3 +139,8 @@ Entry format:
   - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
   - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
   - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.
+
+- `2026-09-05`: Preserve PostgreSQL migration semantics through jOOQ generation
+  - Context: splitting a PostgreSQL `CHECK` installation from its later validation exposed that jOOQ's DDL parser rejects both `NOT VALID` and `VALIDATE CONSTRAINT` even though Flyway and PostgreSQL require those forms for the production-safe migration.
+  - Observation: weakening the production migration to satisfy code generation would restore a blocking table scan; the repository already supports narrowly scoped jOOQ ignore markers for PostgreSQL-only syntax.
+  - Expected pattern: keep the PostgreSQL/Flyway statement authoritative, wrap only the unsupported syntax or statement in the established jOOQ ignore markers, and prove both the production SQL and generation path with focused migration tests plus `generateJooq`-dependent validation.

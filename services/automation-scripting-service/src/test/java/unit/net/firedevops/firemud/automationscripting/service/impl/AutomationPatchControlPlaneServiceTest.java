@@ -50,7 +50,6 @@ class AutomationPatchControlPlaneServiceTest {
                 service.getScriptPatchInstanceRolloutStatus(
                     GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
                         .setTenantId("1")
-                        .setScriptPinEpoch(0L)
                         .setLastObservedControlPlaneRequestId("request-1")
                         .build()))
         .withMessage("script_pin_epoch and control-plane request ID must be supplied together");

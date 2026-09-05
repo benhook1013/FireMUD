@@ -12,6 +12,13 @@ WHERE upper(btrim(source_type)) = 'AUTOMATION'
   AND NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL
   AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL;
 
+-- Player commands have no durable owner evidence. Clear legacy patch-only
+-- observations rather than manufacturing an epoch or control-plane request id.
+UPDATE gameplay_command
+SET script_patch_version = NULL
+WHERE upper(btrim(source_type)) = 'PLAYER'
+  AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL;
+
 ALTER TABLE gameplay_command
     ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent
     CHECK (
@@ -50,4 +57,4 @@ ALTER TABLE gameplay_command
             AND script_pin_epoch IS NULL
             AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
         )
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
