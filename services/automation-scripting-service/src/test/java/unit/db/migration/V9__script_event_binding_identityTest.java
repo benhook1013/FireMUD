@@ -28,10 +28,16 @@ class V9__script_event_binding_identityTest {
             "script_id, binding_id, id");
 
     int addColumn = normalized.indexOf("ADD COLUMN binding_id");
+    int dropConstraint = normalized.indexOf("DROP CONSTRAINT uq_script_event_binding");
     int addConstraint = normalized.indexOf("ADD CONSTRAINT uq_script_event_binding");
+    int dropIndex = normalized.indexOf("DROP INDEX idx_script_event_bindings_resolution");
     int recreateIndex = normalized.indexOf("CREATE INDEX idx_script_event_bindings_resolution");
     assertThat(addColumn).isGreaterThanOrEqualTo(0);
+    assertThat(dropConstraint).isGreaterThan(addColumn);
     assertThat(addConstraint).isGreaterThan(addColumn);
+    assertThat(addConstraint).isGreaterThan(dropConstraint);
+    assertThat(dropIndex).isGreaterThan(addConstraint);
     assertThat(recreateIndex).isGreaterThan(addConstraint);
+    assertThat(recreateIndex).isGreaterThan(dropIndex);
   }
 }

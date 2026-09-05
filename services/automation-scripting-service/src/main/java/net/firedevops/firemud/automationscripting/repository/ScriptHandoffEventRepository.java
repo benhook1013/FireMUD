@@ -166,9 +166,9 @@ public class ScriptHandoffEventRepository {
               .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_REASON, entity.getHandoffReason())
               .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, toLocalDateTime(entity.getObservedAt()))
               .set(SCRIPT_HANDOFF_EVENTS.ROW_VERSION, SCRIPT_HANDOFF_EVENTS.ROW_VERSION.plus(1))
-              // event_id is the child identity. A retry carrying a different script owner tuple is
-              // conflicting input, not permission to rewrite the original handoff evidence.
-              .where(ownerTupleMatches)
+              // The complete child identity is immutable. A retry may update only downstream
+              // disposition fields after every identity component matches the persisted row.
+              .where(ownerTupleMatches.and(immutableIdentityMatches(entity)))
               .returning()
               .fetchOptional(this::toEntity);
       if (replay.isPresent()) {
@@ -180,53 +180,17 @@ public class ScriptHandoffEventRepository {
                   () ->
                       new IllegalStateException(
                           "handoff event conflict did not yield a persisted row"));
-      if (!ownerTupleMatches(existing, entity)) {
-        throw new IllegalStateException("Handoff event owner tuple conflict");
+      if (!immutableIdentityMatches(existing, entity)) {
+        throw identityConflict(existing, entity);
       }
       return existing;
     }
     int nextRowVersion = entity.getRowVersion() + 1;
-    String normalizedRequestId = blankToNull(entity.getScriptPinControlPlaneRequestId());
-    Condition ownerTupleMatches =
-        SCRIPT_HANDOFF_EVENTS
-            .SCRIPT_PATCH_VERSION
-            .eq(entity.getScriptPatchVersion())
-            .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
-            .and(
-                SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                    normalizedRequestId));
     int updated =
         dsl.update(SCRIPT_HANDOFF_EVENTS)
-            .set(SCRIPT_HANDOFF_EVENTS.EVENT_ID, entity.getEventId())
-            .set(SCRIPT_HANDOFF_EVENTS.TENANT_ID, entity.getTenantId())
-            .set(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID, entity.getGameInstanceId())
-            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
-            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, normalizedRequestId)
-            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID, entity.getScriptId())
-            .set(SCRIPT_HANDOFF_EVENTS.BINDING_ID, entity.getBindingId())
-            .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID, entity.getPluginId())
-            .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
-            .set(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID, entity.getWorkItemId())
-            .set(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL, entity.getCommandOrdinal())
-            .set(SCRIPT_HANDOFF_EVENTS.AUTOMATION_DISPATCH_ID, entity.getAutomationDispatchId())
             .set(SCRIPT_HANDOFF_EVENTS.GAME_SESSION_COMMAND_ID, entity.getGameSessionCommandId())
-            .set(SCRIPT_HANDOFF_EVENTS.TARGET_GAME_INSTANCE_ID, entity.getTargetGameInstanceId())
-            .set(SCRIPT_HANDOFF_EVENTS.TARGET_REGION_ID, entity.getTargetRegionId())
-            .set(SCRIPT_HANDOFF_EVENTS.TARGET_REGION_EPOCH, entity.getTargetRegionEpoch())
             .set(SCRIPT_HANDOFF_EVENTS.REMOTE_COORDINATOR_ID, entity.getRemoteCoordinatorId())
             .set(SCRIPT_HANDOFF_EVENTS.REMOTE_FOLLOWUP_ID, entity.getRemoteFollowupId())
-            .set(SCRIPT_HANDOFF_EVENTS.TARGET_ENTITY_ID, entity.getTargetEntityId())
-            .set(SCRIPT_HANDOFF_EVENTS.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
-            .set(SCRIPT_HANDOFF_EVENTS.WORLD_SLUG, entity.getWorldSlug())
-            .set(SCRIPT_HANDOFF_EVENTS.REALM_SLUG, entity.getRealmSlug())
-            .set(SCRIPT_HANDOFF_EVENTS.POINTER_VERSION, entity.getPointerVersion())
-            .set(SCRIPT_HANDOFF_EVENTS.SOURCE_KIND, entity.getSourceKind())
-            .set(SCRIPT_HANDOFF_EVENTS.SOURCE_STATE, entity.getSourceState())
-            .set(SCRIPT_HANDOFF_EVENTS.SOURCE_ORDINAL, entity.getSourceOrdinal())
-            .set(SCRIPT_HANDOFF_EVENTS.SOURCE_DUE_TICK_ID, entity.getSourceDueTickId())
-            .set(SCRIPT_HANDOFF_EVENTS.SOURCE_DUE_AT_MS, entity.getSourceDueAtMs())
-            .set(SCRIPT_HANDOFF_EVENTS.EMITTED_COMMAND_TEXT, entity.getEmittedCommandText())
             .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME, entity.getHandoffOutcome())
             .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_REASON, entity.getHandoffReason())
             .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, toLocalDateTime(entity.getObservedAt()))
@@ -236,12 +200,12 @@ public class ScriptHandoffEventRepository {
                     .ID
                     .eq(entity.getId())
                     .and(SCRIPT_HANDOFF_EVENTS.ROW_VERSION.eq(entity.getRowVersion()))
-                    .and(ownerTupleMatches))
+                    .and(immutableIdentityMatches(entity)))
             .execute();
     if (updated != 1) {
       Optional<ScriptHandoffEvent> existing = findById(entity.getId());
-      if (existing.isPresent() && !ownerTupleMatches(existing.orElseThrow(), entity)) {
-        throw new IllegalStateException("Handoff event owner tuple conflict");
+      if (existing.isPresent() && !immutableIdentityMatches(existing.orElseThrow(), entity)) {
+        throw identityConflict(existing.orElseThrow(), entity);
       }
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
           "script_handoff_events", entity.getId());
@@ -269,6 +233,88 @@ public class ScriptHandoffEventRepository {
         && Objects.equals(
             blankToNull(existing.getScriptPinControlPlaneRequestId()),
             blankToNull(incoming.getScriptPinControlPlaneRequestId()));
+  }
+
+  private static Condition immutableIdentityMatches(ScriptHandoffEvent entity) {
+    return SCRIPT_HANDOFF_EVENTS
+        .EVENT_ID
+        .isNotDistinctFrom(entity.getEventId())
+        .and(SCRIPT_HANDOFF_EVENTS.TENANT_ID.isNotDistinctFrom(entity.getTenantId()))
+        .and(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID.isNotDistinctFrom(entity.getGameInstanceId()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION.isNotDistinctFrom(
+                entity.getScriptPatchVersion()))
+        .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                blankToNull(entity.getScriptPinControlPlaneRequestId())))
+        .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID.isNotDistinctFrom(entity.getScriptId()))
+        .and(SCRIPT_HANDOFF_EVENTS.BINDING_ID.isNotDistinctFrom(entity.getBindingId()))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID.isNotDistinctFrom(entity.getPluginId()))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID.isNotDistinctFrom(entity.getPluginVersionId()))
+        .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.isNotDistinctFrom(entity.getWorkItemId()))
+        .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(entity.getCommandOrdinal()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.AUTOMATION_DISPATCH_ID.isNotDistinctFrom(
+                entity.getAutomationDispatchId()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.TARGET_GAME_INSTANCE_ID.isNotDistinctFrom(
+                entity.getTargetGameInstanceId()))
+        .and(SCRIPT_HANDOFF_EVENTS.TARGET_REGION_ID.isNotDistinctFrom(entity.getTargetRegionId()))
+        .and(SCRIPT_HANDOFF_EVENTS.TARGET_REGION_EPOCH.eq(entity.getTargetRegionEpoch()))
+        .and(SCRIPT_HANDOFF_EVENTS.TARGET_ENTITY_ID.isNotDistinctFrom(entity.getTargetEntityId()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.PLAYABLE_STATE_SCOPE.isNotDistinctFrom(
+                entity.getPlayableStateScope()))
+        .and(SCRIPT_HANDOFF_EVENTS.WORLD_SLUG.isNotDistinctFrom(entity.getWorldSlug()))
+        .and(SCRIPT_HANDOFF_EVENTS.REALM_SLUG.isNotDistinctFrom(entity.getRealmSlug()))
+        .and(SCRIPT_HANDOFF_EVENTS.POINTER_VERSION.isNotDistinctFrom(entity.getPointerVersion()))
+        .and(SCRIPT_HANDOFF_EVENTS.SOURCE_KIND.isNotDistinctFrom(entity.getSourceKind()))
+        .and(SCRIPT_HANDOFF_EVENTS.SOURCE_STATE.isNotDistinctFrom(entity.getSourceState()))
+        .and(SCRIPT_HANDOFF_EVENTS.SOURCE_ORDINAL.isNotDistinctFrom(entity.getSourceOrdinal()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.SOURCE_DUE_TICK_ID.isNotDistinctFrom(entity.getSourceDueTickId()))
+        .and(SCRIPT_HANDOFF_EVENTS.SOURCE_DUE_AT_MS.isNotDistinctFrom(entity.getSourceDueAtMs()))
+        .and(
+            SCRIPT_HANDOFF_EVENTS.EMITTED_COMMAND_TEXT.isNotDistinctFrom(
+                entity.getEmittedCommandText()));
+  }
+
+  private static boolean immutableIdentityMatches(
+      ScriptHandoffEvent existing, ScriptHandoffEvent incoming) {
+    return ownerTupleMatches(existing, incoming)
+        && Objects.equals(existing.getEventId(), incoming.getEventId())
+        && Objects.equals(existing.getTenantId(), incoming.getTenantId())
+        && Objects.equals(existing.getGameInstanceId(), incoming.getGameInstanceId())
+        && Objects.equals(existing.getScriptId(), incoming.getScriptId())
+        && Objects.equals(existing.getBindingId(), incoming.getBindingId())
+        && Objects.equals(existing.getPluginId(), incoming.getPluginId())
+        && Objects.equals(existing.getPluginVersionId(), incoming.getPluginVersionId())
+        && Objects.equals(existing.getWorkItemId(), incoming.getWorkItemId())
+        && existing.getCommandOrdinal() == incoming.getCommandOrdinal()
+        && Objects.equals(existing.getAutomationDispatchId(), incoming.getAutomationDispatchId())
+        && Objects.equals(existing.getTargetGameInstanceId(), incoming.getTargetGameInstanceId())
+        && Objects.equals(existing.getTargetRegionId(), incoming.getTargetRegionId())
+        && existing.getTargetRegionEpoch() == incoming.getTargetRegionEpoch()
+        && Objects.equals(existing.getTargetEntityId(), incoming.getTargetEntityId())
+        && Objects.equals(existing.getPlayableStateScope(), incoming.getPlayableStateScope())
+        && Objects.equals(existing.getWorldSlug(), incoming.getWorldSlug())
+        && Objects.equals(existing.getRealmSlug(), incoming.getRealmSlug())
+        && Objects.equals(existing.getPointerVersion(), incoming.getPointerVersion())
+        && Objects.equals(existing.getSourceKind(), incoming.getSourceKind())
+        && Objects.equals(existing.getSourceState(), incoming.getSourceState())
+        && Objects.equals(existing.getSourceOrdinal(), incoming.getSourceOrdinal())
+        && Objects.equals(existing.getSourceDueTickId(), incoming.getSourceDueTickId())
+        && Objects.equals(existing.getSourceDueAtMs(), incoming.getSourceDueAtMs())
+        && Objects.equals(existing.getEmittedCommandText(), incoming.getEmittedCommandText());
+  }
+
+  private static IllegalStateException identityConflict(
+      ScriptHandoffEvent existing, ScriptHandoffEvent incoming) {
+    if (!ownerTupleMatches(existing, incoming)) {
+      return new IllegalStateException("Handoff event owner tuple conflict");
+    }
+    return new IllegalStateException("Handoff event immutable identity conflict");
   }
 
   private void populate(ScriptHandoffEventsRecord record, ScriptHandoffEvent entity) {

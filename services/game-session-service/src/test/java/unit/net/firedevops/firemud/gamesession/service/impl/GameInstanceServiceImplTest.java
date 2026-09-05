@@ -19,6 +19,10 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -332,6 +336,35 @@ class GameInstanceServiceImplTest {
     verify(stateService, never()).saveState(any());
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
+  void failPreparedWorldInstanceUsesDedicatedAuthorityErrorWhenTransportFails()
+      throws ReflectiveOperationException {
+    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
+        .thenThrow(new IllegalStateException("fail-prepared response timed out"));
+
+    Method failPreparedMethod =
+        Arrays.stream(GameInstanceServiceImpl.class.getDeclaredMethods())
+            .filter(method -> method.getName().equals("failPreparedWorldInstance"))
+            .findFirst()
+            .orElseThrow();
+    Class<?> preparedWorldInstanceType = failPreparedMethod.getParameterTypes()[0];
+    Constructor<?> constructor =
+        preparedWorldInstanceType.getDeclaredConstructor(long.class, long.class, long.class);
+    constructor.setAccessible(true);
+    Object preparedWorldInstance = constructor.newInstance(1L, 10L, 1L);
+    failPreparedMethod.setAccessible(true);
+
+    InvocationTargetException invocation =
+        assertThrows(
+            InvocationTargetException.class,
+            () ->
+                failPreparedMethod.invoke(
+                    service, preparedWorldInstance, "session start failed before admission"));
+
+    assertEquals("world fail-prepared authority unavailable", invocation.getCause().getMessage());
+    assertEquals("fail-prepared response timed out", invocation.getCause().getCause().getMessage());
   }
 
   @Test
@@ -1182,6 +1215,16 @@ class GameInstanceServiceImplTest {
     verify(stateService, never()).saveState(any());
   }
 
+  @Test
+  void persistExistingPreservesScriptPinOwnerRequestIdInCopiedTuple() {
+    GameInstance existing =
+        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 3L, "pin-request-1");
+
+    assertEquals(3L, existing.getScriptPinEpoch());
+    assertEquals("pin-request-1", existing.getScriptPatchPinnedControlPlaneRequestId());
+    assertEquals("pin-request-1", store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
+  }
+
   private static net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse
       worldPreparationSnapshot(String tenantId, String gameInstanceId, long lifecycleEpoch) {
     return net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
@@ -1337,11 +1380,26 @@ class GameInstanceServiceImplTest {
       String scriptPatchVersion,
       Long ownerAccountId,
       String status) {
+    return persistExisting(
+        id, tenantId, runtimeVersion, scriptPatchVersion, ownerAccountId, status, null, null);
+  }
+
+  private GameInstance persistExisting(
+      Long id,
+      Long tenantId,
+      String runtimeVersion,
+      String scriptPatchVersion,
+      Long ownerAccountId,
+      String status,
+      Long scriptPinEpoch,
+      String scriptPatchPinnedControlPlaneRequestId) {
     GameInstance instance = new GameInstance();
     instance.setId(id);
     instance.setTenantId(tenantId);
     instance.setRuntimeVersion(runtimeVersion);
     instance.setScriptPatchVersion(scriptPatchVersion);
+    instance.setScriptPinEpoch(scriptPinEpoch);
+    instance.setScriptPatchPinnedControlPlaneRequestId(scriptPatchPinnedControlPlaneRequestId);
     instance.setOwnerAccountId(ownerAccountId);
     instance.setStatus(status);
     store.put(id, copyOf(instance));
@@ -1355,6 +1413,8 @@ class GameInstanceServiceImplTest {
     copy.setRuntimeVersion(instance.getRuntimeVersion());
     copy.setScriptPatchVersion(instance.getScriptPatchVersion());
     copy.setScriptPinEpoch(instance.getScriptPinEpoch());
+    copy.setScriptPatchPinnedControlPlaneRequestId(
+        instance.getScriptPatchPinnedControlPlaneRequestId());
     copy.setOwnerAccountId(instance.getOwnerAccountId());
     copy.setStatus(instance.getStatus());
     return copy;

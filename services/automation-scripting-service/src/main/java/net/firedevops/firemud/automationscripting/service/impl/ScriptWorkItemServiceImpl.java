@@ -209,11 +209,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         workItemRepository.deleteByStatusAndUpdatedAtBefore(
             STATUS_CANCELED,
             now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS));
-    long deadLetteredDeleted =
-        workItemRepository.deleteByStatusAndUpdatedAtBefore(
-            STATUS_DEAD_LETTERED,
-            now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
-    deadLetteredDeleted += deleteExcessDeadLetters();
+    // Dead-letter cleanup remains disabled until recovery-aware parent/child eligibility exists.
+    long deadLetteredDeleted = 0L;
     return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
   }
 
@@ -955,16 +952,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
               audit.setUpdatedAt(now);
               auditRepository.save(audit);
             });
-  }
-
-  private long deleteExcessDeadLetters() {
-    long deadLetteredCount = workItemRepository.countByStatus(STATUS_DEAD_LETTERED);
-    long excess = deadLetteredCount - outboxProperties.getDeadLetterMaxRows();
-    if (excess <= 0) {
-      return 0;
-    }
-    int batchSize = Math.toIntExact(Math.min(excess, Integer.MAX_VALUE));
-    return workItemRepository.deleteOldestByStatus(STATUS_DEAD_LETTERED, batchSize);
   }
 
   private void cancel(ScriptWorkItem item, String reason, Instant now) {

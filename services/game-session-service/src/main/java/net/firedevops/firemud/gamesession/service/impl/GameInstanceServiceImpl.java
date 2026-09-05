@@ -50,6 +50,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
   private static final String WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE =
       "world activation authority unavailable";
+  private static final String WORLD_FAIL_PREPARED_AUTHORITY_UNAVAILABLE =
+      "world fail-prepared authority unavailable";
   private static final String WORLD_PREPARATION_AUTHORITY_UNAVAILABLE =
       "world preparation authority unavailable";
   private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
@@ -787,7 +789,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               preparedWorldInstance.lifecycleEpoch(),
               reason);
     } catch (RuntimeException ex) {
-      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, ex);
+      throw new IllegalStateException(WORLD_FAIL_PREPARED_AUTHORITY_UNAVAILABLE, ex);
     }
     if (response == null) {
       throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);

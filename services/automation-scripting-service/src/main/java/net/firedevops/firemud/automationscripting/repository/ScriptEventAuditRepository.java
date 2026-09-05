@@ -65,7 +65,6 @@ public class ScriptEventAuditRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       Long scriptPinEpoch,
-      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
@@ -114,7 +113,6 @@ public class ScriptEventAuditRepository {
         entity.getEventSchemaVersion(),
         entity.getScriptPatchVersion(),
         entity.getScriptPinEpoch(),
-        entity.getScriptPinControlPlaneRequestId(),
         entity.getScriptEventId(),
         entity.isDryRun());
   }
@@ -203,7 +201,6 @@ public class ScriptEventAuditRepository {
                 eventSchemaVersion,
                 scriptPatchVersion,
                 scriptPinEpoch,
-                scriptPinControlPlaneRequestId,
                 scriptEventId,
                 dryRun)
             .and(

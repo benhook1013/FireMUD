@@ -155,7 +155,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 
     int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
-    int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);
+    int auditTupleEnd = migration.indexOf("ALTER TABLE script_handoff_events", auditTupleStart);
     assertThat(auditTupleStart).isGreaterThanOrEqualTo(0);
     assertThat(auditTupleEnd).isGreaterThan(auditTupleStart);
     assertThat(migration.substring(auditTupleStart, auditTupleEnd))

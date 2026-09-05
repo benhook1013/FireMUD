@@ -636,7 +636,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private DSLContext newDsl(String applicationName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl() + "?ApplicationName=" + applicationName);
+    String baseUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(
+        baseUrl + (baseUrl.contains("?") ? "&" : "?") + "ApplicationName=" + applicationName);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return DSL.using(dataSource, SQLDialect.POSTGRES);
