@@ -3,9 +3,11 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptPatchInstanceRolloutEventsRecord;
@@ -18,6 +20,7 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
 
 class ScriptPatchInstanceRolloutEventRepositoryTest {
@@ -118,17 +121,28 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   }
 
   @Test
-  void rejectsExplicitZeroPinEpochWithoutOwnerRequestIdBeforeQuery() {
+  void allowsExplicitZeroPinEpochWithoutOwnerRequestIdAsUnpinnedFilter() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS))
+          };
+        };
     ScriptPatchInstanceRolloutEventRepository repository =
-        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+        new ScriptPatchInstanceRolloutEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1", "game-1", "patch-1", 0L, null, "", null, null, Pageable.unpaged()))
-        .withMessage(
-            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    assertThat(
+            repository.findEvents(
+                "tenant-1", "game-1", "patch-1", 0L, null, "", null, null, Pageable.unpaged()))
+        .isEmpty();
+    assertThat(sqlRef.get()).contains("script_pin_epoch");
+    assertThat(bindingsRef.get()).contains(0L).doesNotContain("pin-request-1");
   }
 
   @Test
@@ -145,13 +159,15 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   }
 
   @Test
-  void normalizesBlankOwnerRequestIdBeforeUpdate() {
+  void storesEmptyStringForBlankOwnerRequestIdBeforeUpdate() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
           String sql = context.sql().toLowerCase(java.util.Locale.ROOT);
           if (sql.startsWith("update")) {
+            sqlRef.set(sql);
             bindingsRef.set(context.bindings());
             return new MockResult[] {new MockResult(1)};
           }
@@ -162,7 +178,7 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
           row.setGameInstanceId("game-1");
           row.setScriptPatchVersion("patch-1");
           row.setScriptPinEpoch(0L);
-          row.setLastObservedControlPlaneRequestId(null);
+          row.setLastObservedControlPlaneRequestId("");
           row.setRolloutStatus("ROLLED_BACK");
           row.setStatusReason("runtime_pin_differs_from_patch");
           row.setObservedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
@@ -191,6 +207,49 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
     ScriptPatchInstanceRolloutEvent saved = repository.save(event);
 
     assertThat(saved.getLastObservedControlPlaneRequestId()).isNull();
+    assertThat(sqlRef.get()).contains("script_pin_epoch");
+    assertThat(bindingsRef.get()).contains(0L);
     assertThat(bindingsRef.get()).doesNotContain(" ");
+    assertThat(bindingsRef.get()).contains("");
+  }
+
+  @Test
+  void rejectsExistingIdUpdateWhenOwnerTupleChanges() {
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          updateSql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptPatchInstanceRolloutEvent changed = new ScriptPatchInstanceRolloutEvent();
+    changed.setId(9L);
+    changed.setEventId("rollout-event-1");
+    changed.setTenantId("tenant-1");
+    changed.setGameInstanceId("game-1");
+    changed.setScriptPatchVersion("patch-new");
+    changed.setScriptPinEpoch(2L);
+    changed.setLastObservedControlPlaneRequestId("owner-new");
+    changed.setRolloutStatus("ROLLED_BACK");
+    changed.setStatusReason("runtime_pin_differs_from_patch");
+
+    assertThatThrownBy(() -> repository.save(changed))
+        .isInstanceOf(OptimisticLockingFailureException.class)
+        .hasMessage("Stale write rejected for script_patch_instance_rollout_events id=9");
+    assertThat(updateSql)
+        .hasValueSatisfying(
+            sql -> {
+              int whereStart = sql.indexOf(" where ");
+              assertThat(whereStart).isGreaterThanOrEqualTo(0);
+              assertThat(sql.substring(whereStart))
+                  .contains(
+                      "row_version",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "last_observed_control_plane_request_id");
+            });
   }
 }

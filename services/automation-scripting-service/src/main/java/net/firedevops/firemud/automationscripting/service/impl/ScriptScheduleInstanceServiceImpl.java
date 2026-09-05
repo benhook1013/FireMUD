@@ -655,8 +655,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     Instant changedBefore = changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs);
     org.springframework.data.domain.PageRequest page =
         org.springframework.data.domain.PageRequest.of(0, boundedLimit);
-    boolean hasPinFilter =
-        scriptPinEpoch > 0 || !blankToEmpty(scriptPinControlPlaneRequestId).isBlank();
+    String normalizedPinRequestId = blankToEmpty(scriptPinControlPlaneRequestId);
+    boolean hasPinEpoch = scriptPinEpoch > 0;
+    boolean hasPinRequestId = !normalizedPinRequestId.isBlank();
+    boolean hasPinFilter = hasPinEpoch || hasPinRequestId;
     List<ScriptEventAudit> audits =
         !hasPinFilter
             ? eventAuditRepository.findTimerAuditEvents(
@@ -673,8 +675,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 normalizedTenant,
                 normalizedInstance,
                 normalizedPatch,
-                scriptPinEpoch,
-                scriptPinControlPlaneRequestId,
+                hasPinEpoch ? scriptPinEpoch : null,
+                hasPinRequestId ? normalizedPinRequestId : null,
                 normalizedScript,
                 normalizedEvent,
                 normalizedReason,
@@ -2235,14 +2237,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String durableIdentity() {
-      return identity(true);
+      return identity();
     }
 
     private String eventIdentity() {
-      return identity(false);
+      return identity();
     }
 
-    private String identity(boolean includeOwnerRequestEvidence) {
+    private String identity() {
       List<String> values =
           new ArrayList<>(
               List.of(
@@ -2263,9 +2265,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                   String.valueOf(scriptPinEpoch)));
       if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
         values.add(applicableBindingId(instance));
-      }
-      if (includeOwnerRequestEvidence) {
-        values.add(scriptPinControlPlaneRequestId);
       }
       values.addAll(
           List.of(

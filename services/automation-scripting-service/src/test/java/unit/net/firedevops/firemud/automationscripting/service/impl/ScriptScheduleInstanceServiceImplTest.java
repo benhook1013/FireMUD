@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -1797,7 +1796,8 @@ class ScriptScheduleInstanceServiceImplTest {
     List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
     assertThat(workItems)
         .extracting(ScriptWorkItem::getScriptEventId)
-        .containsExactly(workItems.get(0).getScriptEventId(), workItems.get(0).getScriptEventId());
+        .hasSize(2)
+        .containsOnly(workItems.get(0).getScriptEventId());
     assertThat(workItems)
         .extracting(ScriptWorkItem::getScriptPinControlPlaneRequestId)
         .containsExactly("req-1", "req-2");
@@ -1810,6 +1810,48 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(auditCaptor.getAllValues())
         .extracting(ScriptEventAudit::getScriptEventId)
         .containsExactly(workItems.get(0).getScriptEventId(), workItems.get(0).getScriptEventId());
+  }
+
+  @Test
+  void selectedAndTruncatedTimerIdentityExcludesOwnerRequestEvidence() {
+    ScriptSchedulerProperties properties = new ScriptSchedulerProperties();
+    properties.setMaxCatchUpFiringsPerObservation(1);
+    service =
+        new ScriptScheduleInstanceServiceImpl(
+            scheduleDefinitionRepository,
+            scheduleInstanceRepository,
+            pinProjectionRepository,
+            pluginRuntimeStateRepository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            automationQueueService,
+            automationAdmissionStateService,
+            gameDesignControlPlaneClient,
+            gameSessionControlPlaneClient,
+            properties,
+            meterRegistry,
+            new ObjectMapper());
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setLastObservedControlPlaneRequestId("req-2");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isEqualTo(1);
+    verify(workItemRepository).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository).save(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
   }
 
   @Test
@@ -2932,13 +2974,13 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void timerAuditLookupAllowsPositiveEpochWithoutOwnerRequestId() {
+  void forwardsEpochOnlyTimerAuditFilterToAuditRepository() {
     when(eventAuditRepository.findTimerAuditEvents(
             eq("1"),
             eq("game-1"),
             eq("patch-1"),
             eq(2L),
-            isNull(),
+            eq((String) null),
             eq("npc-guard"),
             eq("onInterval"),
             eq(""),
@@ -2957,7 +2999,7 @@ class ScriptScheduleInstanceServiceImplTest {
             eq("game-1"),
             eq("patch-1"),
             eq(2L),
-            isNull(),
+            eq((String) null),
             eq("npc-guard"),
             eq("onInterval"),
             eq(""),
@@ -2967,12 +3009,12 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void timerAuditLookupAllowsOwnerRequestIdWithoutEpoch() {
+  void forwardsRequestIdOnlyTimerAuditFilterToAuditRepository() {
     when(eventAuditRepository.findTimerAuditEvents(
             eq("1"),
             eq("game-1"),
             eq("patch-1"),
-            eq(0L),
+            eq((Long) null),
             eq("req-1"),
             eq("npc-guard"),
             eq("onInterval"),
@@ -2991,7 +3033,7 @@ class ScriptScheduleInstanceServiceImplTest {
             eq("1"),
             eq("game-1"),
             eq("patch-1"),
-            eq(0L),
+            eq((Long) null),
             eq("req-1"),
             eq("npc-guard"),
             eq("onInterval"),

@@ -28,21 +28,27 @@ class V7__script_pin_epoch_runtime_consumersTest {
             "script_pin_epoch = 0",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
             "script_pin_epoch > 0",
-            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
+    String notValidMarker = "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */";
+    int firstNotValid = normalized.indexOf(notValidMarker);
+    int secondNotValid = normalized.indexOf(notValidMarker, firstNotValid + 1);
+    assertThat(firstNotValid).isGreaterThanOrEqualTo(0);
+    assertThat(secondNotValid).isGreaterThan(firstNotValid);
 
     int projectionConstraint =
-        migration.indexOf(
+        normalized.indexOf(
             "ADD CONSTRAINT ck_script_patch_instance_rollout_projections_pin_tuple CHECK");
     int eventConstraint =
-        migration.indexOf("ADD CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple CHECK");
+        normalized.indexOf(
+            "ADD CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple CHECK");
     assertThat(projectionConstraint).isGreaterThanOrEqualTo(0);
     assertThat(eventConstraint).isGreaterThan(projectionConstraint);
-    int eventAlter = migration.indexOf("ALTER TABLE script_patch_instance_rollout_events");
+    int eventAlter = normalized.indexOf("ALTER TABLE script_patch_instance_rollout_events");
     assertThat(eventAlter).isGreaterThan(projectionConstraint);
-    String projectionBlock = migration.substring(0, eventAlter).replaceAll("\\s+", " ");
-    String projectionCheck =
-        migration.substring(projectionConstraint, eventAlter).replaceAll("\\s+", " ");
-    String eventCheck = migration.substring(eventAlter).replaceAll("\\s+", " ");
+    String projectionBlock = normalized.substring(0, eventAlter);
+    String projectionCheck = normalized.substring(projectionConstraint, eventAlter);
+    String eventCheck = normalized.substring(eventAlter);
     assertThat(projectionBlock)
         .contains(
             "ALTER TABLE script_patch_instance_rollout_projections ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0",

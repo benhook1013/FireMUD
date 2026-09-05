@@ -144,3 +144,8 @@ Entry format:
   - Context: splitting a PostgreSQL `CHECK` installation from its later validation exposed that jOOQ's DDL parser rejects both `NOT VALID` and `VALIDATE CONSTRAINT` even though Flyway and PostgreSQL require those forms for the production-safe migration.
   - Observation: weakening the production migration to satisfy code generation would restore a blocking table scan; the repository already supports narrowly scoped jOOQ ignore markers for PostgreSQL-only syntax.
   - Expected pattern: keep the PostgreSQL/Flyway statement authoritative, wrap only the unsupported syntax or statement in the established jOOQ ignore markers, and prove both the production SQL and generation path with focused migration tests plus `generateJooq`-dependent validation.
+
+- `2026-09-06`: Retained-row migration proof must exercise pre-change nullable identities
+  - Context: Automation exact-pin V5 passed fresh-schema migration checks while retained instance ingress rows would have received a null epoch, and its duplicate normalization deleted durable audit evidence.
+  - Observation: fresh-database proof does not exercise legacy nullable uniqueness behavior or retained-row constraint compatibility; deterministic row selection is not safe reconciliation for durable identity evidence.
+  - Expected pattern: for identity migrations, migrate an isolated database only through the prior version, seed every retained nullable identity branch, then prove the forward migration either preserves valid rows or fails closed on duplicates without deletion, following [Database Migrations](../architecture/system-architecture-database-migrations.md#cicd-execution).

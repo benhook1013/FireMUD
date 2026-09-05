@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventIngressAuditRecord;
@@ -27,6 +28,9 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventIngressAuditRepository {
+  private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
+      "script_pin_control_plane_request_id conflicts with existing identity";
+  private static final int MAX_EVENT_INGRESS_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
   private final DSLContext dsl;
@@ -68,10 +72,10 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
                 .and(
                     SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
-                        .isNotDistinctFrom(scriptPinControlPlaneRequestId))
+                        .isNotDistinctFrom(blankToNull(scriptPinControlPlaneRequestId)))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
@@ -83,6 +87,7 @@ public class ScriptEventIngressAuditRepository {
       return insertIfAbsentByIdentity(entity).audit();
     }
     requireCoherentPinTuple(entity);
+    requireCanonicalRequestDigest(entity.getRequestDigest());
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
@@ -132,7 +137,18 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(
+                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.isNotDistinctFrom(
+                            entity.getScriptPatchVersion()))
+                    .and(
+                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(
+                            entity.getScriptPinEpoch()))
+                    .and(
+                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
+                            .isNotDistinctFrom(
+                                blankToNull(entity.getScriptPinControlPlaneRequestId())))
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST.eq(entity.getRequestDigest())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -206,25 +222,43 @@ public class ScriptEventIngressAuditRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script event ingress audit is required");
     }
-    boolean pinned = requireCoherentPinTuple(entity);
+    requireCoherentPinTuple(entity);
     requireCanonicalRequestDigest(entity.getRequestDigest());
+    String normalizedRequestId = blankToNull(entity.getScriptPinControlPlaneRequestId());
+    for (int attempt = 0; attempt < MAX_EVENT_INGRESS_INSERT_ATTEMPTS; attempt++) {
+      Optional<IdempotentInsertResult> inserted = insertEventIdentity(entity, normalizedRequestId);
+      if (inserted.isPresent()) {
+        return inserted.orElseThrow();
+      }
+      Optional<ScriptEventIngressAudit> existing =
+          dsl.selectFrom(SCRIPT_EVENT_INGRESS_AUDIT)
+              .where(identityCondition(entity))
+              .fetchOptional(this::toEntity);
+      if (existing.isPresent()) {
+        ScriptEventIngressAudit existingAudit = existing.orElseThrow();
+        requireMatchingPinOwnerEvidence(
+            normalizedRequestId, existingAudit.getScriptPinControlPlaneRequestId());
+        return new IdempotentInsertResult(existingAudit, false);
+      }
+    }
+    throw new IllegalStateException("Event identity conflict did not yield a row");
+  }
+
+  private Optional<IdempotentInsertResult> insertEventIdentity(
+      ScriptEventIngressAudit entity, String normalizedRequestId) {
     ScriptEventIngressAuditRecord record = dsl.newRecord(SCRIPT_EVENT_INGRESS_AUDIT);
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
     returningFields.add(INSERTED_ROW);
     boolean instanceScoped = entity.getGameInstanceId() != null;
-    Field<?>[] conflictFields =
-        instanceScoped ? runtimeConflictFields(pinned) : onLoadConflictFields();
+    Field<?>[] conflictFields = instanceScoped ? runtimeConflictFields() : onLoadConflictFields();
     Condition conflictPredicate =
         instanceScoped
             ? SCRIPT_EVENT_INGRESS_AUDIT
                 .GAME_INSTANCE_ID
                 .isNotNull()
-                .and(
-                    pinned
-                        ? SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotNull()
-                        : nullScriptPinEpochCondition())
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotNull())
             : SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNull();
     if (!instanceScoped) {
       // Keep the explicit pre-instance/null-pin branch visible in the claim predicate. The
@@ -240,12 +274,16 @@ public class ScriptEventIngressAuditRepository {
             .doUpdate()
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ID, SCRIPT_EVENT_INGRESS_AUDIT.ID)
             .returningResult(returningFields);
-    return insert
-        .fetchOptional(
-            returned ->
-                new IdempotentInsertResult(
-                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))))
-        .orElseThrow(() -> new IllegalStateException("Event identity claim returned no row"));
+    return insert.fetchOptional(
+        returned -> {
+          ScriptEventIngressAudit audit = toEntity(returned);
+          boolean inserted = Boolean.TRUE.equals(returned.get(INSERTED_ROW));
+          if (!inserted) {
+            requireMatchingPinOwnerEvidence(
+                normalizedRequestId, audit.getScriptPinControlPlaneRequestId());
+          }
+          return new IdempotentInsertResult(audit, inserted);
+        });
   }
 
   @SuppressFBWarnings(
@@ -253,7 +291,7 @@ public class ScriptEventIngressAuditRepository {
       justification = "The claimed ingress audit is the repository result contract.")
   public record IdempotentInsertResult(ScriptEventIngressAudit audit, boolean inserted) {}
 
-  private static boolean requireCoherentPinTuple(ScriptEventIngressAudit entity) {
+  private static void requireCoherentPinTuple(ScriptEventIngressAudit entity) {
     Long scriptPinEpoch = entity.getScriptPinEpoch();
     boolean hasRequestId =
         entity.getScriptPinControlPlaneRequestId() != null
@@ -263,7 +301,11 @@ public class ScriptEventIngressAuditRepository {
         throw new IllegalArgumentException(
             "script_pin_control_plane_request_id requires a positive script_pin_epoch");
       }
-      return false;
+      if (entity.getGameInstanceId() != null) {
+        throw new IllegalArgumentException(
+            "script_pin_epoch is required for an instance-scoped ingress audit");
+      }
+      return;
     }
     if (scriptPinEpoch <= 0L) {
       throw new IllegalArgumentException("script_pin_epoch must be positive when present");
@@ -276,7 +318,6 @@ public class ScriptEventIngressAuditRepository {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
-    return true;
   }
 
   private static void requireCanonicalRequestDigest(String requestDigest) {
@@ -290,13 +331,50 @@ public class ScriptEventIngressAuditRepository {
     return SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNull();
   }
 
+  private static Condition identityCondition(ScriptEventIngressAudit entity) {
+    Condition condition =
+        SCRIPT_EVENT_INGRESS_AUDIT
+            .TENANT_ID
+            .eq(entity.getTenantId())
+            .and(
+                SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNotDistinctFrom(
+                    entity.getGameInstanceId()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.isNotDistinctFrom(entity.getRegionId()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.isNotDistinctFrom(entity.getRegionEpoch()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entity.getEntityId()))
+            .and(
+                SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.isNotDistinctFrom(
+                    canonicalPlayableStateScope(
+                        entity.getGameInstanceId(), entity.getPlayableStateScope())))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(entity.getEventSchemaVersion()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(entity.isDryRun()))
+            .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(entity.getSourceService()));
+    if (entity.getGameInstanceId() == null) {
+      return condition
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID.eq(entity.getScriptId()))
+          .and(nullScriptPinEpochCondition());
+    }
+    return condition.and(
+        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()));
+  }
+
+  private static void requireMatchingPinOwnerEvidence(
+      String requestedRequestId, String existingRequestId) {
+    if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
+      throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
+    }
+  }
+
   private static List<SelectFieldOrAsterisk> selectFields() {
     List<SelectFieldOrAsterisk> fields = new ArrayList<>();
     Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
     return fields;
   }
 
-  private static Field<?>[] runtimeConflictFields(boolean pinned) {
+  private static Field<?>[] runtimeConflictFields() {
     List<Field<?>> fields =
         new ArrayList<>(
             List.of(
@@ -309,10 +387,7 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE,
                 SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION,
                 SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
-    if (pinned) {
-      fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
-    }
+    fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE);

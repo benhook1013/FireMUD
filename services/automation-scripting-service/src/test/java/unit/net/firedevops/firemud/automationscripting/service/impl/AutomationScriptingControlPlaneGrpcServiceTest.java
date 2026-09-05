@@ -495,7 +495,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "17",
                     "",
                     "",
-                    "",
+                    "binding-guard",
                     "onTimerExpire",
                     "guard.alert.expire.v1",
                     "TIMER",
@@ -575,6 +575,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo("guard.alert.expire.v1");
     assertThat(ref.get().getSchedules(0).getTargetScopeType()).isEqualTo("ENTITY");
     assertThat(ref.get().getSchedules(0).getTargetScopeId()).isEqualTo("guard-1");
+    assertThat(ref.get().getSchedules(0).getBindingId()).isEqualTo("binding-guard");
     assertThat(ref.get().getSchedules(0).getMaterializationStatus()).isEqualTo("READY");
     assertThat(ref.get().getSchedules(0).getNextDueAtMs()).isEqualTo(5555L);
     assertThat(ref.get().getSchedules(0).getWorldSlug()).isEqualTo("demo");
@@ -620,7 +621,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "17",
                     "",
                     "",
-                    "",
+                    "binding-guard-stale",
                     "onTimerExpire",
                     "guard.alert.expire.v1",
                     "TIMER",
@@ -677,6 +678,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getSchedulesList()).hasSize(1);
+    assertThat(ref.get().getSchedules(0).getBindingId()).isEqualTo("binding-guard-stale");
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(18L);
@@ -715,7 +717,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "npc-guard",
                     "plugin-1",
                     "plugin-v1",
-                    "",
+                    "binding-npc-guard-timer",
                     "onInterval",
                     "patch-1",
                     2L,
@@ -793,6 +795,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsCount()).isEqualTo(1);
     assertThat(ref.get().getEvents(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getEvents(0).getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getEvents(0).getBindingId()).isEqualTo("binding-npc-guard-timer");
     assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
     assertThat(ref.get().getEvents(0).getScriptPinControlPlaneRequestId())
         .isEqualTo("pin-request-1");
@@ -816,7 +819,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void listsScriptTimerAuditEventsWithEpochWithoutOwnerRequestId() {
+  void listsScriptTimerAuditEventsWithEpochOnlyFilter() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);
@@ -891,7 +894,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void listsScriptTimerAuditEventsWithOwnerRequestIdWithoutEpoch() {
+  void listsScriptTimerAuditEventsWithRequestIdOnlyFilter() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);

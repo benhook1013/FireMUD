@@ -5,6 +5,7 @@ import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEvent
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -121,18 +122,23 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
-  void distinctPinnedOwnerRequestsRetainDistinctPreAdmissionClaims() {
+  void distinctPinnedOwnerRequestsConflictWithoutCreatingSecondPreAdmissionClaim() {
     ScriptEventIngressAudit first = pinnedIngressClaim();
     ScriptEventIngressAudit second = pinnedIngressClaim();
     second.setScriptPinControlPlaneRequestId("pin-request-2");
 
     var firstResult = ingressRepository.insertIfAbsentByIdentity(first);
-    var secondResult = ingressRepository.insertIfAbsentByIdentity(second);
 
     assertThat(firstResult.inserted()).isTrue();
-    assertThat(secondResult.inserted()).isTrue();
-    assertThat(firstResult.audit().getId()).isNotEqualTo(secondResult.audit().getId());
-    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(2);
+    assertThatThrownBy(() -> ingressRepository.insertIfAbsentByIdentity(second))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                SCRIPT_EVENT_INGRESS_AUDIT.ID.eq(firstResult.audit().getId())))
+        .isEqualTo("pin-request-1");
   }
 
   @Test

@@ -36,7 +36,8 @@ class V6__script_pin_epoch_projectionTest {
             "script_pin_epoch IS NOT NULL",
             "script_pin_epoch > 0",
             "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL",
-            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
 
     assertThat(migration.indexOf("UPDATE script_patch_pin_projections"))
         .isLessThan(migration.indexOf("ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple"));

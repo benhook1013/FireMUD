@@ -12,7 +12,7 @@ ALTER TABLE script_patch_instance_rollout_projections
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
 ALTER TABLE script_patch_instance_rollout_events
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
@@ -26,4 +26,4 @@ ALTER TABLE script_patch_instance_rollout_events
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;

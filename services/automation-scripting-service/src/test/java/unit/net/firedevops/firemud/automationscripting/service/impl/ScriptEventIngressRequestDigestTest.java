@@ -28,6 +28,18 @@ class ScriptEventIngressRequestDigestTest {
   }
 
   @Test
+  void bindsScriptPinEpochSoChangingOnlyEpochCannotReplayTheClaim() {
+    TriggerScriptEventRequest original = request("{\"a\":1}");
+    TriggerScriptEventRequest changedEpoch = original.toBuilder().setScriptPinEpoch(2L).build();
+
+    assertThat(ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"))
+        .isNotEqualTo(
+            ScriptEventIngressRequestDigest.compute(changedEpoch, "v1", "game-session-service"));
+    assertThat(changedEpoch.getScriptPinControlPlaneRequestId())
+        .isEqualTo(original.getScriptPinControlPlaneRequestId());
+  }
+
+  @Test
   void rejectsDuplicateJsonObjectKeys() {
     TriggerScriptEventRequest duplicateKeys = request("{\"a\":1,\"a\":2}");
 

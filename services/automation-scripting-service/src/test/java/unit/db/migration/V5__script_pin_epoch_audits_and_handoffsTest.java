@@ -17,6 +17,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
       assertThat(stream).isNotNull();
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
+    String normalized = migration.replaceAll("\\s+", " ");
 
     assertThat(migration)
         .contains(
@@ -27,15 +28,15 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "entity_id = COALESCE(entity_id, ''),",
             "playable_state_scope = COALESCE(playable_state_scope, '')",
             "WHERE game_instance_id IS NOT NULL",
-            "ROW_NUMBER() OVER",
-            "DELETE FROM script_event_ingress_audit",
+            "HAVING COUNT(*) > 1",
+            "RAISE EXCEPTION",
+            "duplicate pre-instance script ingress identities require operator reconciliation",
+            "duplicate retained runtime script ingress identities require operator reconciliation",
             "WHERE game_instance_id IS NULL",
-            "ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
-            "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit",
             ") WHERE script_pin_epoch IS NULL;",
@@ -48,7 +49,10 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ck_script_event_ingress_audit_request_digest",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
-        .doesNotContain("ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE");
+        .doesNotContain(
+            "ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE",
+            "DELETE FROM script_event_ingress_audit",
+            "ROW_NUMBER() OVER");
 
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned");
@@ -61,72 +65,78 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
 
     int runtimeStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity");
+    int normalizedRuntimeStart =
+        normalized.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity");
     int runtimeEnd = migration.indexOf(") WHERE", runtimeStart);
     assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeEnd).isGreaterThan(runtimeStart);
     assertThat(migration.substring(runtimeStart, runtimeEnd))
-        .contains(
-            "playable_state_scope", "script_pin_epoch", "script_pin_control_plane_request_id");
+        .contains("playable_state_scope", "script_pin_epoch")
+        .doesNotContain("script_pin_control_plane_request_id");
     assertThat(migration)
         .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 
-    int runtimeUnpinnedStart =
-        migration.indexOf(
+    assertThat(migration)
+        .doesNotContain(
             "CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_unpinned_identity");
-    int runtimeUnpinnedEnd = migration.indexOf(") WHERE", runtimeUnpinnedStart);
-    assertThat(runtimeUnpinnedStart).isGreaterThan(runtimeStart);
-    assertThat(runtimeUnpinnedEnd).isGreaterThan(runtimeUnpinnedStart);
-    assertThat(migration.substring(runtimeUnpinnedStart, runtimeUnpinnedEnd))
-        .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
 
     int playableScopeDrop =
-        migration.indexOf(
-            "ALTER TABLE script_event_ingress_audit\n"
-                + "    ALTER COLUMN playable_state_scope DROP NOT NULL;");
+        normalized.indexOf(
+            "ALTER TABLE script_event_ingress_audit ALTER COLUMN playable_state_scope DROP NOT NULL;");
     int preInstanceNormalization =
-        migration.indexOf(
-            "UPDATE script_event_ingress_audit\n"
-                + "SET game_instance_id = NULL,\n"
-                + "    playable_state_scope = NULL\n"
-                + "WHERE game_instance_id IS NULL OR game_instance_id = '';");
+        normalized.indexOf(
+            "UPDATE script_event_ingress_audit SET game_instance_id = NULL, playable_state_scope = NULL WHERE game_instance_id IS NULL OR game_instance_id = '';");
     assertThat(playableScopeDrop).isGreaterThanOrEqualTo(0);
     assertThat(preInstanceNormalization).isGreaterThan(playableScopeDrop);
-    assertThat(preInstanceNormalization).isLessThan(runtimeStart);
+    assertThat(preInstanceNormalization).isLessThan(normalizedRuntimeStart);
 
     int reconciliationStart =
-        migration.indexOf(
-            "UPDATE script_event_ingress_audit\n"
-                + "SET region_id = COALESCE(region_id, ''),\n"
-                + "    region_epoch = COALESCE(region_epoch, 0),\n"
-                + "    entity_id = COALESCE(entity_id, ''),");
+        normalized.indexOf(
+            "UPDATE script_event_ingress_audit SET region_id = COALESCE(region_id, ''), region_epoch = COALESCE(region_epoch, 0), entity_id = COALESCE(entity_id, ''),");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
-    assertThat(runtimeStart).isGreaterThan(reconciliationStart);
-    int onLoadDedup = migration.indexOf("The legacy nullable game-instance column allowed");
-    assertThat(onLoadDedup).isGreaterThanOrEqualTo(0);
-    assertThat(preInstanceNormalization).isLessThan(onLoadDedup);
-    assertThat(migration.substring(reconciliationStart, onLoadDedup))
+    assertThat(normalizedRuntimeStart).isGreaterThan(reconciliationStart);
+    int normalizedOnLoadDedup =
+        normalized.indexOf("The legacy nullable game-instance column allowed");
+    assertThat(normalizedOnLoadDedup).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isLessThan(normalizedOnLoadDedup);
+    assertThat(reconciliationStart).isLessThan(normalizedOnLoadDedup);
+    assertThat(normalized.substring(reconciliationStart, normalizedOnLoadDedup))
         .contains("entity_id = COALESCE(entity_id, '')", "WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
-    assertThat(migration.substring(onLoadDedup, runtimeStart))
+    assertThat(normalized.substring(normalizedOnLoadDedup, normalizedRuntimeStart))
         .contains(
             "WHERE game_instance_id IS NULL",
             "AND script_id IS NOT NULL",
             "WHERE game_instance_id IS NOT NULL",
             "AND entity_id IS NOT NULL",
-            "script_pin_epoch IS NULL")
+            "script_pin_epoch IS NULL",
+            "HAVING COUNT(*) > 1",
+            "RAISE EXCEPTION")
         .doesNotContain("NULLS NOT DISTINCT");
 
     int ingressTupleStart =
         migration.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple");
     int ingressTupleEnd =
-        migration.indexOf("-- Rejected instance-scoped requests", ingressTupleStart);
+        migration.indexOf(
+            "CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity", ingressTupleStart);
     assertThat(ingressTupleStart).isGreaterThanOrEqualTo(0);
     assertThat(ingressTupleEnd).isGreaterThan(ingressTupleStart);
     assertThat(migration.substring(ingressTupleStart, ingressTupleEnd))
         .contains(
+            "script_pin_epoch IS NULL",
             "script_pin_epoch > 0",
             "game_instance_id IS NOT NULL",
             "script_pin_control_plane_request_id");
+    int normalizedIngressTupleStart =
+        normalized.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple");
+    int normalizedIngressTupleEnd =
+        normalized.indexOf(
+            "CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity",
+            normalizedIngressTupleStart);
+    assertThat(normalizedIngressTupleStart).isGreaterThanOrEqualTo(0);
+    assertThat(normalizedIngressTupleEnd).isGreaterThan(normalizedIngressTupleStart);
+    assertThat(normalized.substring(normalizedIngressTupleStart, normalizedIngressTupleEnd))
+        .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 
     int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
     int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);
@@ -138,13 +148,23 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "game_instance_id IS NOT NULL",
             "script_pin_control_plane_request_id");
 
-    int onLoadStart =
-        migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");
-    int onLoadEnd = migration.indexOf(") WHERE", onLoadStart);
-    assertThat(onLoadStart).isGreaterThan(runtimeStart);
-    assertThat(onLoadStart).isGreaterThan(onLoadDedup);
-    assertThat(onLoadEnd).isGreaterThan(onLoadStart);
-    assertThat(migration.substring(onLoadStart, onLoadEnd))
+    int auditPinnedStart =
+        migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON");
+    int auditPinnedEnd = migration.indexOf(") WHERE", auditPinnedStart);
+    assertThat(auditPinnedStart).isGreaterThanOrEqualTo(0);
+    assertThat(auditPinnedEnd).isGreaterThan(auditPinnedStart);
+    assertThat(migration.substring(auditPinnedStart, auditPinnedEnd))
+        .contains("script_pin_epoch", "script_event_id", "dry_run")
+        .doesNotContain("script_pin_control_plane_request_id");
+
+    int normalizedOnLoadStart =
+        normalized.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");
+    int normalizedOnLoadEnd = normalized.indexOf(") WHERE", normalizedOnLoadStart);
+    assertThat(normalizedOnLoadStart).isGreaterThan(normalizedRuntimeStart);
+    assertThat(normalizedOnLoadStart).isGreaterThanOrEqualTo(0);
+    assertThat(normalizedOnLoadStart).isGreaterThan(normalizedOnLoadDedup);
+    assertThat(normalizedOnLoadEnd).isGreaterThan(normalizedOnLoadStart);
+    assertThat(normalized.substring(normalizedOnLoadStart, normalizedOnLoadEnd))
         .contains("script_id")
         .doesNotContain("region_id", "region_epoch", "game_instance_id");
     assertThat(migration)

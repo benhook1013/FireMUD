@@ -129,6 +129,68 @@ class ScriptDesignDigestServiceImplTest {
   }
 
   @Test
+  void getDraftDesignDigestChangesWhenOnlyBindingIdChanges() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setDefinition("return 1");
+    ScriptEventBinding first = binding("binding-1");
+    ScriptEventBinding second = binding("binding-2");
+
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(first), List.of(second));
+
+    var firstDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var secondDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+
+    assertEquals(firstDigest.digestSchemaVersion(), secondDigest.digestSchemaVersion());
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        firstDigest.contentDigest(), secondDigest.contentDigest());
+  }
+
+  @Test
+  void getDraftDesignDigestIsIndependentOfBindingOrder() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setDefinition("return 1");
+    ScriptEventBinding first = binding("binding-1");
+    ScriptEventBinding second = binding("binding-2");
+
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(first, second), List.of(second, first));
+
+    var orderedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var reversedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+
+    assertEquals(orderedDigest.contentDigest(), reversedDigest.contentDigest());
+  }
+
+  private static ScriptEventBinding binding(String bindingId) {
+    ScriptEventBinding binding = new ScriptEventBinding();
+    binding.setTenantId(1L);
+    binding.setScriptPatchVersion("patch-1");
+    binding.setEventType("onCommand");
+    binding.setEventSchemaVersion("v1");
+    binding.setScriptId("script-1");
+    binding.setBindingId(bindingId);
+    binding.setTargetScopeType("ENTITY");
+    binding.setTargetScopeId("entity-1");
+    binding.setPriority(1);
+    return binding;
+  }
+
+  @Test
   void getDraftDesignDigestFailsClosedWhenPatchMissing() {
     when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-2"))
         .thenReturn(List.of());

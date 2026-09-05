@@ -1,6 +1,7 @@
 -- Persist the exact observed owner pin epoch with ingress, execution, and handoff evidence.
--- Audit rows may omit the epoch for tenant-readiness or rejected pre-pin requests; handoff rows
--- remain fail-closed at zero until an instance-scoped pin is observed.
+-- Audit rows may omit the epoch for tenant-readiness, rejected pre-pin requests, or retained
+-- pre-fencing runtime evidence; new instance-scoped claims require a positive exact owner tuple.
+-- Handoff rows remain fail-closed at zero until an instance-scoped pin is observed.
 ALTER TABLE script_event_ingress_audit
     ADD COLUMN script_pin_epoch BIGINT;
 
@@ -65,59 +66,59 @@ WHERE game_instance_id IS NOT NULL
       OR playable_state_scope IS NULL);
 
 -- The legacy nullable game-instance column allowed duplicate pre-instance onLoad rows because
--- PostgreSQL treats NULL identity values as distinct. Retain one deterministic row before the
--- dedicated non-null-safe onLoad identity index is created.
-DELETE FROM script_event_ingress_audit
-WHERE id IN (
-    SELECT ranked.id
-    FROM (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                   PARTITION BY tenant_id,
-                                script_id,
-                                event_type,
-                                event_schema_version,
-                                script_patch_version,
-                                script_event_id,
-                                dry_run,
-                                source_service
-                   ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id
-               ) AS duplicate_rank
+-- PostgreSQL treats NULL identity values as distinct. Do not choose or delete durable audit
+-- evidence. Fail closed so an operator can reconcile duplicates before the unique index is added.
+/* [jooq ignore start] */
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NULL
           AND script_id IS NOT NULL
           AND script_pin_epoch IS NULL
-    ) AS ranked
-    WHERE ranked.duplicate_rank > 1
-);
-
-DELETE FROM script_event_ingress_audit
-WHERE id IN (
-    SELECT ranked.id
-    FROM (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                   PARTITION BY tenant_id,
-                                game_instance_id,
-                                region_id,
-                                region_epoch,
-                                entity_id,
-                                playable_state_scope,
-                                event_type,
-                                event_schema_version,
-                                script_patch_version,
-                                script_event_id,
-                                dry_run,
-                                source_service
-                   ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id
-               ) AS duplicate_rank
+        GROUP BY tenant_id,
+                 script_id,
+                 event_type,
+                 event_schema_version,
+                 script_patch_version,
+                 script_event_id,
+                 dry_run,
+                 source_service
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'duplicate pre-instance script ingress identities require operator reconciliation';
+    END IF;
+    IF EXISTS (
+        SELECT 1
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NOT NULL
           AND entity_id IS NOT NULL
           AND script_pin_epoch IS NULL
-    ) AS ranked
-    WHERE ranked.duplicate_rank > 1
-);
+        GROUP BY tenant_id,
+                 game_instance_id,
+                 region_id,
+                 region_epoch,
+                 entity_id,
+                 playable_state_scope,
+                 event_type,
+                 event_schema_version,
+                 script_patch_version,
+                 script_event_id,
+                 dry_run,
+                 source_service
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'duplicate retained runtime script ingress identities require operator reconciliation';
+    END IF;
+END
+$$;
+/* [jooq ignore stop] */
+
+-- Retained instance-scoped rows predate exact-pin evidence. Preserve them with a NULL epoch; new
+-- repository claims cannot create this shape, and the positive-epoch runtime index excludes it.
 
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_event_ingress_audit (
     tenant_id,
@@ -130,7 +131,6 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     event_schema_version,
     script_patch_version,
     script_pin_epoch,
-    script_pin_control_plane_request_id,
     script_event_id,
     dry_run,
     source_service
@@ -144,24 +144,6 @@ ALTER TABLE script_event_ingress_audit
             AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
-
--- Rejected instance-scoped requests may omit the epoch; keep that explicit null branch
--- atomically idempotent without collapsing it into a sentinel value.
-CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_unpinned_identity
-ON script_event_ingress_audit (
-    tenant_id,
-    game_instance_id,
-    region_id,
-    region_epoch,
-    entity_id,
-    playable_state_scope,
-    event_type,
-    event_schema_version,
-    script_patch_version,
-    script_event_id,
-    dry_run,
-    source_service
-) WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NULL;
 
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
     tenant_id,
@@ -210,7 +192,6 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit
         event_schema_version,
         script_patch_version,
         script_pin_epoch,
-        script_pin_control_plane_request_id,
         script_event_id,
         dry_run
     ) WHERE script_pin_epoch > 0;

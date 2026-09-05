@@ -1128,7 +1128,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private void requireCurrentClaim(ScriptEventIngressAudit claim) {
-    if (claim.getId() != null && !repository.renewClaimIfCurrent(claim, Instant.now())) {
+    if (claim.getId() == null || !repository.renewClaimIfCurrent(claim, Instant.now())) {
       // Lease loss is a retryable ingress outcome. Keep all effects behind this fence and let the
       // existing gRPC boundary map the condition to UNAVAILABLE for a safe retry.
       throw new ScriptIngressInProgressException("ingress_claim_lost");
@@ -1498,7 +1498,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private record ValidationResult(TriggerAdmission admission, long scriptPinEpoch) {}
 
-  private record PinValidation(TriggerAdmission admission, Long scriptPinEpoch) {}
+  private record PinValidation(TriggerAdmission admission, long scriptPinEpoch) {}
 
   private record AdmissionStateValidation(
       TriggerAdmission admission, AutomationAdmissionStateService.AdmissionStateSummary state) {

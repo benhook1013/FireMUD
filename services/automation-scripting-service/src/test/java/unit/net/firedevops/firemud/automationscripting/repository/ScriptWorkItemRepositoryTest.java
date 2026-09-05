@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -27,6 +28,48 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemRepositoryTest {
+  @Test
+  void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    7L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "pointer-1",
+                    "script-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "binding-1",
+                    "onCommand",
+                    "v1",
+                    "patch-1",
+                    2L,
+                    "pin-request-1",
+                    "event-1",
+                    false))
+        .isFalse();
+
+    int whereStart = sql.get().indexOf(" where ");
+    assertThat(whereStart).isGreaterThanOrEqualTo(0);
+    assertThat(sql.get().substring(whereStart))
+        .contains("script_pin_epoch", "script_pin_control_plane_request_id", "script_event_id");
+  }
+
   @Test
   void insertRejectsIncompleteScriptPinTuple() {
     ScriptWorkItemRepository repository =
@@ -53,7 +96,7 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
-  void insertAndHydratePositiveScriptPinEpoch() {
+  void insertRejectsConflictingOwnerEvidenceAgainstExistingIdentity() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
@@ -64,12 +107,11 @@ class ScriptWorkItemRepositoryTest {
           Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
           returned.set(requestIdField, "pin-request-1");
-          returned.set(insertedField, true);
+          returned.set(insertedField, false);
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
           return new MockResult[] {new MockResult(1, result)};
@@ -85,9 +127,11 @@ class ScriptWorkItemRepositoryTest {
     item.setPluginVersionId("plugin-v1");
     item.setBindingId("binding-1");
     item.setScriptPinEpoch(7L);
-    item.setScriptPinControlPlaneRequestId("pin-request-1");
+    item.setScriptPinControlPlaneRequestId("pin-request-2");
 
-    ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
+    assertThatThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
 
     assertThat(insertSql)
         .hasValueSatisfying(
@@ -99,11 +143,42 @@ class ScriptWorkItemRepositoryTest {
                         "> 0",
                         "plugin_id",
                         "plugin_version_id",
-                        "binding_id",
-                        "script_pin_control_plane_request_id"));
-    assertThat(saved.getScriptPinEpoch()).isEqualTo(7L);
-    assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
-    assertThat(saved.getId()).isEqualTo(9L);
+                        "binding_id")
+                    .doesNotContain("script_pin_control_plane_request_id"));
+  }
+
+  @Test
+  void insertIfAbsentByTriggerIdentityRejectsConflictingOwnerEvidenceFromFallbackLookup() {
+    ScriptWorkItemsRecord row = workItemRecord(12L, 4, 7L);
+    row.setScriptPinControlPlaneRequestId("pin-request-1");
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Integer> calls = new AtomicReference<>(0);
+    MockDataProvider provider =
+        context -> {
+          calls.updateAndGet(value -> value + 1);
+          if (calls.get() == 1) {
+            return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS))};
+          }
+          Result<ScriptWorkItemsRecord> result = resultDsl.newResult(SCRIPT_WORK_ITEMS);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("tenant-1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(4L);
+    item.setEntityId("entity-1");
+    item.setScriptId("script-1");
+    item.setScriptPinEpoch(7L);
+    item.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(calls.get()).isEqualTo(2);
   }
 
   @Test
@@ -118,7 +193,6 @@ class ScriptWorkItemRepositoryTest {
           Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);

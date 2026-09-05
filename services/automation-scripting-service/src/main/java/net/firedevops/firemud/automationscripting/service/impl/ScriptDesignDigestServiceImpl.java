@@ -4,9 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
@@ -20,6 +22,20 @@ import tools.jackson.databind.ObjectMapper;
     justification = "Injected repositories and mapper are internal Spring collaborators.")
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
   private static final int DIGEST_SCHEMA_VERSION = 4;
+  private static final Comparator<String> NULLS_FIRST_STRING =
+      Comparator.nullsFirst(String::compareTo);
+  private static final Comparator<ScriptEventBinding> BINDING_DIGEST_ORDER =
+      Comparator.comparing(ScriptEventBinding::getScriptPatchVersion, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getEventType, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getEventSchemaVersion, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getScriptId, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getTargetScopeType, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getTargetScopeId, NULLS_FIRST_STRING)
+          .thenComparingInt(ScriptEventBinding::getPriority)
+          .thenComparing(ScriptEventBinding::getPriorityTag, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::isRequiresExclusiveEvent)
+          .thenComparing(ScriptEventBinding::isEnabled)
+          .thenComparing(ScriptEventBinding::getBindingId, NULLS_FIRST_STRING);
 
   private final ScriptDefinitionRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -52,6 +68,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
             .findByTenantIdOrderByScriptPatchVersionAscEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
                 tenantKey)
             .stream()
+            .sorted(BINDING_DIGEST_ORDER)
             .map(this::bindingDigest)
             .toList();
     try {
@@ -95,6 +112,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
                 tenantKey, scriptPatchVersion)
             .stream()
+            .sorted(BINDING_DIGEST_ORDER)
             .map(this::bindingDigest)
             .toList();
     if (scripts.isEmpty()) {
@@ -120,8 +138,7 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     }
   }
 
-  private Map<String, Object> bindingDigest(
-      net.firedevops.firemud.automationscripting.entity.ScriptEventBinding binding) {
+  private Map<String, Object> bindingDigest(ScriptEventBinding binding) {
     return canonicalMap(
         Map.ofEntries(
             Map.entry("scriptPatchVersion", binding.getScriptPatchVersion()),

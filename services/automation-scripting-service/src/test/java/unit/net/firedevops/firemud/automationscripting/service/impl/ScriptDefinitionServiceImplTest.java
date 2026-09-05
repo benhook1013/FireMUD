@@ -22,6 +22,9 @@ import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 
@@ -93,8 +96,10 @@ class ScriptDefinitionServiceImplTest {
     verify(bindingRepository).saveAll(any());
   }
 
-  @Test
-  void updateScriptRejectsOmittedBindingId() {
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" ", "  ", "\t"})
+  void updateScriptRejectsBlankBindingId(String bindingId) {
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(
             null,
@@ -104,7 +109,14 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false, null)));
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    bindingId)));
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(IllegalArgumentException.class)

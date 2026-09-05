@@ -39,7 +39,9 @@ class ScriptEventBindingRepositoryTest {
     repository.save(binding(2L, "binding-b"));
 
     assertThat(updates).hasSize(2).allMatch(sql -> sql.contains("binding_id"));
-    assertThat(bindings.toString()).contains("binding-a", "binding-b");
+    assertThat(bindings).hasSize(2);
+    assertThat(bindings.get(0)).contains("binding-a");
+    assertThat(bindings.get(1)).contains("binding-b");
   }
 
   @Test
@@ -61,7 +63,8 @@ class ScriptEventBindingRepositoryTest {
             1L, "patch-1", "onCommand", "v1");
 
     assertThat(sql.get())
-        .contains("order by", "priority\" asc", "script_id\" asc", "binding_id\" asc", "id\" asc");
+        .containsSubsequence(
+            "order by", "priority\" asc", "script_id\" asc", "binding_id\" asc", "id\" asc");
   }
 
   private static ScriptEventBinding binding(Long id, String bindingId) {
