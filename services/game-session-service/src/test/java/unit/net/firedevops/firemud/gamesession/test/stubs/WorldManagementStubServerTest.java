@@ -59,6 +59,38 @@ class WorldManagementStubServerTest {
   }
 
   @Test
+  void returnsRoomSnapshotInTheRequestedRuntimeScope() throws Exception {
+    int port = TestSocketUtils.findAvailableTcpPort();
+    try (WorldManagementStubServer server = new WorldManagementStubServer(port)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+      try {
+        WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
+            WorldManagementServiceGrpc.newBlockingStub(channel);
+        RoomInstanceRef requestedRoom =
+            RoomInstanceRef.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("42")
+                .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                .build();
+
+        GetRoomSnapshotResponse response =
+            stub.getRoomSnapshot(
+                GetRoomSnapshotRequest.newBuilder()
+                    .setTenantId("1")
+                    .setRoomInstance(requestedRoom)
+                    .build());
+
+        assertEquals("1", response.getSnapshot().getTenantId());
+        assertEquals("42", response.getSnapshot().getGameInstanceId());
+        assertEquals(LookTestFixtures.ROOM_INSTANCE_ID, response.getSnapshot().getRoomInstanceId());
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void unknownRoomInstanceIdReturnsNotFound() throws Exception {
     int port = TestSocketUtils.findAvailableTcpPort();
     try (WorldManagementStubServer server = new WorldManagementStubServer(port)) {
