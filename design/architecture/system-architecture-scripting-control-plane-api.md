@@ -671,7 +671,7 @@ Inputs:
 
 - `tenantId`
 - Optional current filters: `gameInstanceId`, `scriptPatchVersion`, `scriptId`, `eventType`, `finalReason`
-- Optional current partial observed-pin filter: `scriptPinEpoch` with `scriptPinControlPlaneRequestId` (required together when either is supplied); because `scriptPatchVersion` remains independently optional on this live surface, this is not an exact tuple filter. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and `scriptPinControlPlaneRequestId` together.
+- Optional current independent observed-pin filters: `scriptPinEpoch` and `scriptPinControlPlaneRequestId`; each may be supplied independently and filters only its corresponding persisted field. These read-only diagnostic filters do not weaken the exact paired owner evidence required for mutation or admission identity. Because `scriptPatchVersion` and these owner fields remain independently optional on this live surface, this is not an exact tuple filter. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and `scriptPinControlPlaneRequestId` together.
 - Optional `changedAfter` / `changedBefore`
 - `limit` (bounded by the service)
 

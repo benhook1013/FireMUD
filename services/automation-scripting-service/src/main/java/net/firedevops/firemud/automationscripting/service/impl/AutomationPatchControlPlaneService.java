@@ -283,10 +283,11 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
-    requireCoherentScriptPinFilter(
-        request.getScriptPinEpoch(), request.getScriptPinControlPlaneRequestId());
+    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    boolean hasPinFilter =
+        request.getScriptPinEpoch() > 0 || !request.getScriptPinControlPlaneRequestId().isBlank();
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
-        request.getScriptPinEpoch() > 0
+        hasPinFilter
             ? scriptScheduleInstanceService.listTimerAuditEvents(
                 request.getTenantId(),
                 request.getGameInstanceId(),
@@ -1105,13 +1106,17 @@ final class AutomationPatchControlPlaneService {
   }
 
   private static void requireCoherentScriptPinFilter(long scriptPinEpoch, String requestId) {
-    if (scriptPinEpoch < 0) {
-      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
-    }
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     boolean hasRequestId = requestId != null && !requestId.isBlank();
     if ((scriptPinEpoch > 0) != hasRequestId) {
       throw new IllegalArgumentException(
           "script_pin_epoch and control-plane request ID must be supplied together");
+    }
+  }
+
+  private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
     }
   }
 
