@@ -159,7 +159,7 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   }
 
   @Test
-  void normalizesBlankOwnerRequestIdBeforeUpdate() {
+  void storesEmptyStringForBlankOwnerRequestIdBeforeUpdate() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
@@ -178,7 +178,7 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
           row.setGameInstanceId("game-1");
           row.setScriptPatchVersion("patch-1");
           row.setScriptPinEpoch(0L);
-          row.setLastObservedControlPlaneRequestId(null);
+          row.setLastObservedControlPlaneRequestId("");
           row.setRolloutStatus("ROLLED_BACK");
           row.setStatusReason("runtime_pin_differs_from_patch");
           row.setObservedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
@@ -210,6 +210,7 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
     assertThat(sqlRef.get()).contains("script_pin_epoch");
     assertThat(bindingsRef.get()).contains(0L);
     assertThat(bindingsRef.get()).doesNotContain(" ");
+    assertThat(bindingsRef.get()).contains("");
   }
 
   @Test

@@ -658,11 +658,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     String normalizedPinRequestId = blankToEmpty(scriptPinControlPlaneRequestId);
     boolean hasPinEpoch = scriptPinEpoch > 0;
     boolean hasPinRequestId = !normalizedPinRequestId.isBlank();
-    if (hasPinEpoch != hasPinRequestId) {
-      throw new IllegalArgumentException(
-          "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
-    }
-    boolean hasPinFilter = hasPinEpoch && hasPinRequestId;
+    boolean hasPinFilter = hasPinEpoch || hasPinRequestId;
     List<ScriptEventAudit> audits =
         !hasPinFilter
             ? eventAuditRepository.findTimerAuditEvents(
@@ -679,8 +675,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 normalizedTenant,
                 normalizedInstance,
                 normalizedPatch,
-                scriptPinEpoch,
-                normalizedPinRequestId,
+                hasPinEpoch ? scriptPinEpoch : null,
+                hasPinRequestId ? normalizedPinRequestId : null,
                 normalizedScript,
                 normalizedEvent,
                 normalizedReason,

@@ -31,7 +31,8 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL",
             "ADD CONSTRAINT ck_script_work_items_pin_tuple CHECK",
             "script_pin_epoch > 0",
-            "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL")
+            "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */")
         .doesNotContain("ADD CONSTRAINT uq_script_work_item_trigger_identity UNIQUE");
 
     String normalized = migration.replaceAll("\\s+", " ");
@@ -47,7 +48,8 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "script_pin_epoch = 0",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
             "script_pin_epoch > 0",
-            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL",
+            "NOT VALID");
 
     int scheduleUpdate = migration.indexOf("UPDATE script_schedule_instances");
     int scheduleConstraint =

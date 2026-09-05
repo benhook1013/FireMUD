@@ -1796,7 +1796,8 @@ class ScriptScheduleInstanceServiceImplTest {
     List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
     assertThat(workItems)
         .extracting(ScriptWorkItem::getScriptEventId)
-        .containsExactly(workItems.get(0).getScriptEventId(), workItems.get(0).getScriptEventId());
+        .hasSize(2)
+        .containsOnly(workItems.get(0).getScriptEventId());
     assertThat(workItems)
         .extracting(ScriptWorkItem::getScriptPinControlPlaneRequestId)
         .containsExactly("req-1", "req-2");
@@ -2973,37 +2974,73 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void timerAuditLookupRejectsPositiveEpochWithoutOwnerRequestId() {
-    assertThatThrownBy(
-            () ->
-                service.listTimerAuditEvents(
-                    "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage(
-            "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
-    verifyNoInteractions(eventAuditRepository);
+  void forwardsEpochOnlyTimerAuditFilterToAuditRepository() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq((String) null),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq((String) null),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
   }
 
   @Test
-  void timerAuditLookupRejectsOwnerRequestIdWithoutEpoch() {
-    assertThatThrownBy(
-            () ->
-                service.listTimerAuditEvents(
-                    "1",
-                    "game-1",
-                    "patch-1",
-                    0L,
-                    "req-1",
-                    "npc-guard",
-                    "onInterval",
-                    "",
-                    0L,
-                    0L,
-                    25))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage(
-            "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
-    verifyNoInteractions(eventAuditRepository);
+  void forwardsRequestIdOnlyTimerAuditFilterToAuditRepository() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq((Long) null),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq((Long) null),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
   }
 
   @Test

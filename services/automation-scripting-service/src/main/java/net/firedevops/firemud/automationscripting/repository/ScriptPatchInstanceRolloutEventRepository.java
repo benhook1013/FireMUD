@@ -114,7 +114,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
-    String normalizedRequestId = blankToNull(entity.getLastObservedControlPlaneRequestId());
+    String normalizedRequestId = storedRequestId(entity.getLastObservedControlPlaneRequestId());
     Condition ownerTupleMatches =
         SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS
             .SCRIPT_PATCH_VERSION
@@ -123,8 +123,8 @@ public class ScriptPatchInstanceRolloutEventRepository {
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH.eq(
                     entity.getScriptPinEpoch()))
             .and(
-                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID
-                    .isNotDistinctFrom(normalizedRequestId));
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID.eq(
+                    normalizedRequestId));
     int updated =
         dsl.update(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID, entity.getEventId())
@@ -176,7 +176,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setLastObservedControlPlaneRequestId(
-        blankToNull(entity.getLastObservedControlPlaneRequestId()));
+        storedRequestId(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
@@ -234,5 +234,9 @@ public class ScriptPatchInstanceRolloutEventRepository {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
+  }
+
+  private static String storedRequestId(String requestId) {
+    return requestId == null || requestId.isBlank() ? "" : requestId;
   }
 }

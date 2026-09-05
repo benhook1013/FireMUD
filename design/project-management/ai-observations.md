@@ -134,3 +134,8 @@ Entry format:
   - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
   - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
   - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.
+
+- `2026-09-06`: Retained-row migration proof must exercise pre-change nullable identities
+  - Context: Automation exact-pin V5 passed fresh-schema migration checks while retained instance ingress rows would have received a null epoch, and its duplicate normalization deleted durable audit evidence.
+  - Observation: fresh-database proof does not exercise legacy nullable uniqueness behavior or retained-row constraint compatibility; deterministic row selection is not safe reconciliation for durable identity evidence.
+  - Expected pattern: for identity migrations, migrate an isolated database only through the prior version, seed every retained nullable identity branch, then prove the forward migration either preserves valid rows or fails closed on duplicates without deletion, following [Database Migrations](../architecture/system-architecture-database-migrations.md#cicd-execution).

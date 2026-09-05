@@ -191,21 +191,15 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     workItemRepository
         .findDistinctInstancePatchPairs(tenantId, gameInstanceId, "")
         .forEach(pair -> patchVersions.add(pair.getScriptPatchVersion()));
-    Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin =
-        pinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
-    if (pin.isPresent() && authoritativeUnpinned(pin.get())) {
-      repository
-          .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-          .forEach(repository::delete);
-      return;
-    }
-    pin.ifPresent(
-        value -> {
-          if (value.observedPinnedScriptPatchVersion() != null
-              && !value.observedPinnedScriptPatchVersion().isBlank()) {
-            patchVersions.add(value.observedPinnedScriptPatchVersion());
-          }
-        });
+    pinProjectionService
+        .getPinConvergence(tenantId, gameInstanceId)
+        .summary()
+        .ifPresent(
+            pin -> {
+              if (!pin.observedPinnedScriptPatchVersion().isBlank()) {
+                patchVersions.add(pin.observedPinnedScriptPatchVersion());
+              }
+            });
     patchVersions.forEach(
         patchVersion -> refreshProjection(tenantId, gameInstanceId, patchVersion));
   }
@@ -224,18 +218,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin =
         pinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
     // Runtime pin evidence is authoritative. Do not infer rollback or delete an existing
-    // projection while the authority is unavailable, stale, or incoherent.
-    if (pin.isEmpty()) {
-      return;
-    }
-    if (authoritativeUnpinned(pin.get())) {
-      repository
-          .findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-              tenantId, gameInstanceId, scriptPatchVersion)
-          .ifPresent(repository::delete);
-      return;
-    }
-    if (!usableRuntimePin(pin.get())) {
+    // projection while the authority is unavailable or has not supplied a positive epoch.
+    if (pin.isEmpty() || !usableRuntimePin(pin.get())) {
       return;
     }
     List<ScriptWorkItem> workItems =
@@ -282,14 +266,6 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
         && !runtime.observedPinnedScriptPatchVersion().isBlank()
         && runtime.lastObservedControlPlaneRequestId() != null
         && !runtime.lastObservedControlPlaneRequestId().isBlank();
-  }
-
-  private static boolean authoritativeUnpinned(
-      ScriptPatchPinProjectionService.PinConvergenceSummary runtime) {
-    return !runtime.projectionStale()
-        && runtime.scriptPinEpoch() == 0
-        && normalize(runtime.observedPinnedScriptPatchVersion()).isBlank()
-        && normalize(runtime.lastObservedControlPlaneRequestId()).isBlank();
   }
 
   private Optional<ProjectionSnapshot> buildSnapshot(

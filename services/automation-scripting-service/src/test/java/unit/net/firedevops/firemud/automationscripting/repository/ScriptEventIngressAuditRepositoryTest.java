@@ -113,7 +113,7 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
-  void saveFencesImmutablePinTupleEvidenceWithTheRowVersionCas() {
+  void saveFencesImmutableRequestAndPinTupleEvidenceWithTheRowVersionCas() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     MockDataProvider provider =
@@ -139,8 +139,12 @@ class ScriptEventIngressAuditRepositoryTest {
         .hasMessage("Stale write rejected for script_event_ingress_audit id=7");
     assertThat(sqlRef.get())
         .contains(
-            "script_patch_version", "script_pin_epoch", "script_pin_control_plane_request_id");
-    assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2");
+            "script_patch_version",
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "request_digest");
+    assertThat(sqlRef.get().split("request_digest", -1)).hasSize(3);
+    assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2", REQUEST_DIGEST);
   }
 
   @Test

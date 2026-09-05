@@ -67,7 +67,7 @@ ALTER TABLE script_work_items
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
 ALTER TABLE script_schedule_instances
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
@@ -104,4 +104,4 @@ ALTER TABLE script_schedule_instances
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;

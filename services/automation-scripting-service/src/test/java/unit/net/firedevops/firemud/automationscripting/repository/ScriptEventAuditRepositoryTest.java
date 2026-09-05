@@ -28,53 +28,50 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
-  void timerAuditLookupRejectsPartialPinFiltersBeforeQuery() {
-    AtomicReference<Integer> queryCount = new AtomicReference<>(0);
+  void timerAuditLookupAllowsIndependentPinFilters() {
+    List<String> queries = new ArrayList<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
-          queryCount.updateAndGet(value -> value + 1);
+          queries.add(context.sql().toLowerCase(Locale.ROOT));
           return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_AUDIT))};
         };
     ScriptEventAuditRepository repository =
         new ScriptEventAuditRepository(
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findTimerAuditEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    2L,
-                    null,
-                    "script-1",
-                    "onTimerExpire",
-                    "",
-                    null,
-                    null,
-                    PageRequest.of(0, 25)))
-        .withMessage(
-            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findTimerAuditEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    null,
-                    "request-1",
-                    "script-1",
-                    "onTimerExpire",
-                    "",
-                    null,
-                    null,
-                    PageRequest.of(0, 25)))
-        .withMessage(
-            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
-    assertThat(queryCount).hasValue(0);
+    repository.findTimerAuditEvents(
+        "tenant-1",
+        "game-1",
+        "patch-1",
+        2L,
+        null,
+        "script-1",
+        "onTimerExpire",
+        "",
+        null,
+        null,
+        PageRequest.of(0, 25));
+    repository.findTimerAuditEvents(
+        "tenant-1",
+        "game-1",
+        "patch-1",
+        null,
+        "request-1",
+        "script-1",
+        "onTimerExpire",
+        "",
+        null,
+        null,
+        PageRequest.of(0, 25));
+
+    assertThat(queries).hasSize(2);
+    String epochOnlyWhere = queries.get(0).substring(queries.get(0).indexOf(" where "));
+    String requestOnlyWhere = queries.get(1).substring(queries.get(1).indexOf(" where "));
+    assertThat(epochOnlyWhere).contains("\"script_pin_epoch\" = ?");
+    assertThat(epochOnlyWhere).doesNotContain("script_pin_control_plane_request_id");
+    assertThat(requestOnlyWhere).doesNotContain("\"script_pin_epoch\" = ?");
+    assertThat(requestOnlyWhere).contains("script_pin_control_plane_request_id");
   }
 
   @Test

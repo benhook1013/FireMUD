@@ -318,7 +318,6 @@ public class ScriptEventAuditRepository {
       Pageable pageable) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
-    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     Condition condition =
         SCRIPT_EVENT_AUDIT
             .TENANT_ID

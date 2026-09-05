@@ -148,6 +148,60 @@ class PublishGateServiceImplTest {
   }
 
   @Test
+  void fullVersionGateFailsClosedForMissingParticipantKey() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        java.util.Collections.singletonList(
+            new PublishParticipantDigestDto(
+                null, "7", "version:7", "digest-unknown", 1, null, null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+  }
+
+  @Test
+  void fullVersionGateFailsClosedForMissingSchemaVersion() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", null, null, null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+  }
+
+  @Test
   void scriptPatchGatePassesWhenParticipantsConverge() {
     VersionDto version =
         new VersionDto(

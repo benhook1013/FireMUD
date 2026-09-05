@@ -101,8 +101,9 @@ public class PublishGateServiceImpl implements PublishGateService {
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
                 "publish gate failed: wrong scope from " + digest.participantKey());
           }
+          String participantKey = digest.participantKey();
           Integer supportedSchemaVersion =
-              SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(digest.participantKey());
+              participantKey == null ? null : SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(participantKey);
           if (digest.digestSchemaVersion() == null
               || !digest.digestSchemaVersion().equals(supportedSchemaVersion)) {
             throw new PublishGateFailureException(

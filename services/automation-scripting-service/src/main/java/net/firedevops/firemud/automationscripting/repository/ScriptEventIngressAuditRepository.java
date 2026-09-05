@@ -144,7 +144,8 @@ public class ScriptEventIngressAuditRepository {
                     .and(
                         SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
                             .isNotDistinctFrom(
-                                blankToNull(entity.getScriptPinControlPlaneRequestId()))))
+                                blankToNull(entity.getScriptPinControlPlaneRequestId())))
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST.eq(entity.getRequestDigest())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(

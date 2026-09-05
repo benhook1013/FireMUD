@@ -4148,10 +4148,6 @@ class ScriptEventIngressServiceImplTest {
         .thenAnswer(
             invocation -> {
               ScriptEventIngressAudit claim = invocation.getArgument(0);
-              if (claim == null) {
-                return new ScriptEventIngressAuditRepository.IdempotentInsertResult(
-                    new ScriptEventIngressAudit(), true);
-              }
               claim.setId(1L);
               return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
             });
