@@ -147,4 +147,49 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
         .isEqualTo("runtime_pin_restored_after_rollback");
     assertThat(eventCaptor.getValue().getObservedAt()).isEqualTo(Instant.ofEpochMilli(200));
   }
+
+  @Test
+  void preservesExistingProjectionWhenOwnerPinIsUnavailable() {
+    ScriptPatchInstanceRolloutProjectionRepository repository =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
+    ScriptPatchInstanceRolloutEventRepository eventRepository =
+        Mockito.mock(ScriptPatchInstanceRolloutEventRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    ScriptPatchInstanceRolloutProjection existing = new ScriptPatchInstanceRolloutProjection();
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setRolloutStatus(
+        ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED.name());
+    existing.setStatusReason("runtime_pin_matches_patch");
+    existing.setLastChangedAt(Instant.ofEpochMilli(100));
+    existing.setProjectionRefreshedAt(Instant.ofEpochMilli(100));
+    when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+            "1", "game-1", "patch-1"))
+        .thenReturn(List.of());
+    when(pinProjectionService.getPinConvergence("1", "game-1"))
+        .thenReturn(
+            new ScriptPatchPinProjectionService.PinConvergenceLookup(Optional.empty(), "", ""));
+    when(repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1"))
+        .thenReturn(Optional.of(existing));
+    ScriptPatchInstanceRolloutProjectionServiceImpl service =
+        new ScriptPatchInstanceRolloutProjectionServiceImpl(
+            repository,
+            eventRepository,
+            workItemRepository,
+            pinProjectionService,
+            new ScriptRuntimeProperties());
+
+    Optional<ScriptWorkItemService.PatchInstanceRolloutSummary> summary =
+        service.getProjection("1", "game-1", "patch-1", 0L, null);
+
+    assertThat(summary).isPresent();
+    assertThat(summary.get().rolloutStatus())
+        .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(repository, Mockito.never()).delete(Mockito.any());
+    verifyNoInteractions(eventRepository);
+  }
 }

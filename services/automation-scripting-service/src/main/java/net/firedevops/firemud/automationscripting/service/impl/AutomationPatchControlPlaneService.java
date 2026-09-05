@@ -222,20 +222,15 @@ final class AutomationPatchControlPlaneService {
         request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     GetScriptPatchInstanceRolloutStatusResponse.Builder response =
         GetScriptPatchInstanceRolloutStatusResponse.newBuilder();
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
     var rollout =
-        request.getScriptPinEpoch() > 0
-            ? workItemService.getPatchInstanceRolloutStatus(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                request.getScriptPinEpoch(),
-                request.getLastObservedControlPlaneRequestId())
-            : workItemService.getPatchInstanceRolloutStatus(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                0L,
-                null);
+        workItemService.getPatchInstanceRolloutStatus(
+            request.getTenantId(),
+            request.getGameInstanceId(),
+            request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId);
     rollout.ifPresentOrElse(
         summary ->
             response
@@ -290,33 +285,20 @@ final class AutomationPatchControlPlaneService {
       throw new IllegalArgumentException(
           "script pin filters require both a positive script_pin_epoch and request ID");
     }
-    boolean hasPinFilter = hasEpoch;
+    String requestId = hasEpoch ? request.getScriptPinControlPlaneRequestId() : null;
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
-        hasPinFilter
-            ? scriptScheduleInstanceService.listTimerAuditEvents(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                request.getScriptPinEpoch(),
-                request.getScriptPinControlPlaneRequestId(),
-                request.getScriptId(),
-                request.getEventType(),
-                request.getFinalReason(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs(),
-                request.getLimit())
-            : scriptScheduleInstanceService.listTimerAuditEvents(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                0L,
-                null,
-                request.getScriptId(),
-                request.getEventType(),
-                request.getFinalReason(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs(),
-                request.getLimit());
+        scriptScheduleInstanceService.listTimerAuditEvents(
+            request.getTenantId(),
+            request.getGameInstanceId(),
+            request.getScriptPatchVersion(),
+            request.getScriptPinEpoch(),
+            requestId,
+            request.getScriptId(),
+            request.getEventType(),
+            request.getFinalReason(),
+            request.getChangedAfterMs(),
+            request.getChangedBeforeMs(),
+            request.getLimit());
     Map<String, CurrentRuntimeScope> currentScopes =
         loadCurrentRuntimeScopes(
             request.getTenantId(),
@@ -337,26 +319,18 @@ final class AutomationPatchControlPlaneService {
         request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutsResponse.Builder response =
         ListScriptPatchInstanceRolloutsResponse.newBuilder();
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
     var rollouts =
-        request.getScriptPinEpoch() > 0
-            ? workItemService.listPatchInstanceRollouts(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                request.getScriptPinEpoch(),
-                request.getLastObservedControlPlaneRequestId(),
-                request.getRolloutStatus(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs())
-            : workItemService.listPatchInstanceRollouts(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                0L,
-                null,
-                request.getRolloutStatus(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs());
+        workItemService.listPatchInstanceRollouts(
+            request.getTenantId(),
+            request.getGameInstanceId(),
+            request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId,
+            request.getRolloutStatus(),
+            request.getChangedAfterMs(),
+            request.getChangedBeforeMs());
     rollouts.stream()
         .map(AutomationPatchControlPlaneService::toProto)
         .forEach(response::addRollouts);
@@ -369,28 +343,19 @@ final class AutomationPatchControlPlaneService {
         request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutEventsResponse.Builder response =
         ListScriptPatchInstanceRolloutEventsResponse.newBuilder();
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
     var rolloutEvents =
-        request.getScriptPinEpoch() > 0
-            ? workItemService.listPatchInstanceRolloutEvents(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                request.getScriptPinEpoch(),
-                request.getLastObservedControlPlaneRequestId(),
-                request.getRolloutStatus(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs(),
-                request.getLimit())
-            : workItemService.listPatchInstanceRolloutEvents(
-                request.getTenantId(),
-                request.getGameInstanceId(),
-                request.getScriptPatchVersion(),
-                0L,
-                null,
-                request.getRolloutStatus(),
-                request.getChangedAfterMs(),
-                request.getChangedBeforeMs(),
-                request.getLimit());
+        workItemService.listPatchInstanceRolloutEvents(
+            request.getTenantId(),
+            request.getGameInstanceId(),
+            request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId,
+            request.getRolloutStatus(),
+            request.getChangedAfterMs(),
+            request.getChangedBeforeMs(),
+            request.getLimit());
     rolloutEvents.stream()
         .map(AutomationPatchControlPlaneService::toProto)
         .forEach(response::addEvents);
