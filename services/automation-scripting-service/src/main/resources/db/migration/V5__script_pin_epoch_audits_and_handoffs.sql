@@ -85,6 +85,7 @@ WHERE id IN (
                ) AS duplicate_rank
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NULL
+          AND script_id IS NOT NULL
           AND script_pin_epoch IS NULL
     ) AS ranked
     WHERE ranked.duplicate_rank > 1

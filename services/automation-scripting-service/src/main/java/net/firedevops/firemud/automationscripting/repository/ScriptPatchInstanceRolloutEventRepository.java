@@ -39,6 +39,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
       Instant changedAfter,
       Instant changedBefore,
       Pageable pageable) {
+    requireCoherentPinFilter(scriptPinEpoch, lastObservedControlPlaneRequestId);
     Condition condition = SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID.eq(tenantId);
     if (!gameInstanceId.isBlank()) {
       condition =
@@ -197,11 +198,28 @@ public class ScriptPatchInstanceRolloutEventRepository {
   }
 
   private static void requireCoherentPinTuple(ScriptPatchInstanceRolloutEvent entity) {
-    if (entity.getScriptPinEpoch() < 0L) {
+    requireCoherentPinTuple(
+        entity.getScriptPinEpoch(), entity.getLastObservedControlPlaneRequestId());
+  }
+
+  private static void requireCoherentPinFilter(Long scriptPinEpoch, String requestId) {
+    if (scriptPinEpoch != null && scriptPinEpoch < 0L) {
       throw new IllegalArgumentException("script_pin_epoch must be non-negative");
     }
-    boolean hasRequestId = blankToNull(entity.getLastObservedControlPlaneRequestId()) != null;
-    if ((entity.getScriptPinEpoch() > 0L) != hasRequestId) {
+    boolean hasPositiveEpoch = scriptPinEpoch != null && scriptPinEpoch > 0L;
+    boolean hasRequestId = blankToNull(requestId) != null;
+    if (hasPositiveEpoch != hasRequestId || (scriptPinEpoch != null && scriptPinEpoch == 0L)) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    }
+  }
+
+  private static void requireCoherentPinTuple(Long scriptPinEpoch, String requestId) {
+    if (scriptPinEpoch != null && scriptPinEpoch < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    boolean hasRequestId = blankToNull(requestId) != null;
+    if ((scriptPinEpoch != null && scriptPinEpoch > 0L) != hasRequestId) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }

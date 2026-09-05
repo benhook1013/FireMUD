@@ -928,6 +928,36 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void rejectsNegativeScriptPinEpochWhenListingScriptTimerAuditEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPinEpoch(-1L)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch must be non-negative");
+    Mockito.verifyNoInteractions(scheduleInstanceService);
+  }
+
+  @Test
   void setsAutomationAdmissionModeThroughAdmissionStateService() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AutomationAdmissionStateService admissionStateService =
@@ -1086,6 +1116,49 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRolloutStatus() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<GetScriptPatchInstanceRolloutStatusResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<GetScriptPatchInstanceRolloutStatusResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.getScriptPatchInstanceRolloutStatus(
+        GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.getScriptPatchInstanceRolloutStatus(
+        GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
+  }
+
+  @Test
   void listsScriptPatchInstanceRolloutsFromReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -1152,6 +1225,49 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRollouts(0).getLastObservedControlPlaneRequestId())
         .isEqualTo("pin-request-4");
     assertThat(ref.get().getRollouts(0).getPublication().getVersionId()).isEqualTo(18L);
+  }
+
+  @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRollouts() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutsResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<ListScriptPatchInstanceRolloutsResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.listScriptPatchInstanceRollouts(
+        ListScriptPatchInstanceRolloutsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.listScriptPatchInstanceRollouts(
+        ListScriptPatchInstanceRolloutsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
   }
 
   @Test
@@ -1223,6 +1339,49 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getLastObservedControlPlaneRequestId())
         .isEqualTo("pin-request-4");
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(19L);
+  }
+
+  @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRolloutEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
   }
 
   @Test

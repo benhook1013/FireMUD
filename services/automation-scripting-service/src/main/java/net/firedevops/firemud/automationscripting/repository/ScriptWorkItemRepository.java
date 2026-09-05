@@ -383,7 +383,7 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_WORK_ITEMS.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, entity.getScriptId())
-            .set(SCRIPT_WORK_ITEMS.BINDING_ID, entity.getBindingId())
+            .set(SCRIPT_WORK_ITEMS.BINDING_ID, normalizePluginIdentity(entity.getBindingId()))
             .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, normalizePluginIdentity(entity.getPluginId()))
             .set(
                 SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID,
@@ -620,7 +620,7 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
         .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(normalizePluginIdentity(pluginId)))
         .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(normalizePluginIdentity(pluginVersionId)))
-        .and(SCRIPT_WORK_ITEMS.BINDING_ID.eq(bindingId))
+        .and(SCRIPT_WORK_ITEMS.BINDING_ID.eq(normalizePluginIdentity(bindingId)))
         .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
@@ -717,7 +717,7 @@ public class ScriptWorkItemRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
-    record.setBindingId(entity.getBindingId());
+    record.setBindingId(normalizePluginIdentity(entity.getBindingId()));
     record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
     record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
     record.setTargetScopeType(entity.getTargetScopeType());

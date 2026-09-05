@@ -214,6 +214,64 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(insertSql.get()).contains("script_patch_version", "script_pin_epoch");
   }
 
+  @Test
+  void rejectsExistingIdUpdateWhenOwnerRequestChanges() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("update")) {
+            updateSql.set(sql);
+            return new MockResult[] {new MockResult(0)};
+          }
+          ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
+          row.setId(9L);
+          row.setEventId("event-1");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-1");
+          row.setScriptPinEpoch(2L);
+          row.setScriptPinControlPlaneRequestId("owner-original");
+          row.setHandoffOutcome("enqueued");
+          row.setRowVersion(0);
+          Record returned = resultDsl.newRecord(SCRIPT_HANDOFF_EVENTS.fields());
+          returned.from(row);
+          Result<Record> result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent changed = new ScriptHandoffEvent();
+    changed.setId(9L);
+    changed.setEventId("event-1");
+    changed.setTenantId("tenant-1");
+    changed.setGameInstanceId("game-1");
+    changed.setScriptPatchVersion("patch-1");
+    changed.setScriptPinEpoch(2L);
+    changed.setScriptPinControlPlaneRequestId("owner-new");
+    changed.setHandoffOutcome("enqueued");
+
+    assertThatThrownBy(() -> repository.save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Handoff event owner tuple conflict");
+    assertThat(updateSql)
+        .hasValueSatisfying(
+            sql -> {
+              int whereStart = sql.indexOf(" where ");
+              assertThat(whereStart).isGreaterThanOrEqualTo(0);
+              assertThat(sql.substring(whereStart))
+                  .contains(
+                      "row_version",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "script_pin_control_plane_request_id");
+            });
+  }
+
   private static String conflictTarget(String sql) {
     String normalized = sql.toLowerCase(Locale.ROOT);
     int conflictStart = normalized.indexOf("on conflict");

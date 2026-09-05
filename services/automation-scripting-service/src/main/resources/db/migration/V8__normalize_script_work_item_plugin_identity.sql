@@ -1,8 +1,15 @@
 -- Canonicalize legacy script-only work-item provenance before making the identity fields required.
--- Plugin-backed rows retain their exact IDs; only absent plugin identity becomes the empty sentinel.
+-- Plugin-backed rows retain their exact pair. A partial pair is not authoritative provenance, so
+-- normalize both fields to the empty script-only sentinel before enforcing the tuple columns.
 UPDATE script_work_items
-SET plugin_id = COALESCE(plugin_id, ''),
-    plugin_version_id = COALESCE(plugin_version_id, '')
+SET plugin_id = CASE
+        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        ELSE plugin_id
+    END,
+    plugin_version_id = CASE
+        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        ELSE plugin_version_id
+    END
 WHERE plugin_id IS NULL OR plugin_version_id IS NULL;
 
 ALTER TABLE script_work_items

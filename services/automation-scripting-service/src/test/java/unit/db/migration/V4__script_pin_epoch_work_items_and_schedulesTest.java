@@ -35,13 +35,14 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL")
         .doesNotContain("ADD CONSTRAINT uq_script_work_item_trigger_identity UNIQUE");
 
-    assertThat(migration)
+    String normalized = migration.replaceAll("\\s+", " ");
+    assertThat(normalized)
         .contains(
             "UPDATE script_schedule_instances",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "DROP CONSTRAINT uq_script_schedule_instance_scope",
             "ADD CONSTRAINT uq_script_schedule_instance_scope UNIQUE",
-            "plugin_version_id,\n        binding_id,\n        target_scope_type",
+            "plugin_version_id, binding_id, target_scope_type",
             "SET last_observed_control_plane_request_id = ''",
             "ADD CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK",
             "script_pin_epoch = 0",

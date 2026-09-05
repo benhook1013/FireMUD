@@ -109,6 +109,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
     assertThat(migration.substring(onLoadDedup, runtimeStart))
         .contains(
+            "WHERE game_instance_id IS NULL",
+            "AND script_id IS NOT NULL",
             "WHERE game_instance_id IS NOT NULL",
             "AND entity_id IS NOT NULL",
             "script_pin_epoch IS NULL")

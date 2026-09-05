@@ -134,3 +134,8 @@ Entry format:
   - Context: reconciling local exact-pin admission and final execution with the existing remote Automation follow-up path.
   - Observation: local and remote commands both use the `AUTOMATION` source type, so applying local tuple requirements by source type alone breaks the remote legacy path before its separate source/target tuple contract is implemented.
   - Expected pattern: discriminate the local path with its remote-follow-up evidence as well as source type, preserve the remote path's current schema contract, and widen it only when the owning source/target design and proof land together.
+
+- `2026-09-05`: Preserve applied baseline checksums while converging pre-v1 schema
+  - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
+  - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
+  - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.

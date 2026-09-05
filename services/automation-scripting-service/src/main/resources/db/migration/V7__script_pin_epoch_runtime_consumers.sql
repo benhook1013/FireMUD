@@ -9,7 +9,7 @@ ALTER TABLE script_patch_instance_rollout_projections
 ALTER TABLE script_patch_instance_rollout_projections
     ADD CONSTRAINT ck_script_patch_instance_rollout_projections_pin_tuple CHECK (
         (script_pin_epoch = 0
-            AND last_observed_control_plane_request_id = '')
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
     );
@@ -23,7 +23,7 @@ ALTER TABLE script_patch_instance_rollout_events
 ALTER TABLE script_patch_instance_rollout_events
     ADD CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple CHECK (
         (script_pin_epoch = 0
-            AND last_observed_control_plane_request_id = '')
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
     );

@@ -191,6 +191,32 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void concurrentUnpinnedWorkClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<ScriptWorkItemRepository.IdempotentInsertResult>> futures = new ArrayList<>();
+    for (int i = 0; i < 2; i++) {
+      futures.add(
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return new ScriptWorkItemRepository(dsl)
+                    .insertIfAbsentByTriggerIdentity(unpinnedWorkItem());
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    var first = get(futures.get(0));
+    var second = get(futures.get(1));
+
+    assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
+    assertThat(first.workItem().getId()).isEqualTo(second.workItem().getId());
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+  }
+
+  @Test
   void scriptOnlyPluginIdentityDefaultsToEmptyAndLookupFindsTheCanonicalRow() {
     dsl.insertInto(SCRIPT_WORK_ITEMS)
         .set(SCRIPT_WORK_ITEMS.TENANT_ID, "tenant-script-only")
@@ -448,6 +474,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     item.setSourceService("game-session-service");
     item.setTriggerMode("EVENT");
     item.setStatus("PENDING_EVALUATION");
+    return item;
+  }
+
+  private ScriptWorkItem unpinnedWorkItem() {
+    ScriptWorkItem item = pinnedWorkItem();
+    item.setScriptPinEpoch(0L);
+    item.setScriptPinControlPlaneRequestId(null);
     return item;
   }
 

@@ -18,6 +18,7 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Pageable;
 
 class ScriptPatchInstanceRolloutEventRepositoryTest {
   @Test
@@ -56,6 +57,91 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
         .isThrownBy(() -> repository.save(event))
         .withMessage(
             "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsPositivePinEpochWithoutOwnerRequestIdBeforeQuery() {
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findEvents(
+                    "tenant-1", "game-1", "patch-1", 2L, null, "", null, null, Pageable.unpaged()))
+        .withMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsOwnerRequestIdWithoutPositivePinEpochBeforeQuery() {
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findEvents(
+                    "tenant-1",
+                    "game-1",
+                    "patch-1",
+                    null,
+                    "pin-request-1",
+                    "",
+                    null,
+                    null,
+                    Pageable.unpaged()))
+        .withMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsZeroPinEpochWithOwnerRequestIdBeforeQuery() {
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findEvents(
+                    "tenant-1",
+                    "game-1",
+                    "patch-1",
+                    0L,
+                    "pin-request-1",
+                    "",
+                    null,
+                    null,
+                    Pageable.unpaged()))
+        .withMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsExplicitZeroPinEpochWithoutOwnerRequestIdBeforeQuery() {
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findEvents(
+                    "tenant-1", "game-1", "patch-1", 0L, null, "", null, null, Pageable.unpaged()))
+        .withMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsNegativePinEpochBeforeQuery() {
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                repository.findEvents(
+                    "tenant-1", "game-1", "patch-1", -1L, null, "", null, null, Pageable.unpaged()))
+        .withMessage("script_pin_epoch must be non-negative");
   }
 
   @Test
