@@ -90,7 +90,8 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             sql ->
                 assertThat(conflictClause(sql))
-                    .contains("script_pin_epoch", "script_pin_control_plane_request_id"));
+                    .contains(
+                        "where", "script_pin_epoch", "> 0", "script_pin_control_plane_request_id"));
     assertThat(saved.getScriptPinEpoch()).isEqualTo(7L);
     assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(saved.getId()).isEqualTo(9L);

@@ -42,6 +42,12 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "script_pin_epoch > 0",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
 
+    int scheduleUpdate = migration.indexOf("UPDATE script_schedule_instances");
+    int scheduleConstraint =
+        migration.indexOf("ADD CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK");
+    assertThat(scheduleUpdate).isGreaterThanOrEqualTo(0);
+    assertThat(scheduleConstraint).isGreaterThan(scheduleUpdate);
+
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned");
     assertThat(unpinnedStart).isGreaterThanOrEqualTo(0);

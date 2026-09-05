@@ -429,6 +429,54 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void acceptsSameEpochObservationFromSameOwnerIdempotently() {
+    ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
+    existing.setId(7L);
+    existing.setRowVersion(2);
+    existing.setTenantId("1");
+    existing.setGameInstanceId("game-1");
+    existing.setObservedPinnedScriptPatchVersion("patch-2");
+    existing.setScriptPinEpoch(2L);
+    existing.setLastObservedControlPlaneRequestId("req-2");
+
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.of(existing));
+    Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-2")
+            .setScriptPinEpoch(2L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-2")
+            .build());
+
+    verify(repository).save(existing);
+    verify(scheduleInstanceService)
+        .reconcileObservedRuntimeState(Mockito.eq("1"), Mockito.eq("game-1"), Mockito.any());
+    verify(rolloutProjectionService).refreshForInstance("1", "game-1");
+    assertThat(existing.getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(existing.getLastObservedControlPlaneRequestId()).isEqualTo("req-2");
+  }
+
+  @Test
   void replacesLegacyPartialProjectionOnFirstPositiveObservation() {
     ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
     existing.setId(7L);

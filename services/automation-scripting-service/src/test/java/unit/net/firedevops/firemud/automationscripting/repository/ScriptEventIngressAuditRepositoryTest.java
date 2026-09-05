@@ -166,6 +166,7 @@ class ScriptEventIngressAuditRepositoryTest {
   void insertIfAbsentByIdentityClaimsNullEpochBranchAtomically() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     ScriptEventIngressAuditRecord row = new ScriptEventIngressAuditRecord();
     row.setId(11L);
     row.setTenantId("tenant-1");
@@ -177,6 +178,7 @@ class ScriptEventIngressAuditRepositoryTest {
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          bindingsRef.set(context.bindings());
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
@@ -200,12 +202,15 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setEventSchemaVersion("v1");
     entity.setScriptPatchVersion("patch-1");
     entity.setScriptEventId("event-1");
+    entity.setScriptPinControlPlaneRequestId(" ");
 
     ScriptEventIngressAuditRepository.IdempotentInsertResult result =
         repository.insertIfAbsentByIdentity(entity);
 
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(11L);
+    assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
+    assertThat(bindingsRef.get()).doesNotContain(" ");
     assertThat(sqlRef.get()).contains("on conflict", "do update", "script_pin_epoch\" is null");
   }
 

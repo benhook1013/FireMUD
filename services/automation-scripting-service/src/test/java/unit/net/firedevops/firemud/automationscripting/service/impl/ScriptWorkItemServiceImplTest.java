@@ -457,9 +457,9 @@ class ScriptWorkItemServiceImplTest {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptOutboxProperties properties = outboxProperties();
-    properties.setDeadLetterMaxRows(1);
-    when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(2L);
-    when(workItemRepository.deleteOldestByStatus("DEAD_LETTERED", 1)).thenReturn(1L);
+    properties.setDeadLetterMaxRows(2);
+    when(workItemRepository.countByStatus("DEAD_LETTERED")).thenReturn(5L);
+    when(workItemRepository.deleteOldestByStatus("DEAD_LETTERED", 3)).thenReturn(2L);
     ScriptWorkItemService service =
         service(
             workItemRepository,
@@ -475,8 +475,8 @@ class ScriptWorkItemServiceImplTest {
 
     ScriptWorkItemService.TerminalCleanupResult result = service.cleanupTerminalWorkItems();
 
-    assertThat(result.deadLetteredDeleted()).isEqualTo(1L);
-    verify(workItemRepository).deleteOldestByStatus("DEAD_LETTERED", 1);
+    assertThat(result.deadLetteredDeleted()).isEqualTo(2L);
+    verify(workItemRepository).deleteOldestByStatus("DEAD_LETTERED", 3);
   }
 
   @Test

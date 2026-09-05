@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
@@ -69,7 +70,7 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
                 .and(
                     SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
-                        .isNotDistinctFrom(scriptPinControlPlaneRequestId))
+                        .isNotDistinctFrom(blankToNull(scriptPinControlPlaneRequestId)))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
@@ -102,7 +103,7 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(
                 SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                entity.getScriptPinControlPlaneRequestId())
+                blankToNull(entity.getScriptPinControlPlaneRequestId()))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
@@ -345,7 +346,7 @@ public class ScriptEventIngressAuditRepository {
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.set(
         SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-        entity.getScriptPinControlPlaneRequestId());
+        blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.set(
         SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, toOffsetDateTime(entity.getClaimStartedAt()));
     record.setEventType(entity.getEventType());
@@ -392,7 +393,7 @@ public class ScriptEventIngressAuditRepository {
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(
-        record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+        blankToNull(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID)));
     entity.setClaimStartedAt(toInstant(record.get(SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT)));
     entity.setEventType(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));

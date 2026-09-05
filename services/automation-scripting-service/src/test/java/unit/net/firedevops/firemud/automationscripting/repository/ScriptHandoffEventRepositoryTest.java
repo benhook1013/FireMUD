@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -19,6 +20,32 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptHandoffEventRepositoryTest {
+  @Test
+  void rejectsPositivePinEpochWithoutOwnerRequestId() {
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setScriptPinEpoch(2L);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.save(event))
+        .withMessage(
+            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void rejectsOwnerRequestIdOnUnpinnedHandoff() {
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.save(event))
+        .withMessage(
+            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+  }
+
   @Test
   void newLogicalCommandUsesEventIdConflictUpsert() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);

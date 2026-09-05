@@ -854,9 +854,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
     verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository, Mockito.atLeastOnce()).save(workItemCaptor.capture());
-    assertThat(workItemCaptor.getAllValues())
-        .allMatch(saved -> !"HANDOFF_IN_FLIGHT".equals(saved.getStatus()));
+    verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItemCaptor.getValue().getCancelReason()).isEqualTo("remote_response_invalid");
   }
 
   @Test
@@ -928,9 +928,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
     verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository, Mockito.atLeastOnce()).save(workItemCaptor.capture());
-    assertThat(workItemCaptor.getAllValues())
-        .allMatch(saved -> !"HANDOFF_IN_FLIGHT".equals(saved.getStatus()));
+    verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(workItemCaptor.getValue().getCancelReason()).isEqualTo("remote_response_invalid");
   }
 
   @Test
