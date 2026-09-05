@@ -8050,11 +8050,6 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   private static String runtimeReadErrorCode(
-      net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse response) {
-    return runtimeReadErrorCode("RUNNING", response);
-  }
-
-  private static String runtimeReadErrorCode(
       String status,
       net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse response) {
     GameInstance instance = runningGameInstance();

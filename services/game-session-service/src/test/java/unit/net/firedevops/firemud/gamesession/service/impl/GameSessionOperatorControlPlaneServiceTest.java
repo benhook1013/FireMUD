@@ -541,7 +541,9 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setReason("pin")
                         .setExpectedCurrentPin(
                             ExpectedCurrentPin.newBuilder()
-                                .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
+                                .setKind(
+                                    ExpectedCurrentPin.Kind
+                                        .EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                                 .build())
                         .build()))
         .withMessage(
@@ -651,7 +653,9 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setReason("pin")
                         .setExpectedCurrentPin(
                             ExpectedCurrentPin.newBuilder()
-                                .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
+                                .setKind(
+                                    ExpectedCurrentPin.Kind
+                                        .EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                                 .build())
                         .build()))
         .withMessage("target_script_patch_version must contain at most 100 characters");
