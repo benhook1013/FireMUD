@@ -186,6 +186,15 @@ public class ScriptHandoffEventRepository {
       return existing;
     }
     int nextRowVersion = entity.getRowVersion() + 1;
+    String normalizedRequestId = blankToNull(entity.getScriptPinControlPlaneRequestId());
+    Condition ownerTupleMatches =
+        SCRIPT_HANDOFF_EVENTS
+            .SCRIPT_PATCH_VERSION
+            .eq(entity.getScriptPatchVersion())
+            .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
+            .and(
+                SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                    normalizedRequestId));
     int updated =
         dsl.update(SCRIPT_HANDOFF_EVENTS)
             .set(SCRIPT_HANDOFF_EVENTS.EVENT_ID, entity.getEventId())
@@ -193,9 +202,7 @@ public class ScriptHandoffEventRepository {
             .set(SCRIPT_HANDOFF_EVENTS.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(
-                SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                blankToNull(entity.getScriptPinControlPlaneRequestId()))
+            .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, normalizedRequestId)
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_HANDOFF_EVENTS.BINDING_ID, entity.getBindingId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID, entity.getPluginId())
@@ -228,9 +235,14 @@ public class ScriptHandoffEventRepository {
                 SCRIPT_HANDOFF_EVENTS
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_HANDOFF_EVENTS.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_HANDOFF_EVENTS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(ownerTupleMatches))
             .execute();
     if (updated != 1) {
+      Optional<ScriptHandoffEvent> existing = findById(entity.getId());
+      if (existing.isPresent() && !ownerTupleMatches(existing.orElseThrow(), entity)) {
+        throw new IllegalStateException("Handoff event owner tuple conflict");
+      }
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
           "script_handoff_events", entity.getId());
     }

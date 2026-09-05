@@ -129,3 +129,8 @@ Entry format:
   - Context: tightening local Compose smoke project binding and lifecycle checks.
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
+
+- `2026-09-05`: Preserve applied baseline checksums while converging pre-v1 schema
+  - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
+  - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
+  - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.

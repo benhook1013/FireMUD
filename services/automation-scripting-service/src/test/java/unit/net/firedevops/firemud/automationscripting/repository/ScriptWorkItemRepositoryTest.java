@@ -146,6 +146,60 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void triggerIdentityNormalizesNullBindingIdForWriteAndLookupPredicate() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Object[]> insertBindings = new AtomicReference<>();
+    AtomicReference<Object[]> selectBindings = new AtomicReference<>();
+    AtomicReference<String> selectSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("insert")) {
+            insertBindings.set(context.bindings());
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+            };
+          }
+          selectSql.set(sql);
+          selectBindings.set(context.bindings());
+          ScriptWorkItemsRecord row = workItemRecord(11L, 0, 0L);
+          row.setBindingId("");
+          Result<ScriptWorkItemsRecord> result = resultDsl.newResult(SCRIPT_WORK_ITEMS);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setTenantId("tenant-1");
+    item.setGameInstanceId("game-1");
+    item.setRegionId("region-1");
+    item.setRegionEpoch(1L);
+    item.setEntityId("entity-1");
+    item.setPlayableStateScope("scope-1");
+    item.setWorldSlug("world-1");
+    item.setRealmSlug("realm-1");
+    item.setPointerVersion("pointer-1");
+    item.setScriptId("script-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("version-1");
+    item.setBindingId(null);
+    item.setEventType("event-1");
+    item.setEventSchemaVersion("v1");
+    item.setScriptPatchVersion("patch-1");
+    item.setScriptEventId("event-id-1");
+
+    ScriptWorkItem found = repository.insertIfAbsentByTriggerIdentity(item).workItem();
+
+    assertThat(found.getId()).isEqualTo(11L);
+    assertThat(insertBindings).hasValueSatisfying(values -> assertThat(values).contains(""));
+    assertThat(selectSql)
+        .hasValueSatisfying(sql -> assertThat(sql).contains("binding_id", "where"));
+    assertThat(selectBindings).hasValueSatisfying(values -> assertThat(values).contains(""));
+  }
+
+  @Test
   void scriptOnlyPluginLookupNormalizesNullIdentityToCanonicalEmptyValues() {
     ScriptWorkItemsRecord row = workItemRecord(11L, 0, 0L);
     row.setPluginId("");
