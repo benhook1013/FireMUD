@@ -648,6 +648,7 @@ message ScriptScheduleInstanceEntry {
   string current_runtime_pointer_version = 44;
   bool is_routing_bundle_stale = 45;
   int64 script_pin_epoch = 46;
+  string binding_id = 47;
 }
 
 message ListScriptScheduleInstancesResponse {
@@ -709,6 +710,7 @@ message ScriptTimerAuditEventEntry {
   bool is_routing_bundle_stale = 37;
   int64 script_pin_epoch = 38;
   string script_pin_control_plane_request_id = 39;
+  string binding_id = 40;
 }
 
 message ListScriptTimerAuditEventsResponse {

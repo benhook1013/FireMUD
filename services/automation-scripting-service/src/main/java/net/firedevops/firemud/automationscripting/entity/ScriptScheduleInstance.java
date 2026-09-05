@@ -17,6 +17,7 @@ public class ScriptScheduleInstance {
   private String pointerVersion = "";
   private String pluginId = "";
   private String pluginVersionId = "";
+  private String bindingId = "";
   private String eventType;
   private String scheduleDefinitionId;
   private String scheduleKind;

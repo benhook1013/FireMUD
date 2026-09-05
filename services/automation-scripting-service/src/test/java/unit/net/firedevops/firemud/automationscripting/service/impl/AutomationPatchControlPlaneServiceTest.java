@@ -100,6 +100,7 @@ class AutomationPatchControlPlaneServiceTest {
                     "17",
                     "",
                     "",
+                    "",
                     "onTimerExpire",
                     "guard.alert.expire.v1",
                     "TIMER",

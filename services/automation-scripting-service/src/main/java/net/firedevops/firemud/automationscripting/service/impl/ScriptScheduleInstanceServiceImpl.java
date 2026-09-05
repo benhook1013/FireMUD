@@ -216,6 +216,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               instance.getPlayableStateScope(),
               instance.getPluginId(),
               instance.getPluginVersionId(),
+              applicableBindingId(instance),
               instance.getScheduleDefinitionId(),
               instance.getTargetScopeType(),
               instance.getTargetScopeId()),
@@ -239,6 +240,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
                 definition.getPluginId(),
                 definition.getPluginVersionId(),
+                applicableBindingId(definition, binding),
                 definition.getScheduleDefinitionId(),
                 binding.getTargetScopeType(),
                 binding.getTargetScopeId());
@@ -277,6 +279,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                             instance.getPlayableStateScope(),
                             instance.getPluginId(),
                             instance.getPluginVersionId(),
+                            applicableBindingId(instance),
                             instance.getScheduleDefinitionId(),
                             instance.getTargetScopeType(),
                             instance.getTargetScopeId())))
@@ -774,6 +777,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPointerVersion(routingBundle.pointerVersion());
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
+    instance.setBindingId(applicableBindingId(definition, binding));
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -882,6 +886,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         && instance.getCadenceValue() == definition.getCadenceValue()
         && Objects.equals(instance.getCadenceUnit(), definition.getCadenceUnit())
         && Objects.equals(instance.getPriorityTag(), definition.getPriorityTag())
+        && Objects.equals(applicableBindingId(instance), applicableBindingId(definition, binding))
         && instance.getBindingPriority() == binding.getPriority()
         && instance.isRequiresExclusiveEvent() == binding.isRequiresExclusiveEvent();
   }
@@ -1171,6 +1176,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(instance.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    audit.setBindingId(applicableBindingId(instance));
+    audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
+    audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1321,6 +1329,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    item.setBindingId(applicableBindingId(instance));
+    item.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
+    item.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
@@ -1622,6 +1633,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(workItem.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
+    audit.setBindingId(applicableBindingId(workItem));
+    audit.setTargetScopeType(blankToEmpty(workItem.getTargetScopeType()));
+    audit.setTargetScopeId(blankToEmpty(workItem.getTargetScopeId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
@@ -1731,6 +1745,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.scriptId(),
         summary.pluginId(),
         summary.pluginVersionId(),
+        summary.bindingId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
         summary.scriptPinEpoch(),
@@ -1767,6 +1782,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.pointerVersion(),
         summary.pluginId(),
         summary.pluginVersionId(),
+        summary.bindingId(),
         summary.eventType(),
         summary.scheduleDefinitionId(),
         summary.scheduleKind(),
@@ -1919,6 +1935,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         audit.getScriptId(),
         blankToEmpty(audit.getPluginId()),
         blankToEmpty(audit.getPluginVersionId()),
+        blankToEmpty(audit.getBindingId()),
         audit.getEventType(),
         audit.getScriptPatchVersion(),
         audit.getScriptPinEpoch() == null ? 0L : audit.getScriptPinEpoch(),
@@ -1952,6 +1969,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + ":"
         + candidate.duePointToken()
         + ":"
+        + shortHash(applicableBindingId(instance))
+        + ":"
         + shortHash(instance.getScheduleDefinitionId());
   }
 
@@ -1959,6 +1978,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     ScriptScheduleInstance instance = candidate.instance();
     Map<String, Object> payload = new LinkedHashMap<>();
     payload.put("scheduleId", blankToEmpty(instance.getScheduleDefinitionId()));
+    payload.put("bindingId", applicableBindingId(instance));
     payload.put("scriptPatchVersion", blankToEmpty(instance.getScriptPatchVersion()));
     payload.put("scriptPinEpoch", candidate.scriptPinEpoch());
     payload.put(
@@ -1983,6 +2003,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + blankToEmpty(instance.getPluginId())
         + "|"
         + blankToEmpty(instance.getPluginVersionId())
+        + "|"
+        + applicableBindingId(instance)
         + "|"
         + blankToEmpty(instance.getTargetScopeType())
         + "|"
@@ -2021,6 +2043,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         routingBundle.pointerVersion(),
         instance.getPluginId(),
         instance.getPluginVersionId(),
+        applicableBindingId(instance),
         instance.getEventType(),
         instance.getScheduleDefinitionId(),
         instance.getScheduleKind(),
@@ -2055,6 +2078,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String playableStateScope,
       String pluginId,
       String pluginVersionId,
+      String bindingId,
       String scheduleDefinitionId,
       String targetScopeType,
       String targetScopeId) {
@@ -2063,6 +2087,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + blankToEmpty(pluginId)
         + "\u0000"
         + blankToEmpty(pluginVersionId)
+        + "\u0000"
+        + blankToEmpty(bindingId)
         + "\u0000"
         + blankToEmpty(targetScopeType)
         + "\u0000"
@@ -2073,6 +2099,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String bindingKey(String scriptId, String eventType) {
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
+  }
+
+  private static String applicableBindingId(
+      ScriptScheduleDefinition definition, ScriptEventBinding binding) {
+    return isPluginOwned(definition.getPluginId(), definition.getPluginVersionId())
+        ? blankToEmpty(binding.getBindingId())
+        : "";
+  }
+
+  private static String applicableBindingId(ScriptScheduleInstance instance) {
+    return isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())
+        ? blankToEmpty(instance.getBindingId())
+        : "";
+  }
+
+  private static String applicableBindingId(ScriptWorkItem workItem) {
+    return isPluginOwned(workItem.getPluginId(), workItem.getPluginVersionId())
+        ? blankToEmpty(workItem.getBindingId())
+        : "";
+  }
+
+  private static boolean isPluginOwned(String pluginId, String pluginVersionId) {
+    return !blankToEmpty(pluginId).isBlank() && !blankToEmpty(pluginVersionId).isBlank();
   }
 
   private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
@@ -2208,6 +2257,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                   DEFAULT_SCHEMA_VERSION,
                   instance.getScriptPatchVersion(),
                   String.valueOf(scriptPinEpoch)));
+      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
+        values.add(applicableBindingId(instance));
+      }
       if (includeOwnerRequestEvidence) {
         values.add(scriptPinControlPlaneRequestId);
       }

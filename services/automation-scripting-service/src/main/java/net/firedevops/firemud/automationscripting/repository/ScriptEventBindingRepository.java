@@ -46,7 +46,11 @@ public class ScriptEventBindingRepository {
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_BINDINGS.ENABLED.eq(true)))
-        .orderBy(SCRIPT_EVENT_BINDINGS.PRIORITY.asc(), SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+        .orderBy(
+            SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -60,7 +64,9 @@ public class ScriptEventBindingRepository {
             SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
             SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
             SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
-            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -77,7 +83,9 @@ public class ScriptEventBindingRepository {
             SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
             SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
             SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
-            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 

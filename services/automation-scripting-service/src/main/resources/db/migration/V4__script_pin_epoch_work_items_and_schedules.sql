@@ -73,6 +73,25 @@ ALTER TABLE script_work_items
 ALTER TABLE script_schedule_instances
     ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;
 
+ALTER TABLE script_schedule_instances
+    ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';
+
+ALTER TABLE script_schedule_instances
+    DROP CONSTRAINT uq_script_schedule_instance_scope;
+
+ALTER TABLE script_schedule_instances
+    ADD CONSTRAINT uq_script_schedule_instance_scope UNIQUE (
+        tenant_id,
+        game_instance_id,
+        playable_state_scope,
+        plugin_id,
+        plugin_version_id,
+        binding_id,
+        target_scope_type,
+        target_scope_id,
+        schedule_definition_id
+    );
+
 -- Rows created before epoch fencing may contain only the legacy request identity.  Do not retain
 -- that identity as if it were evidence for epoch zero; the exact tuple is absent until a positive
 -- owner epoch is observed.

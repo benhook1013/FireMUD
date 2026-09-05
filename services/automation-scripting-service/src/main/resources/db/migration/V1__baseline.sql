@@ -145,6 +145,7 @@ CREATE TABLE script_event_bindings (
         event_type,
         event_schema_version,
         script_id,
+        binding_id,
         target_scope_type,
         target_scope_id
     )
@@ -157,7 +158,9 @@ CREATE INDEX idx_script_event_bindings_resolution ON script_event_bindings(
     event_schema_version,
     enabled,
     priority,
-    script_id
+    script_id,
+    binding_id,
+    id
 );
 
 CREATE TABLE script_work_items (

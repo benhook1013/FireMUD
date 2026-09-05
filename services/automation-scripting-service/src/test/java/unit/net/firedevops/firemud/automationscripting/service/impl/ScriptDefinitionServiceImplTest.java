@@ -128,4 +128,31 @@ class ScriptDefinitionServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("unsupported binding scope COMMAND_ALIAS for onSpawn@v1");
   }
+
+  @Test
+  void updateScriptRejectsDuplicateNormalizedBindingIdsAcrossScopes() {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    "binding-command"),
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand", "v1", "GLOBAL", "", 0, "normal", false, " binding-command ")));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("duplicate binding id: binding-command");
+  }
 }

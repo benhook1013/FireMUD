@@ -1007,7 +1007,8 @@ class ScriptScheduleInstanceServiceImplTest {
         .thenReturn(
             List.of(
                 binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false),
-                binding("plugin-town-crier", "onInterval", "GLOBAL", "", 5, false)));
+                pluginBinding("plugin-town-crier", "binding-pulse-a"),
+                pluginBinding("plugin-town-crier", "binding-pulse-b")));
 
     service.reconcileObservedRuntimeState(
         "1",
@@ -1031,8 +1032,10 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     assertThat(captor.getValue())
-        .extracting(ScriptScheduleInstance::getScheduleDefinitionId)
-        .containsExactlyInAnyOrder("guard.alert.expire.v1", "town-crier.market.pulse.v1");
+        .filteredOn(
+            instance -> instance.getScheduleDefinitionId().equals("town-crier.market.pulse.v1"))
+        .extracting(ScriptScheduleInstance::getBindingId)
+        .containsExactlyInAnyOrder("binding-pulse-a", "binding-pulse-b");
   }
 
   @Test
@@ -1646,6 +1649,9 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setScriptPinEpoch(1L);
     tickInstance.setLastObservedControlPlaneRequestId("req-1");
     tickInstance.setScriptId("npc-guard");
+    tickInstance.setBindingId("binding-patrol");
+    tickInstance.setPluginId("plugin-1");
+    tickInstance.setPluginVersionId("plugin-v1");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
     tickInstance.setScheduleKind("INTERVAL");
@@ -1671,6 +1677,9 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
         .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1")));
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(
@@ -1693,20 +1702,25 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getEventSchemaVersion()).isEqualTo("v1");
+    assertThat(workItem.getBindingId()).isEqualTo("binding-patrol");
+    assertThat(workItem.getTargetScopeType()).isEqualTo("ENTITY");
+    assertThat(workItem.getTargetScopeId()).isEqualTo("guard-1");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     // Golden identity: SHA-256 (first 60 hex chars) of length-prefixed UTF-8 values in
     // TimerFiringCandidate.eventIdentity(): tenant, instance, playable scope, region/epoch, target
-    // scope/entity, script/plugin identity, event/schema, patch/pin epoch, schedule, dueTickId,
+    // scope/entity, script/plugin/binding identity, event/schema, patch/pin epoch, schedule,
+    // dueTickId,
     // dry-run, and trigger mode. Owner request evidence is durable but excluded from this
     // logical event identity. Changing any value, order, or framing changes persisted scriptEventId
     // dedupe keys, so a migration must backfill existing scheduler work/audit identities together.
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-2fa3c269c66c6643d96d8d89d264081192fdc44fe8667ea0575845b6c9f3");
+        .isEqualTo("timer-ee9d7297281a06d82c2263077be551603f1d95c60afb8f25b729234d4a5f");
     assertThat(workItem.getScriptPinEpoch()).isEqualTo(1L);
     assertThat(workItem.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
+    assertThat(workItem.getPayloadJson()).contains("\"bindingId\":\"binding-patrol\"");
     assertThat(new ObjectMapper().readTree(workItem.getPayloadJson()).get("dueTickId").asLong())
         .isEqualTo(130L);
     verify(automationQueueService).enqueueWorkItem(workItem);
@@ -2927,6 +2941,7 @@ class ScriptScheduleInstanceServiceImplTest {
     audit.setScriptId("npc-guard");
     audit.setPluginId("plugin-1");
     audit.setPluginVersionId("plugin-v1");
+    audit.setBindingId("binding-timer");
     audit.setEventType("onInterval");
     audit.setScriptPatchVersion("patch-1");
     audit.setScriptEventId("timer-1");
@@ -2972,6 +2987,7 @@ class ScriptScheduleInstanceServiceImplTest {
             summary -> {
               assertThat(summary.pluginId()).isEqualTo("plugin-1");
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
               assertThat(summary.sourceDueTickId()).isEqualTo(130L);
               assertThat(summary.publication().versionId()).isEqualTo(17L);
@@ -2992,6 +3008,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setPointerVersion("17");
     instance.setPluginId("plugin-1");
     instance.setPluginVersionId("plugin-v1");
+    instance.setBindingId("binding-timer");
     instance.setEventType("onTimerExpire");
     instance.setScheduleDefinitionId("guard.alert.expire.v1");
     instance.setScheduleKind("TIMER");
@@ -3028,6 +3045,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
               assertThat(summary.pluginId()).isEqualTo("plugin-1");
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
   }
@@ -3357,6 +3375,12 @@ class ScriptScheduleInstanceServiceImplTest {
     binding.setPriority(priority);
     binding.setRequiresExclusiveEvent(requiresExclusiveEvent);
     binding.setEnabled(true);
+    return binding;
+  }
+
+  private static ScriptEventBinding pluginBinding(String scriptId, String bindingId) {
+    ScriptEventBinding binding = binding(scriptId, "onInterval", "GLOBAL", "", 5, false);
+    binding.setBindingId(bindingId);
     return binding;
   }
 

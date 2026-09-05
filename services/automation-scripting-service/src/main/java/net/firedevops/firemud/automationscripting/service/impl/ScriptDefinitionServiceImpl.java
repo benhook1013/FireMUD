@@ -1,7 +1,9 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -55,12 +57,17 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     if (dto.eventBindings() == null || dto.eventBindings().isEmpty()) {
       return;
     }
-    dto.eventBindings().forEach(this::validateBinding);
+    Set<String> bindingIds = new HashSet<>();
+    dto.eventBindings().forEach(binding -> validateBinding(binding, bindingIds));
   }
 
-  private void validateBinding(ScriptDefinitionDto.EventBindingDto binding) {
+  private void validateBinding(
+      ScriptDefinitionDto.EventBindingDto binding, Set<String> bindingIds) {
     normalizeBinding(binding);
-    requiredText(binding.bindingId(), "binding id");
+    String bindingId = normalizeBindingId(binding.bindingId());
+    if (!bindingIds.add(bindingId)) {
+      throw new IllegalArgumentException("duplicate binding id: " + bindingId);
+    }
     normalizePriorityTag(binding.priorityTag());
   }
 
@@ -85,7 +92,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     entity.setEventSchemaVersion(normalized.eventSchemaVersion());
     entity.setTargetScopeType(normalized.targetScopeType());
     entity.setTargetScopeId(normalize(binding.targetScopeId()));
-    entity.setBindingId(requiredText(binding.bindingId(), "binding id"));
+    entity.setBindingId(normalizeBindingId(binding.bindingId()));
     entity.setPriority(binding.priority());
     entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
     entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());
@@ -129,6 +136,10 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
       throw new IllegalArgumentException(fieldName + " is required");
     }
     return value;
+  }
+
+  private static String normalizeBindingId(String value) {
+    return requiredText(value, "binding id").trim();
   }
 
   private static String normalize(String value) {
