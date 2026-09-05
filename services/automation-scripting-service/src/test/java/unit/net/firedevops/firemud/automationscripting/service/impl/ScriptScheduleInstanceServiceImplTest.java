@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -55,6 +56,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.ObjectMapper;
 
 class ScriptScheduleInstanceServiceImplTest {
   private ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
@@ -156,7 +158,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             new ScriptSchedulerProperties(),
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
   }
 
   @Test
@@ -1677,6 +1680,8 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
+    assertThat(new ObjectMapper().readTree(workItem.getPayloadJson()).get("dueTickId").asLong())
+        .isEqualTo(130L);
     verify(automationQueueService).enqueueWorkItem(workItem);
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
     verify(eventAuditRepository).save(auditCaptor.capture());
@@ -2569,7 +2574,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             schedulerProperties,
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");
@@ -2769,14 +2775,38 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void timerAuditLookupRejectsPositiveEpochWithoutOwnerRequestId() {
-    assertThatThrownBy(
-            () ->
-                service.listTimerAuditEvents(
-                    "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
-    verifyNoInteractions(eventAuditRepository);
+  void timerAuditLookupAllowsPositiveEpochWithoutOwnerRequestId() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            isNull(),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            isNull(),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
   }
 
   @Test
@@ -3069,7 +3099,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             properties,
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");

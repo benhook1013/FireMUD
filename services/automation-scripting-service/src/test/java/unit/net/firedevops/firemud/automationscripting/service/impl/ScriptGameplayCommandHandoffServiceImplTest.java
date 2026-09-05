@@ -412,6 +412,43 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void unpinnedHandoffRetainsExplicitUnpinnedTupleInHandoffEvidence() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("auto-unpinned")
+                .build());
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptWorkItem unpinned = workItem();
+    unpinned.setScriptPinEpoch(0L);
+    unpinned.setScriptPinControlPlaneRequestId(null);
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    service.handoff(
+        unpinned, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getValue().getScriptPinEpoch()).isZero();
+    assertThat(handoffCaptor.getValue().getScriptPinControlPlaneRequestId()).isBlank();
+  }
+
+  @Test
   void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

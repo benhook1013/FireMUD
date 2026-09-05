@@ -72,8 +72,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   /**
    * The ingress row is claimed before the admission decision exists. Keep the placeholder a valid
-   * wire outcome so a concurrent caller can receive a retryable response without attempting any
-   * handler work. The durable state is carried by sourceState=IN_PROGRESS.
+   * durable value while sourceState=IN_PROGRESS; concurrent callers are rejected at the RPC
+   * boundary with retryable UNAVAILABLE and never receive an admission result.
    */
   private static final String IN_PROGRESS_REASON = "ingress_in_progress";
 
@@ -333,7 +333,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private TriggerAdmission admissionFromStoredIngress(ScriptEventIngressAudit audit) {
     if (IN_PROGRESS_STATE.equals(audit.getSourceState())) {
-      return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, IN_PROGRESS_REASON, 0);
+      throw new ScriptIngressInProgressException();
     }
     return new TriggerAdmission(
         audit.isAdmitted(),

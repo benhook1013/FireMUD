@@ -27,6 +27,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "WHERE game_instance_id IS NOT NULL",
             "ROW_NUMBER() OVER",
             "DELETE FROM script_event_ingress_audit",
+            "WHERE game_instance_id IS NULL",
+            "ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit",
             "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
@@ -57,20 +59,29 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration)
         .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 
+    int runtimeUnpinnedStart =
+        migration.indexOf(
+            "CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_unpinned_identity");
+    int runtimeUnpinnedEnd = migration.indexOf(") WHERE", runtimeUnpinnedStart);
+    assertThat(runtimeUnpinnedStart).isGreaterThan(runtimeStart);
+    assertThat(runtimeUnpinnedEnd).isGreaterThan(runtimeUnpinnedStart);
+    assertThat(migration.substring(runtimeUnpinnedStart, runtimeUnpinnedEnd))
+        .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
+
     int reconciliationStart = migration.indexOf("UPDATE script_event_ingress_audit");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeStart).isGreaterThan(reconciliationStart);
-    assertThat(migration.substring(reconciliationStart, runtimeStart))
-        .contains(
-            "WHERE game_instance_id IS NOT NULL",
-            "script_pin_epoch IS NOT NULL",
-            "script_pin_epoch IS NULL")
+    int onLoadDedup = migration.indexOf("The legacy nullable game-instance column allowed");
+    assertThat(onLoadDedup).isGreaterThanOrEqualTo(0);
+    assertThat(migration.substring(reconciliationStart, onLoadDedup))
+        .contains("WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
 
     int onLoadStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");
     int onLoadEnd = migration.indexOf(") WHERE", onLoadStart);
     assertThat(onLoadStart).isGreaterThan(runtimeStart);
+    assertThat(onLoadStart).isGreaterThan(onLoadDedup);
     assertThat(onLoadEnd).isGreaterThan(onLoadStart);
     assertThat(migration.substring(onLoadStart, onLoadEnd))
         .contains("script_id")

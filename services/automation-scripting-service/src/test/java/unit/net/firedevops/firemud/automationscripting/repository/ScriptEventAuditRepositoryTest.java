@@ -27,27 +27,49 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
-  void timerAuditLookupRejectsPinnedEpochWithoutOwnerRequestId() {
+  void timerAuditLookupAllowsEpochAndRequestFiltersIndependently() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_AUDIT))};
+        };
     ScriptEventAuditRepository repository =
-        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findTimerAuditEvents(
-                    "tenant-1",
-                    "game-1",
-                    "patch-1",
-                    2L,
-                    null,
-                    "script-1",
-                    "onTimerExpire",
-                    "",
-                    null,
-                    null,
-                    PageRequest.of(0, 25)))
-        .withMessage(
-            "script_pin_control_plane_request_id is required for pinned timer audit lookups");
+    assertThat(
+            repository.findTimerAuditEvents(
+                "tenant-1",
+                "game-1",
+                "patch-1",
+                2L,
+                null,
+                "script-1",
+                "onTimerExpire",
+                "",
+                null,
+                null,
+                PageRequest.of(0, 25)))
+        .isEmpty();
+    assertThat(sqlRef.get()).contains("script_pin_epoch");
+
+    assertThat(
+            repository.findTimerAuditEvents(
+                "tenant-1",
+                "game-1",
+                "patch-1",
+                null,
+                "request-1",
+                "script-1",
+                "onTimerExpire",
+                "",
+                null,
+                null,
+                PageRequest.of(0, 25)))
+        .isEmpty();
+    assertThat(sqlRef.get()).contains("script_pin_control_plane_request_id");
   }
 
   @Test

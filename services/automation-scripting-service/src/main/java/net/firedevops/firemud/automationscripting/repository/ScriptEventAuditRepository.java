@@ -250,10 +250,6 @@ public class ScriptEventAuditRepository {
       Pageable pageable) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
-    if ((normalizedScriptPinEpoch != null) != (normalizedScriptPinControlPlaneRequestId != null)) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id is required for pinned timer audit lookups");
-    }
     Condition condition =
         SCRIPT_EVENT_AUDIT
             .TENANT_ID
