@@ -139,6 +139,9 @@ printf '%s' "$count" > "$FAKE_PUBLISH_CALLS"
 if [[ "${FAKE_PUBLISH_FAIL_PHASE:-}" == "$phase" ]]; then
   exit 1
 fi
+if [[ " ${FAKE_PUBLISH_FAIL_PHASES:-} " == *" $phase "* ]]; then
+  exit 1
+fi
 if (( count <= ${FAKE_PUBLISH_FAIL_COUNT:-0} )); then
   exit 1
 fi
@@ -181,6 +184,7 @@ reset_case() {
   export FAKE_PR_901_HEAD=''
   export FAKE_DELETE_FAIL=false
   export FAKE_PUBLISH_FAIL_PHASE=''
+  export FAKE_PUBLISH_FAIL_PHASES=''
   export FAKE_PUBLISH_FAIL_COUNT=0
   export FAKE_EXISTING_COMMENT_ID=''
   export FAKE_PREVIOUS_COMMENT_BODY=''
@@ -227,6 +231,15 @@ if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
   exit 1
 fi
 grep -q 'Preview Reclaim Cancelled' "$FAKE_COMMENT_BODY"
+bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
+  101 900 head-101 image-101 pr-101.preview.firedevops.net \
+  '## ✅ Preview Ready' failure
+grep -q '<!-- firemud-preview-reclaim-failed -->' "$FAKE_COMMENT_BODY"
+if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
+  echo "failure status remained stuck in reclaiming" >&2
+  exit 1
+fi
+grep -q '## ❌ Preview Failed' "$FAKE_COMMENT_BODY"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
@@ -301,19 +314,60 @@ if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
 fi
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
 if grep -q ' reclaimed$' "$FAKE_PUBLISH_LOG"; then
   echo "delete failure was incorrectly published as reclaimed" >&2
+  exit 1
+fi
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+
+reset_case
+export FAKE_DELETE_FAIL=true
+export FAKE_PUBLISH_FAIL_PHASES='failure'
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim reported success after deletion and failure-state compensation failed" >&2
+  exit 1
+fi
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
+test "$(grep -c '101 900 failure' "$FAKE_PUBLISH_LOG")" -eq 3
+if grep -q ' reclaimed$' "$FAKE_PUBLISH_LOG"; then
+  echo "delete failure compensation incorrectly published as reclaimed" >&2
   exit 1
 fi
 grep -qx 'reclaiming' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_PUBLISH_FAIL_PHASE=reclaimed
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim reported success after final status publication failed" >&2
+  exit 1
+fi
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
 test "$(grep -c '101 900 reclaimed' "$FAKE_PUBLISH_LOG")" -eq 3
-grep -qx 'reclaimed_pr=101' "$GITHUB_OUTPUT"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+if grep -qx 'reclaimed_pr=101' "$GITHUB_OUTPUT"; then
+  echo "reclaim emitted a reclaimed output after final status publication failed" >&2
+  exit 1
+fi
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+
+reset_case
+export FAKE_PUBLISH_FAIL_PHASE=reclaimed
+export FAKE_PUBLISH_FAIL_PHASES='failure'
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim reported success after final status and failure-state repair failed" >&2
+  exit 1
+fi
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
+test "$(grep -c '101 900 reclaimed' "$FAKE_PUBLISH_LOG")" -eq 3
+test "$(grep -c '101 900 failure' "$FAKE_PUBLISH_LOG")" -eq 3
+if grep -qx 'reclaimed_pr=101' "$GITHUB_OUTPUT"; then
+  echo "reclaim emitted a reclaimed output after failure-state repair failed" >&2
+  exit 1
+fi
 grep -qx 'reclaiming' "$FAKE_PUBLISHED_STATE"
 
 reset_case

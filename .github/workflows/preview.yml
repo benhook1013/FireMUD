@@ -1046,6 +1046,39 @@ jobs:
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
+      - name: Revalidate preview cleanup target before deletion
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA || "";
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const requiresClosedState =
+              context.eventName === "pull_request" && context.payload.action === "closed";
+
+            if (
+              (requiresClosedState && currentPullRequest.state !== "closed") ||
+              currentPullRequest.head?.sha !== expectedHeadSha
+            ) {
+              core.setFailed(
+                `Aborting stale preview cleanup for PR #${prNumber}: ` +
+                `expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}, current ` +
+                `${currentPullRequest.state}/${currentPullRequest.head?.sha}`
+              );
+              return;
+            }
+
+            core.info(
+              `Preview cleanup target is still ${requiresClosedState ? "closed" : "current"} ` +
+              `at ${expectedHeadSha} for PR #${prNumber}.`
+            );
+
       - name: Delete preview namespace and release
         id: delete-preview
         run: |

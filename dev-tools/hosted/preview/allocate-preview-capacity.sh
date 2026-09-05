@@ -305,11 +305,20 @@ fi
 
 echo "Reclaiming oldest ordinary preview ${selected_namespace} for priority PR #${target_pr_number}"
 if ! bash "$delete_script" "$selected_namespace" "$selected_namespace"; then
-  echo "Preview deletion failed; retaining the conservative unavailable status because intact Ready state cannot be proven" >&2
+  if ! publish_reclaim_state failure; then
+    echo "Preview deletion failed and failure-state compensation failed; preserving the conservative reclaiming status" >&2
+  else
+    echo "Preview deletion failed; durable failure status recorded" >&2
+  fi
   exit 1
 fi
 if ! publish_reclaim_state reclaimed; then
-  echo "Final reclaimed status publication failed; the conservative unavailable status remains in place" >&2
+  if ! publish_reclaim_state failure; then
+    echo "Final reclaimed status publication failed and failure-state repair failed; preserving the conservative reclaiming status" >&2
+  else
+    echo "Final reclaimed status publication failed; durable failure status recorded" >&2
+  fi
+  exit 1
 fi
 
 emit_output reclaimed_pr "$selected_pr"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 7 ]]; then
-  echo "usage: $0 <pr_number> <priority_pr_number> <previous_head_sha> <previous_image_tag> <previous_hostname> <previous_summary> <reclaiming|reclaimed|retained>" >&2
+  echo "usage: $0 <pr_number> <priority_pr_number> <previous_head_sha> <previous_image_tag> <previous_hostname> <previous_summary> <reclaiming|reclaimed|retained|failure>" >&2
   exit 1
 fi
 if [[ -z "${GITHUB_REPOSITORY:-}" || -z "${GH_TOKEN:-}" ]]; then
@@ -58,6 +58,16 @@ EOF
 EOF
 )"
     ;;
+  failure)
+    summary="$(bash "${script_dir}/write-preview-summary.sh" \
+      failure \
+      "$pr_number" \
+      "$previous_head_sha" \
+      "$previous_image_tag" \
+      "$previous_hostname" \
+      unavailable \
+      "reclaim to priority PR #${priority_pr_number}")"
+    ;;
   *)
     echo "unsupported reclaim publication phase: $phase" >&2
     exit 1
@@ -77,6 +87,9 @@ trap 'rm -f "$body_file"' EXIT
       ;;
     retained)
       printf '%s\n' '<!-- firemud-preview-reclaim-cancelled -->'
+      ;;
+    failure)
+      printf '%s\n' '<!-- firemud-preview-reclaim-failed -->'
       ;;
   esac
   printf '%s\n' '### Preview Summary' '' "$summary"

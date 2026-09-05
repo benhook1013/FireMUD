@@ -337,7 +337,7 @@ if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event_name == '\''pull_request'\'' && github.event.pull_request.number || inputs.pr_number || github.ref }}'
+assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
 for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
@@ -363,6 +363,20 @@ for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'firemud-preview-summary'
   assert_job_contains preview.yml "$job" 'isLegacyWorkflowComment'
 done
+assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
+assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
+assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
+assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
+assert_job_contains preview.yml preview-destroy 'currentPullRequest.head?.sha !== expectedHeadSha'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal JavaScript template syntax.
+assert_job_contains preview.yml preview-destroy 'expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}'
+assert_job_contains preview.yml preview-destroy 'core.setFailed('
+require_ordered_sequence "$preview_path" \
+  'Revalidate preview cleanup target before deletion' \
+  'context.eventName === "pull_request" && context.payload.action === "closed"' \
+  '(requiresClosedState && currentPullRequest.state !== "closed") ||' \
+  'currentPullRequest.head?.sha !== expectedHeadSha' \
+  'Delete preview namespace and release'
 for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'always() && !cancelled()'
 done
@@ -383,7 +397,7 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
-require_contains "$preview_reconciler_path" 'gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100"'
+require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
 if grep -Fq 'displayTitle == "PR Preview Environment"' "$preview_reconciler_path"; then
