@@ -1333,8 +1333,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setCreatedAt(Instant.ofEpochMilli(100));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
-    when(workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
     ScriptWorkItemService service =
         service(
@@ -1361,6 +1361,9 @@ class ScriptWorkItemServiceImplTest {
     assertThat(deadLetters.get(0).reason()).isEqualTo("STALE_TIMELINE");
     assertThat(deadLetters.get(0).updatedAtMs()).isEqualTo(300L);
     assertThat(deadLetters.get(0).publication().versionId()).isEqualTo(17L);
+    verify(workItemRepository)
+        .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
   }
 
   @Test
@@ -1379,8 +1382,8 @@ class ScriptWorkItemServiceImplTest {
     deadLetter.setEventType("onCommand");
     deadLetter.setScriptEventId("event-1");
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    when(workItemRepository.findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            "1", "DEAD_LETTERED", PageRequest.of(0, 25)))
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25)))
         .thenReturn(List.of(deadLetter));
     ScriptWorkItemService service =
         service(

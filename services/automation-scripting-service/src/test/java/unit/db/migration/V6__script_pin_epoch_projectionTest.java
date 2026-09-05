@@ -33,6 +33,7 @@ class V6__script_pin_epoch_projectionTest {
             "script_pin_epoch IS NULL OR script_pin_epoch = 0",
             "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
+            "script_pin_epoch IS NOT NULL",
             "script_pin_epoch > 0",
             "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
