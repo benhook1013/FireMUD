@@ -228,13 +228,12 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     if (pin.isEmpty() || !usableRuntimePin(pin.get())) {
       return;
     }
+    ScriptPatchPinProjectionService.PinConvergenceSummary runtimePin = pin.get();
     Optional<ProjectionSnapshot> snapshot =
         buildSnapshot(
-            tenantId,
-            gameInstanceId,
             scriptPatchVersion,
             workItems,
-            pin,
+            runtimePin,
             existing.map(ScriptPatchInstanceRolloutProjection::getRolloutStatus),
             now);
     if (snapshot.isEmpty()) {
@@ -247,13 +246,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     projection.setTenantId(tenantId);
     projection.setGameInstanceId(gameInstanceId);
     projection.setScriptPatchVersion(scriptPatchVersion);
-    projection.setScriptPinEpoch(
-        pin.map(ScriptPatchPinProjectionService.PinConvergenceSummary::scriptPinEpoch).orElse(0L));
-    projection.setLastObservedControlPlaneRequestId(
-        pin.map(
-                ScriptPatchPinProjectionService.PinConvergenceSummary
-                    ::lastObservedControlPlaneRequestId)
-            .orElse(""));
+    projection.setScriptPinEpoch(runtimePin.scriptPinEpoch());
+    projection.setLastObservedControlPlaneRequestId(runtimePin.lastObservedControlPlaneRequestId());
     projection.setRolloutStatus(snapshot.get().rolloutStatus().name());
     projection.setStatusReason(snapshot.get().statusReason());
     projection.setLastChangedAt(Instant.ofEpochMilli(snapshot.get().lastChangedAtMs()));
@@ -275,57 +269,39 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
   }
 
   private Optional<ProjectionSnapshot> buildSnapshot(
-      String tenantId,
-      String gameInstanceId,
       String scriptPatchVersion,
       List<ScriptWorkItem> workItems,
-      Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin,
+      ScriptPatchPinProjectionService.PinConvergenceSummary runtime,
       Optional<String> existingRolloutStatus,
       Instant now) {
-    if (pin.isPresent()) {
-      ScriptPatchPinProjectionService.PinConvergenceSummary runtime = pin.get();
-      if (runtime.scriptPinEpoch() > 0
-          && scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
-        ScriptPatchInstanceRolloutStatus rolloutStatus =
-            priorRollbackObserved(existingRolloutStatus)
-                ? ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
-                : ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED;
-        String reason =
-            rolloutStatus
-                    == ScriptPatchInstanceRolloutStatus
-                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
-                ? "runtime_pin_restored_after_rollback"
-                : "runtime_pin_matches_patch";
-        return Optional.of(
-            new ProjectionSnapshot(
-                rolloutStatus,
-                reason,
-                runtime.scriptPinEpoch(),
-                runtime.lastObservedControlPlaneRequestId(),
-                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
-      }
-      if (!workItems.isEmpty()) {
-        return Optional.of(
-            new ProjectionSnapshot(
-                ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
-                "runtime_pin_differs_from_patch",
-                runtime.scriptPinEpoch(),
-                runtime.lastObservedControlPlaneRequestId(),
-                maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
-      }
-      return Optional.empty();
+    if (scriptPatchVersion.equals(runtime.observedPinnedScriptPatchVersion())) {
+      ScriptPatchInstanceRolloutStatus rolloutStatus =
+          priorRollbackObserved(existingRolloutStatus)
+              ? ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+              : ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED;
+      String reason =
+          rolloutStatus
+                  == ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED
+              ? "runtime_pin_restored_after_rollback"
+              : "runtime_pin_matches_patch";
+      return Optional.of(
+          new ProjectionSnapshot(
+              rolloutStatus,
+              reason,
+              runtime.scriptPinEpoch(),
+              runtime.lastObservedControlPlaneRequestId(),
+              maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
     }
-    if (workItems.isEmpty()) {
-      return Optional.empty();
+    if (!workItems.isEmpty()) {
+      return Optional.of(
+          new ProjectionSnapshot(
+              ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
+              "runtime_pin_differs_from_patch",
+              runtime.scriptPinEpoch(),
+              runtime.lastObservedControlPlaneRequestId(),
+              maxLastChangedAtMs(workItems, runtime.observedAtMs(), now)));
     }
-    long lastChangedAtMs = maxWorkItemUpdatedAtMs(workItems);
-    return Optional.of(
-        new ProjectionSnapshot(
-            localFallbackRolloutStatus(workItems),
-            "projection_lag_exceeded",
-            0L,
-            "",
-            lastChangedAtMs));
+    return Optional.empty();
   }
 
   private ScriptWorkItemService.PatchInstanceRolloutSummary toSummary(
@@ -397,14 +373,6 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
     event.setObservedAt(Instant.ofEpochMilli(snapshot.lastChangedAtMs()));
     event.setProjectionRefreshedAt(projectionRefreshedAt);
     eventRepository.save(event);
-  }
-
-  private static ScriptPatchInstanceRolloutStatus localFallbackRolloutStatus(
-      List<ScriptWorkItem> workItems) {
-    if (workItems.stream().allMatch(item -> "CANCELED".equals(item.getStatus()))) {
-      return ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK;
-    }
-    return ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED;
   }
 
   private static long maxLastChangedAtMs(
