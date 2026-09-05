@@ -4,6 +4,7 @@ import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkI
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWork
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Record1;
 import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -131,6 +133,57 @@ class ScriptWorkItemRepositoryTest {
         .contains("where", "script_pin_epoch", "= 0")
         .doesNotContain("script_pin_control_plane_request_id");
     assertThat(saved.getScriptPinControlPlaneRequestId()).isNull();
+  }
+
+  @Test
+  void deletingWorkItemsDisposesChildEvidenceBeforeParentRows() {
+    List<String> sqlStatements = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          sqlStatements.add(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(1, null)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptWorkItem item = new ScriptWorkItem();
+    item.setId(99L);
+
+    repository.deleteAll(List.of(item));
+
+    assertThat(sqlStatements).hasSize(3);
+    assertThat(sqlStatements.get(0)).contains("script_event_audit");
+    assertThat(sqlStatements.get(1)).contains("script_handoff_events");
+    assertThat(sqlStatements.get(2)).contains("script_work_items");
+  }
+
+  @Test
+  void statusRetentionDeletesChildrenBeforeMatchingParents() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    List<String> sqlStatements = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          sqlStatements.add(sql);
+          if (sql.startsWith("select")) {
+            Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
+            returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
+            Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
+            result.add(returned);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          return new MockResult[] {new MockResult(1, null)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.EPOCH))
+        .isEqualTo(1);
+
+    assertThat(sqlStatements).hasSize(4);
+    assertThat(sqlStatements.get(0)).startsWith("select");
+    assertThat(sqlStatements.get(1)).contains("script_event_audit");
+    assertThat(sqlStatements.get(2)).contains("script_handoff_events");
+    assertThat(sqlStatements.get(3)).contains("script_work_items");
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {

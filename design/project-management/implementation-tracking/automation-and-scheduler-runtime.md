@@ -12,7 +12,7 @@ Current residual: the live NPC formation REST family is public/unauthenticated a
 
 The current Automation queue reset/rebuild/resume path is unavailable and must fail closed regardless of the observed status mix; a non-atomic status preflight cannot authorize the target PENDING-only workflow. The owner-reconciled target recovery and its proof remain outstanding.
 
-Terminal cleanup is also incomplete: the live job directly deletes aged terminal `script_work_items`, while `script_event_audit.work_item_id` and `script_handoff_events.work_item_id` are non-cascading foreign keys. Parent deletion is therefore unsafe when child audit or handoff rows remain, and current unit coverage proves only mocked repository call counts, not database deletion or child disposition. The target must retain or explicitly dispose child handoff/audit evidence under the owning retention contracts before deleting a parent; no implementation or real-database proof is claimed.
+Terminal cleanup now disposes aged child audit and handoff evidence before deleting each parent `script_work_items` row in the same transaction; the non-cascading foreign keys therefore cannot strand the parent cleanup on a constraint violation. The configured parent retention windows remain the live evidence horizon, and repository proof covers the child-first SQL order; a real PostgreSQL migration/retention run remains unclaimed.
 
 The `xmax = 0` insert discriminator used by the `ScriptWorkItem` and `ScriptEventAudit` repositories remains without PostgreSQL integration proof; current unit/mock evidence does not establish INSERT-versus-conflict-update behavior against PostgreSQL.
 
