@@ -985,7 +985,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
     item.setScriptPatchVersion(request.getScriptPatchVersion());
     item.setScriptPinEpoch(scriptPinEpoch);
-    item.setScriptPinControlPlaneRequestId(normalize(request.getScriptPinControlPlaneRequestId()));
+    item.setScriptPinControlPlaneRequestId(
+        scriptPinEpoch > 0L ? normalize(request.getScriptPinControlPlaneRequestId()) : null);
     item.setScriptEventId(request.getScriptEventId());
     item.setDryRun(request.getIsDryRun());
     item.setSourceService(sourceService);

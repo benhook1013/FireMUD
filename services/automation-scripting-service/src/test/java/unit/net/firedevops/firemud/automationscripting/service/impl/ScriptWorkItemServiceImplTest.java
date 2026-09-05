@@ -1367,6 +1367,31 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void normalizesBlankDeadLetterFiltersBeforeRepositoryRead() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "", "", "DEAD_LETTERED", PageRequest.of(0, 25)))
+        .thenReturn(List.of());
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    assertThat(service.listDeadLetters("1", "  ", "\u2003", 25)).isEmpty();
+    verify(workItemRepository)
+        .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            "1", "", "", "DEAD_LETTERED", PageRequest.of(0, 25));
+  }
+
+  @Test
   void collapsesPartialRoutingBundleInDeadLetterSummary() {
     ScriptWorkItem deadLetter = workItem("patch-1", "DEAD_LETTERED", Instant.ofEpochMilli(300));
     deadLetter.setId(99L);
@@ -1844,8 +1869,8 @@ class ScriptWorkItemServiceImplTest {
                 "onCommand",
                 "v1",
                 "patch-1",
-                0L,
-                null,
+                1L,
+                "req-1",
                 "event-1",
                 false,
                 "game-session-service"))
