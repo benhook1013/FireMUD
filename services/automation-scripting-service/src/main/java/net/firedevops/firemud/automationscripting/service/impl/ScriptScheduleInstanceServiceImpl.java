@@ -646,8 +646,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     Instant changedBefore = changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs);
     org.springframework.data.domain.PageRequest page =
         org.springframework.data.domain.PageRequest.of(0, boundedLimit);
+    boolean hasPinFilter =
+        scriptPinEpoch > 0 || !blankToEmpty(scriptPinControlPlaneRequestId).isBlank();
     List<ScriptEventAudit> audits =
-        scriptPinEpoch <= 0
+        !hasPinFilter
             ? eventAuditRepository.findTimerAuditEvents(
                 normalizedTenant,
                 normalizedInstance,
