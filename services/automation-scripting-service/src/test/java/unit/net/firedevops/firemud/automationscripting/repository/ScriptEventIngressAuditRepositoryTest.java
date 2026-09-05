@@ -41,6 +41,46 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void rejectsPositivePinEpochWithoutGameInstanceBeforeSelectingConflictTarget() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("game_instance_id is required for a positive script_pin_epoch");
+  }
+
+  @Test
+  void rejectsPositivePinEpochWithoutGameInstanceBeforeUpdate() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setId(7L);
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("game_instance_id is required for a positive script_pin_epoch");
+  }
+
+  @Test
+  void rejectsMismatchedPinTupleBeforeUpdate() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setId(7L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id requires a positive script_pin_epoch");
+  }
+
+  @Test
   void staleInProgressReclaimUsesRowVersionFenceAndRefreshesClaimLease() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
@@ -166,7 +206,7 @@ class ScriptEventIngressAuditRepositoryTest {
 
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(11L);
-    assertThat(sqlRef.get()).contains("on conflict", "do update", "script_pin_epoch is null");
+    assertThat(sqlRef.get()).contains("on conflict", "do update", "script_pin_epoch\" is null");
   }
 
   @Test
@@ -222,10 +262,11 @@ class ScriptEventIngressAuditRepositoryTest {
     String sql = sqlRef.get();
     int conflictStart = sql.indexOf("on conflict");
     int targetEnd = sql.indexOf(") where", conflictStart);
+    assertThat(targetEnd).isGreaterThan(conflictStart);
     assertThat(sql.substring(conflictStart, targetEnd))
         .contains("game_instance_id")
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
-    assertThat(sql).contains("game_instance_id\" is not null", "script_pin_epoch is null");
+    assertThat(sql).contains("game_instance_id\" is not null", "script_pin_epoch\" is null");
   }
 
   @Test
