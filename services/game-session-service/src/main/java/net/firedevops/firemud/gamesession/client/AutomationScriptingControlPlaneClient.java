@@ -7,6 +7,8 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRequest;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -25,6 +27,7 @@ public final class AutomationScriptingControlPlaneClient
   private static final Logger LOG =
       LoggerFactory.getLogger(AutomationScriptingControlPlaneClient.class);
   private static final long PLUGIN_STATUS_DEADLINE_MILLIS = 250L;
+  private static final long SCRIPT_PATCH_STATUS_DEADLINE_MILLIS = 2_000L;
 
   public AutomationScriptingControlPlaneClient(
       ServiceEndpointsProperties endpoints,
@@ -81,8 +84,40 @@ public final class AutomationScriptingControlPlaneClient
     }
   }
 
+  /** Reads the authoritative tenant-scoped readiness projection for one script patch. */
+  public GetScriptPatchStatusResponse getScriptPatchStatus(
+      long tenantId, String scriptPatchVersion) {
+    if (stub() == null) {
+      return unavailablePatchStatus();
+    }
+    try {
+      return stub()
+          .withDeadlineAfter(SCRIPT_PATCH_STATUS_DEADLINE_MILLIS, TimeUnit.MILLISECONDS)
+          .getScriptPatchStatus(
+              GetScriptPatchStatusRequest.newBuilder()
+                  .setTenantId(Long.toString(tenantId))
+                  .setScriptPatchVersion(scriptPatchVersion)
+                  .build());
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() != Status.Code.UNAVAILABLE) {
+        throw ex;
+      }
+      LOG.warn("Automation & Scripting getScriptPatchStatus failed", ex);
+      return unavailablePatchStatus();
+    }
+  }
+
   private static GetPluginStatusResponse unavailable() {
     return GetPluginStatusResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("AUTOMATION_SCRIPTING_UNAVAILABLE")
+                .setMessage("Automation & Scripting service unavailable"))
+        .build();
+  }
+
+  private static GetScriptPatchStatusResponse unavailablePatchStatus() {
+    return GetScriptPatchStatusResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()
                 .setCode("AUTOMATION_SCRIPTING_UNAVAILABLE")

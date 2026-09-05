@@ -5,6 +5,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 public final class GameInstanceTestFixtures {
   public static final long PUBLISHED_RELEASE_BUNDLE_ID = 700L;
+  private static final long INITIAL_SCRIPT_PIN_EPOCH = 1L;
+  private static final String INITIAL_SCRIPT_PIN_REQUEST_ID = "test-fixture-initial";
 
   private GameInstanceTestFixtures() {}
 
@@ -16,6 +18,7 @@ public final class GameInstanceTestFixtures {
           tenant_id BIGINT NOT NULL,
           runtime_version VARCHAR(100) NOT NULL,
           script_patch_version VARCHAR(100),
+          script_pin_epoch BIGINT,
           game_template_id BIGINT,
           launch_descriptor_id VARCHAR(64),
           version_id BIGINT,
@@ -26,6 +29,7 @@ public final class GameInstanceTestFixtures {
           script_patch_pinned_at TIMESTAMP NULL,
           script_patch_pinned_by VARCHAR(200) NULL,
           script_patch_pinned_reason VARCHAR(500) NULL,
+          script_patch_pinned_control_plane_request_id VARCHAR(128) NULL,
           owner_account_id BIGINT NOT NULL,
           status VARCHAR(20) NOT NULL
         )
@@ -39,6 +43,10 @@ public final class GameInstanceTestFixtures {
     jdbc.execute(
         "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS generation_config_revision VARCHAR(128)");
     jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS remap_set_id VARCHAR(64)");
+    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS script_pin_epoch BIGINT");
+    jdbc.execute(
+        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS "
+            + "script_patch_pinned_control_plane_request_id VARCHAR(128)");
   }
 
   public static long insertRunningGameInstance(
@@ -51,6 +59,8 @@ public final class GameInstanceTestFixtures {
                   tenant_id,
                   runtime_version,
                   script_patch_version,
+                  script_pin_epoch,
+                  script_patch_pinned_control_plane_request_id,
                   game_template_id,
                   launch_descriptor_id,
                   version_id,
@@ -60,12 +70,14 @@ public final class GameInstanceTestFixtures {
                   remap_set_id,
                   owner_account_id,
                   status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """,
                 Long.class,
                 tenantId,
                 "0.1.0",
                 "initial",
+                INITIAL_SCRIPT_PIN_EPOCH,
+                INITIAL_SCRIPT_PIN_REQUEST_ID,
                 gameTemplateId,
                 "stub-launch-descriptor",
                 gameTemplateId,

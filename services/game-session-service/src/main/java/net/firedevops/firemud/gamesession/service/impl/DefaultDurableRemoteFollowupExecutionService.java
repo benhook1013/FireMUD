@@ -8,9 +8,6 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -22,7 +19,6 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -308,36 +304,11 @@ public final class DefaultDurableRemoteFollowupExecutionService
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      if (gameplayAdmissionPointerAuthorityService == null) {
-        try {
-          return executeTriggerScriptEvent(
-              root,
-              coordinator,
-              followup,
-              TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                  authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope")),
-              null);
-        } catch (IllegalArgumentException ex) {
-          return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
-        }
-      }
-      TargetPointerResolution targetPointer = resolveTargetPointer(followup);
-      if (!targetPointer.available()) {
-        return retryableTargetPointerFailure(targetPointer);
-      }
-      PlayableStateScope targetScope;
       try {
-        targetScope =
-            TriggerScriptEventRequestFactory.requirePlayableStateScope(
-                targetPointer.pointer().stateScope());
+        return executeTriggerScriptEvent(root, coordinator, followup);
       } catch (IllegalArgumentException ex) {
-        return retryableTargetPointerFailure(
-            TargetPointerResolution.unavailable(
-                "ADMISSION_POINTER_UNAVAILABLE",
-                "Current target gameplay admission pointer is invalid"));
+        return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
       }
-      return executeTriggerScriptEvent(
-          root, coordinator, followup, targetScope, targetPointer.pointer());
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",
@@ -553,48 +524,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
         errorMessage);
   }
 
-  private TargetPointerResolution resolveTargetPointer(RemoteFollowup followup) {
-    if (gameplayAdmissionPointerAuthorityService == null) {
-      return TargetPointerResolution.unavailable(
-          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
-    }
-    final java.util.List<GameplayAdmissionPointerSnapshot> pointers;
-    try {
-      pointers =
-          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-              followup.getTenantId(), followup.getTargetGameInstanceId());
-    } catch (RuntimeException ex) {
-      return TargetPointerResolution.unavailable(
-          "AUTH_UNAVAILABLE", "Current gameplay admission pointer authority is unavailable");
-    }
-    if (pointers == null
-        || pointers.size() != 1
-        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointers.getFirst())) {
-      return TargetPointerResolution.unavailable(
-          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
-    }
-    GameplayAdmissionPointerSnapshot pointer = pointers.getFirst();
-    if (pointer.tenantId() != followup.getTenantId()
-        || pointer.gameInstanceId() != followup.getTargetGameInstanceId()) {
-      return TargetPointerResolution.unavailable(
-          "ADMISSION_POINTER_UNAVAILABLE", "Current target gameplay admission pointer is invalid");
-    }
-    return TargetPointerResolution.available(pointer);
-  }
-
-  private static PayloadExecution retryableTargetPointerFailure(
-      TargetPointerResolution targetPointer) {
-    return retryablePayloadExecution(
-        targetPointer.errorCode(),
-        targetPointer.errorMessage(),
-        "{\"admissionOutcome\":\"RETRY_QUEUED\",\"errorCode\":\""
-            + jsonEscape(targetPointer.errorCode())
-            + "\",\"message\":\""
-            + jsonEscape(targetPointer.errorMessage())
-            + "\"}",
-        null);
-  }
-
   private static boolean isRetryableTargetAdmissionFailure(
       AutomationGameplayCommandAdmissionSupport.AdmissionResult result) {
     String normalized =
@@ -630,137 +559,39 @@ public final class DefaultDurableRemoteFollowupExecutionService
   }
 
   private PayloadExecution executeTriggerScriptEvent(
-      JsonNode root,
-      RemoteCommandCoordinator coordinator,
-      RemoteFollowup followup,
-      PlayableStateScope playableStateScope,
-      GameplayAdmissionPointerSnapshot targetPointer) {
+      JsonNode root, RemoteCommandCoordinator coordinator, RemoteFollowup followup) {
     try {
       if (root != null && !root.isMissingNode() && !root.isObject()) {
         throw new IllegalArgumentException("payload must be a JSON object");
       }
-      String scriptId = authoritativeText(coordinator.getScriptId(), root, "scriptId");
-      String pluginId = authoritativeText(coordinator.getPluginId(), root, "pluginId");
-      String pluginVersionId =
-          authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
-      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
-          targetPointer == null
-              ? sourceRoutingBundle(followup, root)
-              : new GameplayAdmissionPointerSnapshots.RoutingBundle(
-                  targetPointer.worldSlug(),
-                  targetPointer.realmSlug(),
-                  targetPointer.pointerVersion());
-      boolean isDryRun = authoritativeBoolean(false, root, "isDryRun");
-      TriggerScriptEventRequest.Builder request =
-          TriggerScriptEventRequestFactory.builder(
-              new TriggerScriptEventRequestFactory.CommonFields(
-                  Long.toString(followup.getTenantId()),
-                  Long.toString(followup.getTargetGameInstanceId()),
-                  followup.getTargetRegionId(),
-                  followup.getTargetRegionEpoch(),
-                  requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId"),
-                  requiredAuthoritativeText(followup.getEventType(), root, "eventType"),
-                  firstNonBlank(
-                      authoritativeText(
-                          followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
-                      firstNonBlank(followup.getEventSchemaVersion(), "v1")),
-                  requiredAuthoritativeText(
-                      coordinator.getScriptPatchVersion(), root, "scriptPatchVersion"),
-                  requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId"),
-                  isDryRun,
-                  triggerMode(root, followup),
-                  playableStateScope,
-                  requiredAuthoritativeText(
-                      followup.getReadSnapshotToken(), root, "readSnapshotToken"),
-                  eventPayloadJson(root, followup)),
-              toRequestRoutingBundle(routingBundle));
-      if (scriptId != null) {
-        request.setScriptId(scriptId);
-      }
-      if (pluginId != null) {
-        request.setPluginId(pluginId);
-      }
-      if (pluginVersionId != null) {
-        request.setPluginVersionId(pluginVersionId);
-      }
-      Long dueTickId = authoritativeLong(followup.getDueTickId(), root, "dueTickId");
-      if (dueTickId != null) {
-        request.setDueTickId(dueTickId);
-      }
-      Long dueAtMs = optionalLong(root, "dueAtMs");
-      if (dueAtMs != null) {
-        request.setDueAtMs(dueAtMs);
-      }
-      TriggerScriptEventResponse response =
-          automationScriptingClient.triggerScriptEvent(request.build());
-      String resultPayload =
-          "{\"admitted\":"
-              + response.getAdmitted()
-              + ",\"admissionOutcome\":\""
-              + jsonEscape(response.getAdmissionOutcome().name())
-              + "\""
-              + jsonStringField("admissionReason", response.getAdmissionReason())
-              + ",\"resolvedHandlerCount\":"
-              + response.getResolvedHandlerCount()
-              + "}";
-      if (!response.hasError() && response.getAdmitted()) {
-        return new PayloadExecution(
-            "APPLIED", "APPLIED", null, null, resultPayload, null, null, null);
-      }
-      String errorCode =
-          response.hasError() && !response.getError().getCode().isBlank()
-              ? response.getError().getCode()
-              : response.getAdmissionReason().isBlank()
-                  ? "REMOTE_SCRIPT_EVENT_REJECTED"
-                  : response.getAdmissionReason().toUpperCase(Locale.ROOT);
-      String errorMessage =
-          response.hasError() && !response.getError().getMessage().isBlank()
-              ? response.getError().getMessage()
-              : response.getAdmissionReason().isBlank()
-                  ? "Target-side remote script event was not admitted"
-                  : response.getAdmissionReason();
-      if (isRetryableTriggerAdmissionFailure(response, errorCode)) {
-        return retryablePayloadExecution(errorCode, errorMessage, resultPayload, null);
-      }
-      return new PayloadExecution(
-          "ABANDONED",
-          "ABANDONED",
-          errorCode,
-          errorMessage,
-          resultPayload,
-          null,
-          errorCode,
-          errorMessage);
+      authoritativeText(coordinator.getScriptId(), root, "scriptId");
+      authoritativeText(coordinator.getPluginId(), root, "pluginId");
+      authoritativeText(coordinator.getPluginVersionId(), root, "pluginVersionId");
+      TriggerScriptEventRequestFactory.requirePlayableStateScope(
+          authoritativeText(followup.getPlayableStateScope(), root, "playableStateScope"));
+      sourceRoutingBundle(followup, root);
+      authoritativeBoolean(false, root, "isDryRun");
+      requiredAuthoritativeText(followup.getTargetEntityId(), root, "entityId");
+      requiredAuthoritativeText(followup.getEventType(), root, "eventType");
+      String eventSchemaVersion =
+          firstNonBlank(
+              authoritativeText(followup.getEventSchemaVersion(), root, "eventSchemaVersion"),
+              "v1");
+      requiredAuthoritativeText(coordinator.getScriptPatchVersion(), root, "scriptPatchVersion");
+      requiredAuthoritativeText(followup.getScriptEventId(), root, "scriptEventId");
+      triggerMode(root, followup);
+      requiredAuthoritativeText(followup.getReadSnapshotToken(), root, "readSnapshotToken");
+      eventPayloadJson(root, followup);
+      authoritativeLong(followup.getDueTickId(), root, "dueTickId");
+      optionalLong(root, "dueAtMs");
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
     }
-  }
-
-  private static boolean isRetryableTriggerAdmissionFailure(
-      TriggerScriptEventResponse response, String errorCode) {
-    String normalizedErrorCode = errorCode == null ? "" : errorCode.trim().toUpperCase(Locale.ROOT);
-    if (switch (normalizedErrorCode) {
-      case "AUTOMATION_SCRIPTING_UNAVAILABLE",
-          "AUTH_UNAVAILABLE",
-          "AUTHORITY_UNAVAILABLE",
-          "INFRASTRUCTURE_ERROR",
-          "PIN_STATE_UNAVAILABLE",
-          "SIGNER_POLICY_UNAVAILABLE",
-          "UNAVAILABLE" ->
-          true;
-      default -> false;
-    }) {
-      return true;
-    }
-    return switch (response.getAdmissionOutcome()) {
-      case TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING,
-          TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK,
-          TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR,
-          TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE,
-          TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE ->
-          true;
-      default -> false;
-    };
+    // The split intentionally removed durable remote source/target pin tuples. Do not derive a
+    // target Trigger ingress tuple from the mutable target instance or generic patch metadata.
+    return failure(
+        "REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE",
+        "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");
   }
 
   private PayloadExecution failure(String failureCode, String failureMessage) {
@@ -919,17 +750,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
     return primary != null ? primary : fallback;
   }
 
-  private static TriggerScriptEventRequestFactory.RoutingBundle toRequestRoutingBundle(
-      GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle) {
-    if (routingBundle == null) {
-      return null;
-    }
-    return new TriggerScriptEventRequestFactory.RoutingBundle(
-        routingBundle.worldSlug(),
-        routingBundle.realmSlug(),
-        Long.toString(routingBundle.pointerVersion()));
-  }
-
   private static String jsonStringField(String fieldName, String value) {
     if (value == null || value.isBlank()) {
       return "";
@@ -963,19 +783,4 @@ public final class DefaultDurableRemoteFollowupExecutionService
       long targetGameInstanceId,
       String targetRegionId,
       long targetRegionEpoch) {}
-
-  private record TargetPointerResolution(
-      GameplayAdmissionPointerSnapshot pointer, String errorCode, String errorMessage) {
-    private static TargetPointerResolution available(GameplayAdmissionPointerSnapshot pointer) {
-      return new TargetPointerResolution(pointer, null, null);
-    }
-
-    private static TargetPointerResolution unavailable(String errorCode, String errorMessage) {
-      return new TargetPointerResolution(null, errorCode, errorMessage);
-    }
-
-    private boolean available() {
-      return pointer != null;
-    }
-  }
 }

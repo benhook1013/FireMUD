@@ -21,10 +21,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
-import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
-import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -1585,7 +1581,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void remoteTriggerScriptEventUsesCurrentTargetPointerAndExactReplaySkipsPointerReread() {
+  void remoteTriggerScriptEventIsDisabledAndExactReplaySkipsPointerReread() {
     usePointerAuthority();
     TickEffect effect = commandEffect("trigger-followup");
     RemoteFollowup followup = commandFollowup("trigger-followup", "trigger_script_event");
@@ -1598,20 +1594,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
     followup.setEventPayloadJson("{\"fromRegionId\":\"R-101\",\"toRegionId\":\"R-102\"}");
     RemoteCommandCoordinator coordinator = commandCoordinator("trigger-followup");
     configureTargetAdmission(followup, coordinator, "trigger");
-    when(pointerAuthority.listByRuntimeTarget(1L, 9L))
-        .thenReturn(List.of(targetPointer("target-world", "target-realm", 23L, "ISOLATED")));
-    when(automationScriptingClient.triggerScriptEvent(any()))
-        .thenReturn(
-            TriggerScriptEventResponse.newBuilder()
-                .setAdmitted(true)
-                .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED)
-                .setAdmissionReason("admitted_for_handler_resolution")
-                .setResolvedHandlerCount(2)
-                .build());
     when(remoteFollowupRuntimeService.recordResult(any()))
         .thenAnswer(
             invocation -> {
-              followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_APPLIED);
+              followup.setStatus(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED);
+              followup.setFailureCode("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE");
+              followup.setFailureMessage(
+                  "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");
               return new RemoteFollowupRuntimeService.ResultOutcome(
                   RemoteFollowupRuntimeServiceImpl.COORDINATOR_REMOTE_ABANDONED,
                   RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED,
@@ -1624,18 +1613,35 @@ class AutomationGameplayCommandAdmissionSupportTest {
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult replay =
         service.execute(effect);
 
-    assertEquals("APPLIED", first.effectStatus());
-    assertEquals("APPLIED", replay.effectStatus());
-    org.mockito.ArgumentCaptor<TriggerScriptEventRequest> captor =
-        org.mockito.ArgumentCaptor.forClass(TriggerScriptEventRequest.class);
-    verify(automationScriptingClient).triggerScriptEvent(captor.capture());
+    assertEquals("ABANDONED", first.effectStatus());
+    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", first.failureCode());
+    assertEquals("ABANDONED", replay.effectStatus());
+    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", replay.failureCode());
+    verify(automationScriptingClient, never()).triggerScriptEvent(any());
+    verify(pointerAuthority, never()).listByRuntimeTarget(1L, 9L);
+    org.mockito.ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> resultRequestCaptor =
+        org.mockito.ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
+    verify(remoteFollowupRuntimeService).recordResult(resultRequestCaptor.capture());
+    RemoteFollowupRuntimeService.ResultRequest resultRequest = resultRequestCaptor.getValue();
+    assertEquals(1L, resultRequest.tenantId());
+    assertEquals("remote-result:trigger-followup", resultRequest.resultId());
+    assertEquals("trigger-followup", resultRequest.followupId());
+    assertEquals("coord-trigger-followup", resultRequest.coordinatorId());
+    assertEquals(7L, resultRequest.originGameInstanceId());
+    assertEquals("region-origin", resultRequest.originRegionId());
+    assertEquals(4L, resultRequest.originRegionEpoch());
+    assertEquals(9L, resultRequest.targetGameInstanceId());
+    assertEquals("region-target", resultRequest.targetRegionId());
+    assertEquals(8L, resultRequest.targetRegionEpoch());
+    assertEquals(RemoteFollowupRuntimeServiceImpl.FOLLOWUP_ABANDONED, resultRequest.outcome());
     assertEquals(
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
-        captor.getValue().getPlayableStateScope());
-    assertEquals("target-world", captor.getValue().getWorldSlug());
-    assertEquals("target-realm", captor.getValue().getRealmSlug());
-    assertEquals("23", captor.getValue().getPointerVersion());
-    verify(pointerAuthority).listByRuntimeTarget(1L, 9L);
+        "{\"failureCode\":\"REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE\",\"message\":\"Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available\"}",
+        resultRequest.resultPayloadJson());
+    assertNull(resultRequest.resultCommandId());
+    assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", resultRequest.resultErrorCode());
+    assertEquals(
+        "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available",
+        resultRequest.resultMessage());
   }
 
   static Stream<List<GameplayAdmissionPointerSnapshot>> temporarilyUnavailableTargetPointers() {

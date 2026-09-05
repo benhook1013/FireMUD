@@ -95,6 +95,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                           "onCommand",
                           "v1",
                           scope.scriptPatchVersion(),
+                          scope.scriptPinEpoch(),
+                          scope.scriptPinControlPlaneRequestId(),
                           command.getCommandId(),
                           false,
                           TriggerMode.TRIGGER_MODE_NORMAL,
@@ -312,6 +314,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
                     eventType,
                     "v1",
                     scope.scriptPatchVersion(),
+                    scope.scriptPinEpoch(),
+                    scope.scriptPinControlPlaneRequestId(),
                     scriptEventId,
                     false,
                     TriggerMode.TRIGGER_MODE_NORMAL,
@@ -373,15 +377,19 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     if (gameInstanceId <= 0 || !StringUtils.hasText(entityId)) {
       return null;
     }
-    String scriptPatchVersion =
-        gameInstanceRepository
-            .findById(gameInstanceId)
-            .map(GameInstance::getScriptPatchVersion)
-            .filter(StringUtils::hasText)
-            .orElse("");
-    if (scriptPatchVersion.isBlank()) {
+    GameInstance instance = gameInstanceRepository.findById(gameInstanceId).orElse(null);
+    String scriptPatchVersion = instance == null ? "" : instance.getScriptPatchVersion();
+    long scriptPinEpoch =
+        instance == null || instance.getScriptPinEpoch() == null
+            ? 0L
+            : instance.getScriptPinEpoch();
+    String scriptPinControlPlaneRequestId =
+        instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
+    if (!StringUtils.hasText(scriptPatchVersion)
+        || scriptPinEpoch <= 0L
+        || !StringUtils.hasText(scriptPinControlPlaneRequestId)) {
       LOG.debug(
-          "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
+          "Skipping script event publish because the complete script pin tuple is unavailable tenantId={} gameInstanceId={} characterId={}",
           tenantId,
           gameInstanceId,
           entityId);
@@ -415,6 +423,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         entityId,
         playableStateScope,
         scriptPatchVersion,
+        scriptPinEpoch,
+        scriptPinControlPlaneRequestId,
         resolveRoutingBundle(context, command));
   }
 
@@ -558,6 +568,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       String entityId,
       PlayableStateScope playableStateScope,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       TriggerScriptEventRequestFactory.RoutingBundle routingBundle) {}
 
   private record PublishedRegionScope(String regionId, long regionEpoch) {}
