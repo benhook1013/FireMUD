@@ -211,7 +211,7 @@ public class ScriptEventIngressAuditRepository {
     returningFields.add(INSERTED_ROW);
     boolean instanceScoped = entity.getGameInstanceId() != null;
     Field<?>[] conflictFields =
-        instanceScoped ? runtimeConflictFields(pinned, pinned) : onLoadConflictFields();
+        instanceScoped ? runtimeConflictFields(pinned) : onLoadConflictFields();
     Condition conflictPredicate =
         instanceScoped
             ? SCRIPT_EVENT_INGRESS_AUDIT
@@ -285,8 +285,7 @@ public class ScriptEventIngressAuditRepository {
     return fields;
   }
 
-  private static Field<?>[] runtimeConflictFields(
-      boolean includeScriptPinEpoch, boolean includeScriptPinControlPlaneRequestId) {
+  private static Field<?>[] runtimeConflictFields(boolean pinned) {
     List<Field<?>> fields =
         new ArrayList<>(
             List.of(
@@ -299,10 +298,8 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE,
                 SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION,
                 SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
-    if (includeScriptPinEpoch) {
+    if (pinned) {
       fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
-    }
-    if (includeScriptPinControlPlaneRequestId) {
       fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID);
