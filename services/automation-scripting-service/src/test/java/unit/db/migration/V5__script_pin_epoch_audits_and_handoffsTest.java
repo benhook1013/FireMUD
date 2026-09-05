@@ -35,7 +35,6 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
-            "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit",
             ") WHERE script_pin_epoch IS NULL;",
@@ -65,8 +64,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeEnd).isGreaterThan(runtimeStart);
     assertThat(migration.substring(runtimeStart, runtimeEnd))
-        .contains(
-            "playable_state_scope", "script_pin_epoch", "script_pin_control_plane_request_id");
+        .contains("playable_state_scope", "script_pin_epoch")
+        .doesNotContain("script_pin_control_plane_request_id");
     assertThat(migration)
         .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 
@@ -124,6 +123,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(ingressTupleEnd).isGreaterThan(ingressTupleStart);
     assertThat(migration.substring(ingressTupleStart, ingressTupleEnd))
         .contains(
+            "script_pin_epoch IS NULL",
+            "game_instance_id IS NULL",
             "script_pin_epoch > 0",
             "game_instance_id IS NOT NULL",
             "script_pin_control_plane_request_id");
@@ -137,6 +138,15 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "script_pin_epoch > 0",
             "game_instance_id IS NOT NULL",
             "script_pin_control_plane_request_id");
+
+    int auditPinnedStart =
+        migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON");
+    int auditPinnedEnd = migration.indexOf(") WHERE", auditPinnedStart);
+    assertThat(auditPinnedStart).isGreaterThanOrEqualTo(0);
+    assertThat(auditPinnedEnd).isGreaterThan(auditPinnedStart);
+    assertThat(migration.substring(auditPinnedStart, auditPinnedEnd))
+        .contains("script_pin_epoch", "script_event_id", "dry_run")
+        .doesNotContain("script_pin_control_plane_request_id");
 
     int onLoadStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");

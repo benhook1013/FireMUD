@@ -25,7 +25,6 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
-            "script_pin_control_plane_request_id,",
             "WHERE script_pin_epoch > 0",
             "CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned",
             "WHERE script_pin_epoch = 0",
@@ -64,6 +63,15 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
     String unpinnedIndex = migration.substring(unpinnedStart, unpinnedEnd);
     assertThat(unpinnedIndex)
         .contains("script_event_id", "dry_run")
+        .doesNotContain("script_pin_control_plane_request_id");
+
+    int pinnedStart =
+        migration.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON");
+    int pinnedEnd = migration.indexOf(") WHERE", pinnedStart);
+    assertThat(pinnedStart).isGreaterThanOrEqualTo(0);
+    assertThat(pinnedEnd).isGreaterThan(pinnedStart);
+    assertThat(migration.substring(pinnedStart, pinnedEnd))
+        .contains("script_pin_epoch", "script_event_id", "dry_run")
         .doesNotContain("script_pin_control_plane_request_id");
   }
 }

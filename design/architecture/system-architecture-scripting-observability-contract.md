@@ -73,7 +73,7 @@ Audit records must include at least:
   - `eventType`
   - `scriptPatchVersion`
   - `scriptPinEpoch` (required for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
-  - `scriptPinControlPlaneRequestId` (required with `scriptPinEpoch` for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
+  - `scriptPinControlPlaneRequestId` (retained immutable owner/audit evidence, required with a positive `scriptPinEpoch` for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad` and explicitly unpinned epoch-zero records)
   - `scriptEventId`
   - `isDryRun` (boolean)
   - `sourceService` (derived from authenticated producer/workload identity for custom/service-specific events; the same value used in ingress dedupe and persisted unchanged in ingress and handler audit; omitted for built-in events that originate entirely within Automation & Scripting)

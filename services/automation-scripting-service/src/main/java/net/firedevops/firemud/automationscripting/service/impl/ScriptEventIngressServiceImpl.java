@@ -1498,7 +1498,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private record ValidationResult(TriggerAdmission admission, long scriptPinEpoch) {}
 
-  private record PinValidation(TriggerAdmission admission, Long scriptPinEpoch) {}
+  private record PinValidation(TriggerAdmission admission, long scriptPinEpoch) {}
 
   private record AdmissionStateValidation(
       TriggerAdmission admission, AutomationAdmissionStateService.AdmissionStateSummary state) {

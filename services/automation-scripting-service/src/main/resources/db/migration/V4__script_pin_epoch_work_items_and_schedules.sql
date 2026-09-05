@@ -36,7 +36,6 @@ CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items (
         event_schema_version,
         script_patch_version,
         script_pin_epoch,
-        script_pin_control_plane_request_id,
         script_event_id,
         dry_run
     ) WHERE script_pin_epoch > 0;

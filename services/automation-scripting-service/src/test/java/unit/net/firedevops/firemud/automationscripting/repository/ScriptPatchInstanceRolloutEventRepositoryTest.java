@@ -3,9 +3,11 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptPatchInstanceRolloutEventsRecord;
@@ -18,6 +20,7 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
 
 class ScriptPatchInstanceRolloutEventRepositoryTest {
@@ -192,5 +195,45 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
 
     assertThat(saved.getLastObservedControlPlaneRequestId()).isNull();
     assertThat(bindingsRef.get()).doesNotContain(" ");
+  }
+
+  @Test
+  void rejectsExistingIdUpdateWhenOwnerTupleChanges() {
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          updateSql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptPatchInstanceRolloutEvent changed = new ScriptPatchInstanceRolloutEvent();
+    changed.setId(9L);
+    changed.setEventId("rollout-event-1");
+    changed.setTenantId("tenant-1");
+    changed.setGameInstanceId("game-1");
+    changed.setScriptPatchVersion("patch-new");
+    changed.setScriptPinEpoch(2L);
+    changed.setLastObservedControlPlaneRequestId("owner-new");
+    changed.setRolloutStatus("ROLLED_BACK");
+    changed.setStatusReason("runtime_pin_differs_from_patch");
+
+    assertThatThrownBy(() -> repository.save(changed))
+        .isInstanceOf(OptimisticLockingFailureException.class)
+        .hasMessage("Stale write rejected for script_patch_instance_rollout_events id=9");
+    assertThat(updateSql)
+        .hasValueSatisfying(
+            sql -> {
+              int whereStart = sql.indexOf(" where ");
+              assertThat(whereStart).isGreaterThanOrEqualTo(0);
+              assertThat(sql.substring(whereStart))
+                  .contains(
+                      "row_version",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "last_observed_control_plane_request_id");
+            });
   }
 }

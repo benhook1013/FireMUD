@@ -28,7 +28,13 @@ class V7__script_pin_epoch_runtime_consumersTest {
             "script_pin_epoch = 0",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
             "script_pin_epoch > 0",
-            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
+            "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
+    String notValidMarker = "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */";
+    int firstNotValid = migration.indexOf(notValidMarker);
+    int secondNotValid = migration.indexOf(notValidMarker, firstNotValid + 1);
+    assertThat(firstNotValid).isGreaterThanOrEqualTo(0);
+    assertThat(secondNotValid).isGreaterThan(firstNotValid);
 
     int projectionConstraint =
         migration.indexOf(

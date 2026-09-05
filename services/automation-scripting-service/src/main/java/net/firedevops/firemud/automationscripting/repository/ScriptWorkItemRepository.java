@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWorkItemsRecord;
@@ -32,6 +34,8 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
+  private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
+      "script_pin_control_plane_request_id conflicts with existing identity";
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
 
@@ -448,6 +452,10 @@ public class ScriptWorkItemRepository {
       Optional<TriggerIdentityInsertResult> insertResult = insertTriggerIdentity(entity);
       if (insertResult.isPresent()) {
         TriggerIdentityInsertResult result = insertResult.orElseThrow();
+        if (!result.inserted()) {
+          requireMatchingPinOwnerEvidence(
+              normalizedRequestId, result.workItem().getScriptPinControlPlaneRequestId());
+        }
         return new IdempotentInsertResult(result.workItem(), result.inserted());
       }
       Optional<ScriptWorkItem> existing =
@@ -469,10 +477,12 @@ public class ScriptWorkItemRepository {
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
               entity.getScriptPinEpoch(),
-              normalizedRequestId,
+              entity.getScriptPinControlPlaneRequestId(),
               entity.getScriptEventId(),
               entity.isDryRun());
       if (existing.isPresent()) {
+        requireMatchingPinOwnerEvidence(
+            normalizedRequestId, existing.orElseThrow().getScriptPinControlPlaneRequestId());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -531,7 +541,6 @@ public class ScriptWorkItemRepository {
                 SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
     if (entity.getScriptPinEpoch() > 0L) {
       fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
@@ -625,9 +634,6 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch))
-        .and(
-            SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                scriptPinControlPlaneRequestId))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
   }
@@ -767,6 +773,13 @@ public class ScriptWorkItemRepository {
           "script_pin_control_plane_request_id is required for a positive script_pin_epoch");
     }
     return requestId;
+  }
+
+  private static void requireMatchingPinOwnerEvidence(
+      String requestedRequestId, String existingRequestId) {
+    if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
+      throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
+    }
   }
 
   private ScriptWorkItem toEntity(Record record) {

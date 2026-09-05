@@ -19,4 +19,4 @@ ALTER TABLE script_patch_pin_projections
             AND script_pin_epoch > 0
             AND NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;

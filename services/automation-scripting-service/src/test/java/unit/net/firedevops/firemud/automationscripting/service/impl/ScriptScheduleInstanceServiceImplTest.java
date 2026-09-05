@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -1813,6 +1812,48 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void selectedAndTruncatedTimerIdentityExcludesOwnerRequestEvidence() {
+    ScriptSchedulerProperties properties = new ScriptSchedulerProperties();
+    properties.setMaxCatchUpFiringsPerObservation(1);
+    service =
+        new ScriptScheduleInstanceServiceImpl(
+            scheduleDefinitionRepository,
+            scheduleInstanceRepository,
+            pinProjectionRepository,
+            pluginRuntimeStateRepository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            automationQueueService,
+            automationAdmissionStateService,
+            gameDesignControlPlaneClient,
+            gameSessionControlPlaneClient,
+            properties,
+            meterRegistry,
+            new ObjectMapper());
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setLastObservedControlPlaneRequestId("req-2");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isEqualTo(1);
+    verify(workItemRepository).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository).save(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
   void timerReadSnapshotTokenIncludesPatchAndPositivePinEpoch() {
     ScriptScheduleInstance patchOne =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
@@ -2932,73 +2973,37 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
-  void timerAuditLookupAllowsPositiveEpochWithoutOwnerRequestId() {
-    when(eventAuditRepository.findTimerAuditEvents(
-            eq("1"),
-            eq("game-1"),
-            eq("patch-1"),
-            eq(2L),
-            isNull(),
-            eq("npc-guard"),
-            eq("onInterval"),
-            eq(""),
-            any(),
-            any(),
-            any()))
-        .thenReturn(List.of());
-
-    assertThat(
-            service.listTimerAuditEvents(
-                "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
-        .isEmpty();
-    verify(eventAuditRepository)
-        .findTimerAuditEvents(
-            eq("1"),
-            eq("game-1"),
-            eq("patch-1"),
-            eq(2L),
-            isNull(),
-            eq("npc-guard"),
-            eq("onInterval"),
-            eq(""),
-            any(),
-            any(),
-            any());
+  void timerAuditLookupRejectsPositiveEpochWithoutOwnerRequestId() {
+    assertThatThrownBy(
+            () ->
+                service.listTimerAuditEvents(
+                    "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
+    verifyNoInteractions(eventAuditRepository);
   }
 
   @Test
-  void timerAuditLookupAllowsOwnerRequestIdWithoutEpoch() {
-    when(eventAuditRepository.findTimerAuditEvents(
-            eq("1"),
-            eq("game-1"),
-            eq("patch-1"),
-            eq(0L),
-            eq("req-1"),
-            eq("npc-guard"),
-            eq("onInterval"),
-            eq(""),
-            any(),
-            any(),
-            any()))
-        .thenReturn(List.of());
-
-    assertThat(
-            service.listTimerAuditEvents(
-                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
-        .isEmpty();
-    verify(eventAuditRepository)
-        .findTimerAuditEvents(
-            eq("1"),
-            eq("game-1"),
-            eq("patch-1"),
-            eq(0L),
-            eq("req-1"),
-            eq("npc-guard"),
-            eq("onInterval"),
-            eq(""),
-            any(),
-            any(),
-            any());
+  void timerAuditLookupRejectsOwnerRequestIdWithoutEpoch() {
+    assertThatThrownBy(
+            () ->
+                service.listTimerAuditEvents(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    0L,
+                    "req-1",
+                    "npc-guard",
+                    "onInterval",
+                    "",
+                    0L,
+                    0L,
+                    25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
+    verifyNoInteractions(eventAuditRepository);
   }
 
   @Test

@@ -114,6 +114,17 @@ public class ScriptPatchInstanceRolloutEventRepository {
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
+    String normalizedRequestId = blankToNull(entity.getLastObservedControlPlaneRequestId());
+    Condition ownerTupleMatches =
+        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS
+            .SCRIPT_PATCH_VERSION
+            .eq(entity.getScriptPatchVersion())
+            .and(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH.eq(
+                    entity.getScriptPinEpoch()))
+            .and(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID
+                    .isNotDistinctFrom(normalizedRequestId));
     int updated =
         dsl.update(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID, entity.getEventId())
@@ -125,7 +136,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
-                blankToNull(entity.getLastObservedControlPlaneRequestId()))
+                normalizedRequestId)
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -140,8 +151,8 @@ public class ScriptPatchInstanceRolloutEventRepository {
                     .ID
                     .eq(entity.getId())
                     .and(
-                        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION.eq(
-                            entity.getRowVersion())))
+                        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(ownerTupleMatches))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(

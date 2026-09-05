@@ -130,7 +130,6 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     event_schema_version,
     script_patch_version,
     script_pin_epoch,
-    script_pin_control_plane_request_id,
     script_event_id,
     dry_run,
     source_service
@@ -139,6 +138,7 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
 ALTER TABLE script_event_ingress_audit
     ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK (
         (script_pin_epoch IS NULL
+            AND game_instance_id IS NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
@@ -210,7 +210,6 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit
         event_schema_version,
         script_patch_version,
         script_pin_epoch,
-        script_pin_control_plane_request_id,
         script_event_id,
         dry_run
     ) WHERE script_pin_epoch > 0;

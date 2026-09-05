@@ -655,8 +655,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     Instant changedBefore = changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs);
     org.springframework.data.domain.PageRequest page =
         org.springframework.data.domain.PageRequest.of(0, boundedLimit);
-    boolean hasPinFilter =
-        scriptPinEpoch > 0 || !blankToEmpty(scriptPinControlPlaneRequestId).isBlank();
+    String normalizedPinRequestId = blankToEmpty(scriptPinControlPlaneRequestId);
+    boolean hasPinEpoch = scriptPinEpoch > 0;
+    boolean hasPinRequestId = !normalizedPinRequestId.isBlank();
+    if (hasPinEpoch != hasPinRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_epoch and script_pin_control_plane_request_id must be provided together");
+    }
+    boolean hasPinFilter = hasPinEpoch && hasPinRequestId;
     List<ScriptEventAudit> audits =
         !hasPinFilter
             ? eventAuditRepository.findTimerAuditEvents(
@@ -674,7 +680,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 normalizedInstance,
                 normalizedPatch,
                 scriptPinEpoch,
-                scriptPinControlPlaneRequestId,
+                normalizedPinRequestId,
                 normalizedScript,
                 normalizedEvent,
                 normalizedReason,
@@ -2235,7 +2241,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String durableIdentity() {
-      return identity(true);
+      return identity(false);
     }
 
     private String eventIdentity() {

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventAuditRecord;
@@ -29,6 +30,8 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventAuditRepository {
   private static final String SOURCE_KIND_SCHEDULE_TIMER = "SCHEDULE_TIMER";
+  private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
+      "script_pin_control_plane_request_id conflicts with existing identity";
   private static final int MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
@@ -87,9 +90,6 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(normalizedScriptPinEpoch))
-        .and(
-            SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                normalizedScriptPinControlPlaneRequestId))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
   }
@@ -212,12 +212,19 @@ public class ScriptEventAuditRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script event audit is required");
     }
-    requireCoherentPinTuple(
-        normalizedScriptPinEpoch(entity), blankToNull(entity.getScriptPinControlPlaneRequestId()));
+    Long normalizedScriptPinEpoch = normalizedScriptPinEpoch(entity);
+    String normalizedScriptPinControlPlaneRequestId =
+        blankToNull(entity.getScriptPinControlPlaneRequestId());
+    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     for (int attempt = 0; attempt < MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<HandlerIdentityInsertResult> inserted = insertHandlerIdentity(entity);
       if (inserted.isPresent()) {
         HandlerIdentityInsertResult result = inserted.orElseThrow();
+        if (!result.inserted()) {
+          requireMatchingPinOwnerEvidence(
+              normalizedScriptPinControlPlaneRequestId,
+              result.audit().getScriptPinControlPlaneRequestId());
+        }
         return new IdempotentInsertResult(result.audit(), result.inserted());
       }
       Optional<ScriptEventAudit> existing =
@@ -225,6 +232,9 @@ public class ScriptEventAuditRepository {
               .where(handlerIdentityCondition(entity))
               .fetchOptional(this::toEntity);
       if (existing.isPresent()) {
+        requireMatchingPinOwnerEvidence(
+            normalizedScriptPinControlPlaneRequestId,
+            existing.orElseThrow().getScriptPinControlPlaneRequestId());
         return new IdempotentInsertResult(existing.orElseThrow(), false);
       }
     }
@@ -282,7 +292,6 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
     if (entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L) {
       fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_AUDIT.DRY_RUN);
@@ -309,6 +318,7 @@ public class ScriptEventAuditRepository {
       Pageable pageable) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
+    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     Condition condition =
         SCRIPT_EVENT_AUDIT
             .TENANT_ID
@@ -382,6 +392,9 @@ public class ScriptEventAuditRepository {
     }
     requireCoherentPinTuple(
         normalizedScriptPinEpoch(entity), blankToNull(entity.getScriptPinControlPlaneRequestId()));
+    Long normalizedScriptPinEpoch = normalizedScriptPinEpoch(entity);
+    String normalizedScriptPinControlPlaneRequestId =
+        blankToNull(entity.getScriptPinControlPlaneRequestId());
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_AUDIT)
@@ -427,7 +440,14 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
+                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
+                    .and(
+                        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(
+                            normalizedScriptPinEpoch))
+                    .and(
+                        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                            normalizedScriptPinControlPlaneRequestId)))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -531,6 +551,13 @@ public class ScriptEventAuditRepository {
 
   private static String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
+  }
+
+  private static void requireMatchingPinOwnerEvidence(
+      String requestedRequestId, String existingRequestId) {
+    if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
+      throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
+    }
   }
 
   private static Long normalizedScriptPinEpoch(ScriptEventAudit entity) {
