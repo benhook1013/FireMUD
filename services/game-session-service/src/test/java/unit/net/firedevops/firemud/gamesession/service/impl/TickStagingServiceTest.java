@@ -66,6 +66,7 @@ class TickStagingServiceTest {
     redisTemplate = mock(RedisTemplate.class);
     listOps = mock(org.springframework.data.redis.core.ListOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     AtomicLong commandIds = new AtomicLong();
     when(gameplayCommandRepository.save(any()))
@@ -527,7 +528,8 @@ class TickStagingServiceTest {
     existingBatch.setExpectedEffectCount(1);
     existingBatch.setSelectedWorkManifestJson(
         replayManifestJson(service, List.of("S|cmd-sealed-solo|generate")));
-    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("S|cmd-sealed-solo|generate")));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -563,12 +565,13 @@ class TickStagingServiceTest {
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
-    existingBatch.setSelectedWorkManifestDigest("stale-digest");
     existingBatch.setSelectedWorkManifestJson(
         "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\","
             + "\"items\":[{\"sourceKind\":\"GAMEPLAY_RETRY\",\"sourceOrdinal\":1,"
             + "\"sourceState\":\"RETRY_QUEUED\",\"effectKey\":\"command:-\","
             + "\"commandId\":\"-\",\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
+    existingBatch.setSelectedWorkManifestDigest(
+        shortHash(service, existingBatch.getSelectedWorkManifestJson()));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -588,6 +591,7 @@ class TickStagingServiceTest {
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).leftPush(anyString(), any());
     verify(listOps, never()).rightPush(anyString(), any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
   }
@@ -605,12 +609,13 @@ class TickStagingServiceTest {
     existingBatch.setRegionEpoch(1L);
     existingBatch.setExecutorFence("fence-a");
     existingBatch.setStatus("STAGED");
-    existingBatch.setSelectedWorkManifestDigest("stale-digest");
     existingBatch.setSelectedWorkManifestJson(
         "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\","
             + "\"items\":[{\"sourceKind\":\"GAMEPLAY_RETRY\",\"sourceOrdinal\":1,"
             + "\"sourceState\":\"RETRY_QUEUED\",\"effectKey\":\"command:cmd|unsafe\","
             + "\"commandId\":\"cmd|unsafe\",\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
+    existingBatch.setSelectedWorkManifestDigest(
+        shortHash(service, existingBatch.getSelectedWorkManifestJson()));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -814,7 +819,8 @@ class TickStagingServiceTest {
     existingBatch.setStatus("STAGED");
     existingBatch.setSelectedWorkManifestJson(
         replayManifestJson(service, List.of("N|cmd-sealed-owner|look")));
-    existingBatch.setSelectedWorkManifestDigest("different-digest");
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-sealed-owner|look")));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
@@ -835,8 +841,106 @@ class TickStagingServiceTest {
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).leftPush(anyString(), any());
     verify(listOps, never()).rightPush(anyString(), any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void sealedReplayRejectsTamperedPinEvidenceEvenWhenManifestDigestIsRecomputed() {
+    GameplayCommand pendingCommand = gameplayCommand("cmd-pending-player");
+    pendingCommand.setSourceType("PLAYER");
+    GameplayCommand sealedCommand = gameplayCommand("cmd-sealed-tamper");
+    sealedCommand.setSourceType("AUTOMATION");
+    sealedCommand.setScriptPatchVersion("patch-1");
+    sealedCommand.setScriptPinEpoch(1L);
+    sealedCommand.setScriptPinControlPlaneRequestId("request-1");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending-player")))
+        .thenReturn(List.of(pendingCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-tamper")))
+        .thenReturn(List.of(sealedCommand));
+
+    String sealedManifest = replayManifestJson(service, List.of("N|cmd-sealed-tamper|look"));
+    String tamperedManifest =
+        sealedManifest.replace(
+            "\"scriptPinControlPlaneRequestId\":\"request-1\"",
+            "\"scriptPinControlPlaneRequestId\":\"request-tampered\"");
+    assertFalse(sealedManifest.equals(tamperedManifest));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-sealed-tamper");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(tamperedManifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, tamperedManifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-pending-player", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(failure.getMessage().contains("does not match gameplay command"));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void sealedReplayRejectsStoredManifestDigestTamperBeforeLoadingSealedCommands() {
+    GameplayCommand pendingCommand = gameplayCommand("cmd-pending-digest");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-pending-digest")))
+        .thenReturn(List.of(pendingCommand));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-digest-tamper");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(
+        "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\","
+            + "\"items\":[{\"sourceKind\":\"GAMEPLAY_RETRY\",\"sourceOrdinal\":1,"
+            + "\"sourceState\":\"RETRY_QUEUED\",\"effectKey\":\"command:cmd-sealed-digest\","
+            + "\"commandId\":\"cmd-sealed-digest\",\"requiresSoloTick\":false,"
+            + "\"commandDigest\":\"digest\"}]}");
+    existingBatch.setSelectedWorkManifestDigest("tampered-digest");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-pending-digest", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(failure.getMessage().contains("manifest digest does not match"));
+    verify(gameplayCommandRepository, never()).findByCommandIdIn(List.of("cmd-sealed-digest"));
+    verify(gameplayCommandRepository, never()).saveAll(any());
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
   }
 
   @Test
@@ -860,7 +964,8 @@ class TickStagingServiceTest {
 
     org.junit.jupiter.api.Assertions.assertTrue(
         initialBatch.getSelectedWorkManifestJson().contains("\"sourceOrdinal\":1"));
-    initialBatch.setSelectedWorkManifestDigest("stale-digest");
+    initialBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-1|look")));
     when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(initialBatch));
@@ -869,7 +974,7 @@ class TickStagingServiceTest {
         service.resolveReplayBatch(
             1L,
             2L,
-            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look")),
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look changed")),
             new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
 
     org.junit.jupiter.api.Assertions.assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
@@ -1058,7 +1163,8 @@ class TickStagingServiceTest {
     existingBatch.setBatchSource("FRESH_STAGE");
     existingBatch.setSelectedWorkManifestJson(
         "{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"region-a\",\"items\":[{\"sourceKind\":\"SCHEDULE_TIMER\",\"sourceOrdinal\":5000,\"sourceState\":\"SCHEDULE_DUE_CLAIMED\",\"effectKey\":\"command:cmd-1\",\"commandId\":\"cmd-1\",\"queueSourceDueTickId\":14,\"queueSourceDueAtMs\":9000,\"requiresSoloTick\":false,\"commandDigest\":\"digest\"}]}");
-    existingBatch.setSelectedWorkManifestDigest("stale-digest");
+    existingBatch.setSelectedWorkManifestDigest(
+        shortHash(service, existingBatch.getSelectedWorkManifestJson()));
     existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
     GameplayCommand command = gameplayCommand("cmd-1");
     command.setEnqueueSeq(null);
@@ -1090,6 +1196,25 @@ class TickStagingServiceTest {
 
   @Test
   void resolveReplayBatchRestoresSealedManifestAndRequeuesRedisOnlyEntries() {
+    List<String> events = new ArrayList<>();
+    service =
+        newStagingService(
+            new TransactionOperations() {
+              @Override
+              public <T> T execute(TransactionCallback<T> action) {
+                events.add("transaction-begin");
+                T result = action.doInTransaction(new SimpleTransactionStatus());
+                events.add("transaction-commit");
+                return result;
+              }
+            });
+    doAnswer(
+            invocation -> {
+              events.add("redis-reconcile");
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(any(), any(), any(Object[].class));
     List<Object> pendingRawEntries = List.of("N|cmd-1|look", "N|cmd-2|wave");
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-existing");
@@ -1117,6 +1242,7 @@ class TickStagingServiceTest {
             invocation -> {
               @SuppressWarnings("unchecked")
               List<GameplayCommand> saved = (List<GameplayCommand>) invocation.getArgument(0);
+              events.add("durable-command-status");
               saved.stream()
                   .map(TickStagingServiceTest::copyGameplayCommand)
                   .forEach(savedSnapshots::add);
@@ -1131,17 +1257,28 @@ class TickStagingServiceTest {
             1L, 2L, "STAGED"))
         .thenReturn(Optional.of(existingBatch));
 
-    TickBatch replayBatch =
-        service.resolveReplayBatch(
+    TickStagingService.ReplayResolution replayResolution =
+        service.resolveReplayBatchForTick(
             1L,
             2L,
             parseEntries(service, pendingRawEntries),
             new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+    TickBatch replayBatch = replayResolution.batch();
 
     org.junit.jupiter.api.Assertions.assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    assertEquals(
+        List.of("cmd-1"),
+        replayResolution.drainEntries().stream()
+            .map(TickQueuedCommandEnvelope::commandId)
+            .toList());
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
+    int finalTransactionCommit = events.lastIndexOf("transaction-commit");
+    assertTrue(finalTransactionCommit >= 0);
+    assertTrue(
+        events.subList(0, finalTransactionCommit).stream()
+            .noneMatch(event -> event.startsWith("redis-")));
+    assertTrue(events.indexOf("durable-command-status") < finalTransactionCommit);
+    assertTrue(events.indexOf("redis-reconcile") > finalTransactionCommit);
     org.junit.jupiter.api.Assertions.assertTrue(
         savedSnapshots.stream()
             .anyMatch(
@@ -1149,6 +1286,54 @@ class TickStagingServiceTest {
                     "cmd-2".equals(saved.getCommandId())
                         && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
                         && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())));
+  }
+
+  @Test
+  void resolveReplayBatchRetriesTheCommittedReplacementWithoutCreatingAnotherBatch() {
+    TickBatch replacement = new TickBatch();
+    replacement.setTickBatchId("tb-replacement");
+    replacement.setTenantId(1L);
+    replacement.setGameInstanceId(2L);
+    replacement.setRegionId("region-a");
+    replacement.setRegionEpoch(1L);
+    replacement.setExecutorFence("fence-a");
+    replacement.setStatus("STAGED");
+    replacement.setBatchSource("PENDING_REPLAY");
+    replacement.setRequiresSoloTick(false);
+    replacement.setCommandCount(1);
+    replacement.setExpectedEffectCount(1);
+    GameplayCommand sealedCommand = gameplayCommand("cmd-1");
+    GameplayCommand redisOnlyCommand = gameplayCommand("cmd-2");
+    redisOnlyCommand.setCommandText("wave");
+    redisOnlyCommand.setSanitizedCommandText("wave");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(sealedCommand, redisOnlyCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(sealedCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+        .thenReturn(List.of(redisOnlyCommand));
+    String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
+    replacement.setSelectedWorkManifestJson(sealedManifest);
+    replacement.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-1|look")));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(replacement));
+
+    TickStagingService.ReplayResolution resolution =
+        service.resolveReplayBatchForTick(
+            1L,
+            2L,
+            List.of(
+                new TickQueuedCommandEnvelope(false, "cmd-1", "look"),
+                new TickQueuedCommandEnvelope(false, "cmd-2", "wave")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    assertEquals("tb-replacement", resolution.batch().getTickBatchId());
+    assertTrue(resolution.replacementCommitted());
+    assertEquals("STAGED", replacement.getStatus());
+    verify(tickBatchRepository, never()).save(any());
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
   }
 
   @Test

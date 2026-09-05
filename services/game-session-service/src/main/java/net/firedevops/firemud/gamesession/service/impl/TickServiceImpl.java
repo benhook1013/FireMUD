@@ -307,6 +307,7 @@ public class TickServiceImpl implements TickService {
         TickBatch activeBatch = null;
         List<TickQueuedCommandEnvelope> activeBatchEntries = List.of();
         boolean activeBatchDurablyDrained = false;
+        boolean durableReplayDecisionCommitted = false;
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
@@ -339,19 +340,32 @@ public class TickServiceImpl implements TickService {
             requireResolvedPendingEntries(replayResult, normalizedQueueTargetId);
             List<TickQueuedCommandEnvelope> replayEntries = replayResult.entries();
             if (!replayEntries.isEmpty()) {
-              TickBatch replayBatch =
-                  tickStagingService.resolveReplayBatch(
-                      normalizedTenantId, normalizedQueueTargetId, replayEntries, ownership);
+              TickStagingService.ReplayResolution replayResolution;
+              try {
+                replayResolution =
+                    tickStagingService.resolveReplayBatchForTick(
+                        normalizedTenantId, normalizedQueueTargetId, replayEntries, ownership);
+                durableReplayDecisionCommitted = replayResolution.replacementCommitted();
+              } catch (TickStagingService.ReplayReconciliationFailure ex) {
+                replayResolution = ex.resolution();
+                activeBatch = replayResolution.batch();
+                activeBatchEntries = replayResolution.drainEntries();
+                durableReplayDecisionCommitted = replayResolution.replacementCommitted();
+                throw ex;
+              }
+              TickBatch replayBatch = replayResolution.batch();
+              List<TickQueuedCommandEnvelope> effectiveReplayEntries =
+                  replayResolution.drainEntries();
               tickBatchExecutionService.requireCurrentOwnership(replayBatch, false);
               lease.requireOwned();
               logger.info(
                   "Replaying {} executable pending commands for {}",
-                  replayEntries.size(),
+                  effectiveReplayEntries.size(),
                   normalizedQueueTargetId);
               activeBatch = replayBatch;
-              activeBatchEntries = replayEntries;
+              activeBatchEntries = effectiveReplayEntries;
               activeBatchDurablyDrained = false;
-              tickBatchExecutionService.markBatchDrained(replayBatch, replayEntries);
+              tickBatchExecutionService.markBatchDrained(replayBatch, effectiveReplayEntries);
               activeBatchDurablyDrained = true;
               lease.requireOwned();
               commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
@@ -432,36 +446,45 @@ public class TickServiceImpl implements TickService {
               "session:" + normalizedTenantId + ":" + normalizedQueueTargetId);
           if (lease.isOwned()) {
             boolean rollbackSucceeded = false;
-            try {
-              luaTimer.record(
-                  () ->
-                      executeFencedScript(
-                          rollbackScript,
-                          lease,
-                          List.of(
-                              tickQueueControlService.pendingKey(
-                                  normalizedTenantId, normalizedQueueTargetId),
-                              tickQueueControlService.queueKey(
-                                  normalizedTenantId, normalizedQueueTargetId)),
-                          "rollback"));
-              rollbackSucceeded = true;
-            } catch (RuntimeException rollbackFailure) {
-              logger.error(
-                  "Skipped Redis rollback after queue lease loss or rollback failure "
-                      + "tenantId={} gameInstanceId={}",
-                  normalizedTenantId,
-                  normalizedQueueTargetId,
-                  rollbackFailure);
-            }
-            if (rollbackSucceeded && activeBatch != null && !activeBatchDurablyDrained) {
-              tickBatchExecutionService.markBatchAbandoned(
-                  activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
-            } else if (rollbackSucceeded && activeBatchDurablyDrained) {
+            if (durableReplayDecisionCommitted) {
               logger.warn(
-                  "Durable tick drain committed before post-commit failure; preserving batch state "
+                  "Durable replay decision committed before Redis reconciliation failure; "
+                      + "preserving batch and coordination state "
                       + "for tenantId={} gameInstanceId={}",
                   normalizedTenantId,
                   normalizedQueueTargetId);
+            } else {
+              try {
+                luaTimer.record(
+                    () ->
+                        executeFencedScript(
+                            rollbackScript,
+                            lease,
+                            List.of(
+                                tickQueueControlService.pendingKey(
+                                    normalizedTenantId, normalizedQueueTargetId),
+                                tickQueueControlService.queueKey(
+                                    normalizedTenantId, normalizedQueueTargetId)),
+                            "rollback"));
+                rollbackSucceeded = true;
+              } catch (RuntimeException rollbackFailure) {
+                logger.error(
+                    "Skipped Redis rollback after queue lease loss or rollback failure "
+                        + "tenantId={} gameInstanceId={}",
+                    normalizedTenantId,
+                    normalizedQueueTargetId,
+                    rollbackFailure);
+              }
+              if (rollbackSucceeded && activeBatch != null && !activeBatchDurablyDrained) {
+                tickBatchExecutionService.markBatchAbandoned(
+                    activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
+              } else if (rollbackSucceeded && activeBatchDurablyDrained) {
+                logger.warn(
+                    "Durable tick drain committed before post-commit failure; preserving batch state "
+                        + "for tenantId={} gameInstanceId={}",
+                    normalizedTenantId,
+                    normalizedQueueTargetId);
+              }
             }
             if (rollbackSucceeded) {
               awaitReplication();

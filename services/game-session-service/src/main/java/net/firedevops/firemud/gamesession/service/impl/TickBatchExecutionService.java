@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
@@ -30,6 +32,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 final class TickBatchExecutionService {
   private static final Logger logger = LoggingUtil.getLogger(TickBatchExecutionService.class);
   private static final String REMOTE_FOLLOWUP_BATCH_SOURCE = "REMOTE_FOLLOWUP_DRAIN";
+  private static final DefaultRedisScript<Long> RESTORE_PENDING_PROJECTION_SCRIPT =
+      buildRestorePendingProjectionScript();
 
   private final MeterRegistry meterRegistry;
   private final RedisTemplate<String, Object> redisTemplate;
@@ -102,45 +106,122 @@ final class TickBatchExecutionService {
       List<TickQueuedCommandEnvelope> sealedEntries) {
     requireRestorableCommandIdentifiers(pendingEntries);
     requireRestorableCommandIdentifiers(sealedEntries);
+    List<TickQueuedCommandEnvelope> redisOnlyEntries =
+        redisOnlyEntries(pendingEntries, sealedEntries);
+    String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
+    String queueKey = tickQueueControlService.queueKey(tenantId, gameInstanceId);
+    List<Object> scriptArguments = new ArrayList<>();
+    scriptArguments.add(pendingEntries.size());
+    pendingEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
+    scriptArguments.add(sealedEntries.size());
+    sealedEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
+    scriptArguments.add(redisOnlyEntries.size());
+    redisOnlyEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
+    Long restored =
+        redisTemplate.execute(
+            RESTORE_PENDING_PROJECTION_SCRIPT,
+            List.of(pendingKey, queueKey),
+            scriptArguments.toArray());
+    if (!Long.valueOf(1L).equals(restored)) {
+      throw new IllegalStateException(
+          "Redis pending projection reconciliation did not commit for gameInstanceId="
+              + gameInstanceId);
+    }
+    if (!redisOnlyEntries.isEmpty()) {
+      recordRequeuedActions(redisOnlyEntries);
+    }
+  }
+
+  void preparePendingProjectionReconciliation(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries) {
+    requireRestorableCommandIdentifiers(pendingEntries);
+    requireRestorableCommandIdentifiers(sealedEntries);
+    List<TickQueuedCommandEnvelope> redisOnlyEntries =
+        redisOnlyEntries(pendingEntries, sealedEntries);
+    if (redisOnlyEntries.isEmpty()) {
+      return;
+    }
     Instant now = Instant.now();
+    updateGameplayCommands(
+        tenantId,
+        gameInstanceId,
+        null,
+        null,
+        redisOnlyEntries,
+        "RETRY_QUEUED",
+        "PENDING",
+        now,
+        "MANIFEST_MISMATCH",
+        "Redis pending entry was returned to queue because sealed replay manifest won",
+        false);
+  }
+
+  private List<TickQueuedCommandEnvelope> redisOnlyEntries(
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries) {
     Set<String> sealedCommandIds =
         sealedEntries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
             .collect(java.util.stream.Collectors.toSet());
-    List<TickQueuedCommandEnvelope> redisOnlyEntries =
-        pendingEntries.stream()
-            .filter(
-                entry ->
-                    entry.commandId() != null
-                        && !entry.commandId().isBlank()
-                        && !sealedCommandIds.contains(entry.commandId()))
-            .toList();
-    if (!redisOnlyEntries.isEmpty()) {
-      requeueEntries(tenantId, gameInstanceId, redisOnlyEntries);
-      updateGameplayCommands(
-          tenantId,
-          gameInstanceId,
-          null,
-          null,
-          redisOnlyEntries,
-          "RETRY_QUEUED",
-          "PENDING",
-          now,
-          "MANIFEST_MISMATCH",
-          "Redis pending entry was returned to queue because sealed replay manifest won",
-          false);
-      recordRequeuedActions(redisOnlyEntries);
-    }
-    String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
-    redisTemplate.delete(pendingKey);
-    for (TickQueuedCommandEnvelope entry : sealedEntries) {
-      redisTemplate
-          .opsForList()
-          .rightPush(
-              pendingKey,
-              tickQueueControlService.queuePayload(
-                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
-    }
+    return pendingEntries.stream()
+        .filter(
+            entry ->
+                entry.commandId() != null
+                    && !entry.commandId().isBlank()
+                    && !sealedCommandIds.contains(entry.commandId()))
+        .toList();
+  }
+
+  private String queuePayload(TickQueuedCommandEnvelope entry) {
+    return tickQueueControlService.queuePayload(
+        entry.requiresSoloTick(), entry.commandId(), entry.command());
+  }
+
+  private static DefaultRedisScript<Long> buildRestorePendingProjectionScript() {
+    DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+    script.setResultType(Long.class);
+    script.setScriptText(
+        """
+        local pending = KEYS[1]
+        local queue = KEYS[2]
+        local argumentIndex = 1
+
+        local pendingCount = tonumber(ARGV[argumentIndex])
+        argumentIndex = argumentIndex + 1
+        if not pendingCount or pendingCount < 0 then
+          return 0
+        end
+        for index = 1, pendingCount do
+          redis.call('LREM', pending, 0, ARGV[argumentIndex])
+          argumentIndex = argumentIndex + 1
+        end
+
+        local sealedCount = tonumber(ARGV[argumentIndex])
+        argumentIndex = argumentIndex + 1
+        if not sealedCount or sealedCount < 0 then
+          return 0
+        end
+        for index = 1, sealedCount do
+          redis.call('RPUSH', pending, ARGV[argumentIndex])
+          argumentIndex = argumentIndex + 1
+        end
+
+        local redisOnlyCount = tonumber(ARGV[argumentIndex])
+        argumentIndex = argumentIndex + 1
+        if not redisOnlyCount or redisOnlyCount < 0 then
+          return 0
+        end
+        for index = redisOnlyCount, 1, -1 do
+          local payload = ARGV[argumentIndex + index - 1]
+          redis.call('LREM', queue, 0, payload)
+          redis.call('LPUSH', queue, payload)
+        end
+        return 1
+        """);
+    return script;
   }
 
   void markBatchManifestMismatch(

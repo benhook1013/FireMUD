@@ -62,6 +62,7 @@ class TickBatchExecutionServiceTest {
     redisTemplate = mock(RedisTemplate.class);
     listOps = mock(ListOperations.class);
     when(redisTemplate.opsForList()).thenReturn(listOps);
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(1L);
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     AtomicLong commandIds = new AtomicLong();
     when(gameplayCommandRepository.save(any()))
@@ -850,11 +851,14 @@ class TickBatchExecutionServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
         .thenReturn(List.of(command));
 
+    service.preparePendingProjectionReconciliation(
+        1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
     service.restorePendingProjection(1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
 
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).rightPush(anyString(), any());
+    verify(listOps, never()).leftPush(anyString(), any());
     assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
     assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
     assertTrue(
@@ -864,6 +868,45 @@ class TickBatchExecutionServiceTest {
                 .counter()
                 .count()
             > 0.0);
+  }
+
+  @Test
+  void preparePendingProjectionReconciliationPersistsRedisOnlyRetryBeforeRedisMutation() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
+    GameplayCommand command = gameplayCommand("cmd-2");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+        .thenReturn(List.of(command));
+
+    service.preparePendingProjectionReconciliation(
+        1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
+
+    assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
+    verify(gameplayCommandRepository).saveAll(any());
+    verify(redisTemplate, never()).execute(any(), any(), any(Object[].class));
+  }
+
+  @Test
+  void preparePendingProjectionReconciliationLeavesRedisUntouchedWhenDurableUpdateFails() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
+    GameplayCommand command = gameplayCommand("cmd-2");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+        .thenReturn(List.of(command));
+    doThrow(new IllegalStateException("database unavailable"))
+        .when(gameplayCommandRepository)
+        .saveAll(any());
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.preparePendingProjectionReconciliation(
+                    1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
+
+    assertEquals("database unavailable", exception.getMessage());
+    verify(redisTemplate, never()).execute(any(), any(), any(Object[].class));
   }
 
   @Test
@@ -951,6 +994,26 @@ class TickBatchExecutionServiceTest {
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).leftPush(any(), any());
     verify(listOps, never()).rightPush(any(), any());
+  }
+
+  @Test
+  void restorePendingProjectionLeavesRedisUntouchedWhenAtomicReconciliationFails() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
+    when(redisTemplate.execute(any(), any(), any(Object[].class)))
+        .thenThrow(new IllegalStateException("Redis unavailable"));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.restorePendingProjection(
+                    1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
+
+    assertEquals("Redis unavailable", exception.getMessage());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
   }
 
   private static GameplayCommand gameplayCommand(String commandId) {

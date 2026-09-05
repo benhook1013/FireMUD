@@ -1921,10 +1921,80 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals(
         "MANIFEST_MISMATCH", existingBatch.getFailureCode());
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(any(), any(), any(Object[].class));
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count(), 0.001);
+  }
+
+  @Test
+  void processTickPreservesReplacementWhenFailureOccursAfterReconciliationBeforeDrain() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|look", "N|cmd-2|wave"));
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replacement-before-drain");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
+    first.setEnqueueSeq(4L);
+    net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
+    second.setCommandText("wave");
+    second.setSanitizedCommandText("wave");
+    second.setEnqueueSeq(5L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(first, second));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replacement-before-drain"))
+        .thenReturn(List.of());
+    List<net.firedevops.firemud.gamesession.entity.TickBatch> savedBatches = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch saved = invocation.getArgument(0);
+              savedBatches.add(saved);
+              return saved;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    org.mockito.Mockito.doThrow(new IllegalStateException("ownership changed"))
+        .when(tickBatchExecutionService)
+        .requireCurrentOwnership(any(), eq(false));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
+    net.firedevops.firemud.gamesession.entity.TickBatch replacement =
+        savedBatches.stream()
+            .filter(batch -> "PENDING_REPLAY".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals("STAGED", replacement.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(1, replacement.getCommandCount());
+    org.junit.jupiter.api.Assertions.assertFalse(
+        replacement.getSelectedWorkManifestJson().contains("cmd-2"));
+    verify(tickBatchExecutionService, never())
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+    verify(redisTemplate, never()).execute(eq(rollbackMarker), any(), any(Object[].class));
   }
 
   @Test
@@ -1984,9 +2054,8 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(any(), any(), any(Object[].class));
     org.junit.jupiter.api.Assertions.assertTrue(
         savedSnapshots.stream()
             .anyMatch(
@@ -1995,6 +2064,12 @@ class TickServiceImplTest {
                         && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
                         && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())
                         && "REDIS_RETRY_QUEUED".equals(saved.getQueueSourceState())));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        savedSnapshots.stream()
+            .anyMatch(
+                saved ->
+                    "cmd-2".equals(saved.getCommandId())
+                        && "DRAINED".equals(saved.getExecutionOutcome())));
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0,
         meterRegistry
