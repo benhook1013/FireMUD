@@ -152,7 +152,10 @@ class ScriptWorkItemRepositoryTest {
     repository.deleteAll(List.of(item));
 
     assertThat(sqlStatements).hasSize(3);
-    assertThat(sqlStatements.get(0)).contains("script_event_audit");
+    assertThat(sqlStatements.get(0))
+        .startsWith("update")
+        .contains("script_event_audit")
+        .contains("work_item_id");
     assertThat(sqlStatements.get(1)).contains("script_handoff_events");
     assertThat(sqlStatements.get(2)).contains("script_work_items");
   }
@@ -182,7 +185,10 @@ class ScriptWorkItemRepositoryTest {
 
     assertThat(sqlStatements).hasSize(4);
     assertThat(sqlStatements.get(0)).startsWith("select").contains("for update");
-    assertThat(sqlStatements.get(1)).contains("script_event_audit");
+    assertThat(sqlStatements.get(1))
+        .startsWith("update")
+        .contains("script_event_audit")
+        .contains("work_item_id");
     assertThat(sqlStatements.get(2)).contains("script_handoff_events");
     assertThat(sqlStatements.get(3))
         .contains("script_work_items")
@@ -219,7 +225,10 @@ class ScriptWorkItemRepositoryTest {
         .contains("order by")
         .contains("fetch next")
         .contains("for update");
-    assertThat(sqlStatements.get(1)).contains("script_event_audit");
+    assertThat(sqlStatements.get(1))
+        .startsWith("update")
+        .contains("script_event_audit")
+        .contains("work_item_id");
     assertThat(sqlStatements.get(2)).contains("script_handoff_events");
     assertThat(sqlStatements.get(3)).contains("script_work_items").contains("status");
   }

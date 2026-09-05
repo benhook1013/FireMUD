@@ -596,9 +596,9 @@ public class ScriptWorkItemRepository {
   }
 
   /**
-   * Deletes terminal work-item evidence in child-first order under the caller's transaction. Both
-   * child tables use non-cascading foreign keys so parent deletion must dispose the same retention
-   * cohort explicitly before removing the work-item row.
+   * Deletes terminal work-item evidence in FK-safe order under the caller's transaction. Handoff
+   * rows are disposed with the parent, while audit rows remain under their independent retention
+   * policy and are detached from the deleted work-item through their nullable foreign key.
    */
   private long deleteByIds(Collection<Long> ids) {
     return deleteByIds(ids, org.jooq.impl.DSL.noCondition());
@@ -608,7 +608,10 @@ public class ScriptWorkItemRepository {
     if (ids == null || ids.isEmpty()) {
       return 0L;
     }
-    dsl.deleteFrom(SCRIPT_EVENT_AUDIT).where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.in(ids)).execute();
+    dsl.update(SCRIPT_EVENT_AUDIT)
+        .set(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID, (Long) null)
+        .where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.in(ids))
+        .execute();
     dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
         .where(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.in(ids))
         .execute();
