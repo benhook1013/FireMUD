@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
@@ -153,9 +154,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch ownerLockHeld = new CountDownLatch(1);
     CountDownLatch releaseOwner = new CountDownLatch(1);
     String ownerApplicationName = "automation-claim-owner-" + System.nanoTime();
-    String reclaimApplicationName = "automation-claim-reclaim-" + System.nanoTime();
     DSLContext ownerDsl = newDsl(ownerApplicationName);
-    DSLContext reclaimDsl = newDsl(reclaimApplicationName);
+    DSLContext reclaimDsl = newDsl("automation-claim-reclaim-" + System.nanoTime());
     Future<Boolean> renewal =
         executor.submit(
             () ->
@@ -170,12 +170,22 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                     }));
     assertThat(ownerLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
+    AtomicLong reclaimBackendPid = new AtomicLong();
+    CountDownLatch reclaimStarted = new CountDownLatch(1);
     Future<Optional<ScriptEventIngressAudit>> reclaim =
         executor.submit(
             () ->
-                new ScriptEventIngressAuditRepository(reclaimDsl)
-                    .reclaimStaleInProgress(ownerClaim, STALE_BEFORE, RENEWED_AT.plusSeconds(1)));
-    awaitPostgresLockWait(reclaimApplicationName);
+                reclaimDsl.transactionResult(
+                    configuration -> {
+                      DSLContext transactionDsl = configuration.dsl();
+                      reclaimBackendPid.set(currentBackendPid(transactionDsl));
+                      reclaimStarted.countDown();
+                      return new ScriptEventIngressAuditRepository(transactionDsl)
+                          .reclaimStaleInProgress(
+                              ownerClaim, STALE_BEFORE, RENEWED_AT.plusSeconds(1));
+                    }));
+    assertThat(reclaimStarted.await(5, TimeUnit.SECONDS)).isTrue();
+    awaitPostgresLockWait(reclaimBackendPid.get());
     releaseOwner.countDown();
 
     assertThat(get(renewal)).isTrue();
@@ -207,9 +217,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     CountDownLatch parentLockHeld = new CountDownLatch(1);
     CountDownLatch releaseParent = new CountDownLatch(1);
     String lockApplicationName = "automation-retention-owner-" + System.nanoTime();
-    String cleanupApplicationName = "automation-retention-cleanup-" + System.nanoTime();
     DSLContext lockDsl = newDsl(lockApplicationName);
-    DSLContext cleanupDsl = newDsl(cleanupApplicationName);
+    DSLContext cleanupDsl = newDsl("automation-retention-cleanup-" + System.nanoTime());
     Future<Void> lock =
         executor.submit(
             () ->
@@ -227,18 +236,21 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                     }));
     assertThat(parentLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
 
+    AtomicLong cleanupBackendPid = new AtomicLong();
     CountDownLatch cleanupStarted = new CountDownLatch(1);
     Future<Long> cleanup =
         executor.submit(
-            () -> {
-              cleanupStarted.countDown();
-              return cleanupDsl.transactionResult(
-                  configuration ->
-                      new ScriptWorkItemRepository(configuration.dsl())
-                          .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()));
-            });
+            () ->
+                cleanupDsl.transactionResult(
+                    configuration -> {
+                      DSLContext transactionDsl = configuration.dsl();
+                      cleanupBackendPid.set(currentBackendPid(transactionDsl));
+                      cleanupStarted.countDown();
+                      return new ScriptWorkItemRepository(transactionDsl)
+                          .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now());
+                    }));
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
-    awaitPostgresLockWait(cleanupApplicationName);
+    awaitPostgresLockWait(cleanupBackendPid.get());
     releaseParent.countDown();
 
     assertThat(get(lock)).isNull();
@@ -299,6 +311,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     item.setScriptPatchVersion("patch-1");
     item.setScriptPinEpoch(2L);
     item.setScriptPinControlPlaneRequestId("pin-request-1");
+    item.setPluginId("");
+    item.setPluginVersionId("");
+    item.setBindingId("");
     item.setScriptEventId("event-1");
     item.setSourceService("game-session-service");
     item.setTriggerMode("EVENT");
@@ -354,6 +369,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     handoff.setCommandOrdinal(0);
     handoff.setAutomationDispatchId("dispatch-1");
     handoff.setTargetEntityId("entity-1");
+    handoff.setEmittedCommandText("");
     handoff.setHandoffOutcome("HANDED_OFF");
     handoff.setHandoffReason("accepted");
     handoff.setObservedAt(OLD);
@@ -385,20 +401,29 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     return DSL.using(dataSource, SQLDialect.POSTGRES);
   }
 
-  private void awaitPostgresLockWait(String applicationName) throws InterruptedException {
+  private static long currentBackendPid(DSLContext transactionDsl) {
+    Object value = transactionDsl.fetchValue("SELECT pg_backend_pid()");
+    if (!(value instanceof Number number)) {
+      throw new IllegalStateException("PostgreSQL backend PID was not returned");
+    }
+    return number.longValue();
+  }
+
+  private void awaitPostgresLockWait(long backendPid) throws InterruptedException {
     Instant deadline = Instant.now().plusSeconds(5);
     while (Instant.now().isBefore(deadline)) {
       Number waitingBackends =
           (Number)
               dsl.fetchValue(
                   "SELECT count(*) FROM pg_stat_activity "
-                      + "WHERE application_name = ? AND wait_event_type = 'Lock'",
-                  applicationName);
+                      + "WHERE pid = ? AND state = 'active' "
+                      + "AND cardinality(pg_blocking_pids(pid)) > 0",
+                  backendPid);
       if (waitingBackends != null && waitingBackends.longValue() > 0) {
         return;
       }
       Thread.sleep(10);
     }
-    throw new AssertionError("PostgreSQL backend did not enter a lock wait: " + applicationName);
+    throw new AssertionError("PostgreSQL backend did not enter a lock wait: " + backendPid);
   }
 }
