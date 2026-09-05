@@ -64,7 +64,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
         .thenReturn(
@@ -353,7 +356,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -382,6 +388,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(gameSessionClient).enqueueAutomationCommandIfAbsent(requestCaptor.capture());
     assertThat(requestCaptor.getValue().getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(requestCaptor.getValue().getAutomationWorkItemId()).isEqualTo("99");
+    assertThat(requestCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(requestCaptor.getValue().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(requestCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(requestCaptor.getValue().getCommand()).isEqualTo("say hello");
     assertThat(requestCaptor.getValue().getTargetEntityId()).isEqualTo("target-entity-1");
     assertThat(requestCaptor.getValue().getDueTickId()).isEqualTo(34L);
@@ -575,7 +585,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -643,7 +656,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -702,7 +718,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -835,7 +854,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .setRuntimeState(
                     GameInstanceRuntimeState.newBuilder()
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptGameplayCommandHandoffService service =
@@ -872,7 +894,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(11L))
+                        .setRegionEpoch(11L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptGameplayCommandHandoffService service =
@@ -909,7 +934,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("other-tenant")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptGameplayCommandHandoffService service =
@@ -1021,6 +1049,46 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void staleScriptPinTupleCancelsBeforeLocalEnqueue() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("7")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(3L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-2")
+                        .build())
+                .build());
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(new ScriptEventAudit()));
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED);
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+  }
+
+  @Test
   void persistsIdempotencyConflictAsBoundedHandoffReason() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
@@ -1032,7 +1100,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
         .thenReturn(
@@ -1086,7 +1157,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1146,7 +1220,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -1319,7 +1396,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-2")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1370,7 +1450,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("other-tenant")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
         .thenReturn(ScheduleRemoteFollowupResponse.newBuilder().build());
@@ -1407,7 +1490,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
         .thenReturn(
@@ -1450,6 +1536,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getTargetRegionEpoch()).isEqualTo(77L);
     assertThat(requestCaptor.getValue().getPayloadKind()).isEqualTo("enqueue_automation_command");
     assertThat(requestCaptor.getValue().getRequestedCommand()).isEqualTo("say hello");
+    assertThat(requestCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(requestCaptor.getValue().getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(requestCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());
@@ -1477,7 +1567,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
         .thenReturn(
@@ -1521,7 +1614,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1563,7 +1659,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
@@ -1645,7 +1744,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
         .thenReturn(ScheduleRemoteFollowupResponse.newBuilder().build());
@@ -1707,7 +1809,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("7")
                         .setRegionId("region-1")
-                        .setRegionEpoch(12L))
+                        .setRegionEpoch(12L)
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(2L)
+                        .setScriptPatchPinnedControlPlaneRequestId("pin-request-1"))
                 .build());
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(new ScriptEventAudit()));
@@ -1769,6 +1874,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .setGameInstanceId("7")
                 .setRegionId("region-1")
                 .setRegionEpoch(12L)
+                .setPinnedScriptPatchVersion("patch-1")
+                .setScriptPinEpoch(2L)
+                .setScriptPatchPinnedControlPlaneRequestId("pin-request-1")
                 .build())
         .build();
   }

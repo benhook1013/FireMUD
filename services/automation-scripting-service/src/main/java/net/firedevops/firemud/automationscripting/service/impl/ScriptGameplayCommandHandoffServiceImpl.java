@@ -533,6 +533,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
     } catch (RuntimeException ex) {
       // A client-side failure is indistinguishable from an unavailable owner. Do not let a
       // partial local handoff escape the durable retry/fail-closed path.
+      LOGGER.warn(
+          "Runtime owner lookup failed for tenantId={} gameInstanceId={} regionId={}",
+          workItem.getTenantId(),
+          workItem.getGameInstanceId(),
+          workItem.getRegionId(),
+          ex);
       return RuntimeRegionScopeStatus.UNAVAILABLE;
     }
     if (runtimeState == null || runtimeState.hasError()) {
@@ -551,6 +557,27 @@ public class ScriptGameplayCommandHandoffServiceImpl
     if (runtimeState.getRuntimeState().getRegionId().isBlank()
         || runtimeState.getRuntimeState().getRegionEpoch() <= 0) {
       return RuntimeRegionScopeStatus.MALFORMED;
+    }
+    // Region ownership alone is not a sufficient final script fence: the same patch can be
+    // repinned under a newer epoch. Require the exact tuple and owner request evidence captured
+    // on the durable work item before allowing either local staging or remote scheduling.
+    if (workItem.getScriptPinEpoch() <= 0
+        || normalize(workItem.getScriptPinControlPlaneRequestId()).isBlank()
+        || runtimeState.getRuntimeState().getScriptPinEpoch() <= 0
+        || normalize(runtimeState.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId())
+            .isBlank()) {
+      return RuntimeRegionScopeStatus.MALFORMED;
+    }
+    if (!runtimeState
+            .getRuntimeState()
+            .getPinnedScriptPatchVersion()
+            .equals(normalize(workItem.getScriptPatchVersion()))
+        || runtimeState.getRuntimeState().getScriptPinEpoch() != workItem.getScriptPinEpoch()
+        || !runtimeState
+            .getRuntimeState()
+            .getScriptPatchPinnedControlPlaneRequestId()
+            .equals(normalize(workItem.getScriptPinControlPlaneRequestId()))) {
+      return RuntimeRegionScopeStatus.ADVANCED;
     }
     return runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
             && runtimeState.getRuntimeState().getRegionEpoch() == workItem.getRegionEpoch()
@@ -605,6 +632,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptId(workItem.getScriptId())
         .setBindingId(normalize(workItem.getBindingId()))
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
+        .setScriptPinEpoch(workItem.getScriptPinEpoch())
+        .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
@@ -654,6 +683,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setRealmSlug(routingBundle.realmSlug())
         .setPointerVersion(routingBundle.parsedPointerVersion())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
+        .setScriptPinEpoch(workItem.getScriptPinEpoch())
+        .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setAutomationDispatchId(dispatchId)

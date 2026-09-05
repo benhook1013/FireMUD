@@ -2771,6 +2771,22 @@ class ScriptEventIngressServiceImplTest {
     existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
     existing.setAdmissionReason("admitted_handlers_resolved");
     existing.setResolvedHandlerCount(2);
+    existing.setRequestDigest(
+        ScriptEventIngressRequestDigest.compute(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setScriptId("script-1")
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("event-1")
+                .build(),
+            "v1",
+            "game-session-service"));
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
@@ -3695,11 +3711,28 @@ class ScriptEventIngressServiceImplTest {
     stale.setRowVersion(3);
     stale.setSourceState("IN_PROGRESS");
     stale.setClaimStartedAt(java.time.Instant.now().minusSeconds(60));
+    stale.setRequestDigest(
+        ScriptEventIngressRequestDigest.compute(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("stale-recovery-event")
+                .setReadSnapshotToken("snapshot-1")
+                .build(),
+            "v1",
+            "game-session-service"));
     ScriptEventIngressAudit reclaimed = new ScriptEventIngressAudit();
     reclaimed.setId(9L);
     reclaimed.setRowVersion(4);
     reclaimed.setSourceState("IN_PROGRESS");
     reclaimed.setClaimStartedAt(java.time.Instant.now());
+    reclaimed.setRequestDigest(stale.getRequestDigest());
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
         .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(stale, false));
     when(repository.reclaimStaleInProgress(Mockito.eq(stale), Mockito.any(), Mockito.any()))
@@ -3863,7 +3896,8 @@ class ScriptEventIngressServiceImplTest {
       releaseOldOwner.countDown();
       ExecutionException failure =
           assertThrows(ExecutionException.class, () -> oldOwnerResult.get(5, TimeUnit.SECONDS));
-      assertThat(failure).hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(failure).hasCauseInstanceOf(ScriptIngressInProgressException.class);
+      assertThat(failure.getCause()).hasMessage("ingress_claim_lost");
       verifyNoInteractions(quotaService, workItemRepository, eventAuditRepository);
     } finally {
       releaseOldOwner.countDown();
@@ -3952,6 +3986,21 @@ class ScriptEventIngressServiceImplTest {
         TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
     finalized.setAdmissionReason("admitted_handlers_resolved");
     finalized.setResolvedHandlerCount(2);
+    finalized.setRequestDigest(
+        ScriptEventIngressRequestDigest.compute(
+            gameplayRequestBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .setRegionEpoch(7)
+                .setEntityId("entity-1")
+                .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                .setEventType("onCommand")
+                .setScriptPatchVersion("patch-1")
+                .setScriptEventId("replay-event")
+                .build(),
+            "v1",
+            "game-session-service"));
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
         .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(finalized, false));
     ScriptEventBindingRepository bindingRepository =
@@ -3995,6 +4044,61 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
+  void changedPayloadUnderExistingEventIdentityReturnsIdempotencyConflict() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
+    existing.setId(17L);
+    existing.setSourceState("TRIGGER_ADMITTED");
+    existing.setAdmitted(true);
+    existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
+    existing.setAdmissionReason("admitted_handlers_resolved");
+    TriggerScriptEventRequest original =
+        gameplayRequestBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(7)
+            .setEntityId("entity-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEventType("onCommand")
+            .setScriptPatchVersion("patch-1")
+            .setScriptEventId("conflicting-event")
+            .build();
+    existing.setRequestDigest(
+        ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"));
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(existing, false));
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    TriggerScriptEventRequest changed =
+        original.toBuilder()
+            .setPayloadJson("{\"commandId\":\"cmd-2\",\"commandName\":\"LOOK\"}")
+            .build();
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(changed, "game-session-service");
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.reason()).isEqualTo("idempotency_conflict");
+    verify(repository, never()).save(Mockito.any());
+  }
+
+  @Test
   void postClaimFailureLeavesClaimInProgressAndDoesNotFanOut() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
@@ -4009,6 +4113,7 @@ class ScriptEventIngressServiceImplTest {
               claim.setId(8L);
               return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
             });
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))

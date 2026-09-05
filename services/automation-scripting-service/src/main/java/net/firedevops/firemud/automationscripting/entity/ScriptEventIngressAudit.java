@@ -25,6 +25,9 @@ public class ScriptEventIngressAudit {
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
   private String scriptPatchVersion;
 
+  /** SHA-256 digest of the normalized event-scope request inputs bound to this claim. */
+  private String requestDigest = "";
+
   /** Null for pre-instance tenant-readiness ingress, positive for instance-scoped events. */
   private Long scriptPinEpoch;
 

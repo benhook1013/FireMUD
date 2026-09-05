@@ -35,6 +35,11 @@ public class ScriptEventIngressAuditRepository {
     this.dsl = dsl;
   }
 
+  /**
+   * Looks up one event-scope claim. The request-ID argument is retained for call-site compatibility
+   * but intentionally is not part of the lookup identity: it is owner evidence, while the persisted
+   * request digest adjudicates changed inputs on the one claim row.
+   */
   public Optional<ScriptEventIngressAudit>
       findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
           String tenantId,
@@ -108,6 +113,7 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST, entity.getRequestDigest())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE, entity.getSourceService())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.TRIGGER_MODE, entity.getTriggerMode())
@@ -301,7 +307,6 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
     if (pinned) {
       fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN);
@@ -353,6 +358,7 @@ public class ScriptEventIngressAuditRepository {
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setRequestDigest(entity.getRequestDigest());
     record.setScriptEventId(entity.getScriptEventId());
     record.setSourceService(entity.getSourceService());
     record.setTriggerMode(entity.getTriggerMode());
@@ -399,6 +405,7 @@ public class ScriptEventIngressAuditRepository {
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
+    entity.setRequestDigest(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST));
     entity.setScriptEventId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID));
     entity.setSourceService(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE));
     entity.setTriggerMode(record.get(SCRIPT_EVENT_INGRESS_AUDIT.TRIGGER_MODE));

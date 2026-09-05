@@ -69,6 +69,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE.name();
   private static final String OUTCOME_QUOTA_DENIED =
       TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED.name();
+  private static final String REASON_IDEMPOTENCY_CONFLICT = "idempotency_conflict";
 
   /**
    * The ingress row is claimed before the admission decision exists. Keep the placeholder a valid
@@ -184,6 +185,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       return pinTupleAdmission;
     }
     String schemaVersion = schemaVersion(request);
+    String requestDigest =
+        ScriptEventIngressRequestDigest.compute(request, schemaVersion, sourceService);
     ScriptEventRegistryService.EventDefinition definition =
         eventRegistryService.getDefinition(request.getEventType(), schemaVersion).orElse(null);
 
@@ -199,6 +202,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             sourceService,
             new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, IN_PROGRESS_REASON, 0),
             IN_PROGRESS_STATE);
+    claimRequest.setRequestDigest(requestDigest);
     ScriptEventIngressAuditRepository.IdempotentInsertResult claim =
         repository.insertIfAbsentByIdentity(claimRequest);
     if (claim != null) {
@@ -209,6 +213,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       if (claim.inserted()) {
         claimRequest = claimedAudit;
       } else {
+        if (!requestDigest.equals(normalize(claimedAudit.getRequestDigest()))) {
+          return idempotencyConflict();
+        }
         if (isStaleInProgress(claimedAudit)) {
           Instant now = Instant.now();
           ScriptEventIngressAudit reclaimed =
@@ -238,6 +245,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       // the old read path for those tests and for a misconfigured test double.
       ScriptEventIngressAudit existing = findExisting(request, schemaVersion, sourceService);
       if (existing != null) {
+        if (!requestDigest.equals(normalize(existing.getRequestDigest()))) {
+          return idempotencyConflict();
+        }
         return admissionFromStoredIngress(existing);
       }
     }
@@ -274,6 +284,10 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     // save returns the fenced winner. Returning its fields makes retries converge on the durable
     // result even if the repository implementation normalizes or repairs the stored response.
     return finalized == null ? admission : admissionFromStoredIngress(finalized);
+  }
+
+  private static TriggerAdmission idempotencyConflict() {
+    return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, REASON_IDEMPOTENCY_CONFLICT, 0);
   }
 
   private ScriptEventIngressAudit buildIngressAudit(
@@ -1125,7 +1139,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
 
   private void requireCurrentClaim(ScriptEventIngressAudit claim) {
     if (claim.getId() != null && !repository.renewClaimIfCurrent(claim, Instant.now())) {
-      throw new IllegalStateException("stale script ingress claim");
+      // Lease loss is a retryable ingress outcome. Keep all effects behind this fence and let the
+      // existing gRPC boundary map the condition to UNAVAILABLE for a safe retry.
+      throw new ScriptIngressInProgressException("ingress_claim_lost");
     }
   }
 

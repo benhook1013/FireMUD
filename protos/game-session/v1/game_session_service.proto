@@ -770,6 +770,11 @@ message ScheduleRemoteFollowupRequest {
   string trigger_mode = 39;
   string read_snapshot_token = 40;
   string event_payload_json = 41;
+  // Exact source script pin evidence captured by Automation. Game Session must compare this
+  // tuple with the authoritative source owner state before accepting the follow-up; the request
+  // ID is owner evidence/correlation, not a third pin-identity component.
+  int64 script_pin_epoch = 42;
+  string script_pin_control_plane_request_id = 43;
 }
 
 message ScheduleRemoteFollowupResponse {
@@ -1295,7 +1300,13 @@ message EnqueueAutomationCommandIfAbsentRequest {
   int64 origin_source_ordinal = 21;
   int64 origin_source_due_tick_id = 22;
   int64 origin_source_due_at_ms = 23;
+  // Stable handler binding identity; field 24 is reserved by the cross-service contract.
   string binding_id = 24;
+  // Exact script pin evidence captured by Automation. The Game Session owner/admission boundary
+  // compares both fields with its authoritative current tuple before staging or replaying; a
+  // mismatched request ID is rejected owner evidence, not a distinct claim.
+  int64 script_pin_epoch = 25;
+  string script_pin_control_plane_request_id = 26;
 }
 
 message EnqueueAutomationCommandIfAbsentResponse {

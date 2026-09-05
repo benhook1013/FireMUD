@@ -123,6 +123,57 @@ class ScriptHandoffEventRepositoryTest {
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
   }
 
+  @Test
+  void preservesExistingEventWhenRetryCarriesDifferentPinOwnerTuple() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> insertSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("insert")) {
+            insertSql.set(sql);
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields()))
+            };
+          }
+          ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
+          row.setId(9L);
+          row.setEventId("event-1");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-original");
+          row.setScriptPinEpoch(2L);
+          row.setScriptPinControlPlaneRequestId("owner-original");
+          row.setHandoffOutcome("enqueued");
+          row.setHandoffReason("game_session_accepted");
+          Result<Record> result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+          Record returned = resultDsl.newRecord(SCRIPT_HANDOFF_EVENTS.fields());
+          returned.from(row);
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent retry = new ScriptHandoffEvent();
+    retry.setEventId("event-1");
+    retry.setTenantId("tenant-1");
+    retry.setGameInstanceId("game-1");
+    retry.setScriptPatchVersion("patch-new");
+    retry.setScriptPinEpoch(3L);
+    retry.setScriptPinControlPlaneRequestId("owner-new");
+    retry.setHandoffOutcome("enqueued");
+    retry.setHandoffReason("changed-input");
+
+    ScriptHandoffEvent saved = repository.save(retry);
+
+    assertThat(saved.getScriptPatchVersion()).isEqualTo("patch-original");
+    assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("owner-original");
+    assertThat(insertSql.get()).contains("script_patch_version", "script_pin_epoch");
+  }
+
   private static String conflictTarget(String sql) {
     String normalized = sql.toLowerCase(Locale.ROOT);
     int conflictStart = normalized.indexOf("on conflict");

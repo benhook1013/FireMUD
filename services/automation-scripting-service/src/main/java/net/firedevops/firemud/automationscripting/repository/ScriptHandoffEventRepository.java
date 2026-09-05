@@ -144,19 +144,39 @@ public class ScriptHandoffEventRepository {
       // event_id is the deterministic logical command identity assigned by the handoff service.
       // A retry may reach this boundary after Game Session has already accepted the command, so
       // converge the same child row instead of inserting another disposition.
-      return dsl.insertInto(SCRIPT_HANDOFF_EVENTS)
-          .set(record)
-          .onConflict(SCRIPT_HANDOFF_EVENTS.EVENT_ID)
-          .doUpdate()
-          .set(SCRIPT_HANDOFF_EVENTS.GAME_SESSION_COMMAND_ID, entity.getGameSessionCommandId())
-          .set(SCRIPT_HANDOFF_EVENTS.REMOTE_COORDINATOR_ID, entity.getRemoteCoordinatorId())
-          .set(SCRIPT_HANDOFF_EVENTS.REMOTE_FOLLOWUP_ID, entity.getRemoteFollowupId())
-          .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME, entity.getHandoffOutcome())
-          .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_REASON, entity.getHandoffReason())
-          .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, toLocalDateTime(entity.getObservedAt()))
-          .set(SCRIPT_HANDOFF_EVENTS.ROW_VERSION, SCRIPT_HANDOFF_EVENTS.ROW_VERSION.plus(1))
-          .returning()
-          .fetchOne(this::toEntity);
+      Condition ownerTupleMatches =
+          SCRIPT_HANDOFF_EVENTS
+              .SCRIPT_PATCH_VERSION
+              .eq(entity.getScriptPatchVersion())
+              .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
+              .and(
+                  SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                      entity.getScriptPinControlPlaneRequestId()));
+      ScriptHandoffEvent replay =
+          dsl.insertInto(SCRIPT_HANDOFF_EVENTS)
+              .set(record)
+              .onConflict(SCRIPT_HANDOFF_EVENTS.EVENT_ID)
+              .doUpdate()
+              .set(SCRIPT_HANDOFF_EVENTS.GAME_SESSION_COMMAND_ID, entity.getGameSessionCommandId())
+              .set(SCRIPT_HANDOFF_EVENTS.REMOTE_COORDINATOR_ID, entity.getRemoteCoordinatorId())
+              .set(SCRIPT_HANDOFF_EVENTS.REMOTE_FOLLOWUP_ID, entity.getRemoteFollowupId())
+              .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME, entity.getHandoffOutcome())
+              .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_REASON, entity.getHandoffReason())
+              .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, toLocalDateTime(entity.getObservedAt()))
+              .set(SCRIPT_HANDOFF_EVENTS.ROW_VERSION, SCRIPT_HANDOFF_EVENTS.ROW_VERSION.plus(1))
+              // event_id is the child identity. A retry carrying a different script owner tuple is
+              // conflicting input, not permission to rewrite the original handoff evidence.
+              .where(ownerTupleMatches)
+              .returning()
+              .fetchOptional(this::toEntity)
+              .orElseGet(
+                  () ->
+                      findByEventId(entity.getEventId())
+                          .orElseThrow(
+                              () ->
+                                  new IllegalStateException(
+                                      "handoff event conflict did not yield a persisted row")));
+      return replay;
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
@@ -214,6 +234,12 @@ public class ScriptHandoffEventRepository {
   private Optional<ScriptHandoffEvent> findById(Long id) {
     return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
         .where(SCRIPT_HANDOFF_EVENTS.ID.eq(id))
+        .fetchOptional(this::toEntity);
+  }
+
+  private Optional<ScriptHandoffEvent> findByEventId(String eventId) {
+    return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(SCRIPT_HANDOFF_EVENTS.EVENT_ID.eq(eventId))
         .fetchOptional(this::toEntity);
   }
 

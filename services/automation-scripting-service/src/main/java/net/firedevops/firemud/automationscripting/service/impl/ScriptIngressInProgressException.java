@@ -5,4 +5,8 @@ final class ScriptIngressInProgressException extends RuntimeException {
   ScriptIngressInProgressException() {
     super("ingress_in_progress");
   }
+
+  ScriptIngressInProgressException(String reason) {
+    super(reason);
+  }
 }
