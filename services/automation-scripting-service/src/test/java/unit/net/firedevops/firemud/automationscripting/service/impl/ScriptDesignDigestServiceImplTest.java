@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
 
 class ScriptDesignDigestServiceImplTest {
   @Mock private ScriptDefinitionRepository repository;
@@ -45,7 +47,7 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("patch-1", digest.scopeValue());
     assertEquals("script-patch:patch-1", digest.appliedCommitId());
-    assertEquals(3, digest.digestSchemaVersion());
+    assertEquals(4, digest.digestSchemaVersion());
   }
 
   @Test
@@ -73,7 +75,7 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
-    assertEquals(3, digest.digestSchemaVersion());
+    assertEquals(4, digest.digestSchemaVersion());
   }
 
   @Test
@@ -83,6 +85,47 @@ class ScriptDesignDigestServiceImplTest {
         () -> service.getDraftDesignDigestForScriptPatch("0", "patch-1"));
 
     verifyNoInteractions(repository, bindingRepository);
+  }
+
+  @Test
+  void getDraftDesignDigestIsIndependentOfJsonMapOrdering() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setDefinition("return 1");
+    ScriptEventBinding binding = new ScriptEventBinding();
+    binding.setTenantId(1L);
+    binding.setScriptPatchVersion("patch-1");
+    binding.setEventType("onCommand");
+    binding.setEventSchemaVersion("v1");
+    binding.setScriptId("script-1");
+    binding.setBindingId("binding-1");
+    binding.setTargetScopeType("ENTITY");
+    binding.setTargetScopeId("entity-1");
+    binding.setPriority(1);
+
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding));
+
+    var defaultMapperDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var sortedMapperService =
+        new ScriptDesignDigestServiceImpl(
+            repository,
+            bindingRepository,
+            new ObjectMapper()
+                .rebuild()
+                .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                .build());
+    var sortedMapperDigest = sortedMapperService.getDraftDesignDigestForScriptPatch("1", "patch-1");
+
+    assertEquals(defaultMapperDigest.contentDigest(), sortedMapperDigest.contentDigest());
+    assertEquals(4, defaultMapperDigest.digestSchemaVersion());
+    assertEquals(4, sortedMapperDigest.digestSchemaVersion());
   }
 
   @Test

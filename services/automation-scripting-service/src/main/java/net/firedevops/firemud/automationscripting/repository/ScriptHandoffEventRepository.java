@@ -10,6 +10,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptHandoffEventsRecord;
@@ -144,6 +145,7 @@ public class ScriptHandoffEventRepository {
       // event_id is the deterministic logical command identity assigned by the handoff service.
       // A retry may reach this boundary after Game Session has already accepted the command, so
       // converge the same child row instead of inserting another disposition.
+      String normalizedRequestId = blankToNull(entity.getScriptPinControlPlaneRequestId());
       Condition ownerTupleMatches =
           SCRIPT_HANDOFF_EVENTS
               .SCRIPT_PATCH_VERSION
@@ -151,8 +153,8 @@ public class ScriptHandoffEventRepository {
               .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
               .and(
                   SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                      entity.getScriptPinControlPlaneRequestId()));
-      ScriptHandoffEvent replay =
+                      normalizedRequestId));
+      Optional<ScriptHandoffEvent> replay =
           dsl.insertInto(SCRIPT_HANDOFF_EVENTS)
               .set(record)
               .onConflict(SCRIPT_HANDOFF_EVENTS.EVENT_ID)
@@ -168,15 +170,20 @@ public class ScriptHandoffEventRepository {
               // conflicting input, not permission to rewrite the original handoff evidence.
               .where(ownerTupleMatches)
               .returning()
-              .fetchOptional(this::toEntity)
-              .orElseGet(
+              .fetchOptional(this::toEntity);
+      if (replay.isPresent()) {
+        return replay.get();
+      }
+      ScriptHandoffEvent existing =
+          findByEventId(entity.getEventId())
+              .orElseThrow(
                   () ->
-                      findByEventId(entity.getEventId())
-                          .orElseThrow(
-                              () ->
-                                  new IllegalStateException(
-                                      "handoff event conflict did not yield a persisted row")));
-      return replay;
+                      new IllegalStateException(
+                          "handoff event conflict did not yield a persisted row"));
+      if (!ownerTupleMatches(existing, entity)) {
+        throw new IllegalStateException("Handoff event owner tuple conflict");
+      }
+      return existing;
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
@@ -241,6 +248,15 @@ public class ScriptHandoffEventRepository {
     return dsl.selectFrom(SCRIPT_HANDOFF_EVENTS)
         .where(SCRIPT_HANDOFF_EVENTS.EVENT_ID.eq(eventId))
         .fetchOptional(this::toEntity);
+  }
+
+  private static boolean ownerTupleMatches(
+      ScriptHandoffEvent existing, ScriptHandoffEvent incoming) {
+    return Objects.equals(existing.getScriptPatchVersion(), incoming.getScriptPatchVersion())
+        && existing.getScriptPinEpoch() == incoming.getScriptPinEpoch()
+        && Objects.equals(
+            blankToNull(existing.getScriptPinControlPlaneRequestId()),
+            blankToNull(incoming.getScriptPinControlPlaneRequestId()));
   }
 
   private void populate(ScriptHandoffEventsRecord record, ScriptHandoffEvent entity) {

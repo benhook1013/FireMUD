@@ -1965,6 +1965,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + ":"
         + candidate.regionEpoch()
         + ":"
+        + instance.getScriptPatchVersion()
+        + ":"
+        + candidate.scriptPinEpoch()
+        + ":"
         + candidate.scriptPinControlPlaneRequestId()
         + ":"
         + candidate.duePointToken()

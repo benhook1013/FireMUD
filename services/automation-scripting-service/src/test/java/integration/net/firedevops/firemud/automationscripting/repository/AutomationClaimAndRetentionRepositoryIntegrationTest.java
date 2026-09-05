@@ -46,6 +46,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private static final Instant OLD = Instant.parse("2020-01-01T00:00:00Z");
   private static final Instant STALE_BEFORE = Instant.parse("2026-08-01T00:00:30Z");
   private static final Instant RENEWED_AT = Instant.parse("2026-08-01T00:01:00Z");
+  private static final String REQUEST_DIGEST = "a".repeat(64);
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
@@ -398,6 +399,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     claim.setScriptPinEpoch(2L);
     claim.setScriptPinControlPlaneRequestId("pin-request-1");
     claim.setScriptEventId("event-1");
+    claim.setRequestDigest(REQUEST_DIGEST);
     claim.setSourceService("game-session-service");
     claim.setTriggerMode("EVENT");
     claim.setSourceState("IN_PROGRESS");
@@ -415,6 +417,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     claim.setEventSchemaVersion("v1");
     claim.setScriptPatchVersion("patch-1");
     claim.setScriptEventId("on-load-event-1");
+    claim.setRequestDigest(REQUEST_DIGEST);
     claim.setSourceService("automation-scripting-service");
     claim.setTriggerMode("ON_LOAD");
     claim.setSourceState("IN_PROGRESS");

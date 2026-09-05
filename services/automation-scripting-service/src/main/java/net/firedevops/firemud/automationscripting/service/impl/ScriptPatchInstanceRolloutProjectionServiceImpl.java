@@ -405,7 +405,8 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
 
   private static void requireCompleteTuple(long scriptPinEpoch, String requestId) {
     if ((scriptPinEpoch > 0) != !normalize(requestId).isBlank()) {
-      throw new IllegalArgumentException("script_pin_control_plane_request_id_required");
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
   }
 

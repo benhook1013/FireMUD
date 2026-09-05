@@ -24,7 +24,7 @@ public class PublishGateServiceImpl implements PublishGateService {
           PublishParticipantKey.WORLD_MANAGEMENT.name(), 2,
           PublishParticipantKey.ENTITY_MANAGEMENT.name(), 1,
           PublishParticipantKey.GAME_LOGIC.name(), 1,
-          PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 3,
+          PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 4,
           PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE.name(), 1);
   private static final List<PublishParticipantKey> FULL_VERSION_PARTICIPANTS =
       List.of(

@@ -41,7 +41,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
 
     assertThatThrownBy(() -> service.getProjection("1", "game-1", "patch-1", 2L, null))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     assertThatThrownBy(
             () ->
                 service.listProjections(
@@ -55,7 +56,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
                     0L,
                     0L))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     assertThatThrownBy(
             () ->
                 service.listEvents(
@@ -70,7 +72,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
                     0L,
                     25))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     verifyNoInteractions(repository, eventRepository, workItemRepository, pinProjectionService);
   }
 
@@ -93,7 +96,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
 
     assertThatThrownBy(() -> service.getProjection("1", "game-1", "patch-1", 0L, "request-1"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     assertThatThrownBy(
             () ->
                 service.listProjections(
@@ -107,7 +111,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
                     0L,
                     0L))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     assertThatThrownBy(
             () ->
                 service.listEvents(
@@ -122,7 +127,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
                     0L,
                     25))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_control_plane_request_id_required");
+        .hasMessage(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     verifyNoInteractions(repository, eventRepository, workItemRepository, pinProjectionService);
   }
 
@@ -218,9 +224,6 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     existing.setStatusReason("runtime_pin_matches_patch");
     existing.setLastChangedAt(Instant.ofEpochMilli(100));
     existing.setProjectionRefreshedAt(Instant.ofEpochMilli(100));
-    when(workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-            "1", "game-1", "patch-1"))
-        .thenReturn(List.of());
     when(pinProjectionService.getPinConvergence("1", "game-1"))
         .thenReturn(
             new ScriptPatchPinProjectionService.PinConvergenceLookup(Optional.empty(), "", ""));
