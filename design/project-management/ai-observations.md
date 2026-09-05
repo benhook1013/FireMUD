@@ -144,3 +144,8 @@ Entry format:
   - Context: splitting a PostgreSQL `CHECK` installation from its later validation exposed that jOOQ's DDL parser rejects both `NOT VALID` and `VALIDATE CONSTRAINT` even though Flyway and PostgreSQL require those forms for the production-safe migration.
   - Observation: weakening the production migration to satisfy code generation would restore a blocking table scan; the repository already supports narrowly scoped jOOQ ignore markers for PostgreSQL-only syntax.
   - Expected pattern: keep the PostgreSQL/Flyway statement authoritative, wrap only the unsupported syntax or statement in the established jOOQ ignore markers, and prove both the production SQL and generation path with focused migration tests plus `generateJooq`-dependent validation.
+
+- `2026-09-06`: Invoke the canonical Gradle lock helper through Bash when its mode is not executable
+  - Context: the Game Session baseline convergence check found `dev-tools/validation/run-locked-gradle.sh` present but not executable in the WSL worktree.
+  - Observation: direct invocation fails before validation with `Permission denied`, while `bash dev-tools/validation/run-locked-gradle.sh ...` preserves the helper's repository lock and command behavior.
+  - Expected pattern: use the Bash invocation when the checkout does not preserve the executable bit; do not replace the canonical helper with an ad hoc lock command.

@@ -28,7 +28,7 @@ This document is the current target authority for SQL persistence, schema owners
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.
-- SQL migrations are the default and Java-based callbacks are avoided. The active Game Session `V8__remote_followup_target_instance_effect_identity` Flyway Java migration is the explicitly documented nontransactional exception; it remains an implementation/proof gap requiring focused exception and deployment proof, as recorded in the [shared runtime and persistence tracker](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#packet-5-tail-and-packet-6-p0-status-and-proof-gaps). It must not be generalized into a preferred migration path.
+- SQL migrations are the default and Java-based callbacks are avoided. Game Session now expresses its complete fresh-schema contract in one `V1__baseline.sql`; the former nontransactional Java index migrations were folded into that baseline after the accepted no-retained-data boundary and are no longer active migration exceptions.
 
 ## Per-Service Organization
 
@@ -174,19 +174,13 @@ The following examples illustrate how to apply the version-aware guidelines to c
 - For service-scoped local rebuilds, use [`dev-tools/restores/reset-service-db.sh`](../../dev-tools/restores/reset-service-db.sh) instead of `flywayClean`. It drops only the tables created by that service's migrations plus that service's Flyway history table, and saga-backed services also include the shared saga tables in that destructive scope before rerunning `flywayMigrate` for the same service. The script waits for local Postgres readiness, exports standard `FLYWAY_*` connection variables, and preserves the owning service schema plus Flyway history table (`SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, `FLYWAY_TABLE`) before rerunning migrations. Pass `--dry-run` first if you want to inspect the destructive scope.
 - Run `./gradlew :service:flywayValidate` to verify migrations before committing.
 - The CI pipeline runs `flywayValidate` for all services to catch migration issues early.
-- Runtime-target uniqueness migrations must preflight existing durable duplicates and fail closed
-  when any are found; they must not choose a row, delete duplicates, or silently rewrite ownership.
-  The operator must investigate and reconcile the duplicate `(tenant_id, game_instance_id)` rows
-  under the owning service's data-recovery procedure, verify one canonical row per runtime target,
-  and rerun the migration. A concurrently created or invalid index may be retried only after the
-  same preflight passes; an invalid index is not evidence that the uniqueness contract is safe.
-- The Game Session V9 runtime-target uniqueness migration bounds PostgreSQL lock waits for its
-  concurrent index create/drop to 30 seconds and resets the connection `lock_timeout` in a
-  `finally` path. A timeout or other DDL failure aborts startup and leaves Flyway history for
-  the operator to inspect; do not mark it repaired or drop an index automatically. After resolving
-  the blocking session and confirming the duplicate preflight and index state, use the owning
-  service's Flyway `repair` only when its schema-history metadata actually records a failed entry,
-  then rerun the migration. An invalid or partial index is never treated as proof of uniqueness.
+- Runtime-target uniqueness migrations against retained data must preflight existing durable
+  duplicates and fail closed when any are found; they must not choose a row, delete duplicates, or
+  silently rewrite ownership. Game Session's accepted destructive pre-v1 reset has no retained-data
+  migration path: its canonical V1 baseline creates the `(tenant_id, game_instance_id)` uniqueness
+  index directly on an empty schema. A future retained-data change to that index must restore the
+  duplicate preflight, bounded-lock, retry, and operator-recovery requirements appropriate to an
+  online migration rather than treating the fresh-schema baseline as precedent for in-place DDL.
 - See [DEVELOPER_SETUP.md](../../DEVELOPER_SETUP.md) for the environment variables needed to connect to your local PostgreSQL instance. Copy the `FIREMUD_POSTGRES_*` values from `.env.sample` into `.env` so Flyway can connect locally.
 - During deployment GitHub Actions builds the Docker image, pushes it, and Kubernetes restarts the service. This step is fully automated.
 - On startup the container executes Flyway against its database schema before the Spring application fully starts.

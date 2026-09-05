@@ -34,7 +34,8 @@ CREATE TABLE game_instances (
     version_state_epoch bigint,
     generation_config_revision character varying(128),
     remap_set_id character varying(64),
-    script_patch_pinned_control_plane_request_id character varying(128)
+    script_patch_pinned_control_plane_request_id character varying(128),
+    script_pin_epoch bigint
 );
 
 CREATE SEQUENCE game_instances_id_seq
@@ -169,7 +170,13 @@ CREATE TABLE gameplay_command (
     queue_source_due_tick_id bigint,
     queue_source_due_at_ms bigint,
     remote_coordinator_id character varying(128),
-    remote_followup_id character varying(128)
+    remote_followup_id character varying(128),
+    execution_hook character varying(128),
+    admitted_release_bundle_id bigint,
+    admitted_version_id bigint,
+    declared_effects_json text,
+    script_pin_epoch bigint,
+    script_pin_control_plane_request_id character varying(128)
 );
 
 CREATE SEQUENCE gameplay_command_enqueue_seq_seq
@@ -189,6 +196,103 @@ CREATE SEQUENCE gameplay_command_id_seq
     CACHE 1;
 
 ALTER SEQUENCE gameplay_command_id_seq OWNED BY gameplay_command.id;
+
+CREATE SEQUENCE resume_transcript_entry_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+CREATE TABLE resume_transcript_entry (
+    id bigint NOT NULL DEFAULT nextval('resume_transcript_entry_id_seq'),
+    tenant_id bigint NOT NULL,
+    game_instance_id bigint NOT NULL,
+    character_id bigint NOT NULL,
+    protocol_text text NOT NULL,
+    line_count integer NOT NULL,
+    byte_size integer NOT NULL,
+    appended_at timestamp with time zone NOT NULL,
+    output_kind character varying(64),
+    replay_policy character varying(64),
+    brief_render_policy character varying(64),
+    payload_type character varying(128),
+    payload_json text,
+    expires_at timestamp with time zone,
+    CONSTRAINT resume_transcript_entry_pkey PRIMARY KEY (id)
+);
+
+ALTER SEQUENCE resume_transcript_entry_id_seq OWNED BY resume_transcript_entry.id;
+
+CREATE SEQUENCE player_command_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+CREATE TABLE player_command_history (
+    id bigint NOT NULL DEFAULT nextval('player_command_history_id_seq'),
+    tenant_id bigint NOT NULL,
+    game_instance_id bigint NOT NULL,
+    character_id bigint NOT NULL,
+    command_text text NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    CONSTRAINT player_command_history_pkey PRIMARY KEY (id)
+);
+
+ALTER SEQUENCE player_command_history_id_seq OWNED BY player_command_history.id;
+
+CREATE TABLE player_command_history_retention_sweep_state (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    cursor_tenant_id BIGINT,
+    cursor_game_instance_id BIGINT,
+    cursor_character_id BIGINT,
+    batches_since_wrap INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO player_command_history_retention_sweep_state (singleton) VALUES (TRUE);
+
+CREATE TABLE script_pin_operation (
+    tenant_id bigint NOT NULL,
+    game_instance_id bigint NOT NULL,
+    control_plane_request_id character varying(128) NOT NULL,
+    operation_kind character varying(32) NOT NULL,
+    target_script_patch_version character varying(100) NOT NULL,
+    expected_pin_kind character varying(32) NOT NULL,
+    expected_script_pin_epoch bigint,
+    actor_principal character varying(200) NOT NULL,
+    reason character varying(500) NOT NULL,
+    mutation_digest character varying(64) NOT NULL,
+    outcome character varying(32) NOT NULL,
+    error_code character varying(128),
+    previous_script_patch_version character varying(100),
+    previous_script_pin_epoch bigint,
+    resulting_script_patch_version character varying(100),
+    resulting_script_pin_epoch bigint,
+    committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id),
+    CHECK (
+        (previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL)
+        OR
+        (previous_script_patch_version IS NOT NULL AND previous_script_pin_epoch IS NOT NULL AND previous_script_pin_epoch > 0)
+    ),
+    CHECK (
+        (resulting_script_patch_version IS NULL AND resulting_script_pin_epoch IS NULL)
+        OR
+        (resulting_script_patch_version IS NOT NULL AND resulting_script_pin_epoch IS NOT NULL AND resulting_script_pin_epoch > 0)
+    ),
+    CHECK (
+        (expected_pin_kind = 'EXPECT_UNPINNED' AND expected_script_pin_epoch IS NULL)
+        OR
+        (expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0)
+        OR
+        (expected_pin_kind = 'UNCONDITIONAL' AND expected_script_pin_epoch IS NULL)
+    )
+);
+
+CREATE INDEX idx_script_pin_operation_instance
+    ON script_pin_operation (tenant_id, game_instance_id, committed_at, control_plane_request_id);
 
 CREATE TABLE prepared_version_upgrade (
     id bigint NOT NULL,
@@ -476,6 +580,23 @@ ALTER TABLE feature_flag
 ALTER TABLE game_instances
     ADD CONSTRAINT game_instances_pkey PRIMARY KEY (id);
 
+ALTER TABLE game_instances
+    ADD CONSTRAINT game_instances_script_pin_tuple_coherent
+    CHECK (
+        (
+            NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL
+            AND script_pin_epoch IS NULL
+            AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
+        )
+        OR
+        (
+            NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL
+            AND script_pin_epoch IS NOT NULL
+            AND script_pin_epoch > 0
+            AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NOT NULL
+        )
+    );
+
 ALTER TABLE game_manifest
     ADD CONSTRAINT game_manifest_pkey PRIMARY KEY (id);
 
@@ -490,6 +611,46 @@ ALTER TABLE gameplay_command
 
 ALTER TABLE gameplay_command
     ADD CONSTRAINT gameplay_command_pkey PRIMARY KEY (id);
+
+ALTER TABLE gameplay_command
+    ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent
+    CHECK (
+        (
+            upper(btrim(source_type)) = 'PLAYER'
+            AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL
+            AND script_pin_epoch IS NULL
+            AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
+        )
+        OR
+        (
+            upper(btrim(source_type)) = 'AUTOMATION'
+            AND NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL
+            AND (
+                (
+                    NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL
+                    AND script_pin_epoch IS NULL
+                    AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
+                )
+                OR
+                (
+                    NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL
+                    AND script_pin_epoch IS NOT NULL
+                    AND script_pin_epoch > 0
+                    AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NOT NULL
+                )
+            )
+        )
+        OR
+        (
+            upper(btrim(source_type)) <> 'PLAYER'
+            AND NOT (
+                upper(btrim(source_type)) = 'AUTOMATION'
+                AND NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL
+            )
+            AND script_pin_epoch IS NULL
+            AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
+        )
+    );
 
 ALTER TABLE prepared_version_upgrade
     ADD CONSTRAINT prepared_version_upgrade_pkey PRIMARY KEY (id);
@@ -556,6 +717,16 @@ CREATE INDEX idx_gameplay_command_tenant_instance_enqueue_seq ON gameplay_comman
 
 CREATE INDEX idx_gameplay_command_tenant_instance_status ON gameplay_command USING btree (tenant_id, game_instance_id, execution_outcome);
 
+CREATE INDEX idx_resume_transcript_entry_scope_order
+    ON resume_transcript_entry USING btree (tenant_id, game_instance_id, character_id, appended_at, id);
+
+CREATE INDEX idx_resume_transcript_entry_expiry
+    ON resume_transcript_entry USING btree (expires_at)
+    WHERE expires_at IS NOT NULL;
+
+CREATE INDEX idx_player_command_history_scope_order
+    ON player_command_history USING btree (tenant_id, game_instance_id, character_id, accepted_at, id);
+
 CREATE INDEX idx_prepared_version_upgrade_source_instance ON prepared_version_upgrade USING btree (tenant_id, source_game_instance_id, target_version_id);
 
 CREATE UNIQUE INDEX idx_remote_command_coordinator_command_id ON remote_command_coordinator USING btree (tenant_id, command_id);
@@ -600,7 +771,8 @@ CREATE INDEX idx_remote_followup_result_scope_observed ON remote_followup_result
 
 CREATE INDEX idx_remote_followup_routing_due ON remote_followup USING btree (tenant_id, script_patch_version, plugin_version_id, playable_state_scope, world_slug, realm_slug, pointer_version, payload_kind, origin_source_kind, due_tick_id);
 
-CREATE UNIQUE INDEX idx_remote_followup_target_region_epoch_effect ON remote_followup USING btree (tenant_id, target_region_id, target_region_epoch, effect_key);
+CREATE UNIQUE INDEX idx_remote_followup_target_instance_region_epoch_effect
+    ON remote_followup USING btree (tenant_id, target_game_instance_id, target_region_id, target_region_epoch, effect_key);
 
 CREATE INDEX idx_remote_followup_target_region_status_due ON remote_followup USING btree (tenant_id, target_region_id, status, due_tick_id);
 
@@ -627,5 +799,8 @@ CREATE INDEX idx_tick_effect_tick_batch_id ON tick_effect USING btree (tick_batc
 CREATE UNIQUE INDEX uq_game_instances_running_tenant_owner ON game_instances USING btree (tenant_id, owner_account_id) WHERE ((status)::text = 'RUNNING'::text);
 
 CREATE UNIQUE INDEX uq_gameplay_admission_pointer_world_realm ON gameplay_admission_pointer USING btree (world_slug, realm_slug);
+
+CREATE UNIQUE INDEX uq_gameplay_admission_pointer_runtime_target
+    ON gameplay_admission_pointer USING btree (tenant_id, game_instance_id);
 
 CREATE UNIQUE INDEX uq_prepared_version_upgrade_request ON prepared_version_upgrade USING btree (tenant_id, control_plane_request_id);
