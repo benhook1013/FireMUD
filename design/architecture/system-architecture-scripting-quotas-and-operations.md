@@ -10,7 +10,7 @@ Routing note:
 - Use the [DSL and lifecycle reference](./system-architecture-scripting-dsl-reference-and-lifecycle.md) for DSL/lifecycle semantics.
 - Use [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md) for execution-state behavior.
 
-Exact script selection is the Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple; this document owns only quota/capacity consequences when that tuple is unavailable or fenced. Routine rollback does not pause gameplay; see [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) and [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Plugin artifact/lifecycle distinctions remain in [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
+Exact script selection is the Game Session `(scriptPatchVersion, scriptPinEpoch)` execution tuple; `scriptPinControlPlaneRequestId` is mandatory paired owner evidence and correlation, but is not an execution-identity component. This document owns only quota/capacity consequences when that tuple is unavailable or fenced. Routine rollback does not pause gameplay; see [Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) and [ADR 0106](./decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). Plugin artifact/lifecycle distinctions remain in [DSL Reference & Lifecycle](./system-architecture-scripting-dsl-reference-and-lifecycle.md#one-dsl-distinct-artifact-and-lifecycle-roles).
 
 ## Target-State Quota and Budget Contract
 
@@ -260,6 +260,7 @@ The **target-state** canonical `script_event_audit` schema includes:
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
   - `scriptPatchVersion` – for instance-scoped gameplay/runtime rows, the logical script patch identifier supplied by Game Session and used to resolve the runtime script set; tenant-readiness `onLoad` uses the candidate patch from Automation's tenant-readiness lifecycle.
   - `scriptPinEpoch` – exact Game Session selection epoch paired with `scriptPatchVersion` for instance-scoped gameplay/runtime rows; version-only observations cannot authorize admission or execution. It is absent for tenant-readiness `onLoad`, whose identity remains tenant/script/event-schema/patch/event-type/`isDryRun`/`scriptEventId`.
+  - `scriptPinControlPlaneRequestId` – mandatory nonblank owner evidence paired with `scriptPatchVersion` and positive `scriptPinEpoch` for instance-scoped gameplay/runtime and scheduler triggers. It must be exact-compared through quota admission, durable work, retry, replay, and recovery; it may participate in durable claim/conflict keys but is not execution identity. It is absent for tenant-readiness `onLoad` and pre-instance/unpinned branches.
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
   - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
   - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.

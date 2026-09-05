@@ -76,7 +76,13 @@ class ScriptHandoffEventRepositoryTest {
         .hasValueSatisfying(
             sql ->
                 assertThat(sql)
-                    .contains("on conflict", "event_id", "do update", "handoff_outcome")
+                    .contains(
+                        "on conflict",
+                        "event_id",
+                        "script_pin_epoch",
+                        "script_pin_control_plane_request_id",
+                        "do update",
+                        "handoff_outcome")
                     .doesNotContain("uuid"));
   }
 }
