@@ -384,7 +384,7 @@ class ScriptWorkItemRepositoryTest {
     ScriptWorkItemRepository repository =
         new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThat(repository.deleteOldestByStatus("DEAD_LETTERED", 1)).isEqualTo(1);
+    assertThat(repository.deleteOldestByStatus("HANDED_OFF", 1)).isEqualTo(1);
 
     assertThat(sqlStatements).hasSize(4);
     assertThat(sqlStatements.get(0))
@@ -399,6 +399,16 @@ class ScriptWorkItemRepositoryTest {
         .contains("work_item_id");
     assertThat(sqlStatements.get(2)).contains("script_handoff_events");
     assertThat(sqlStatements.get(3)).contains("script_work_items").contains("status");
+  }
+
+  @Test
+  void deadLetterCleanupFailsClosedUntilRecoveryAwareRetentionEvidenceExists() {
+    DSLContext dsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptWorkItemRepository repository = new ScriptWorkItemRepository(dsl);
+
+    assertThat(repository.deleteByStatusAndUpdatedAtBefore("DEAD_LETTERED", Instant.EPOCH))
+        .isZero();
+    assertThat(repository.deleteOldestByStatus("DEAD_LETTERED", 1)).isZero();
   }
 
   @Test

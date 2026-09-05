@@ -149,3 +149,8 @@ Entry format:
   - Context: Automation exact-pin V5 passed fresh-schema migration checks while retained instance ingress rows would have received a null epoch, and its duplicate normalization deleted durable audit evidence.
   - Observation: fresh-database proof does not exercise legacy nullable uniqueness behavior or retained-row constraint compatibility; deterministic row selection is not safe reconciliation for durable identity evidence.
   - Expected pattern: for identity migrations, migrate an isolated database only through the prior version, seed every retained nullable identity branch, then prove the forward migration either preserves valid rows or fails closed on duplicates without deletion, following [Database Migrations](../architecture/system-architecture-database-migrations.md#cicd-execution).
+
+- `2026-09-06`: Retention limits cannot substitute for recoverability evidence
+  - Context: hosted review found that automatic dead-letter age and row-cap cleanup could delete a parent and its handoff ledger while the live schema lacked recovery generations, claim state, expected-child evidence, and independent retention horizons.
+  - Observation: terminal status plus age or capacity is not enough to prove that a recovery bundle may be deleted; a partial child-outcome check still cannot prove absent children, completed resumed dispatch, or expired evidence obligations.
+  - Expected pattern: apply one recovery-aware whole-bundle predicate to every automatic and explicit cleanup selector, and fail closed without deleting dead-letter evidence until the schema can prove that predicate.

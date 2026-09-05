@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -9,6 +10,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
+import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -66,6 +68,33 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     pinnedSaved.setStatusReason("updated-positive");
     ScriptPatchInstanceRolloutEvent pinnedUpdated = repository.save(pinnedSaved);
     assertThat(rawRequestId(dsl, pinnedUpdated.getId())).isEqualTo("owner-4");
+  }
+
+  @Test
+  void rolloutProjectionStoresBlankOwnerEvidenceAsEmptyStringWhileReadingItAsAbsent() {
+    DSLContext dsl = migrateToLatest();
+    ScriptPatchInstanceRolloutProjectionRepository repository =
+        new ScriptPatchInstanceRolloutProjectionRepository(dsl);
+
+    ScriptPatchInstanceRolloutProjection projection = rolloutProjection(0L, " ");
+    ScriptPatchInstanceRolloutProjection saved = repository.save(projection);
+
+    assertThat(saved.getLastObservedControlPlaneRequestId()).isNull();
+    assertThat(rawProjectionRequestId(dsl, saved.getId())).isEqualTo("");
+    assertThat(
+            repository
+                .findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+                    "tenant-projection", "instance-projection", "patch-projection")
+                .orElseThrow()
+                .getLastObservedControlPlaneRequestId())
+        .isNull();
+
+    saved.setLastObservedControlPlaneRequestId("\t");
+    saved.setStatusReason("updated-zero");
+    ScriptPatchInstanceRolloutProjection updated = repository.save(saved);
+
+    assertThat(updated.getLastObservedControlPlaneRequestId()).isNull();
+    assertThat(rawProjectionRequestId(dsl, updated.getId())).isEqualTo("");
   }
 
   @Test
@@ -183,10 +212,31 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     return event;
   }
 
+  private ScriptPatchInstanceRolloutProjection rolloutProjection(
+      long scriptPinEpoch, String requestId) {
+    ScriptPatchInstanceRolloutProjection projection = new ScriptPatchInstanceRolloutProjection();
+    projection.setTenantId("tenant-projection");
+    projection.setGameInstanceId("instance-projection");
+    projection.setScriptPatchVersion("patch-projection");
+    projection.setScriptPinEpoch(scriptPinEpoch);
+    projection.setLastObservedControlPlaneRequestId(requestId);
+    projection.setRolloutStatus("ROLLED_BACK");
+    projection.setStatusReason("initial");
+    projection.setLastChangedAt(Instant.parse("2026-08-01T00:00:01Z"));
+    projection.setProjectionRefreshedAt(Instant.parse("2026-08-01T00:00:02Z"));
+    return projection;
+  }
+
   private String rawRequestId(DSLContext dsl, Long id) {
     return dsl.fetchValue(
         SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
         SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ID.eq(id));
+  }
+
+  private String rawProjectionRequestId(DSLContext dsl, Long id) {
+    return dsl.fetchValue(
+        SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
+        SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ID.eq(id));
   }
 
   private int countRows(DSLContext dsl, String tenantId) {
