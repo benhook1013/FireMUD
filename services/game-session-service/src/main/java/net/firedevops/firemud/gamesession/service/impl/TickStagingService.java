@@ -894,7 +894,9 @@ final class TickStagingService {
       SealedReplayCommand sealedCommand, GameplayCommand command, String tickBatchId) {
     boolean localAutomation = isLocalAutomationCommand(command);
     if (sealedCommand.scriptPatchVersionPresent()
-        && !Objects.equals(sealedCommand.scriptPatchVersion(), command.getScriptPatchVersion())) {
+        && !Objects.equals(
+            blankToNull(sealedCommand.scriptPatchVersion()),
+            blankToNull(command.getScriptPatchVersion()))) {
       throw new IllegalStateException(
           "Sealed replay script patch evidence does not match gameplay command commandId="
               + sealedCommand.commandId()
@@ -964,6 +966,10 @@ final class TickStagingService {
 
   private static String normalize(String value) {
     return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private boolean uniformMode(List<TickQueuedCommandEnvelope> entries, String source) {

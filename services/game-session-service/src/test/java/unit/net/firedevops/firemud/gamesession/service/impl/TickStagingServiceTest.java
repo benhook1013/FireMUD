@@ -514,6 +514,7 @@ class TickStagingServiceTest {
     command.setRequiresSoloTick(true);
     command.setCommandText("generate");
     command.setSanitizedCommandText("generate");
+    command.setScriptPatchVersion("");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-solo")))
         .thenReturn(List.of(command));
     TickBatch existingBatch = new TickBatch();
@@ -698,13 +699,13 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void createBatchRejectsLocalAutomationCommandWithSamePatchAndOldEpoch() {
-    GameplayCommand command = gameplayCommand("cmd-old-epoch");
+  void createBatchRejectsLocalAutomationCommandWithSamePatchAndDifferentEpoch() {
+    GameplayCommand command = gameplayCommand("cmd-different-epoch");
     command.setSourceType("AUTOMATION");
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(2L);
     command.setScriptPinControlPlaneRequestId("request-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-old-epoch")))
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-different-epoch")))
         .thenReturn(List.of(command));
 
     assertThrows(
@@ -716,7 +717,7 @@ class TickStagingServiceTest {
                 2L,
                 false,
                 new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
-                List.of(new TickQueuedCommandEnvelope(false, "cmd-old-epoch", "look"))));
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-different-epoch", "look"))));
 
     verify(gameInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
     verify(tickBatchRepository, never()).save(any());
@@ -767,13 +768,13 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void resolveReplayBatchRejectsLocalAutomationWithSamePatchAndOldEpoch() {
-    GameplayCommand command = gameplayCommand("cmd-replay-old-epoch");
+  void resolveReplayBatchRejectsLocalAutomationWithSamePatchAndDifferentEpoch() {
+    GameplayCommand command = gameplayCommand("cmd-replay-different-epoch");
     command.setSourceType("AUTOMATION");
     command.setScriptPatchVersion("patch-1");
     command.setScriptPinEpoch(2L);
     command.setScriptPinControlPlaneRequestId("request-2");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-replay-old-epoch")))
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-replay-different-epoch")))
         .thenReturn(List.of(command));
 
     IllegalStateException failure =
@@ -783,7 +784,8 @@ class TickStagingServiceTest {
                 service.resolveReplayBatch(
                     1L,
                     2L,
-                    List.of(new TickQueuedCommandEnvelope(false, "cmd-replay-old-epoch", "look")),
+                    List.of(
+                        new TickQueuedCommandEnvelope(false, "cmd-replay-different-epoch", "look")),
                     new TickQueueControlService.OwnershipSnapshot(
                         "region-a", 1L, "fence-a", false, 0L)));
 

@@ -294,8 +294,8 @@ message ScriptDeadLetterEntry {
   string current_runtime_realm_slug = 34;
   string current_runtime_pointer_version = 35;
   bool is_routing_bundle_stale = 36;
-  int64 script_pin_epoch = 37;
-  string script_pin_control_plane_request_id = 38;
+  optional int64 script_pin_epoch = 37;
+  optional string script_pin_control_plane_request_id = 38;
 }
 
 message ListScriptDeadLettersResponse {

@@ -53,4 +53,24 @@ class BeforeEachMigrateTest {
     assertThat(callback).contains("script_pin_epoch");
     assertThat(v8).contains("UPDATE script_work_items");
   }
+
+  @Test
+  void defersPluginPairPreflightUntilVersionEightHasMadeThePairRequired() throws IOException {
+    String callback;
+    try (var stream =
+        getClass().getClassLoader().getResourceAsStream("db/migration/beforeEachMigrate.sql")) {
+      assertThat(stream).isNotNull();
+      callback = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+
+    int marker = callback.indexOf("attname IN ('plugin_id', 'plugin_version_id')");
+    int preflight = callback.indexOf("script_work_items contains a one-sided plugin identity pair");
+    assertThat(marker).isGreaterThanOrEqualTo(0);
+    assertThat(preflight).isGreaterThan(marker);
+    assertThat(callback)
+        .contains("attnotnull")
+        .contains("HAVING COUNT(*) = 2")
+        .contains("NULLIF(BTRIM(plugin_id), '') IS NULL")
+        .contains("NULLIF(BTRIM(plugin_version_id), '') IS NULL");
+  }
 }

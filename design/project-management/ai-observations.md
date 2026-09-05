@@ -154,3 +154,8 @@ Entry format:
   - Context: hosted review found that automatic dead-letter age and row-cap cleanup could delete a parent and its handoff ledger while the live schema lacked recovery generations, claim state, expected-child evidence, and independent retention horizons.
   - Observation: terminal status plus age or capacity is not enough to prove that a recovery bundle may be deleted; a partial child-outcome check still cannot prove absent children, completed resumed dispatch, or expired evidence obligations.
   - Expected pattern: apply one recovery-aware whole-bundle predicate to every automatic and explicit cleanup selector, and fail closed without deleting dead-letter evidence until the schema can prove that predicate.
+
+- `2026-09-06`: Cross-store replay must commit durable replacement state before Redis reconciliation
+  - Context: exact-pin tick replay initially drained the original Redis selection before preserving Redis-only commands and treated post-commit Redis failures as generic staging failures.
+  - Observation: once a replacement batch is durably committed, its manifest and effective drain set are authoritative; Redis is only a projection and a reconciliation failure must not roll back or abandon that committed replacement through a generic failure path.
+  - Expected pattern: persist the replacement and any Redis-only retry state in one database transaction, reconcile Redis atomically and idempotently afterward, and carry an explicit committed-replacement fact through later failure handling and retries.

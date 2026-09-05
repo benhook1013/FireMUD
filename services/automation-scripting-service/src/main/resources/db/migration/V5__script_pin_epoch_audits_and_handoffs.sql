@@ -143,7 +143,7 @@ ALTER TABLE script_event_ingress_audit
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
     tenant_id,
@@ -224,7 +224,7 @@ ALTER TABLE script_event_audit
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
 -- Every instance-scoped handoff retains the source owner's exact observed pin tuple.
 -- Zero/blank remains an explicit fail-closed legacy sentinel until a pinned work item is observed.
@@ -243,4 +243,4 @@ ALTER TABLE script_handoff_events
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;

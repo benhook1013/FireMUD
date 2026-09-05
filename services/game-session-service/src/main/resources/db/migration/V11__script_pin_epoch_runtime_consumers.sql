@@ -17,17 +17,17 @@ CREATE TABLE script_pin_operation (
     resulting_script_pin_epoch bigint,
     committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id),
-    CHECK (
+    CONSTRAINT ck_script_pin_operation_previous_tuple CHECK (
         (previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL)
         OR
         (previous_script_patch_version IS NOT NULL AND previous_script_pin_epoch IS NOT NULL AND previous_script_pin_epoch > 0)
     ),
-    CHECK (
+    CONSTRAINT ck_script_pin_operation_resulting_tuple CHECK (
         (resulting_script_patch_version IS NULL AND resulting_script_pin_epoch IS NULL)
         OR
         (resulting_script_patch_version IS NOT NULL AND resulting_script_pin_epoch IS NOT NULL AND resulting_script_pin_epoch > 0)
     ),
-    CHECK (
+    CONSTRAINT ck_script_pin_operation_expected_pin CHECK (
         (expected_pin_kind = 'EXPECT_UNPINNED' AND expected_script_pin_epoch IS NULL)
         OR
         (expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0)

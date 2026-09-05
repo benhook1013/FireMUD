@@ -15,15 +15,30 @@ BEGIN
         RETURN;
     END IF;
 
+    -- V8 is the stable schema marker for the plugin-pair fence: it normalizes legacy
+    -- NULL/one-sided values before making both provenance columns NOT NULL. Do not reject
+    -- those legacy rows while the callback runs before V8; after V8, reject any new
+    -- one-sided pair before the next migration can proceed.
     IF EXISTS (
         SELECT 1
-        FROM script_work_items
-        WHERE (NULLIF(BTRIM(plugin_id), '') IS NULL)
-           <> (NULLIF(BTRIM(plugin_version_id), '') IS NULL)
+        FROM pg_attribute
+        WHERE attrelid = to_regclass('script_work_items')
+          AND attname IN ('plugin_id', 'plugin_version_id')
+          AND attnotnull
+          AND NOT attisdropped
+        GROUP BY attrelid
+        HAVING COUNT(*) = 2
     ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '23514',
-            MESSAGE = 'script_work_items contains a one-sided plugin identity pair';
+        IF EXISTS (
+            SELECT 1
+            FROM script_work_items
+            WHERE (NULLIF(BTRIM(plugin_id), '') IS NULL)
+               <> (NULLIF(BTRIM(plugin_version_id), '') IS NULL)
+        ) THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '23514',
+                MESSAGE = 'script_work_items contains a one-sided plugin identity pair';
+        END IF;
     END IF;
 
     IF EXISTS (

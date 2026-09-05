@@ -47,12 +47,21 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';",
             "request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'",
             "ck_script_event_ingress_audit_request_digest",
+            "ck_script_event_ingress_audit_pin_tuple",
+            "ck_script_event_audit_pin_tuple",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
         .doesNotContain(
             "ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE",
             "DELETE FROM script_event_ingress_audit",
             "ROW_NUMBER() OVER");
+
+    assertThat(migration)
+        .contains(
+            "ck_script_event_ingress_audit_pin_tuple CHECK",
+            "ck_script_event_audit_pin_tuple CHECK",
+            "ck_script_handoff_events_pin_tuple CHECK",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
 
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned");

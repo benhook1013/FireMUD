@@ -429,9 +429,7 @@ class ScriptEventAuditRepositoryTest {
             sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
             bindingsRef.set(context.bindings());
           }
-          return new MockResult[] {
-            new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_AUDIT))
-          };
+          return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_AUDIT))};
         };
     ScriptEventAuditRepository repository =
         new ScriptEventAuditRepository(

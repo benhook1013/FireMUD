@@ -1794,10 +1794,8 @@ class ScriptScheduleInstanceServiceImplTest {
     verify(workItemRepository, org.mockito.Mockito.times(2))
         .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
     List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
-    assertThat(workItems)
-        .extracting(ScriptWorkItem::getScriptEventId)
-        .hasSize(2)
-        .containsOnly(workItems.get(0).getScriptEventId());
+    assertThat(workItems).hasSize(2);
+    assertThat(workItems.get(1).getScriptEventId()).isEqualTo(workItems.get(0).getScriptEventId());
     assertThat(workItems)
         .extracting(ScriptWorkItem::getScriptPinControlPlaneRequestId)
         .containsExactly("req-1", "req-2");

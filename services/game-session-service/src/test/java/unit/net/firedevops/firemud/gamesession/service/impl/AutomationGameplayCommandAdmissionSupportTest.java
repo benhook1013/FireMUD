@@ -516,6 +516,52 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void validatesRemoteFollowupRequiredFieldsUsingNormalizedSourceType() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 2L, "region-alpha", 7L, "remote-followup-normalized"))
+        .thenReturn(Optional.empty());
+    when(pointerAuthority.listByRuntimeTarget(1L, 2L))
+        .thenReturn(List.of(currentPointer("demo", "production", 17L)));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(1L);
+    ownership.setGameInstanceId(2L);
+    ownership.setRegionId("region-alpha");
+    ownership.setRegionEpoch(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(ownership));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
+            remoteFollowupRequest(" remote_followup ", "remote-followup-normalized"),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            pointerAuthority,
+            tickService);
+
+    assertTrue(result.accepted());
+    assertEquals("ENQUEUED", result.admissionOutcome());
+    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(any());
+  }
+
+  @Test
   void rejectsDuplicateWhileAdmissionIsStillAcceptedAndDoesNotQueue() {
     GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
@@ -1434,12 +1480,17 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   private static AdmissionRequest remoteFollowupRequest(String remoteFollowupId) {
+    return remoteFollowupRequest("REMOTE_FOLLOWUP", remoteFollowupId);
+  }
+
+  private static AdmissionRequest remoteFollowupRequest(
+      String sourceType, String remoteFollowupId) {
     return new AdmissionRequest(
         1L,
         2L,
         "region-alpha",
         7L,
-        "REMOTE_FOLLOWUP",
+        sourceType,
         null,
         null,
         null,

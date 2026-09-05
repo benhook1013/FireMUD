@@ -457,7 +457,7 @@ final class AutomationGameplayCommandAdmissionSupport {
       requireText(request.automationWorkItemId(), "automation_work_item_id is required");
       requireText(request.scriptId(), "script_id is required");
       requireText(request.scriptPatchVersion(), "script_patch_version is required");
-    } else if ("REMOTE_FOLLOWUP".equals(request.sourceType())) {
+    } else if ("REMOTE_FOLLOWUP".equals(normalizedSourceType)) {
       requireText(request.remoteCoordinatorId(), "remote_coordinator_id is required");
       requireText(request.remoteFollowupId(), "remote_followup_id is required");
       TickQueueControlService.requireQueueEncodingSafe(

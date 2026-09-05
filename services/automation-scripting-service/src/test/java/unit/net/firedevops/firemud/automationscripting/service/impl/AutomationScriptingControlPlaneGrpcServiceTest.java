@@ -1712,8 +1712,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "plugin-v1",
                     "onCommand",
                     "patch-1",
-                    0L,
-                    "",
+                    3L,
+                    "pin-request-3",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
@@ -1774,8 +1774,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getDeadLettersList()).hasSize(1);
     assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
-    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isZero();
-    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId()).isEmpty();
+    assertThat(ref.get().getDeadLetters(0).hasScriptPinEpoch()).isTrue();
+    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isEqualTo(3L);
+    assertThat(ref.get().getDeadLetters(0).hasScriptPinControlPlaneRequestId()).isTrue();
+    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-3");
     assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
@@ -1827,8 +1830,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
-                    0L,
-                    "",
+                    3L,
+                    "pin-request-3",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",

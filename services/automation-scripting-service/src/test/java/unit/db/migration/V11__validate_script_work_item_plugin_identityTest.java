@@ -21,7 +21,7 @@ class V11__validate_script_work_item_plugin_identityTest {
 
     assertThat(migration)
         .contains("ADD CONSTRAINT ck_script_work_items_plugin_pair_coherent CHECK")
-        .contains("plugin_id = '' AND plugin_version_id = ''")
+        .contains("BTRIM(plugin_id) = '' AND BTRIM(plugin_version_id) = ''")
         .contains("BTRIM(plugin_id) <> ''")
         .contains("BTRIM(plugin_version_id) <> ''")
         .contains("/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");

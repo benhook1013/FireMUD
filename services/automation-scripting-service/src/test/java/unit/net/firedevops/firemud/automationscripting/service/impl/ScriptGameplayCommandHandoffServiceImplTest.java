@@ -338,6 +338,45 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void handoffEventsCanonicalizeMissingOwnerRequestEvidence() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    AutomationAdmissionStateService admissionService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionService.getState("1", "7", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "7", "region-1", "PAUSED_FOR_ROLLBACK", 1L, "", "", "", 100L));
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionService,
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptWorkItem nullRequestWorkItem = workItem();
+    nullRequestWorkItem.setScriptPinControlPlaneRequestId(null);
+    service.handoff(
+        nullRequestWorkItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptWorkItem blankRequestWorkItem = workItem();
+    blankRequestWorkItem.setScriptPinControlPlaneRequestId("   ");
+    service.handoff(
+        blankRequestWorkItem,
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+    verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
+    assertThat(handoffCaptor.getAllValues())
+        .extracting(ScriptHandoffEvent::getScriptPinControlPlaneRequestId)
+        .containsExactly("", "   ");
+  }
+
+  @Test
   void acceptedGameSessionOutcomeLeavesAggregateTerminalizationToExecutor() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

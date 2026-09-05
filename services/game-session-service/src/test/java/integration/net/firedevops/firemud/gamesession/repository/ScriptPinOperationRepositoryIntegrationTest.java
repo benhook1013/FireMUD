@@ -592,7 +592,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
 
   @Test
   void exactRetryReplaysCommittedResultAtEpochExhaustion() {
-    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE - 1L).execute();
+    dsl.update(GAME_INSTANCES)
+        .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE - 1L)
+        .where(GAME_INSTANCES.TENANT_ID.eq(1L).and(GAME_INSTANCES.ID.eq(7L)))
+        .execute();
 
     ScriptPinMutationResult committed =
         repository.applyScriptPin(
@@ -625,7 +628,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
 
   @Test
   void newMutationAtEpochExhaustionRecordsFailureAndReplaysWithoutStateChange() {
-    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE).execute();
+    dsl.update(GAME_INSTANCES)
+        .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE)
+        .where(GAME_INSTANCES.TENANT_ID.eq(1L).and(GAME_INSTANCES.ID.eq(7L)))
+        .execute();
 
     ScriptPinMutationResult exhausted =
         repository.applyScriptPin(
@@ -685,7 +691,10 @@ class ScriptPinOperationRepositoryIntegrationTest {
 
   @Test
   void epochExhaustionDoesNotMaskExpectationMismatch() {
-    dsl.update(GAME_INSTANCES).set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE).execute();
+    dsl.update(GAME_INSTANCES)
+        .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, Long.MAX_VALUE)
+        .where(GAME_INSTANCES.TENANT_ID.eq(1L).and(GAME_INSTANCES.ID.eq(7L)))
+        .execute();
 
     ScriptPinMutationResult mismatch =
         repository.applyScriptPin(

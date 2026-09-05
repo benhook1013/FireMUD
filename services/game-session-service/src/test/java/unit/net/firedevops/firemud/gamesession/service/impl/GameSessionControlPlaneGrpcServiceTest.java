@@ -3403,6 +3403,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3476,6 +3477,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setTenantId(1L);
     instance.setScriptPinEpoch(2L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     TickService tickService = Mockito.mock(TickService.class);
     GameSessionControlPlaneGrpcService service =
@@ -3513,6 +3515,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3557,6 +3560,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3601,6 +3605,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3652,6 +3657,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3729,6 +3735,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3793,6 +3800,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3837,6 +3845,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3883,6 +3892,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -4064,6 +4074,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -4117,6 +4128,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -4430,6 +4442,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommand existing = new GameplayCommand();
     existing.setCommandId("auto-existing");
     existing.setTenantId(1L);
@@ -8011,12 +8024,6 @@ class GameSessionControlPlaneGrpcServiceTest {
       GameSessionProperties gameSessionProperties,
       AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient,
       WorldManagementClient worldManagementClient) {
-    Mockito.lenient()
-        .when(
-            gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(
-                Mockito.anyLong(), Mockito.anyLong()))
-        .thenAnswer(
-            invocation -> gameInstanceRepository.findById(invocation.getArgument(1, Long.class)));
     GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService =
         new GameSessionRuntimeControlPlaneReadService(
             gameInstanceRepository,
@@ -8828,6 +8835,12 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
     return instance;
+  }
+
+  private static void stubLockedGameInstance(
+      GameInstanceRepository repository, GameInstance instance) {
+    Mockito.when(repository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.of(instance));
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {

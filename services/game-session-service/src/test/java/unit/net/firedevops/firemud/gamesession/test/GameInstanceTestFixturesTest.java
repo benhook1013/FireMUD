@@ -22,7 +22,7 @@ class GameInstanceTestFixturesTest {
   void insertRunningGameInstanceSeedsCoherentScriptPinTuple() {
     when(jdbc.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
-    assertThat(GameInstanceTestFixtures.insertRunningGameInstance(jdbc, 1L, 7L, 7L)).isEqualTo(1L);
+    assertThat(GameInstanceTestFixtures.insertRunningGameInstance(jdbc, 1L, 41L, 7L)).isEqualTo(1L);
 
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<Object[]> argumentsCaptor = ArgumentCaptor.forClass(Object[].class);
@@ -47,7 +47,7 @@ class GameInstanceTestFixturesTest {
             700L,
             "genrev:test:7",
             null,
-            7L,
+            41L,
             "ACTIVE");
   }
 }

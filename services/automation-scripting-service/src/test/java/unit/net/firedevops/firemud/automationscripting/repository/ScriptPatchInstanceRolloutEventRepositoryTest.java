@@ -214,7 +214,7 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   }
 
   @Test
-  void rejectsExistingIdUpdateWhenOwnerTupleChanges() {
+  void rejectsStaleWriteWhenRowVersionOrOwnerPredicateDoesNotMatch() {
     AtomicReference<String> updateSql = new AtomicReference<>();
     MockDataProvider provider =
         context -> {

@@ -135,6 +135,103 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void saveRoundTripsCompleteScriptPinTuple() {
+    GameplayCommand command = repositoryCommand("script-command", "AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(7L);
+    command.setScriptPinControlPlaneRequestId("pin-request-7");
+
+    GameplayCommand saved = repository.save(command);
+
+    assertThat(saved)
+        .extracting(
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly("patch-1", 7L, "pin-request-7");
+
+    saved.setScriptPatchVersion("patch-2");
+    saved.setScriptPinEpoch(8L);
+    saved.setScriptPinControlPlaneRequestId("pin-request-8");
+    GameplayCommand updated = repository.save(saved);
+
+    assertThat(updated)
+        .extracting(
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly("patch-2", 8L, "pin-request-8");
+    assertThat(repository.findByCommandId("script-command"))
+        .get()
+        .extracting(
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly("patch-2", 8L, "pin-request-8");
+  }
+
+  @Test
+  void saveRoundTripsAbsentScriptPinTupleForPlayerCommand() {
+    GameplayCommand command = repositoryCommand("player-command", "PLAYER");
+
+    GameplayCommand saved = repository.save(command);
+
+    assertThat(saved)
+        .extracting(
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly(null, null, null);
+  }
+
+  @Test
+  void saveRoundTripsLegacyPatchOnlyRemoteAutomationCommand() {
+    GameplayCommand command = repositoryCommand("remote-command", "AUTOMATION");
+    command.setRemoteFollowupId("remote-followup-1");
+    command.setScriptPatchVersion("legacy-patch");
+
+    GameplayCommand saved = repository.save(command);
+
+    assertThat(saved)
+        .extracting(
+            GameplayCommand::getRemoteFollowupId,
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly("remote-followup-1", "legacy-patch", null, null);
+    assertThat(repository.findByCommandId("remote-command"))
+        .get()
+        .extracting(
+            GameplayCommand::getRemoteFollowupId,
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly("remote-followup-1", "legacy-patch", null, null);
+  }
+
+  @Test
+  void saveRejectsAutomationCommandWithPatchOnlyTuple() {
+    GameplayCommand command = repositoryCommand("partial-script-command", "AUTOMATION");
+    command.setScriptPatchVersion("patch-only");
+
+    assertThatThrownBy(() -> repository.save(command))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("gameplay_command_script_pin_tuple_coherent");
+  }
+
+  @Test
+  void saveRejectsPlayerCommandWithCompletePinnedTuple() {
+    GameplayCommand command = repositoryCommand("player-script-command", "PLAYER");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(7L);
+    command.setScriptPinControlPlaneRequestId("pin-request-7");
+
+    assertThatThrownBy(() -> repository.save(command))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("gameplay_command_script_pin_tuple_coherent");
+  }
+
+  @Test
   void routedIdempotencyConflictRemainsDistinctFromStalePointer() {
     insertAdmissionPointer("demo", "production", 17L, "SHARED", 7L);
     GameplayCommand first = automationCommand("routed-existing", "dispatch-routed-existing");
@@ -499,6 +596,30 @@ class GameplayCommandRepositoryIntegrationTest {
     command.setTargetEntityId("npc-1");
     command.setRegionId("region-1");
     command.setRegionEpoch(12L);
+    return command;
+  }
+
+  private static GameplayCommand repositoryCommand(String commandId, String sourceType) {
+    GameplayCommand command = new GameplayCommand();
+    command.setCommandId(commandId);
+    command.setTenantId(1L);
+    command.setGameInstanceId(7L);
+    command.setSessionId(0L);
+    command.setCommandName("say");
+    command.setCommandText("say hello");
+    command.setSanitizedCommandText("say hello");
+    command.setRequiresSoloTick(false);
+    command.setExecutionOutcome("ACCEPTED");
+    command.setGameplayResult("PENDING");
+    command.setAcceptedAt(Instant.parse("2026-07-05T06:00:00Z"));
+    command.setAttemptCount(1);
+    command.setSourceType(sourceType);
+    command.setPlayableStateScope("");
+    command.setWorldSlug("");
+    command.setRealmSlug("");
+    command.setRegionId("region-1");
+    command.setRegionEpoch(12L);
+    command.setTargetEntityId("npc-1");
     return command;
   }
 

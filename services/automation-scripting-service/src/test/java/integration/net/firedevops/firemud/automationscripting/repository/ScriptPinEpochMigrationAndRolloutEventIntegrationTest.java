@@ -133,6 +133,60 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .isEqualTo(2L);
   }
 
+  @Test
+  void v8NormalizesLegacyOneSidedPluginPairsBeforeTheCallbackEnforcesCoherence() {
+    DSLContext dsl = migrateToV4();
+    dsl.execute(
+        "INSERT INTO script_work_items ("
+            + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
+            + "script_id, plugin_id, plugin_version_id, event_type, event_schema_version, "
+            + "script_patch_version, script_event_id, source_service, trigger_mode) VALUES ("
+            + "'tenant-plugin-pair', 'instance-plugin-pair', 'region-plugin-pair', 1, "
+            + "'entity-plugin-pair', 'legacy-script', NULL, 'legacy-version', 'onEnterRegion', "
+            + "'v1', 'patch-legacy', 'event-plugin-pair', 'legacy-test', 'EVENT')");
+
+    migrateToLatestInSameSchema();
+
+    assertThat(
+            dsl.fetch(
+                    "SELECT plugin_id, plugin_version_id FROM script_work_items "
+                        + "WHERE tenant_id = 'tenant-plugin-pair'")
+                .intoMaps())
+        .singleElement()
+        .satisfies(
+            row ->
+                assertThat(row)
+                    .containsEntry("plugin_id", "")
+                    .containsEntry("plugin_version_id", ""));
+  }
+
+  @Test
+  void callbackRejectsAOneSidedPairAfterV8HasCompleted() {
+    DSLContext dsl = migrateToV4();
+    dsl.execute(
+        "INSERT INTO script_work_items ("
+            + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
+            + "script_id, plugin_id, plugin_version_id, event_type, event_schema_version, "
+            + "script_patch_version, script_event_id, source_service, trigger_mode) VALUES ("
+            + "'tenant-plugin-pair-post-v8', 'instance-plugin-pair', 'region-plugin-pair', 1, "
+            + "'entity-plugin-pair', 'legacy-script', NULL, 'legacy-version', 'onEnterRegion', "
+            + "'v1', 'patch-legacy', 'event-plugin-pair', 'legacy-test', 'EVENT')");
+
+    migrateToVersionEightInSameSchema();
+    dsl.execute(
+        "INSERT INTO script_work_items ("
+            + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
+            + "script_id, plugin_id, plugin_version_id, event_type, event_schema_version, "
+            + "script_patch_version, script_event_id, source_service, trigger_mode) VALUES ("
+            + "'tenant-plugin-pair-post-v8-invalid', 'instance-plugin-pair', 'region-plugin-pair', 1, "
+            + "'entity-plugin-pair', 'invalid-script', '', 'version-present', 'onEnterRegion', "
+            + "'v1', 'patch-invalid', 'event-plugin-pair-invalid', 'legacy-test', 'EVENT')");
+
+    assertThatThrownBy(this::migrateToLatestInSameSchema)
+        .isInstanceOf(FlywayException.class)
+        .hasStackTraceContaining("one-sided plugin identity pair");
+  }
+
   private DSLContext migrateToLatest() {
     schema = newSchemaName();
     Flyway.configure()
@@ -164,6 +218,17 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .schemas(schema)
         .defaultSchema(schema)
+        .load()
+        .migrate();
+  }
+
+  private void migrateToVersionEightInSameSchema() {
+    Flyway.configure()
+        .dataSource(dataSource(schema))
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .target("8")
         .load()
         .migrate();
   }
