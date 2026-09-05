@@ -330,15 +330,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(gameInstanceId, "game_instance_id");
     requireText(scriptPatchVersion, "script_patch_version");
     Optional<PatchInstanceRolloutSummary> projection =
-        scriptPinEpoch > 0
-            ? rolloutProjectionService.getProjection(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                scriptPinEpoch,
-                lastObservedControlPlaneRequestId)
-            : rolloutProjectionService.getProjection(
-                tenantId, gameInstanceId, scriptPatchVersion, 0L, null);
+        rolloutProjectionService.getProjection(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            projectionPinEpoch(scriptPinEpoch),
+            projectionPinRequestId(scriptPinEpoch, lastObservedControlPlaneRequestId));
     return projection.map(summary -> withPublication(tenantId, summary));
   }
 
@@ -357,25 +354,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     requireCompletePinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     List<PatchInstanceRolloutSummary> projections =
-        scriptPinEpoch > 0
-            ? rolloutProjectionService.listProjections(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                scriptPinEpoch,
-                lastObservedControlPlaneRequestId,
-                rolloutStatus,
-                changedAfterMs,
-                changedBeforeMs)
-            : rolloutProjectionService.listProjections(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                0L,
-                null,
-                rolloutStatus,
-                changedAfterMs,
-                changedBeforeMs);
+        rolloutProjectionService.listProjections(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            projectionPinEpoch(scriptPinEpoch),
+            projectionPinRequestId(scriptPinEpoch, lastObservedControlPlaneRequestId),
+            rolloutStatus,
+            changedAfterMs,
+            changedBeforeMs);
     return projections.stream().map(summary -> withPublication(tenantId, summary)).toList();
   }
 
@@ -394,27 +381,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     requireCompletePinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     List<PatchInstanceRolloutEventSummary> events =
-        scriptPinEpoch > 0
-            ? rolloutProjectionService.listEvents(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                scriptPinEpoch,
-                lastObservedControlPlaneRequestId,
-                rolloutStatus,
-                changedAfterMs,
-                changedBeforeMs,
-                limit)
-            : rolloutProjectionService.listEvents(
-                tenantId,
-                gameInstanceId,
-                scriptPatchVersion,
-                0L,
-                null,
-                rolloutStatus,
-                changedAfterMs,
-                changedBeforeMs,
-                limit);
+        rolloutProjectionService.listEvents(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            projectionPinEpoch(scriptPinEpoch),
+            projectionPinRequestId(scriptPinEpoch, lastObservedControlPlaneRequestId),
+            rolloutStatus,
+            changedAfterMs,
+            changedBeforeMs,
+            limit);
     return events.stream().map(summary -> withPublication(tenantId, summary)).toList();
   }
 
@@ -487,11 +463,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit) {
     requireText(tenantId, "tenant_id");
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
+    String normalizedGameInstanceId = normalizeRegionId(gameInstanceId);
+    String normalizedScriptPatchVersion = normalizeRegionId(scriptPatchVersion);
     return workItemRepository
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             tenantId,
-            gameInstanceId,
-            scriptPatchVersion,
+            normalizedGameInstanceId,
+            normalizedScriptPatchVersion,
             STATUS_DEAD_LETTERED,
             PageRequest.of(0, boundedLimit))
         .stream()
@@ -559,6 +537,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
+  }
+
+  private static long projectionPinEpoch(long scriptPinEpoch) {
+    return scriptPinEpoch > 0L ? scriptPinEpoch : 0L;
+  }
+
+  private static String projectionPinRequestId(long scriptPinEpoch, String requestId) {
+    return scriptPinEpoch > 0L ? requestId : null;
   }
 
   private PatchInstanceRolloutEventSummary withPublication(

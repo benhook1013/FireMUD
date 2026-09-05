@@ -403,6 +403,8 @@ class ScriptEventIngressServiceImplTest {
     verify(workItemRepository).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getValue().getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(workItemCaptor.getValue().getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(workItemCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(workItemCaptor.getValue().getScriptId()).isEqualTo("script-1");
     assertThat(workItemCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(workItemCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
@@ -2128,6 +2130,8 @@ class ScriptEventIngressServiceImplTest {
     assertThat(workItemCaptor.getValue().getWorldSlug()).isBlank();
     assertThat(workItemCaptor.getValue().getRealmSlug()).isBlank();
     assertThat(workItemCaptor.getValue().getPointerVersion()).isBlank();
+    assertThat(workItemCaptor.getValue().getScriptPinEpoch()).isZero();
+    assertThat(workItemCaptor.getValue().getScriptPinControlPlaneRequestId()).isNull();
   }
 
   @Test

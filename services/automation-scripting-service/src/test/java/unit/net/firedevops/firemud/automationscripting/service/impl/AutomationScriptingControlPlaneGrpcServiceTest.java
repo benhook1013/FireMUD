@@ -850,14 +850,48 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void listsScriptTimerAuditEventsWithOwnerRequestIdOnlyFilter() {
+  void listsScriptTimerAuditEventsWithEpochAndOwnerRequestIdFilter() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);
     Mockito.when(
             scheduleInstanceService.listTimerAuditEvents(
-                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+                "1", "game-1", "patch-1", 2L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
         .thenReturn(List.of());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(2L)
+            .setScriptPinControlPlaneRequestId("req-1")
+            .setScriptId("npc-guard")
+            .setEventType("onInterval")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    Mockito.verify(scheduleInstanceService)
+        .listTimerAuditEvents(
+            "1", "game-1", "patch-1", 2L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25);
+  }
+
+  @Test
+  void rejectsScriptTimerAuditEventsWithOwnerRequestIdWithoutEpoch() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -880,10 +914,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .build(),
         observer(ref));
 
-    assertThat(ref.get().hasError()).isFalse();
-    Mockito.verify(scheduleInstanceService)
-        .listTimerAuditEvents(
-            "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25);
+    assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    Mockito.verifyNoInteractions(scheduleInstanceService);
   }
 
   @Test

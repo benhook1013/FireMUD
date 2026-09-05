@@ -284,8 +284,12 @@ final class AutomationPatchControlPlaneService {
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
     requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
-    boolean hasPinFilter =
-        request.getScriptPinEpoch() > 0 || !request.getScriptPinControlPlaneRequestId().isBlank();
+    boolean hasRequestId = !request.getScriptPinControlPlaneRequestId().isBlank();
+    if (hasRequestId && request.getScriptPinEpoch() <= 0L) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id requires a positive script_pin_epoch");
+    }
+    boolean hasPinFilter = request.getScriptPinEpoch() > 0 || hasRequestId;
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
         hasPinFilter
             ? scriptScheduleInstanceService.listTimerAuditEvents(

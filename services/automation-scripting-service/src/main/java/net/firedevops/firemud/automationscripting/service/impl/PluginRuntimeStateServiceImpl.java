@@ -172,6 +172,8 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       return new ActivationResult(previous, previous, normalize(state.getControlPlaneRequestId()));
     }
     state.setActivePluginVersionId(command.targetPluginVersionId());
+    state.setPluginActivationEpoch(state.getPluginActivationEpoch() + 1L);
+    state.setLifecycleRevision(state.getLifecycleRevision() + 1L);
     state.setPendingPluginVersionId("");
     state.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
     state.setStatusReason(statusReason);
@@ -450,7 +452,15 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
     if (matches(state, previous, targetState, statusReason)) {
       return;
     }
+    String priorState = normalize(state.getPluginState());
     state.setPluginState(targetState.name());
+    if (targetState == PluginState.PLUGIN_STATE_DISABLED
+        && !normalize(state.getActivePluginVersionId()).isBlank()
+        && (PluginState.PLUGIN_STATE_ENABLED.name().equals(priorState)
+            || PluginState.PLUGIN_STATE_DRAINING.name().equals(priorState))) {
+      state.setPluginActivationEpoch(state.getPluginActivationEpoch() + 1L);
+    }
+    state.setLifecycleRevision(state.getLifecycleRevision() + 1L);
     state.setStatusReason(statusReason);
     state.setControlPlaneRequestId(normalize(command.controlPlaneRequestId()));
     state.setActorPrincipal(normalize(command.actorPrincipal()));

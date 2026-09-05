@@ -1745,6 +1745,42 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void pluginTimerIdentityChangesWhenSameVersionIsReactivated() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    first.setPluginId("plugin-1");
+    first.setPluginVersionId("plugin-v1");
+    first.setPluginActivationEpoch(1L);
+    first.setLifecycleRevision(1L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setPluginId("plugin-1");
+    second.setPluginVersionId("plugin-v1");
+    second.setPluginActivationEpoch(2L);
+    second.setLifecycleRevision(3L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first), List.of(second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1", 1L, 1L)))
+        .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1", 2L, 3L)));
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates();
+  }
+
+  @Test
   void observeRuntimeTickProgressFencesTimerScopeMismatchWithoutReusingIdentity() {
     ScriptScheduleInstance shared =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
@@ -2165,6 +2201,8 @@ class ScriptScheduleInstanceServiceImplTest {
     ScriptScheduleInstance timerInstance = wallClockTimerInstance();
     timerInstance.setPluginId("plugin-1");
     timerInstance.setPluginVersionId("plugin-v1");
+    timerInstance.setPluginActivationEpoch(1L);
+    timerInstance.setLifecycleRevision(1L);
     stubScheduleObservation(timerInstance);
     when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
             "1", "game-1", "plugin-1"))
@@ -2418,6 +2456,8 @@ class ScriptScheduleInstanceServiceImplTest {
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
     tickInstance.setPluginId("plugin-1");
     tickInstance.setPluginVersionId("plugin-v1");
+    tickInstance.setPluginActivationEpoch(1L);
+    tickInstance.setLifecycleRevision(1L);
     stubScheduleObservation(tickInstance);
     when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
             "1", "game-1", "plugin-1"))
@@ -2621,10 +2661,14 @@ class ScriptScheduleInstanceServiceImplTest {
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");
     first.setPluginVersionId("plugin-v1");
+    first.setPluginActivationEpoch(1L);
+    first.setLifecycleRevision(1L);
     ScriptScheduleInstance second =
         tickSchedule("guard-2", "npc-scout", "guard.scout.v1", 20L, 120L);
     second.setPluginId("plugin-1");
     second.setPluginVersionId("plugin-v1");
+    second.setPluginActivationEpoch(1L);
+    second.setLifecycleRevision(1L);
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(first, second));
@@ -3181,10 +3225,14 @@ class ScriptScheduleInstanceServiceImplTest {
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");
     first.setPluginVersionId("plugin-v1");
+    first.setPluginActivationEpoch(1L);
+    first.setLifecycleRevision(1L);
     ScriptScheduleInstance second =
         tickSchedule("guard-2", "npc-scout", "guard.scout.v1", 20L, 120L);
     second.setPluginId("plugin-1");
     second.setPluginVersionId("plugin-v1");
+    second.setPluginActivationEpoch(1L);
+    second.setLifecycleRevision(1L);
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(first, second));
@@ -3301,6 +3349,11 @@ class ScriptScheduleInstanceServiceImplTest {
 
   private static PluginRuntimeState enabledPluginRuntimeState(
       String pluginId, String pluginVersionId) {
+    return enabledPluginRuntimeState(pluginId, pluginVersionId, 1L, 1L);
+  }
+
+  private static PluginRuntimeState enabledPluginRuntimeState(
+      String pluginId, String pluginVersionId, long pluginActivationEpoch, long lifecycleRevision) {
     PluginRuntimeState state = new PluginRuntimeState();
     state.setTenantId("1");
     state.setGameInstanceId("game-1");
@@ -3309,6 +3362,8 @@ class ScriptScheduleInstanceServiceImplTest {
     state.setRuntimeRegionId("region-1");
     state.setRuntimeRegionEpoch(12L);
     state.setPluginState(PluginState.PLUGIN_STATE_ENABLED.name());
+    state.setPluginActivationEpoch(pluginActivationEpoch);
+    state.setLifecycleRevision(lifecycleRevision);
     return state;
   }
 
