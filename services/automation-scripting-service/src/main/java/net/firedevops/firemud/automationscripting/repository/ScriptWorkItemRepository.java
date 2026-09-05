@@ -123,25 +123,28 @@ public class ScriptWorkItemRepository {
     return dsl.fetchExists(
         SCRIPT_WORK_ITEMS,
         triggerIdentityCondition(
-            tenantId,
-            gameInstanceId,
-            regionId,
-            regionEpoch,
-            entityId,
-            playableStateScope,
-            worldSlug,
-            realmSlug,
-            pointerVersion,
-            scriptId,
-            pluginId,
-            pluginVersionId,
-            bindingId,
-            eventType,
-            eventSchemaVersion,
-            scriptPatchVersion,
-            scriptPinEpoch,
-            scriptEventId,
-            dryRun));
+                tenantId,
+                gameInstanceId,
+                regionId,
+                regionEpoch,
+                entityId,
+                playableStateScope,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                scriptId,
+                pluginId,
+                pluginVersionId,
+                bindingId,
+                eventType,
+                eventSchemaVersion,
+                scriptPatchVersion,
+                scriptPinEpoch,
+                scriptEventId,
+                dryRun)
+            .and(
+                SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                    blankToNull(scriptPinControlPlaneRequestId))));
   }
 
   public boolean existsByTenantIdAndScriptIdAndStatusIn(
@@ -326,15 +329,18 @@ public class ScriptWorkItemRepository {
     return dsl.fetchCount(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.STATUS.eq(status));
   }
 
+  /**
+   * Deletes eligible rows while retaining the eligibility decision through child and parent
+   * deletion. The caller must invoke this inside a transaction so the row locks remain held.
+   */
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
     Condition eligibility = cleanupEligibility(status, updatedAt);
     List<Long> ids =
         dsl.select(SCRIPT_WORK_ITEMS.ID)
             .from(SCRIPT_WORK_ITEMS)
             .where(eligibility)
-            // The cleanup service calls this method in its existing transaction. Lock the
-            // eligibility decision until child evidence and the parent are deleted so a replay
-            // cannot revive a row after this select but before the delete.
+            // Lock the eligibility decision until child evidence and the parent are deleted so a
+            // replay cannot revive a row after this select but before the delete.
             .forUpdate()
             .fetch(SCRIPT_WORK_ITEMS.ID);
     return deleteByIds(ids, eligibility);

@@ -185,26 +185,29 @@ public class ScriptEventAuditRepository {
     return dsl.fetchExists(
         SCRIPT_EVENT_AUDIT,
         handlerIdentityCondition(
-            tenantId,
-            gameInstanceId,
-            regionId,
-            regionEpoch,
-            entityId,
-            playableStateScope,
-            worldSlug,
-            realmSlug,
-            pointerVersion,
-            scriptId,
-            pluginId,
-            pluginVersionId,
-            bindingId,
-            eventType,
-            eventSchemaVersion,
-            scriptPatchVersion,
-            scriptPinEpoch,
-            scriptPinControlPlaneRequestId,
-            scriptEventId,
-            dryRun));
+                tenantId,
+                gameInstanceId,
+                regionId,
+                regionEpoch,
+                entityId,
+                playableStateScope,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                scriptId,
+                pluginId,
+                pluginVersionId,
+                bindingId,
+                eventType,
+                eventSchemaVersion,
+                scriptPatchVersion,
+                scriptPinEpoch,
+                scriptPinControlPlaneRequestId,
+                scriptEventId,
+                dryRun)
+            .and(
+                SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                    blankToNull(scriptPinControlPlaneRequestId))));
   }
 
   /** Inserts a timer audit without raising a transaction-aborting uniqueness exception. */

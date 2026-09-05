@@ -125,8 +125,15 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "script_pin_epoch IS NULL",
             "script_pin_epoch > 0",
             "game_instance_id IS NOT NULL",
-            "script_pin_control_plane_request_id")
-        .doesNotContain("script_pin_epoch IS NULL\n            AND game_instance_id IS NULL");
+            "script_pin_control_plane_request_id");
+    int normalizedIngressTupleStart =
+        normalized.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple");
+    int normalizedIngressTupleEnd =
+        normalized.indexOf(
+            "CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity",
+            normalizedIngressTupleStart);
+    assertThat(normalized.substring(normalizedIngressTupleStart, normalizedIngressTupleEnd))
+        .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 
     int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
     int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);

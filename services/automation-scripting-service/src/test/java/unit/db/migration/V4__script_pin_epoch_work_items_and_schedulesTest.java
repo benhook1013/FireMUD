@@ -36,7 +36,10 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
         .doesNotContain("ADD CONSTRAINT uq_script_work_item_trigger_identity UNIQUE");
 
     String normalized = migration.replaceAll("\\s+", " ");
-    assertThat(normalized)
+    int scheduleAlter = normalized.indexOf("ALTER TABLE script_schedule_instances");
+    assertThat(scheduleAlter).isGreaterThanOrEqualTo(0);
+    String scheduleBlock = normalized.substring(scheduleAlter);
+    assertThat(scheduleBlock)
         .contains(
             "UPDATE script_schedule_instances",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",

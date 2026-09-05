@@ -29,6 +29,48 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemRepositoryTest {
   @Test
+  void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    7L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "pointer-1",
+                    "script-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "binding-1",
+                    "onCommand",
+                    "v1",
+                    "patch-1",
+                    2L,
+                    "pin-request-1",
+                    "event-1",
+                    false))
+        .isFalse();
+
+    int whereStart = sql.get().indexOf(" where ");
+    assertThat(whereStart).isGreaterThanOrEqualTo(0);
+    assertThat(sql.get().substring(whereStart))
+        .contains("script_pin_epoch", "script_pin_control_plane_request_id", "script_event_id");
+  }
+
+  @Test
   void insertRejectsIncompleteScriptPinTuple() {
     ScriptWorkItemRepository repository =
         new ScriptWorkItemRepository(DSL.using(SQLDialect.POSTGRES));

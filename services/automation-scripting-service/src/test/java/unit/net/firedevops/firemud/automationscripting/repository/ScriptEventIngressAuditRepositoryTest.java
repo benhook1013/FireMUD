@@ -143,7 +143,10 @@ class ScriptEventIngressAuditRepositoryTest {
             "script_pin_epoch",
             "script_pin_control_plane_request_id",
             "request_digest");
-    assertThat(sqlRef.get().split("request_digest", -1)).hasSize(3);
+    int whereStart = sqlRef.get().indexOf(" where ");
+    assertThat(whereStart).isGreaterThanOrEqualTo(0);
+    assertThat(sqlRef.get().substring(0, whereStart)).contains("request_digest");
+    assertThat(sqlRef.get().substring(whereStart)).contains("request_digest");
     assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2", REQUEST_DIGEST);
   }
 

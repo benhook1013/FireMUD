@@ -4114,6 +4114,57 @@ class ScriptEventIngressServiceImplTest {
     verify(repository, never()).save(Mockito.any());
   }
 
+  @Test
+  void missingPersistedClaimIdFailsClosedBeforeHandlerEffects() {
+    SessionContext.setContext(
+        "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenAnswer(
+            invocation ->
+                new ScriptEventIngressAuditRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
+    ScriptEventBindingRepository bindingRepository =
+        Mockito.mock(ScriptEventBindingRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository eventAuditRepository =
+        Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService queueService = Mockito.mock(AutomationQueueService.class);
+    ScriptEventIngressService service =
+        claimTestService(
+            repository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            queueService,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            enabledPluginRuntimeStateService(),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    ScriptIngressInProgressException failure =
+        assertThrows(
+            ScriptIngressInProgressException.class,
+            () ->
+                service.admit(
+                    TriggerScriptEventRequest.newBuilder()
+                        .setTenantId("1")
+                        .setScriptId("script-1")
+                        .setEventType("onLoad")
+                        .setScriptPatchVersion("patch-1")
+                        .setScriptEventId("onload:1:patch-1:script-1")
+                        .build(),
+                    "automation-scripting-service"));
+
+    assertThat(failure).hasMessage("ingress_claim_lost");
+    verify(repository, never()).renewClaimIfCurrent(Mockito.any(), Mockito.any());
+    verify(repository, never()).save(Mockito.any());
+    verifyNoInteractions(bindingRepository, workItemRepository, eventAuditRepository, queueService);
+  }
+
   private static ScriptEventIngressService claimTestService(
       ScriptEventIngressAuditRepository repository,
       ScriptEventBindingRepository bindingRepository,
