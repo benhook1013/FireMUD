@@ -69,11 +69,28 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration.substring(runtimeUnpinnedStart, runtimeUnpinnedEnd))
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
 
-    int reconciliationStart = migration.indexOf("UPDATE script_event_ingress_audit");
+    int playableScopeDrop =
+        migration.indexOf(
+            "ALTER TABLE script_event_ingress_audit\n"
+                + "    ALTER COLUMN playable_state_scope DROP NOT NULL;");
+    int preInstanceNormalization =
+        migration.indexOf(
+            "UPDATE script_event_ingress_audit\n"
+                + "SET game_instance_id = NULL,\n"
+                + "    playable_state_scope = NULL\n"
+                + "WHERE game_instance_id IS NULL OR game_instance_id = '';");
+    assertThat(playableScopeDrop).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isGreaterThan(playableScopeDrop);
+    assertThat(preInstanceNormalization).isLessThan(runtimeStart);
+
+    int reconciliationStart =
+        migration.indexOf(
+            "UPDATE script_event_ingress_audit\n" + "SET region_id = COALESCE(region_id, ''),");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeStart).isGreaterThan(reconciliationStart);
     int onLoadDedup = migration.indexOf("The legacy nullable game-instance column allowed");
     assertThat(onLoadDedup).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isLessThan(onLoadDedup);
     assertThat(migration.substring(reconciliationStart, onLoadDedup))
         .contains("WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");

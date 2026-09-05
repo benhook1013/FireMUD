@@ -27,6 +27,14 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ALTER COLUMN pointer_version DROP NOT NULL;
 
+-- Legacy pre-instance claims used both NULL and the empty-string sentinel for the absent
+-- game-instance identity. Normalize both forms before deduplication so they share the onLoad
+-- identity branch and cannot coexist with a new NULL claim under the runtime index.
+UPDATE script_event_ingress_audit
+SET game_instance_id = NULL,
+    playable_state_scope = NULL
+WHERE game_instance_id IS NULL OR game_instance_id = '';
+
 ALTER TABLE script_event_ingress_audit
     DROP CONSTRAINT uq_script_event_ingress_audit_identity;
 
