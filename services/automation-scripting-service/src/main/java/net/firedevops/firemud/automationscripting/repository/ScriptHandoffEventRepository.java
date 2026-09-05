@@ -144,8 +144,22 @@ public class ScriptHandoffEventRepository {
     if (entity.getId() == null) {
       ScriptHandoffEventsRecord record = dsl.newRecord(SCRIPT_HANDOFF_EVENTS);
       populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      // event_id is the deterministic logical command identity assigned by the handoff service.
+      // A retry may reach this boundary after Game Session has already accepted the command, so
+      // converge the same child row instead of inserting another disposition.
+      return dsl.insertInto(SCRIPT_HANDOFF_EVENTS)
+          .set(record)
+          .onConflict(SCRIPT_HANDOFF_EVENTS.EVENT_ID)
+          .doUpdate()
+          .set(SCRIPT_HANDOFF_EVENTS.GAME_SESSION_COMMAND_ID, entity.getGameSessionCommandId())
+          .set(SCRIPT_HANDOFF_EVENTS.REMOTE_COORDINATOR_ID, entity.getRemoteCoordinatorId())
+          .set(SCRIPT_HANDOFF_EVENTS.REMOTE_FOLLOWUP_ID, entity.getRemoteFollowupId())
+          .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME, entity.getHandoffOutcome())
+          .set(SCRIPT_HANDOFF_EVENTS.HANDOFF_REASON, entity.getHandoffReason())
+          .set(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT, toLocalDateTime(entity.getObservedAt()))
+          .set(SCRIPT_HANDOFF_EVENTS.ROW_VERSION, SCRIPT_HANDOFF_EVENTS.ROW_VERSION.plus(1))
+          .returning()
+          .fetchOne(this::toEntity);
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =

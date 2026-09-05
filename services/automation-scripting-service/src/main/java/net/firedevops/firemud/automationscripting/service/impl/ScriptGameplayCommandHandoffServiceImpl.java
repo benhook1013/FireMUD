@@ -7,7 +7,6 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
@@ -232,7 +231,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
           false, ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED, "", "", "", "");
     }
     boolean remoteHandoff = requiresRemoteHandoff(workItem, command);
-    if (remoteHandoff && runtimeScopeStatus != RuntimeRegionScopeStatus.CURRENT) {
+    if (runtimeScopeStatus != RuntimeRegionScopeStatus.CURRENT) {
       Instant now = Instant.now();
       String errorCode =
           runtimeScopeStatus == RuntimeRegionScopeStatus.UNAVAILABLE
@@ -526,11 +525,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
         || workItem.getGameInstanceId().isBlank()) {
       return RuntimeRegionScopeStatus.MALFORMED;
     }
-    GetGameInstanceRuntimeStateResponse runtimeState =
-        gameSessionClient.getGameInstanceRuntimeState(
-            workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
-    if (runtimeState == null
-        || (runtimeState.hasError() && !runtimeState.getError().getCode().isBlank())) {
+    GetGameInstanceRuntimeStateResponse runtimeState;
+    try {
+      runtimeState =
+          gameSessionClient.getGameInstanceRuntimeState(
+              workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    } catch (RuntimeException ex) {
+      // A client-side failure is indistinguishable from an unavailable owner. Do not let a
+      // partial local handoff escape the durable retry/fail-closed path.
+      return RuntimeRegionScopeStatus.UNAVAILABLE;
+    }
+    if (runtimeState == null || runtimeState.hasError()) {
       return RuntimeRegionScopeStatus.UNAVAILABLE;
     }
     if (!runtimeState.hasRuntimeState()) {
@@ -772,7 +777,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         RoutingBundleSupport.normalize(
             workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
     ScriptHandoffEvent event = new ScriptHandoffEvent();
-    event.setEventId("she-" + UUID.randomUUID());
+    event.setEventId(handoffEventId(workItem, command.ordinal()));
     event.setTenantId(workItem.getTenantId());
     event.setGameInstanceId(workItem.getGameInstanceId());
     event.setScriptPatchVersion(workItem.getScriptPatchVersion());
@@ -805,6 +810,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setHandoffReason(reason);
     event.setObservedAt(now);
     handoffEventRepository.save(event);
+  }
+
+  private static String handoffEventId(ScriptWorkItem workItem, int commandOrdinal) {
+    return "she-work-item-" + workItem.getId() + "-command-" + commandOrdinal;
   }
 
   private static String handoffReason(HandoffResult result) {
