@@ -277,8 +277,8 @@ final class AutomationGameplayCommandAdmissionSupport {
    * Compares the immutable fields carried by the current live automation admission request.
    *
    * <p>The command row also contains mutable execution/recovery state and downstream queue-source
-   * fields; those deliberately do not participate in this comparison. The target-only namespace
-   * and command ordinal are not part of the current request/schema and are therefore not fabricated
+   * fields; those deliberately do not participate in this comparison. The target-only namespace and
+   * command ordinal are not part of the current request/schema and are therefore not fabricated
    * here. Local Automation rows also compare the exact script pin epoch and owner request evidence.
    */
   private static boolean sameAdmissionPayload(GameplayCommand existing, GameplayCommand requested) {

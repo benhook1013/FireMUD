@@ -916,8 +916,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     instance.setTenantId(1L);
     instance.setScriptPatchVersion(changed.scriptPatchVersion());
     instance.setScriptPinEpoch(changed.scriptPinEpoch());
-    instance.setScriptPatchPinnedControlPlaneRequestId(
-        changed.scriptPinControlPlaneRequestId());
+    instance.setScriptPatchPinnedControlPlaneRequestId(changed.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     GameplayCommand existing = new GameplayCommand();
     populateAdmissionFields(existing, automationRequest());
@@ -1561,7 +1560,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static void verifyNoTickEnqueue(TickService tickService) {
     verify(tickService, never())
-        .enqueueCommand(anyLong(), anyLong(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        .enqueueCommand(
+            anyLong(), anyLong(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
   }
 
   private static AdmissionResult admitWithCurrentPointers(
@@ -1584,8 +1584,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     instance.setTenantId(request.tenantId());
     instance.setScriptPatchVersion(request.scriptPatchVersion());
     instance.setScriptPinEpoch(request.scriptPinEpoch());
-    instance.setScriptPatchPinnedControlPlaneRequestId(
-        request.scriptPinControlPlaneRequestId());
+    instance.setScriptPatchPinnedControlPlaneRequestId(request.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(request.gameInstanceId()))
         .thenReturn(Optional.of(instance));
     when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))
@@ -1629,8 +1628,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     instance.setTenantId(request.tenantId());
     instance.setScriptPatchVersion(request.scriptPatchVersion());
     instance.setScriptPinEpoch(request.scriptPinEpoch());
-    instance.setScriptPatchPinnedControlPlaneRequestId(
-        request.scriptPinControlPlaneRequestId());
+    instance.setScriptPatchPinnedControlPlaneRequestId(request.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(request.gameInstanceId()))
         .thenReturn(Optional.of(instance));
     when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))

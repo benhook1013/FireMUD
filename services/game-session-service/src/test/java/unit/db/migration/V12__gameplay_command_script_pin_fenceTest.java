@@ -24,8 +24,7 @@ class V12__gameplay_command_script_pin_fenceTest {
         .contains("UPDATE gameplay_command")
         .contains("SET script_patch_version = NULL")
         .contains("upper(btrim(source_type)) = 'AUTOMATION'")
-        .contains(
-            "NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL")
+        .contains("NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL")
         .contains("ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent")
         .contains("upper(btrim(source_type)) = 'PLAYER'")
         .contains("script_pin_epoch > 0")
