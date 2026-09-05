@@ -914,6 +914,10 @@ class AutomationGameplayCommandAdmissionSupportTest {
     GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
+    instance.setScriptPatchVersion(changed.scriptPatchVersion());
+    instance.setScriptPinEpoch(changed.scriptPinEpoch());
+    instance.setScriptPatchPinnedControlPlaneRequestId(
+        changed.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     GameplayCommand existing = new GameplayCommand();
     populateAdmissionFields(existing, automationRequest());
@@ -1547,6 +1551,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static GameInstance automationInstance() {
     GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-1");
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
