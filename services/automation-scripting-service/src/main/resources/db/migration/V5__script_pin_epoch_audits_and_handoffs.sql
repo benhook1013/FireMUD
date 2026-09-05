@@ -45,9 +45,13 @@ ALTER TABLE script_event_ingress_audit
 UPDATE script_event_ingress_audit
 SET region_id = COALESCE(region_id, ''),
     region_epoch = COALESCE(region_epoch, 0),
+    entity_id = COALESCE(entity_id, ''),
     playable_state_scope = COALESCE(playable_state_scope, '')
 WHERE game_instance_id IS NOT NULL
-  AND (region_id IS NULL OR region_epoch IS NULL OR playable_state_scope IS NULL);
+  AND (region_id IS NULL
+      OR region_epoch IS NULL
+      OR entity_id IS NULL
+      OR playable_state_scope IS NULL);
 
 -- The legacy nullable game-instance column allowed duplicate pre-instance onLoad rows because
 -- PostgreSQL treats NULL identity values as distinct. Retain one deterministic row before the
