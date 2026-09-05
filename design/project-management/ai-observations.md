@@ -129,3 +129,8 @@ Entry format:
   - Context: tightening local Compose smoke project binding and lifecycle checks.
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
+
+- `2026-09-05`: Automation source type alone does not identify the local command path
+  - Context: reconciling local exact-pin admission and final execution with the existing remote Automation follow-up path.
+  - Observation: local and remote commands both use the `AUTOMATION` source type, so applying local tuple requirements by source type alone breaks the remote legacy path before its separate source/target tuple contract is implemented.
+  - Expected pattern: discriminate the local path with its remote-follow-up evidence as well as source type, preserve the remote path's current schema contract, and widen it only when the owning source/target design and proof land together.
