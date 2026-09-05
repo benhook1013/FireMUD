@@ -144,12 +144,46 @@ public interface ScriptWorkItemService {
       String tenantId,
       String gameInstanceId,
       String regionId,
+      boolean statePresent,
       String admissionMode,
       long admissionEpoch,
+      String controlPlaneRequestId,
+      String targetMode,
+      String outcome,
+      String requestFingerprint,
+      long acknowledgedAtMs,
       long activeExecutionCount,
       long oldestActiveExecutionStartedAtMs,
       long pendingCancelableWorkItemCount,
-      long observedAtMs) {}
+      long observedAtMs) {
+    public AutomationDrainStatusSummary(
+        String tenantId,
+        String gameInstanceId,
+        String regionId,
+        String admissionMode,
+        long admissionEpoch,
+        long activeExecutionCount,
+        long oldestActiveExecutionStartedAtMs,
+        long pendingCancelableWorkItemCount,
+        long observedAtMs) {
+      this(
+          tenantId,
+          gameInstanceId,
+          regionId,
+          true,
+          admissionMode,
+          admissionEpoch,
+          "",
+          "",
+          AutomationAdmissionStateService.OUTCOME_ACKNOWLEDGEMENT_UNAVAILABLE,
+          "",
+          0L,
+          activeExecutionCount,
+          oldestActiveExecutionStartedAtMs,
+          pendingCancelableWorkItemCount,
+          observedAtMs);
+    }
+  }
 
   record PatchInstanceRolloutSummary(
       String tenantId,
@@ -254,5 +288,35 @@ public interface ScriptWorkItemService {
     }
   }
 
-  record ReplayResult(long replayedCount, long rejectedCount) {}
+  record ReplayItemResult(
+      String workItemId,
+      String outcome,
+      String rejectionReason,
+      String failureReason,
+      long failureGeneration) {
+    public ReplayItemResult(
+        String workItemId, String outcome, String rejectionReason, long failureGeneration) {
+      this(workItemId, outcome, rejectionReason, "", failureGeneration);
+    }
+
+    public ReplayItemResult(String workItemId, String outcome, String rejectionReason) {
+      this(workItemId, outcome, rejectionReason, "", 0L);
+    }
+  }
+
+  record ReplayResult(
+      long replayedCount,
+      long rejectedCount,
+      List<ReplayItemResult> results,
+      String requestFingerprint) {
+    public ReplayResult {
+      results = results == null ? List.of() : List.copyOf(results);
+      requestFingerprint = requestFingerprint == null ? "" : requestFingerprint;
+    }
+
+    /** Compatibility constructor for callers that only consume aggregate counts. */
+    public ReplayResult(long replayedCount, long rejectedCount) {
+      this(replayedCount, rejectedCount, List.of(), "");
+    }
+  }
 }

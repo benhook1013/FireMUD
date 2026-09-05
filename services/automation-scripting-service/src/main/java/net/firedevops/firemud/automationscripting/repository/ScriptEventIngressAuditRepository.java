@@ -3,13 +3,19 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventIngressAuditRecord;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.SelectFieldOrAsterisk;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -17,6 +23,14 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptEventIngressAuditRepository {
+  private static final Field<Boolean> INSERTED_ROW =
+      field("xmax = 0", Boolean.class).as("inserted");
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Repository result intentionally returns the mutable persisted audit entity.")
+  public record IdempotentInsertResult(ScriptEventIngressAudit audit, boolean inserted) {}
+
   private final DSLContext dsl;
 
   public ScriptEventIngressAuditRepository(DSLContext dsl) {
@@ -42,10 +56,10 @@ public class ScriptEventIngressAuditRepository {
             SCRIPT_EVENT_INGRESS_AUDIT
                 .TENANT_ID
                 .eq(tenantId)
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.eq(regionId))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.eq(regionEpoch))
-                .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.eq(entityId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNotDistinctFrom(gameInstanceId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.isNotDistinctFrom(regionId))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.isNotDistinctFrom(regionEpoch))
+                .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entityId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
@@ -78,6 +92,11 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ACTIVATION_EPOCH,
+                entity.getPluginActivationEpoch())
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
@@ -93,6 +112,7 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.READ_SNAPSHOT_TOKEN, entity.getReadSnapshotToken())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PAYLOAD_JSON, entity.getPayloadJson())
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_FINGERPRINT, entity.getRequestFingerprint())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMITTED, entity.isAdmitted())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_OUTCOME, entity.getAdmissionOutcome())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, entity.getAdmissionReason())
@@ -114,6 +134,44 @@ public class ScriptEventIngressAuditRepository {
     return findById(entity.getId()).orElseThrow();
   }
 
+  /** Inserts an ingress claim or atomically returns the winner for its immutable identity. */
+  public IdempotentInsertResult insertIfAbsentByIdentity(ScriptEventIngressAudit entity) {
+    if (entity.getId() != null) {
+      throw new IllegalArgumentException("A new script event ingress audit is required");
+    }
+    ScriptEventIngressAuditRecord record = dsl.newRecord(SCRIPT_EVENT_INGRESS_AUDIT);
+    populate(record, entity);
+    List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
+    Collections.addAll(returningFields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+    returningFields.add(INSERTED_ROW);
+    // The no-op update makes PostgreSQL wait for a concurrent identity winner and
+    // returns that durable row, avoiding check-then-save races and unique failures.
+    return dsl.insertInto(SCRIPT_EVENT_INGRESS_AUDIT)
+        .set(record)
+        .onConflict(
+            SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID,
+            SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID,
+            SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID,
+            SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH,
+            SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID,
+            SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE,
+            SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE,
+            SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION,
+            SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION,
+            SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID,
+            SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN,
+            SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE)
+        .doUpdate()
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ID, SCRIPT_EVENT_INGRESS_AUDIT.ID)
+        .returningResult(returningFields)
+        .fetchOptional(
+            returned ->
+                new IdempotentInsertResult(
+                    toEntity(returned), Boolean.TRUE.equals(returned.get(INSERTED_ROW))))
+        .orElseThrow(
+            () -> new IllegalStateException("Ingress identity conflict did not yield a row"));
+  }
+
   private Optional<ScriptEventIngressAudit> findById(Long id) {
     return dsl.selectFrom(SCRIPT_EVENT_INGRESS_AUDIT)
         .where(SCRIPT_EVENT_INGRESS_AUDIT.ID.eq(id))
@@ -133,6 +191,9 @@ public class ScriptEventIngressAuditRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setQuotaClass(entity.getQuotaClass());
@@ -148,6 +209,7 @@ public class ScriptEventIngressAuditRepository {
     record.setDryRun(entity.isDryRun());
     record.setReadSnapshotToken(entity.getReadSnapshotToken());
     record.setPayloadJson(entity.getPayloadJson());
+    record.setRequestFingerprint(entity.getRequestFingerprint());
     record.setAdmitted(entity.isAdmitted());
     record.setAdmissionOutcome(entity.getAdmissionOutcome());
     record.setAdmissionReason(entity.getAdmissionReason());
@@ -171,6 +233,12 @@ public class ScriptEventIngressAuditRepository {
     entity.setScriptId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID));
+    Long scriptPinEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    Long pluginActivationEpoch = record.get(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_EVENT_INGRESS_AUDIT.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setEventType(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setQuotaClass(record.get(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS));
@@ -187,6 +255,7 @@ public class ScriptEventIngressAuditRepository {
     entity.setDryRun(Boolean.TRUE.equals(dryRun));
     entity.setReadSnapshotToken(record.get(SCRIPT_EVENT_INGRESS_AUDIT.READ_SNAPSHOT_TOKEN));
     entity.setPayloadJson(record.get(SCRIPT_EVENT_INGRESS_AUDIT.PAYLOAD_JSON));
+    entity.setRequestFingerprint(record.get(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_FINGERPRINT));
     Boolean admitted = record.get(SCRIPT_EVENT_INGRESS_AUDIT.ADMITTED);
     entity.setAdmitted(Boolean.TRUE.equals(admitted));
     entity.setAdmissionOutcome(record.get(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_OUTCOME));

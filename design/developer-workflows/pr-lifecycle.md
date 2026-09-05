@@ -22,6 +22,14 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 - After all known findings are fixed and pushed, the main orchestrator may request the next hosted full review when it observes that no review is active and the rate limit should be free. Verify the resulting summary because a request may be skipped, fail internally, or be rate-limited.
 - After each review/fix run, report hosted and per-CLI finding counts, their practical significance, whether another review cycle is recommended, and a concise summary of subagent use. This evidence, rather than quota availability alone, determines whether review should continue.
 
+### 5B Corpus Recovery
+
+When recovering an oversized corpus, select small vertical capability or knowledge slices by coherent information, authority, and invariant context across the complete local boundary: migrations, entities, repositories, services, tests, and docs. Never split a coherent domain merely to satisfy a file count. Roughly 20–40 files is a planning range when it follows that boundary; approaching 70 files is an operational warning and reaching 85 requires remediation. If one coherent domain approaches the hosted ceiling, use an intermediate landing or repack checkpoint while preserving that domain rather than inventing an arbitrary semantic split. Never use CLI-only review as a workaround for the hosted file ceiling.
+
+The recovery may keep several small PRs open concurrently, but only one PR domain is the active hosted-review domain under the global cap; the others are dormant routing containers. Shared or cross-domain corrections go into the active PR and flow by ancestry/rebase. Isolated off-domain findings route to their dormant owner. Maintain one canonical forward lineage: an extracted or stale carry may be reused only after consumed/retained patch-ID or range-diff equivalence is established, and a carry tip must never be reapplied naively. Keep the active PR mergeable next and avoid building long horizontal schema/repository/service stacks.
+
+The main thread delegates edits and independently verifies and integrates each result. When all lanes are occupied, it waits or interrupts a lane rather than applying manual fixes outside the delegation boundary.
+
 ## Change And Merge Policy
 
 - Keep PRs coherent, normally one medium-sized slice of roughly 800-2,000 changed lines including adjacent convergence. Use smaller PRs for isolated fixes; split only independent or genuinely hard-to-review work.

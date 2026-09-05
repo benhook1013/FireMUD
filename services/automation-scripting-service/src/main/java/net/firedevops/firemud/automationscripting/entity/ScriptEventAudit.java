@@ -18,6 +18,10 @@ public class ScriptEventAudit {
   private String scriptId;
   private String pluginId;
   private String pluginVersionId;
+  private String bindingId;
+  private long scriptPinEpoch;
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
   private String eventType;
   private String eventSchemaVersion;
   private String scriptPatchVersion;

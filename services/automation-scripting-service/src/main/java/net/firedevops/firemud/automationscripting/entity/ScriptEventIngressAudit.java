@@ -20,6 +20,9 @@ public class ScriptEventIngressAudit {
   private String scriptId;
   private String pluginId;
   private String pluginVersionId;
+  private long scriptPinEpoch;
+  private long pluginActivationEpoch;
+  private long lifecycleRevision;
   private String eventType;
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;
@@ -38,6 +41,7 @@ public class ScriptEventIngressAudit {
   private boolean dryRun;
   private String readSnapshotToken;
   private String payloadJson;
+  private String requestFingerprint = "";
   private boolean admitted;
   private String admissionOutcome;
   private String admissionReason;

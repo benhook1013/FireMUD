@@ -1,14 +1,19 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static org.jooq.impl.DSL.field;
+import static org.jooq.impl.DSL.notExists;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,6 +37,8 @@ public class ScriptEventAuditRepository {
   private static final int MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
+  private static final Field<OffsetDateTime> RETENTION_HOLD_UNTIL =
+      field("retention_hold_until", OffsetDateTime.class);
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
@@ -42,6 +49,49 @@ public class ScriptEventAuditRepository {
 
   public ScriptEventAuditRepository(DSLContext dsl) {
     this.dsl = dsl;
+  }
+
+  /**
+   * Disposes terminal audit evidence after the owner safe watermark. The parent status predicate
+   * keeps active work auditable; the caller performs this child disposition before attempting
+   * parent cleanup.
+   */
+  public long deleteExpiredRetentionEvidence(Instant safeWatermark, Instant now) {
+    LocalDateTime cutoff = toLocalDateTime(safeWatermark);
+    OffsetDateTime current = toOffsetDateTime(now);
+    return dsl.deleteFrom(SCRIPT_EVENT_AUDIT)
+        .where(
+            SCRIPT_EVENT_AUDIT
+                .TENANT_ID
+                .isNotNull()
+                .and(SCRIPT_EVENT_AUDIT.UPDATED_AT.lt(cutoff))
+                .and(RETENTION_HOLD_UNTIL.isNull().or(RETENTION_HOLD_UNTIL.le(current)))
+                .and(
+                    notExists(
+                        org.jooq
+                            .impl
+                            .DSL
+                            .selectOne()
+                            .from(SCRIPT_WORK_ITEMS)
+                            .where(
+                                SCRIPT_WORK_ITEMS
+                                    .TENANT_ID
+                                    .eq(SCRIPT_EVENT_AUDIT.TENANT_ID)
+                                    .and(SCRIPT_WORK_ITEMS.ID.eq(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID))
+                                    .and(
+                                        SCRIPT_WORK_ITEMS.STATUS.notIn(
+                                            AutomationScriptingJooqRepositorySupport
+                                                .TERMINAL_WORK_ITEM_STATUSES))))))
+        .execute();
+  }
+
+  /** Applies or clears the durable owner hold for one tenant-qualified audit row. */
+  public boolean setRetentionHold(String tenantId, long auditId, Instant holdUntil) {
+    return dsl.update(SCRIPT_EVENT_AUDIT)
+            .set(RETENTION_HOLD_UNTIL, holdUntil == null ? null : toOffsetDateTime(holdUntil))
+            .where(SCRIPT_EVENT_AUDIT.ID.eq(auditId).and(SCRIPT_EVENT_AUDIT.TENANT_ID.eq(tenantId)))
+            .execute()
+        == 1;
   }
 
   private static Condition handlerIdentityCondition(
@@ -55,28 +105,41 @@ public class ScriptEventAuditRepository {
       String realmSlug,
       String pointerVersion,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String bindingId,
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
       String scriptEventId,
-      boolean dryRun) {
-    return SCRIPT_EVENT_AUDIT
-        .TENANT_ID
-        .eq(tenantId)
-        .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
-        .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(regionId))
-        .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(regionEpoch))
-        .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entityId))
-        .and(SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
-        .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(worldSlug))
-        .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
-        .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
-        .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
-        .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
-        .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
-        .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-        .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
-        .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
+      boolean dryRun,
+      boolean constrainPluginIdentity) {
+    Condition condition =
+        SCRIPT_EVENT_AUDIT
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID.eq(gameInstanceId))
+            .and(SCRIPT_EVENT_AUDIT.REGION_ID.eq(regionId))
+            .and(SCRIPT_EVENT_AUDIT.REGION_EPOCH.eq(regionEpoch))
+            .and(SCRIPT_EVENT_AUDIT.ENTITY_ID.eq(entityId))
+            .and(SCRIPT_EVENT_AUDIT.PLAYABLE_STATE_SCOPE.eq(playableStateScope))
+            .and(SCRIPT_EVENT_AUDIT.WORLD_SLUG.eq(worldSlug))
+            .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
+            .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
+            .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
+            .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
+            .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
+            .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
+            .and(SCRIPT_EVENT_AUDIT.DRY_RUN.eq(dryRun));
+    if (constrainPluginIdentity) {
+      condition =
+          condition
+              .and(SCRIPT_EVENT_AUDIT.PLUGIN_ID.isNotDistinctFrom(pluginId))
+              .and(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID.isNotDistinctFrom(pluginVersionId))
+              .and(SCRIPT_EVENT_AUDIT.BINDING_ID.isNotDistinctFrom(bindingId));
+    }
+    return condition;
   }
 
   private static Condition handlerIdentityCondition(ScriptEventAudit entity) {
@@ -91,11 +154,15 @@ public class ScriptEventAuditRepository {
         entity.getRealmSlug(),
         entity.getPointerVersion(),
         entity.getScriptId(),
+        entity.getPluginId(),
+        entity.getPluginVersionId(),
+        entity.getBindingId(),
         entity.getEventType(),
         entity.getEventSchemaVersion(),
         entity.getScriptPatchVersion(),
         entity.getScriptEventId(),
-        entity.isDryRun());
+        entity.isDryRun(),
+        true);
   }
 
   public boolean
@@ -128,11 +195,59 @@ public class ScriptEventAuditRepository {
             realmSlug,
             pointerVersion,
             scriptId,
+            null,
+            null,
+            null,
             eventType,
             eventSchemaVersion,
             scriptPatchVersion,
             scriptEventId,
-            dryRun));
+            dryRun,
+            false));
+  }
+
+  public boolean
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+          String tenantId,
+          String gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
+          String scriptId,
+          String pluginId,
+          String pluginVersionId,
+          String bindingId,
+          String eventType,
+          String eventSchemaVersion,
+          String scriptPatchVersion,
+          String scriptEventId,
+          boolean dryRun) {
+    return dsl.fetchExists(
+        SCRIPT_EVENT_AUDIT,
+        handlerIdentityCondition(
+            tenantId,
+            gameInstanceId,
+            regionId,
+            regionEpoch,
+            entityId,
+            playableStateScope,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            scriptId,
+            pluginId,
+            pluginVersionId,
+            bindingId,
+            eventType,
+            eventSchemaVersion,
+            scriptPatchVersion,
+            scriptEventId,
+            dryRun,
+            true));
   }
 
   /** Inserts a timer audit without raising a transaction-aborting uniqueness exception. */
@@ -180,6 +295,9 @@ public class ScriptEventAuditRepository {
             SCRIPT_EVENT_AUDIT.REALM_SLUG,
             SCRIPT_EVENT_AUDIT.POINTER_VERSION,
             SCRIPT_EVENT_AUDIT.SCRIPT_ID,
+            SCRIPT_EVENT_AUDIT.PLUGIN_ID,
+            SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID,
+            SCRIPT_EVENT_AUDIT.BINDING_ID,
             SCRIPT_EVENT_AUDIT.EVENT_TYPE,
             SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
             SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION,
@@ -268,6 +386,10 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_EVENT_AUDIT.BINDING_ID, entity.getBindingId())
+            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(SCRIPT_EVENT_AUDIT.PLUGIN_ACTIVATION_EPOCH, entity.getPluginActivationEpoch())
+            .set(SCRIPT_EVENT_AUDIT.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
@@ -320,6 +442,10 @@ public class ScriptEventAuditRepository {
     record.setScriptId(entity.getScriptId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setBindingId(entity.getBindingId());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
+    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
@@ -356,6 +482,13 @@ public class ScriptEventAuditRepository {
     entity.setScriptId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
+    entity.setBindingId(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID));
+    Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    Long pluginActivationEpoch = record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ACTIVATION_EPOCH);
+    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
+    Long lifecycleRevision = record.get(SCRIPT_EVENT_AUDIT.LIFECYCLE_REVISION);
+    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION));
     entity.setScriptPatchVersion(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));

@@ -368,6 +368,8 @@ message GameInstanceRuntimeState {
   string region_id = 19;
   int64 region_epoch = 20;
   repeated AdmissionPointerControlPlaneEntry current_admission_pointers = 21;
+  // Monotonic script-pin generation. It fences same-version repins.
+  int64 script_pin_epoch = 22;
 }
 
 message GetGameInstanceRuntimeStateResponse {

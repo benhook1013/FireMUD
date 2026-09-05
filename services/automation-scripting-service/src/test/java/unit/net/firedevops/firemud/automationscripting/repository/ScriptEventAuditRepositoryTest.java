@@ -26,6 +26,87 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
+  void retentionCleanupBindsUtcOffsetDateTimeForNullableHoldComparison() {
+    Instant safeWatermark = Instant.parse("2026-08-01T00:00:00Z");
+    Instant now = Instant.parse("2026-08-02T00:00:00Z");
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteExpiredRetentionEvidence(safeWatermark, now)).isZero();
+
+    assertThat(bindingsRef.get()[0]).isInstanceOf(java.sql.Timestamp.class);
+    assertThat(bindingsRef.get()).contains("2026-08-02 00:00:00+00:00");
+    assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
+        .contains("retention_hold_until", "is null", " <= ");
+  }
+
+  @Test
+  void retentionHoldWriteUsesUtcOffsetDateTimeAndAllowsClearingHold() {
+    Instant holdUntil = Instant.parse("2026-08-03T00:00:00Z");
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          bindingsRef.set(context.bindings());
+          sqlRef.set(context.sql());
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.setRetentionHold("tenant-1", 11L, holdUntil)).isTrue();
+    assertThat(bindingsRef.get()).contains("2026-08-03 00:00:00+00:00");
+
+    assertThat(repository.setRetentionHold("tenant-1", 11L, null)).isTrue();
+    assertThat(retentionHoldSetClause(sqlRef.get())).contains("retention_hold_until");
+    assertThat(bindingsRef.get()).contains((Object) null);
+  }
+
+  @Test
+  void legacyHandlerExistenceLeavesPluginIdentityUnconstrained() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    3L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "1",
+                    "script-1",
+                    "onTimerExpire",
+                    "v1",
+                    "patch-1",
+                    "event-1",
+                    false))
+        .isTrue();
+    assertThat(sqlRef.get()).doesNotContain("plugin_id", "plugin_version_id", "binding_id");
+  }
+
+  @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));
@@ -324,5 +405,14 @@ class ScriptEventAuditRepositoryTest {
     int actionStart = normalized.indexOf(" do update", conflictStart);
     assertThat(actionStart).as("SQL must contain a DO UPDATE marker").isGreaterThan(conflictStart);
     return normalized.substring(conflictStart, actionStart);
+  }
+
+  private static String retentionHoldSetClause(String sql) {
+    String normalized = sql.toLowerCase(Locale.ROOT);
+    int setStart = normalized.indexOf(" set ");
+    int whereStart = normalized.indexOf(" where ", setStart);
+    assertThat(setStart).as(sql).isGreaterThanOrEqualTo(0);
+    assertThat(whereStart).as(sql).isGreaterThan(setStart);
+    return normalized.substring(setStart, whereStart);
   }
 }

@@ -82,6 +82,7 @@ final class GameSessionOperatorControlPlaneService {
 
   SetPinnedScriptPatchVersionResponse setPinnedScriptPatchVersion(
       long tenantId, long gameInstanceId, SetPinnedScriptPatchVersionRequest request) {
+    requireText(request.getTargetScriptPatchVersion(), "target_script_patch_version is required");
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     String previous = instance.getScriptPatchVersion();
     updatePinnedPatch(
@@ -100,6 +101,7 @@ final class GameSessionOperatorControlPlaneService {
 
   RollbackScriptPatchVersionResponse rollbackScriptPatchVersion(
       long tenantId, long gameInstanceId, RollbackScriptPatchVersionRequest request) {
+    requireText(request.getTargetScriptPatchVersion(), "target_script_patch_version is required");
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     String previous = instance.getScriptPatchVersion();
     updatePinnedPatch(
@@ -189,7 +191,13 @@ final class GameSessionOperatorControlPlaneService {
       String actorPrincipal,
       String reason,
       String controlPlaneRequestId) {
+    long currentScriptPinEpoch =
+        instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch();
+    if (currentScriptPinEpoch == Long.MAX_VALUE) {
+      throw new IllegalStateException("script pin epoch exhausted");
+    }
     instance.setScriptPatchVersion(targetScriptPatchVersion);
+    instance.setScriptPinEpoch(currentScriptPinEpoch + 1L);
     instance.setScriptPatchPinnedAt(Instant.now());
     instance.setScriptPatchPinnedBy(actorPrincipal);
     instance.setScriptPatchPinnedReason(reason);

@@ -26,6 +26,7 @@ public class GameInstanceRepository {
     GAME_INSTANCES.TENANT_ID,
     GAME_INSTANCES.RUNTIME_VERSION,
     GAME_INSTANCES.SCRIPT_PATCH_VERSION,
+    GAME_INSTANCES.SCRIPT_PIN_EPOCH,
     GAME_INSTANCES.GAME_TEMPLATE_ID,
     GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID,
     GAME_INSTANCES.VERSION_ID,
@@ -113,6 +114,7 @@ public class GameInstanceRepository {
             .set(GAME_INSTANCES.TENANT_ID, entity.getTenantId())
             .set(GAME_INSTANCES.RUNTIME_VERSION, entity.getRuntimeVersion())
             .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(GAME_INSTANCES.GAME_TEMPLATE_ID, entity.getGameTemplateId())
             .set(GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID, entity.getLaunchDescriptorId())
             .set(GAME_INSTANCES.VERSION_ID, entity.getVersionId())
@@ -163,6 +165,7 @@ public class GameInstanceRepository {
     record.setTenantId(entity.getTenantId());
     record.setRuntimeVersion(entity.getRuntimeVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setGameTemplateId(entity.getGameTemplateId());
     record.setLaunchDescriptorId(entity.getLaunchDescriptorId());
     record.setVersionId(entity.getVersionId());
@@ -185,6 +188,7 @@ public class GameInstanceRepository {
     entity.setTenantId(record.get(GAME_INSTANCES.TENANT_ID));
     entity.setRuntimeVersion(record.get(GAME_INSTANCES.RUNTIME_VERSION));
     entity.setScriptPatchVersion(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
+    entity.setScriptPinEpoch(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH));
     entity.setGameTemplateId(record.get(GAME_INSTANCES.GAME_TEMPLATE_ID));
     entity.setLaunchDescriptorId(record.get(GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID));
     entity.setVersionId(record.get(GAME_INSTANCES.VERSION_ID));
