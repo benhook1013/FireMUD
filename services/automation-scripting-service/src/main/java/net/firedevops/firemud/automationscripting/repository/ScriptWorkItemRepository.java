@@ -256,6 +256,24 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS.ID.desc());
   }
 
+  public List<ScriptWorkItem> findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String status,
+      Pageable pageable) {
+    Condition condition =
+        SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.STATUS.eq(status));
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID.eq(gameInstanceId));
+    }
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      condition = condition.and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    return fetchManyPaged(
+        condition, pageable, SCRIPT_WORK_ITEMS.UPDATED_AT.desc(), SCRIPT_WORK_ITEMS.ID.desc());
+  }
+
   public long countByStatus(String status) {
     return dsl.fetchCount(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.STATUS.eq(status));
   }

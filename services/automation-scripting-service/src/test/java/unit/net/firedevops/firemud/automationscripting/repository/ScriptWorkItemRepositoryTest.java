@@ -24,6 +24,7 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemRepositoryTest {
   @Test
@@ -184,6 +185,48 @@ class ScriptWorkItemRepositoryTest {
     assertThat(sqlStatements.get(1)).contains("script_event_audit");
     assertThat(sqlStatements.get(2)).contains("script_handoff_events");
     assertThat(sqlStatements.get(3)).contains("script_work_items");
+  }
+
+  @Test
+  void deadLetterListingAppliesOptionalFiltersBeforeLimit() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+        "tenant-1", "game-1", "patch-1", "DEAD_LETTERED", PageRequest.of(0, 25));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement -> {
+              assertThat(statement)
+                  .contains(
+                      "where",
+                      "tenant_id",
+                      "game_instance_id",
+                      "script_patch_version",
+                      "status",
+                      "fetch next");
+              int whereIndex = statement.indexOf(" where ");
+              int fetchIndex = statement.indexOf("fetch next");
+              assertThat(statement.indexOf("game_instance_id", whereIndex))
+                  .isGreaterThan(whereIndex)
+                  .isLessThan(fetchIndex);
+              assertThat(statement.indexOf("script_patch_version", whereIndex))
+                  .isGreaterThan(whereIndex)
+                  .isLessThan(fetchIndex);
+              assertThat(statement.indexOf("status", whereIndex))
+                  .isGreaterThan(whereIndex)
+                  .isLessThan(fetchIndex);
+            });
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {

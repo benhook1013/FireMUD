@@ -488,19 +488,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(tenantId, "tenant_id");
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
     return workItemRepository
-        .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            tenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
+        .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
+            tenantId,
+            gameInstanceId,
+            scriptPatchVersion,
+            STATUS_DEAD_LETTERED,
+            PageRequest.of(0, boundedLimit))
         .stream()
-        .filter(
-            item ->
-                gameInstanceId == null
-                    || gameInstanceId.isBlank()
-                    || item.getGameInstanceId().equals(gameInstanceId))
-        .filter(
-            item ->
-                scriptPatchVersion == null
-                    || scriptPatchVersion.isBlank()
-                    || item.getScriptPatchVersion().equals(scriptPatchVersion))
         .map(ScriptWorkItemServiceImpl::toDeadLetterSummary)
         .map(summary -> withPublication(tenantId, summary))
         .toList();
