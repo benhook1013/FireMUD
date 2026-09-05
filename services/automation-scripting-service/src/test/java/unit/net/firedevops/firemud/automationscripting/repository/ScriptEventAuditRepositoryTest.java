@@ -389,8 +389,11 @@ class ScriptEventAuditRepositoryTest {
         new ScriptEventAuditRepository(
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setPluginId(null);
+    entity.setPluginVersionId(null);
     ScriptEventAuditRepository.IdempotentInsertResult result =
-        repository.insertIfAbsentByHandlerIdentity(auditEntity(now));
+        repository.insertIfAbsentByHandlerIdentity(entity);
 
     assertThat(result.inserted()).isFalse();
     assertThat(result.audit().getId()).isEqualTo(9L);
@@ -426,6 +429,8 @@ class ScriptEventAuditRepositoryTest {
             "script_pin_epoch",
             "script_event_id",
             "dry_run");
+    assertThat(whereClause(selectSqlRef.get()))
+        .contains("\"plugin_id\" = ?", "\"plugin_version_id\" = ?");
     assertThat(whereClause(selectSqlRef.get()))
         .doesNotContain("script_pin_control_plane_request_id");
   }

@@ -417,8 +417,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     eligibleAudit.setScriptEventId("retained-generic-delete");
     ScriptEventAudit deadLetterAudit = retainedEventAudit(deadLettered.getId());
     deadLetterAudit.setScriptEventId("dead-letter-generic-delete");
-    eventAuditRepository.save(eligibleAudit);
-    eventAuditRepository.save(deadLetterAudit);
+    eligibleAudit = eventAuditRepository.save(eligibleAudit);
+    deadLetterAudit = eventAuditRepository.save(deadLetterAudit);
 
     ScriptHandoffEvent eligibleHandoff = retainedHandoff(eligible.getId());
     eligibleHandoff.setEventId("retained-generic-delete-handoff");

@@ -23,10 +23,12 @@ class V8__normalize_script_work_item_plugin_identityTest {
     assertThat(migration)
         .contains(
             "UPDATE script_work_items",
-            "WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''",
+            "WHEN NULLIF(BTRIM(plugin_id), '') IS NULL",
+            "OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''",
             "ELSE plugin_id",
             "ELSE plugin_version_id",
-            "WHERE plugin_id IS NULL OR plugin_version_id IS NULL",
+            "WHERE NULLIF(BTRIM(plugin_id), '') IS NULL",
+            "OR NULLIF(BTRIM(plugin_version_id), '') IS NULL",
             "ALTER COLUMN plugin_id SET DEFAULT ''",
             "ALTER COLUMN plugin_version_id SET DEFAULT ''",
             "ALTER COLUMN plugin_id SET NOT NULL",

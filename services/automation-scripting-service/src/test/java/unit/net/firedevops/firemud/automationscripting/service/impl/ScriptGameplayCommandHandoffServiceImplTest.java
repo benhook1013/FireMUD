@@ -373,7 +373,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
     assertThat(handoffCaptor.getAllValues())
         .extracting(ScriptHandoffEvent::getScriptPinControlPlaneRequestId)
-        .containsExactly("", "   ");
+        .containsExactly("", "");
   }
 
   @Test

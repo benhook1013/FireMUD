@@ -1921,8 +1921,11 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals(
         "MANIFEST_MISMATCH", existingBatch.getFailureCode());
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
+    ArgumentCaptor<List<String>> keyCaptor = redisKeyCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(any(), any(), any(Object[].class));
+        .execute(scriptCaptor.capture(), keyCaptor.capture(), any(Object[].class));
+    assertPendingProjectionRestoreInvocation(scriptCaptor, keyCaptor);
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count(), 0.001);
   }
@@ -2054,8 +2057,11 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
+    ArgumentCaptor<List<String>> keyCaptor = redisKeyCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(any(), any(), any(Object[].class));
+        .execute(scriptCaptor.capture(), keyCaptor.capture(), any(Object[].class));
+    assertPendingProjectionRestoreInvocation(scriptCaptor, keyCaptor);
     org.junit.jupiter.api.Assertions.assertTrue(
         savedSnapshots.stream()
             .anyMatch(
@@ -2208,6 +2214,26 @@ class TickServiceImplTest {
   private static ArgumentCaptor<RedisScript<?>> redisScriptCaptor() {
     return (ArgumentCaptor<RedisScript<?>>)
         (ArgumentCaptor<?>) ArgumentCaptor.forClass(RedisScript.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ArgumentCaptor<List<String>> redisKeyCaptor() {
+    return (ArgumentCaptor<List<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(List.class);
+  }
+
+  private static void assertPendingProjectionRestoreInvocation(
+      ArgumentCaptor<RedisScript<?>> scriptCaptor, ArgumentCaptor<List<String>> keyCaptor) {
+    int restoreInvocation = -1;
+    for (int index = 0; index < scriptCaptor.getAllValues().size(); index++) {
+      if (TickBatchExecutionService.restorePendingProjectionScriptText()
+          .equals(scriptCaptor.getAllValues().get(index).getScriptAsString())) {
+        restoreInvocation = index;
+        break;
+      }
+    }
+    assertThat(restoreInvocation).isGreaterThanOrEqualTo(0);
+    assertThat(keyCaptor.getAllValues().get(restoreInvocation))
+        .containsExactly("gamesession:tick:pending:1:2", "gamesession:tick:queue:1:2");
   }
 
   private static void setField(Object target, String fieldName, Object value) {

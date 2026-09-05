@@ -12,6 +12,7 @@ import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -27,6 +28,32 @@ class AutomationScriptingControlPlaneClientTest {
     AutomationScriptingControlPlaneClient client = newClient(stub);
 
     GetPluginStatusResponse response = client.getPluginStatus(1L, 2L, "plugin-1");
+
+    assertThat(response.getError().getCode()).isEqualTo("AUTOMATION_SCRIPTING_UNAVAILABLE");
+  }
+
+  @Test
+  void mapsPluginStatusDeadlineExceededToRetryableUnavailableResponse() throws Exception {
+    AutomationScriptingControlPlaneServiceGrpc.AutomationScriptingControlPlaneServiceBlockingStub
+        stub = stubThatThrows(Status.DEADLINE_EXCEEDED.withDescription("automation timed out"));
+    AutomationScriptingControlPlaneClient client = newClient(stub);
+
+    GetPluginStatusResponse response = client.getPluginStatus(1L, 2L, "plugin-1");
+
+    assertThat(response.getError().getCode()).isEqualTo("AUTOMATION_SCRIPTING_UNAVAILABLE");
+  }
+
+  @Test
+  void mapsScriptPatchStatusDeadlineExceededToRetryableUnavailableResponse() throws Exception {
+    AutomationScriptingControlPlaneServiceGrpc.AutomationScriptingControlPlaneServiceBlockingStub
+        stub = mockStub();
+    when(stub.getScriptPatchStatus(any()))
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.DEADLINE_EXCEEDED.withDescription("status timed out")));
+    AutomationScriptingControlPlaneClient client = newClient(stub);
+
+    GetScriptPatchStatusResponse response = client.getScriptPatchStatus(1L, "patch-1");
 
     assertThat(response.getError().getCode()).isEqualTo("AUTOMATION_SCRIPTING_UNAVAILABLE");
   }
@@ -90,6 +117,7 @@ class AutomationScriptingControlPlaneClientTest {
                 AutomationScriptingControlPlaneServiceGrpc
                     .AutomationScriptingControlPlaneServiceBlockingStub.class);
     when(stub.withDeadlineAfter(250L, TimeUnit.MILLISECONDS)).thenReturn(stub);
+    when(stub.withDeadlineAfter(2_000L, TimeUnit.MILLISECONDS)).thenReturn(stub);
     return stub;
   }
 }

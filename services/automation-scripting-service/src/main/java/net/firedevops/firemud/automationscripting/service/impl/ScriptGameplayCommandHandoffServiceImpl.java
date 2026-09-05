@@ -562,7 +562,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     // repinned under a newer epoch. Require the exact tuple and owner request evidence captured
     // on the durable work item before allowing either local staging or remote scheduling.
     if (workItem.getScriptPinEpoch() <= 0
-        || normalize(workItem.getScriptPinControlPlaneRequestId()).isBlank()
+        || normalizeOwnerRequestId(workItem.getScriptPinControlPlaneRequestId()).isBlank()
         || runtimeState.getRuntimeState().getScriptPinEpoch() <= 0
         || normalize(runtimeState.getRuntimeState().getScriptPatchPinnedControlPlaneRequestId())
             .isBlank()) {
@@ -576,7 +576,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         || !runtimeState
             .getRuntimeState()
             .getScriptPatchPinnedControlPlaneRequestId()
-            .equals(normalize(workItem.getScriptPinControlPlaneRequestId()))) {
+            .equals(normalizeOwnerRequestId(workItem.getScriptPinControlPlaneRequestId()))) {
       return RuntimeRegionScopeStatus.ADVANCED;
     }
     return runtimeState.getRuntimeState().getRegionId().equals(normalize(workItem.getRegionId()))
@@ -633,7 +633,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setBindingId(normalize(workItem.getBindingId()))
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
-        .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
+        .setScriptPinControlPlaneRequestId(
+            normalizeOwnerRequestId(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setPlayableStateScope(toPlayableStateScope(workItem.getPlayableStateScope()))
@@ -684,7 +685,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setPointerVersion(routingBundle.parsedPointerVersion())
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
-        .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
+        .setScriptPinControlPlaneRequestId(
+            normalizeOwnerRequestId(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setAutomationDispatchId(dispatchId)
@@ -815,7 +817,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setScriptPatchVersion(workItem.getScriptPatchVersion());
     event.setScriptPinEpoch(workItem.getScriptPinEpoch());
     event.setScriptPinControlPlaneRequestId(
-        normalize(workItem.getScriptPinControlPlaneRequestId()));
+        normalizeOwnerRequestId(workItem.getScriptPinControlPlaneRequestId()));
     event.setScriptId(workItem.getScriptId());
     event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
@@ -898,6 +900,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static String normalize(String value) {
     return value == null ? "" : value;
+  }
+
+  private static String normalizeOwnerRequestId(String value) {
+    return value == null || value.isBlank() ? "" : value;
   }
 
   private static long zeroIfNull(Long value) {

@@ -37,5 +37,10 @@ class V12__gameplay_command_script_pin_fenceTest {
                 "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'PLAYER'"))
         .isLessThan(
             normalized.indexOf("ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent"));
+    assertThat(
+            normalized.indexOf(
+                "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'AUTOMATION'"))
+        .isLessThan(
+            normalized.indexOf("ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent"));
   }
 }

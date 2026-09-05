@@ -306,6 +306,35 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionUsesPreparationAuthorityErrorWhenPreparationTransportFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-preparation-timeout", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenThrow(new IllegalStateException("preparation response timed out"));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals("world preparation authority unavailable", error.getMessage());
+    assertEquals("preparation response timed out", error.getCause().getMessage());
+    verify(stateService, never()).saveState(any());
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
   void startSessionFailsClosedWhenWorldPreparationResponseIsNull() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-null-world", 42L);
     when(worldManagementClient.prepareWorldInstance(

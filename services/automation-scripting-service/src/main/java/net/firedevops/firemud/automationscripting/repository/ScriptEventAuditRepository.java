@@ -70,6 +70,8 @@ public class ScriptEventAuditRepository {
       boolean dryRun) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
+    String normalizedPluginId = normalizePluginIdentity(pluginId);
+    String normalizedPluginVersionId = normalizePluginIdentity(pluginVersionId);
     requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     return SCRIPT_EVENT_AUDIT
         .TENANT_ID
@@ -83,8 +85,8 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
         .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
-        .and(SCRIPT_EVENT_AUDIT.PLUGIN_ID.eq(pluginId))
-        .and(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID.eq(pluginVersionId))
+        .and(SCRIPT_EVENT_AUDIT.PLUGIN_ID.eq(normalizedPluginId))
+        .and(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID.eq(normalizedPluginVersionId))
         .and(SCRIPT_EVENT_AUDIT.BINDING_ID.eq(bindingId))
         .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))

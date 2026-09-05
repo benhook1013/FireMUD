@@ -76,7 +76,8 @@ public final class AutomationScriptingControlPlaneClient
                   .setPluginId(pluginId)
                   .build());
     } catch (StatusRuntimeException ex) {
-      if (ex.getStatus().getCode() != Status.Code.UNAVAILABLE) {
+      Status.Code code = ex.getStatus().getCode();
+      if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
         throw ex;
       }
       LOG.warn("Automation & Scripting getPluginStatus failed", ex);
@@ -99,7 +100,8 @@ public final class AutomationScriptingControlPlaneClient
                   .setScriptPatchVersion(scriptPatchVersion)
                   .build());
     } catch (StatusRuntimeException ex) {
-      if (ex.getStatus().getCode() != Status.Code.UNAVAILABLE) {
+      Status.Code code = ex.getStatus().getCode();
+      if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
         throw ex;
       }
       LOG.warn("Automation & Scripting getScriptPatchStatus failed", ex);

@@ -3,14 +3,17 @@
 -- normalize both fields to the empty script-only sentinel before enforcing the tuple columns.
 UPDATE script_work_items
 SET plugin_id = CASE
-        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+          OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
         ELSE plugin_id
     END,
     plugin_version_id = CASE
-        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+          OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
         ELSE plugin_version_id
     END
-WHERE plugin_id IS NULL OR plugin_version_id IS NULL;
+WHERE NULLIF(BTRIM(plugin_id), '') IS NULL
+   OR NULLIF(BTRIM(plugin_version_id), '') IS NULL;
 
 ALTER TABLE script_work_items
     ALTER COLUMN plugin_id SET DEFAULT '';
