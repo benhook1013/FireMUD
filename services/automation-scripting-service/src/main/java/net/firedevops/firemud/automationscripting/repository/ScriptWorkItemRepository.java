@@ -8,7 +8,6 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static org.jooq.impl.DSL.field;
-import static org.jooq.impl.DSL.name;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -32,8 +31,6 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
-  private static final Field<String> SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID =
-      field(name("script_pin_control_plane_request_id"), String.class);
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
@@ -175,8 +172,8 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS
             .TENANT_ID
             .eq(tenantId)
-            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(pluginId))
-            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(pluginVersionId))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(normalizePluginIdentity(pluginId)))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(normalizePluginIdentity(pluginVersionId)))
             .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -387,8 +384,10 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_WORK_ITEMS.BINDING_ID, entity.getBindingId())
-            .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, entity.getPluginId())
-            .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, normalizePluginIdentity(entity.getPluginId()))
+            .set(
+                SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID,
+                normalizePluginIdentity(entity.getPluginVersionId()))
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
@@ -397,7 +396,7 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(
-                SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
                 normalizedScriptPinControlPlaneRequestId(entity))
             .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_WORK_ITEMS.DRY_RUN, entity.isDryRun())
@@ -485,7 +484,7 @@ public class ScriptWorkItemRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_WORK_ITEMS.fields());
-    returningFields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+    returningFields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
@@ -532,7 +531,7 @@ public class ScriptWorkItemRepository {
                 SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
     if (entity.getScriptPinEpoch() > 0L) {
       fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
-      fields.add(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
+      fields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_WORK_ITEMS.DRY_RUN);
@@ -619,14 +618,16 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
         .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
-        .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(pluginId))
-        .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(pluginVersionId))
+        .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(normalizePluginIdentity(pluginId)))
+        .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(normalizePluginIdentity(pluginVersionId)))
         .and(SCRIPT_WORK_ITEMS.BINDING_ID.eq(bindingId))
         .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch))
-        .and(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(scriptPinControlPlaneRequestId))
+        .and(
+            SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                scriptPinControlPlaneRequestId))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID.eq(scriptEventId))
         .and(SCRIPT_WORK_ITEMS.DRY_RUN.eq(dryRun));
   }
@@ -717,8 +718,8 @@ public class ScriptWorkItemRepository {
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
     record.setBindingId(entity.getBindingId());
-    record.setPluginId(entity.getPluginId());
-    record.setPluginVersionId(entity.getPluginVersionId());
+    record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
+    record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setEventType(entity.getEventType());
@@ -727,7 +728,8 @@ public class ScriptWorkItemRepository {
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.set(
-        SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, normalizedScriptPinControlPlaneRequestId(entity));
+        SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+        normalizedScriptPinControlPlaneRequestId(entity));
     record.setScriptEventId(entity.getScriptEventId());
     record.setDryRun(entity.isDryRun());
     record.setSourceService(entity.getSourceService());
@@ -781,8 +783,9 @@ public class ScriptWorkItemRepository {
     entity.setPointerVersion(record.get(SCRIPT_WORK_ITEMS.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_ID));
     entity.setBindingId(record.get(SCRIPT_WORK_ITEMS.BINDING_ID));
-    entity.setPluginId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID));
-    entity.setPluginVersionId(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID));
+    entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
+    entity.setPluginVersionId(
+        normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
     entity.setTargetScopeType(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
@@ -791,7 +794,8 @@ public class ScriptWorkItemRepository {
     entity.setScriptPatchVersion(record.get(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION));
     Long scriptPinEpoch = record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
-    entity.setScriptPinControlPlaneRequestId(record.get(SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
+    entity.setScriptPinControlPlaneRequestId(
+        record.get(SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setScriptEventId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID));
     entity.setDryRun(Boolean.TRUE.equals(record.get(SCRIPT_WORK_ITEMS.DRY_RUN)));
     entity.setSourceService(record.get(SCRIPT_WORK_ITEMS.SOURCE_SERVICE));
@@ -826,5 +830,9 @@ public class ScriptWorkItemRepository {
     public String getScriptPatchVersion() {
       return scriptPatchVersion;
     }
+  }
+
+  private static String normalizePluginIdentity(String value) {
+    return value == null ? "" : value;
   }
 }

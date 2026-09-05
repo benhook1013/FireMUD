@@ -116,6 +116,34 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
+  void insertRejectsEpochWithoutOwnerRequestBeforeConflictSelection() {
+    ScriptEventAudit entity = auditEntity(Instant.parse("2026-08-01T00:00:00Z"));
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId(null);
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByHandlerIdentity(entity))
+        .withMessage(
+            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+  }
+
+  @Test
+  void insertRejectsOwnerRequestWithoutEpochBeforeConflictSelection() {
+    ScriptEventAudit entity = auditEntity(Instant.parse("2026-08-01T00:00:00Z"));
+    entity.setScriptPinEpoch(null);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> repository.insertIfAbsentByHandlerIdentity(entity))
+        .withMessage(
+            "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+  }
+
+  @Test
   void insertIfAbsentByHandlerIdentityMapsConflictReturningMarkerToExistingResult() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(11L, now, now.plusSeconds(1));

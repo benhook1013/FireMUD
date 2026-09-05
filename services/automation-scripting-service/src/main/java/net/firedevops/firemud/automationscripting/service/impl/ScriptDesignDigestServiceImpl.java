@@ -18,7 +18,7 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repositories and mapper are internal Spring collaborators.")
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 2;
+  private static final int DIGEST_SCHEMA_VERSION = 3;
 
   private final ScriptDefinitionRepository repository;
   private final ScriptEventBindingRepository bindingRepository;

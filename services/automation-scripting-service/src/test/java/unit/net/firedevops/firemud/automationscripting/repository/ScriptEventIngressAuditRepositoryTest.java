@@ -340,7 +340,7 @@ class ScriptEventIngressAuditRepositoryTest {
     String conflictTarget =
         sqlRef.get().substring(sqlRef.get().toLowerCase(Locale.ROOT).indexOf("on conflict"));
     assertThat(conflictTarget.substring(0, conflictTarget.indexOf(" do update")))
-        .doesNotContain("script_pin_control_plane_request_id");
+        .contains("script_pin_control_plane_request_id");
   }
 
   @Test
@@ -386,9 +386,9 @@ class ScriptEventIngressAuditRepositoryTest {
     assertThat(whereClause)
         .contains("source_service")
         .contains("script_pin_epoch")
-        .doesNotContain("script_pin_control_plane_request_id")
+        .contains("script_pin_control_plane_request_id")
         .doesNotContain("world_slug", "realm_slug", "pointer_version");
-    assertThat(bindingsRef.get()).contains(4L).doesNotContain("pin-request-1");
+    assertThat(bindingsRef.get()).contains(4L, "pin-request-1");
   }
 
   @Test

@@ -94,6 +94,24 @@ class ScriptDefinitionServiceImplTest {
   }
 
   @Test
+  void updateScriptRejectsOmittedBindingId() {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false, null)));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("binding id is required");
+  }
+
+  @Test
   void updateScriptRejectsUnknownBuiltInEventBinding() {
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(

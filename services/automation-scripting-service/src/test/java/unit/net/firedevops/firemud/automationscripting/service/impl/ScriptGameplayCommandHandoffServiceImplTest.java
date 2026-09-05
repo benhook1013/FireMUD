@@ -533,13 +533,6 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   void unpinnedHandoffRetainsExplicitUnpinnedTupleInHandoffEvidence() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
-        .thenReturn(
-            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
-                .setAccepted(true)
-                .setAdmissionOutcome("ENQUEUED")
-                .setCommandId("auto-unpinned")
-                .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(currentRuntimeState());
     ScriptHandoffEventRepository handoffEventRepository =
@@ -556,9 +549,14 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
-    service.handoff(
-        unpinned, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            unpinned, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+    assertThat(result.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository).save(handoffCaptor.capture());

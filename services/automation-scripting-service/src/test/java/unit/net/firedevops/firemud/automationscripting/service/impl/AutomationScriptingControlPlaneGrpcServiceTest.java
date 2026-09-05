@@ -1093,9 +1093,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             workItemService.listPatchInstanceRollouts(
                 "1",
                 "game-1",
-                "",
-                0L,
-                null,
+                "patch-1",
+                4L,
+                "pin-request-4",
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
                 10L,
                 20L))
@@ -1105,8 +1105,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
-                    0L,
-                    "",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus
                         .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                     "runtime_pin_differs_from_patch",
@@ -1135,6 +1135,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         ListScriptPatchInstanceRolloutsRequest.newBuilder()
             .setTenantId("1")
             .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .setChangedAfterMs(10L)
             .setChangedBeforeMs(20L)
             .build(),
@@ -1145,6 +1148,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRollouts(0).getRolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+    assertThat(ref.get().getRollouts(0).getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getRollouts(0).getLastObservedControlPlaneRequestId())
+        .isEqualTo("pin-request-4");
     assertThat(ref.get().getRollouts(0).getPublication().getVersionId()).isEqualTo(18L);
   }
 
@@ -1157,8 +1163,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "patch-1",
-                0L,
-                null,
+                4L,
+                "pin-request-4",
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                 10L,
                 20L,
@@ -1170,8 +1176,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
-                    0L,
-                    "",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                     "runtime_pin_restored_after_rollback",
                     15L,
@@ -1198,6 +1204,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .setRolloutStatus(
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED)
             .setChangedAfterMs(10L)
@@ -1211,6 +1219,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
     assertThat(ref.get().getEvents(0).getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getEvents(0).getLastObservedControlPlaneRequestId())
+        .isEqualTo("pin-request-4");
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(19L);
   }
 

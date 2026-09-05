@@ -298,6 +298,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -308,23 +309,6 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-1",
-                false,
-                "game-session-service"))
-        .thenReturn(Optional.empty());
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
@@ -437,6 +421,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -549,6 +534,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -735,6 +721,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -842,6 +829,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -951,6 +939,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1054,6 +1043,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1181,6 +1171,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1296,6 +1287,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1405,6 +1397,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1500,6 +1493,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1596,6 +1590,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1690,6 +1685,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1784,6 +1780,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -1857,6 +1854,7 @@ class ScriptEventIngressServiceImplTest {
   void rejectsFractionalTimerDuePointBeforeHandlerResolution() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -2019,6 +2017,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -2106,6 +2105,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "automation-scripting-service", "automation-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -2204,6 +2204,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -2284,6 +2285,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -2364,6 +2366,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -2372,23 +2375,6 @@ class ScriptEventIngressServiceImplTest {
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptQuotaService quotaService = Mockito.mock(ScriptQuotaService.class);
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-quota",
-                false,
-                "game-session-service"))
-        .thenReturn(Optional.empty());
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
@@ -2455,26 +2441,10 @@ class ScriptEventIngressServiceImplTest {
         "41", List.of("platformAdmin"), Map.of(), true, "game-session-service", "gs-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-dry-run-denied",
-                true,
-                "game-session-service"))
-        .thenReturn(Optional.empty());
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
@@ -2538,26 +2508,10 @@ class ScriptEventIngressServiceImplTest {
     SessionContext.setContext("not-a-long", List.of(), Map.of());
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptDryRunQuotaService dryRunQuotaService = Mockito.mock(ScriptDryRunQuotaService.class);
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-dry-run-invalid-account",
-                true,
-                "game-session-service"))
-        .thenReturn(Optional.empty());
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
@@ -2621,6 +2575,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptEventIngressService service =
@@ -2669,6 +2624,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "account-service", "account-service-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptEventIngressService service =
@@ -2717,6 +2673,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptOutputProperties outputProperties = outputProperties();
     outputProperties.setMaxSerializedWorkItemBytes(4);
@@ -2789,25 +2746,11 @@ class ScriptEventIngressServiceImplTest {
             "game-session-service"));
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(existing, false));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-1",
-                false,
-                "game-session-service"))
-        .thenReturn(Optional.of(existing));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -2849,25 +2792,9 @@ class ScriptEventIngressServiceImplTest {
   void keepsIngressClaimsSeparateWhenSourceServiceChanges() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptOutputProperties outputProperties = outputProperties();
     outputProperties.setMaxSerializedWorkItemBytes(1);
-    when(repository
-            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-                "1",
-                "game-1",
-                "region-1",
-                7L,
-                "entity-1",
-                "SHARED",
-                "onCommand",
-                "v1",
-                "patch-1",
-                1L,
-                "pin-request-1",
-                "event-1",
-                false,
-                "game-logic-service"))
-        .thenReturn(Optional.empty());
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -2902,22 +2829,6 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.reason()).isEqualTo("work_item_size_exceeded");
-    verify(repository)
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-            "1",
-            "game-1",
-            "region-1",
-            7L,
-            "entity-1",
-            "SHARED",
-            "onCommand",
-            "v1",
-            "patch-1",
-            1L,
-            "pin-request-1",
-            "event-1",
-            false,
-            "game-logic-service");
     ArgumentCaptor<ScriptEventIngressAudit> auditCaptor =
         ArgumentCaptor.forClass(ScriptEventIngressAudit.class);
     verify(repository).save(auditCaptor.capture());
@@ -2931,6 +2842,7 @@ class ScriptEventIngressServiceImplTest {
   void rejectsMissingRequiredIdentityBeforeAuditWrite() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptEventIngressService service =
@@ -2968,6 +2880,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -3041,6 +2954,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptPatchPinProjectionService projectionService =
@@ -3104,6 +3018,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventAuditRepository eventAuditRepository =
         Mockito.mock(ScriptEventAuditRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -3171,6 +3086,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     ScriptPatchPinProjectionService projectionService =
@@ -3238,6 +3154,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3298,6 +3215,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3353,6 +3271,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3426,6 +3345,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
@@ -3491,6 +3411,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -3536,6 +3457,7 @@ class ScriptEventIngressServiceImplTest {
         "svc", List.of(), Map.of(), true, "game-session-service", "game-session-1");
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -3583,6 +3505,7 @@ class ScriptEventIngressServiceImplTest {
   void concurrentIdenticalAdmissionsHaveOneClaimingResolver() throws Exception {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptEventAuditRepository eventAuditRepository =
@@ -3706,6 +3629,7 @@ class ScriptEventIngressServiceImplTest {
   void staleInProgressClaimIsReclaimedUnderRowVersionFence() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventIngressAudit stale = new ScriptEventIngressAudit();
     stale.setId(9L);
     stale.setRowVersion(3);
@@ -3788,6 +3712,7 @@ class ScriptEventIngressServiceImplTest {
   void reclaimedClaimFencesStalledOwnerBeforeQuotaOrWorkItemEffects() throws Exception {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -3978,6 +3903,7 @@ class ScriptEventIngressServiceImplTest {
   void finalizedClaimIsReplayedWithoutResolvingOrFanningOut() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventIngressAudit finalized = new ScriptEventIngressAudit();
     finalized.setId(7L);
     finalized.setSourceState("TRIGGER_ADMITTED");
@@ -4047,6 +3973,7 @@ class ScriptEventIngressServiceImplTest {
   void changedPayloadUnderExistingEventIdentityReturnsIdempotencyConflict() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
     existing.setId(17L);
     existing.setSourceState("TRIGGER_ADMITTED");
@@ -4102,6 +4029,7 @@ class ScriptEventIngressServiceImplTest {
   void postClaimFailureLeavesClaimInProgressAndDoesNotFanOut() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ArgumentCaptor<ScriptEventIngressAudit> claimCaptor =
@@ -4200,6 +4128,21 @@ class ScriptEventIngressServiceImplTest {
         dryRunQuotaService);
   }
 
+  private static void stubClaimRepository(ScriptEventIngressAuditRepository repository) {
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptEventIngressAudit claim = invocation.getArgument(0);
+              if (claim == null) {
+                return new ScriptEventIngressAuditRepository.IdempotentInsertResult(
+                    new ScriptEventIngressAudit(), true);
+              }
+              claim.setId(1L);
+              return new ScriptEventIngressAuditRepository.IdempotentInsertResult(claim, true);
+            });
+    when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any())).thenReturn(true);
+  }
+
   private static ScriptEventBinding binding(String scriptId, String scopeType, String scopeId) {
     return binding(scriptId, scopeType, scopeId, "normal");
   }
@@ -4265,6 +4208,7 @@ class ScriptEventIngressServiceImplTest {
   private static TimerIngressFixture timerIngressFixture() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
+    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);

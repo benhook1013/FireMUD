@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
+import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -56,6 +57,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private ScriptWorkItemRepository workItemRepository;
   private ScriptEventAuditRepository eventAuditRepository;
   private ScriptHandoffEventRepository handoffRepository;
+  private ScriptPatchPinProjectionRepository pinProjectionRepository;
   private ExecutorService executor;
 
   @BeforeAll
@@ -73,12 +75,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     workItemRepository = new ScriptWorkItemRepository(dsl);
     eventAuditRepository = new ScriptEventAuditRepository(dsl);
     handoffRepository = new ScriptHandoffEventRepository(dsl);
+    pinProjectionRepository = new ScriptPatchPinProjectionRepository(dsl);
   }
 
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE script_event_audit, script_handoff_events, script_work_items,"
+        "TRUNCATE TABLE script_patch_pin_projections, script_event_audit, script_handoff_events,"
+            + " script_work_items,"
             + " script_event_ingress_audit RESTART IDENTITY CASCADE");
     executor = Executors.newFixedThreadPool(3);
   }
@@ -116,6 +120,50 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void distinctPinnedOwnerRequestsRetainDistinctPreAdmissionClaims() {
+    ScriptEventIngressAudit first = pinnedIngressClaim();
+    ScriptEventIngressAudit second = pinnedIngressClaim();
+    second.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    var firstResult = ingressRepository.insertIfAbsentByIdentity(first);
+    var secondResult = ingressRepository.insertIfAbsentByIdentity(second);
+
+    assertThat(firstResult.inserted()).isTrue();
+    assertThat(secondResult.inserted()).isTrue();
+    assertThat(firstResult.audit().getId()).isNotEqualTo(secondResult.audit().getId());
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(2);
+  }
+
+  @Test
+  void concurrentPreInstanceNullEpochClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<ScriptEventIngressAuditRepository.IdempotentInsertResult>> futures =
+        new ArrayList<>();
+    for (int i = 0; i < 2; i++) {
+      futures.add(
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return new ScriptEventIngressAuditRepository(dsl)
+                    .insertIfAbsentByIdentity(preInstanceIngressClaim());
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    var first = get(futures.get(0));
+    var second = get(futures.get(1));
+
+    assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
+    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
+    assertThat(first.audit().getGameInstanceId()).isNull();
+    assertThat(first.audit().getScriptPinEpoch()).isNull();
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
   void concurrentPinnedWorkClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
@@ -139,6 +187,68 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
     assertThat(first.workItem().getId()).isEqualTo(second.workItem().getId());
     assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+  }
+
+  @Test
+  void scriptOnlyPluginIdentityDefaultsToEmptyAndLookupFindsTheCanonicalRow() {
+    dsl.insertInto(SCRIPT_WORK_ITEMS)
+        .set(SCRIPT_WORK_ITEMS.TENANT_ID, "tenant-script-only")
+        .set(SCRIPT_WORK_ITEMS.GAME_INSTANCE_ID, "instance-script-only")
+        .set(SCRIPT_WORK_ITEMS.REGION_ID, "region-script-only")
+        .set(SCRIPT_WORK_ITEMS.REGION_EPOCH, 1L)
+        .set(SCRIPT_WORK_ITEMS.ENTITY_ID, "entity-script-only")
+        .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, "script-only")
+        .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, "onEnterRegion")
+        .set(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION, "v1")
+        .set(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION, "patch-script-only")
+        .set(SCRIPT_WORK_ITEMS.SCRIPT_EVENT_ID, "event-script-only")
+        .set(SCRIPT_WORK_ITEMS.SOURCE_SERVICE, "automation-scripting-service")
+        .set(SCRIPT_WORK_ITEMS.TRIGGER_MODE, "EVENT")
+        .execute();
+
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_WORK_ITEMS.PLUGIN_ID, SCRIPT_WORK_ITEMS.TENANT_ID.eq("tenant-script-only")))
+        .isEmpty();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID,
+                SCRIPT_WORK_ITEMS.TENANT_ID.eq("tenant-script-only")))
+        .isEmpty();
+
+    assertThat(
+            workItemRepository
+                .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
+                    "tenant-script-only", null, null, List.of("PENDING_EVALUATION")))
+        .singleElement()
+        .satisfies(
+            item -> {
+              assertThat(item.getPluginId()).isEmpty();
+              assertThat(item.getPluginVersionId()).isEmpty();
+            });
+  }
+
+  @Test
+  void scriptPatchPinProjectionRoundTripsGeneratedPinEpoch() {
+    ScriptPatchPinProjection projection = new ScriptPatchPinProjection();
+    projection.setTenantId("tenant-1");
+    projection.setGameInstanceId("instance-1");
+    projection.setObservedPinnedScriptPatchVersion("patch-1");
+    projection.setScriptPinEpoch(2L);
+    projection.setLastObservedControlPlaneRequestId("pin-request-1");
+
+    ScriptPatchPinProjection saved = pinProjectionRepository.save(projection);
+
+    assertThat(saved.getId()).isNotNull();
+    assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(saved.getLastObservedControlPlaneRequestId()).isEqualTo("pin-request-1");
+    assertThat(pinProjectionRepository.findByTenantIdAndGameInstanceId("tenant-1", "instance-1"))
+        .get()
+        .satisfies(
+            found -> {
+              assertThat(found.getScriptPinEpoch()).isEqualTo(2L);
+              assertThat(found.getObservedPinnedScriptPatchVersion()).isEqualTo("patch-1");
+            });
   }
 
   @Test
@@ -290,6 +400,23 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     claim.setScriptEventId("event-1");
     claim.setSourceService("game-session-service");
     claim.setTriggerMode("EVENT");
+    claim.setSourceState("IN_PROGRESS");
+    claim.setAdmitted(true);
+    claim.setAdmissionOutcome("ADMITTED");
+    claim.setAdmissionReason("accepted");
+    return claim;
+  }
+
+  private ScriptEventIngressAudit preInstanceIngressClaim() {
+    ScriptEventIngressAudit claim = new ScriptEventIngressAudit();
+    claim.setTenantId("tenant-pre-instance");
+    claim.setScriptId("script-on-load");
+    claim.setEventType("onLoad");
+    claim.setEventSchemaVersion("v1");
+    claim.setScriptPatchVersion("patch-1");
+    claim.setScriptEventId("on-load-event-1");
+    claim.setSourceService("automation-scripting-service");
+    claim.setTriggerMode("ON_LOAD");
     claim.setSourceState("IN_PROGRESS");
     claim.setAdmitted(true);
     claim.setAdmissionOutcome("ADMITTED");

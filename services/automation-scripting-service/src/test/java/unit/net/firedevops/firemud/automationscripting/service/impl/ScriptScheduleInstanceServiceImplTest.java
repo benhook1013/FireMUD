@@ -1264,6 +1264,33 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void observeRuntimeTickProgressFinalFencesReadyRowsWithIncompletePinTuples() {
+    ScriptScheduleInstance readyTick =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    readyTick.setScriptPinEpoch(1L);
+    readyTick.setLastObservedControlPlaneRequestId("");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(readyTick));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result)
+        .isEqualTo(new ScriptScheduleInstanceService.RuntimeTickProgressResult(1, 0, 0));
+    assertThat(readyTick.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(readyTick.getNextDueTickId()).isNull();
+    assertThat(readyTick.getRuntimeRegionId()).isEmpty();
+    verify(scheduleInstanceRepository).saveAll(any());
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+    verify(automationQueueService, never()).enqueueWorkItem(any());
+  }
+
+  @Test
   void observeRuntimeTickProgressLeavesDueStateUntouchedWhileRollbackPaused() {
     ScriptScheduleInstance tickInstance =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 101L);

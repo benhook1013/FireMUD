@@ -61,8 +61,7 @@ class ScriptWorkItemRepositoryTest {
         context -> {
           insertSql.set(context.sql().toLowerCase(Locale.ROOT));
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
-          Field<String> requestIdField =
-              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
           fields.add(requestIdField);
@@ -116,8 +115,7 @@ class ScriptWorkItemRepositoryTest {
         context -> {
           insertSql.set(context.sql().toLowerCase(Locale.ROOT));
           Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
-          Field<String> requestIdField =
-              DSL.field("script_pin_control_plane_request_id", String.class);
+          Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
           fields.add(requestIdField);
@@ -145,6 +143,37 @@ class ScriptWorkItemRepositoryTest {
         .contains("where", "script_pin_epoch", "= 0")
         .doesNotContain("script_pin_control_plane_request_id");
     assertThat(saved.getScriptPinControlPlaneRequestId()).isNull();
+  }
+
+  @Test
+  void scriptOnlyPluginLookupNormalizesNullIdentityToCanonicalEmptyValues() {
+    ScriptWorkItemsRecord row = workItemRecord(11L, 0, 0L);
+    row.setPluginId("");
+    row.setPluginVersionId("");
+    row.setStatus("PENDING_EVALUATION");
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Object[]> bindings = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          bindings.set(context.bindings());
+          Result<ScriptWorkItemsRecord> result = resultDsl.newResult(SCRIPT_WORK_ITEMS);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInOrderByCreatedAtAscIdAsc(
+                    "tenant-1", null, null, List.of("PENDING_EVALUATION")))
+        .singleElement()
+        .satisfies(
+            item -> {
+              assertThat(item.getPluginId()).isEmpty();
+              assertThat(item.getPluginVersionId()).isEmpty();
+            });
+    assertThat(bindings.get()).contains("tenant-1", "", "");
   }
 
   @Test

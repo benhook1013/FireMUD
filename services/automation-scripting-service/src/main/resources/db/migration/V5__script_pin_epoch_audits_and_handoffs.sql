@@ -129,6 +129,7 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     event_schema_version,
     script_patch_version,
     script_pin_epoch,
+    script_pin_control_plane_request_id,
     script_event_id,
     dry_run,
     source_service

@@ -205,50 +205,40 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     claimRequest.setRequestDigest(requestDigest);
     ScriptEventIngressAuditRepository.IdempotentInsertResult claim =
         repository.insertIfAbsentByIdentity(claimRequest);
-    if (claim != null) {
-      ScriptEventIngressAudit claimedAudit = claim.audit();
-      if (claimedAudit == null) {
-        throw new IllegalStateException("Event identity claim returned no audit row");
+    if (claim == null) {
+      throw new IllegalStateException("Event identity claim returned no result");
+    }
+    ScriptEventIngressAudit claimedAudit = claim.audit();
+    if (claimedAudit == null) {
+      throw new IllegalStateException("Event identity claim returned no audit row");
+    }
+    if (claim.inserted()) {
+      claimRequest = claimedAudit;
+    } else {
+      if (!requestDigest.equals(normalize(claimedAudit.getRequestDigest()))) {
+        return idempotencyConflict();
       }
-      if (claim.inserted()) {
-        claimRequest = claimedAudit;
-      } else {
-        if (!requestDigest.equals(normalize(claimedAudit.getRequestDigest()))) {
-          return idempotencyConflict();
-        }
-        if (isStaleInProgress(claimedAudit)) {
-          Instant now = Instant.now();
-          ScriptEventIngressAudit reclaimed =
-              repository
-                  .reclaimStaleInProgress(
-                      claimedAudit,
-                      now.minusMillis(runtimeProperties.getIngressClaimStaleThresholdMs()),
-                      now)
-                  .orElse(null);
-          if (reclaimed != null) {
-            LOGGER.warn(
-                "Reclaimed stale script ingress claim id={} rowVersion={} reason={}",
-                claimedAudit.getId(),
-                claimedAudit.getRowVersion(),
-                RECLAIMED_STALE_REASON);
-            claimRequest = reclaimed;
-          } else {
-            return admissionFromStoredIngress(claimedAudit);
-          }
+      if (isStaleInProgress(claimedAudit)) {
+        Instant now = Instant.now();
+        ScriptEventIngressAudit reclaimed =
+            repository
+                .reclaimStaleInProgress(
+                    claimedAudit,
+                    now.minusMillis(runtimeProperties.getIngressClaimStaleThresholdMs()),
+                    now)
+                .orElse(null);
+        if (reclaimed != null) {
+          LOGGER.warn(
+              "Reclaimed stale script ingress claim id={} rowVersion={} reason={}",
+              claimedAudit.getId(),
+              claimedAudit.getRowVersion(),
+              RECLAIMED_STALE_REASON);
+          claimRequest = reclaimed;
         } else {
           return admissionFromStoredIngress(claimedAudit);
         }
-      }
-    } else {
-      // Existing unit tests use a Mockito repository that predates the claim API. Keep this
-      // fallback inert for the real repository (which always returns a result), while retaining
-      // the old read path for those tests and for a misconfigured test double.
-      ScriptEventIngressAudit existing = findExisting(request, schemaVersion, sourceService);
-      if (existing != null) {
-        if (!requestDigest.equals(normalize(existing.getRequestDigest()))) {
-          return idempotencyConflict();
-        }
-        return admissionFromStoredIngress(existing);
+      } else {
+        return admissionFromStoredIngress(claimedAudit);
       }
     }
 
@@ -280,6 +270,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setAdmissionReason(admission.reason());
     audit.setResolvedHandlerCount(admission.resolvedHandlerCount());
     audit.setSourceState(admission.admitted() ? "TRIGGER_ADMITTED" : "TRIGGER_REJECTED");
+    requireCurrentClaim(audit);
     ScriptEventIngressAudit finalized = repository.save(audit);
     // save returns the fenced winner. Returning its fields makes retries converge on the durable
     // result even if the repository implementation normalizes or repairs the stored response.
@@ -920,6 +911,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       long scriptPinEpoch,
       ScriptEventIngressAudit claim) {
     String scriptId = requiredText(request.getScriptId(), "script_id");
+    requireCurrentClaim(claim);
     if (handlerAuditExistsForScript(request, schemaVersion, scriptId)
         || workItemExistsForScript(request, schemaVersion, scriptId)) {
       return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_handlers_resolved", 1);
@@ -947,7 +939,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       long scriptPinEpoch,
       ScriptEventIngressAudit claim) {
     requireCurrentClaim(claim);
-    if (handlerAuditExists(request, schemaVersion, handler)) {
+    if (handlerAuditExists(request, schemaVersion, handler)
+        || workItemExists(request, schemaVersion, handler.binding())) {
       return;
     }
     if (!request.getIsDryRun()
@@ -1033,11 +1026,8 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setReadSnapshotToken(normalize(request.getReadSnapshotToken()));
     item.setPayloadJson(normalize(request.getPayloadJson()));
     item.setAdmissionEpoch(admissionEpoch);
-    requireCurrentClaim(claim);
     ScriptWorkItem saved = workItemRepository.save(item);
-    requireCurrentClaim(claim);
     rolloutProjectionService.refreshForWorkItem(saved);
-    requireCurrentClaim(claim);
     AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, saved, LOGGER);
     persistHandlerAudit(
         request,
@@ -1383,38 +1373,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             normalizeCommandAlias(stringValue(payload.get("commandAlias"))),
             normalizeCommandAlias(stringValue(payload.get("commandName"))));
     return bindingAlias.equals(payloadAlias);
-  }
-
-  private ScriptEventIngressAudit findExisting(
-      TriggerScriptEventRequest request, String schemaVersion, String sourceService) {
-    if (request.getTenantId().isBlank()
-        || request.getEventType().isBlank()
-        || request.getScriptPatchVersion().isBlank()
-        || request.getScriptEventId().isBlank()) {
-      return null;
-    }
-    // Routing is audit payload rather than ingress identity, but malformed bundles still fail
-    // before an idempotency lookup can replay a prior result.
-    RoutingBundleSupport.normalize(
-        request.getWorldSlug(), request.getRealmSlug(), request.getPointerVersion());
-    boolean instanceScoped = !request.getGameInstanceId().isBlank();
-    return repository
-        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
-            request.getTenantId(),
-            instanceScoped ? normalize(request.getGameInstanceId()) : null,
-            instanceScoped ? normalize(request.getRegionId()) : null,
-            instanceScoped ? (request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L) : null,
-            instanceScoped ? nullableText(request.getEntityId()) : null,
-            instanceScoped ? normalizePlayableStateScope(request.getPlayableStateScope()) : null,
-            request.getEventType(),
-            schemaVersion,
-            request.getScriptPatchVersion(),
-            instanceScoped && request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
-            instanceScoped ? normalize(request.getScriptPinControlPlaneRequestId()) : null,
-            request.getScriptEventId(),
-            request.getIsDryRun(),
-            sourceService)
-        .orElse(null);
   }
 
   private String schemaVersion(TriggerScriptEventRequest request) {
