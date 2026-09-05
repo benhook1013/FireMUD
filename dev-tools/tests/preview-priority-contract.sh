@@ -31,7 +31,10 @@ case "$namespace" in
         printf '%s' '{not-json'
         exit 0
       fi
-      printf '%s\n' "{\"metadata\":{\"name\":\"pr-101\",\"creationTimestamp\":\"2026-01-01T00:00:00Z\",\"labels\":{\"firemud.dev/pr-number\":\"${FAKE_PR_101_OWNER:-101}\"},\"annotations\":{\"firemud.dev/preview-allocated-at\":\"2026-01-02T00:00:00Z\",\"firemud.dev/last-preview-head-sha\":\"head-101\",\"firemud.dev/last-preview-image-tag\":\"${FAKE_PR_101_IMAGE:-image-101}\"}}}"
+      jq -cn \
+        --arg owner "${FAKE_PR_101_OWNER:-101}" \
+        --arg image "${FAKE_PR_101_IMAGE:-image-101}" \
+        '{metadata:{name:"pr-101",creationTimestamp:"2026-01-01T00:00:00Z",labels:{"firemud.dev/pr-number":$owner},annotations:{"firemud.dev/preview-allocated-at":"2026-01-02T00:00:00Z","firemud.dev/last-preview-head-sha":"head-101","firemud.dev/last-preview-image-tag":$image}}}'
       exit 0
     fi
     case "$*" in
@@ -420,7 +423,7 @@ grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
 test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 
 reset_case
-export FAKE_PR_101_IMAGE='image-101\n'
+export FAKE_PR_101_IMAGE=$'image-101\n'
 if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "reclaim proceeded after victim image tag contained a trailing newline" >&2
   exit 1
@@ -430,7 +433,13 @@ grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
 grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
 test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 
-for unsafe_image in 'image-101|' 'image-101\t' 'image-101\r' 'image-101\u0001' 'image-101\u007f'; do
+for unsafe_image in \
+  'image-101|' \
+  $'image-101\t' \
+  $'image-101\r' \
+  $'image-101\u0001' \
+  $'image-101\u007f'
+do
   reset_case
   export FAKE_PR_101_IMAGE="$unsafe_image"
   if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
@@ -442,6 +451,13 @@ for unsafe_image in 'image-101|' 'image-101\t' 'image-101\r' 'image-101\u0001' '
   grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
   test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 done
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
+bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|preview-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'

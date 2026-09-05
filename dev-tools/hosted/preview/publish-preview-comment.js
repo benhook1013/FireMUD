@@ -19,9 +19,9 @@ function commentTimestamp(comment) {
 function latestPreviewComment(comments) {
   const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
   const isWorkflowComment = (comment) =>
-    isBotAuthored(comment) && comment.body.includes(PREVIEW_SUMMARY_MARKER);
+    isBotAuthored(comment) && (comment.body ?? "").includes(PREVIEW_SUMMARY_MARKER);
   const isLegacyWorkflowComment = (comment) =>
-    isBotAuthored(comment) && comment.body.startsWith(LEGACY_SUMMARY_PREFIX);
+    isBotAuthored(comment) && (comment.body ?? "").startsWith(LEGACY_SUMMARY_PREFIX);
   const previewComments = [];
   const seenCommentIds = new Set();
   for (const comment of comments) {

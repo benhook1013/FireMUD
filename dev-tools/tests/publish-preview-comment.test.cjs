@@ -173,6 +173,29 @@ test("selects the canonical preview comment by updated time, then id", async () 
   assert.match(result.calls.updates[0].body, /Demo login password: demo-password/);
 });
 
+test("ignores null or missing bot comment bodies while publishing the canonical summary", async () => {
+  const nullBody = {
+    ...previewComment("90", "ignored", "2026-09-04T00:00:00Z"),
+    body: null,
+  };
+  const missingBody = {
+    ...previewComment("91", "ignored", "2026-09-05T00:00:00Z"),
+  };
+  delete missingBody.body;
+  const canonical = previewComment(
+    "92",
+    "<!-- firemud-preview-summary -->\ncanonical",
+    "2026-09-03T00:00:00Z",
+  );
+
+  const result = await publish({ comments: [nullBody, missingBody, canonical] });
+
+  assert.deepEqual(result.calls.deleted, []);
+  assert.equal(result.calls.updates.length, 1);
+  assert.equal(result.calls.updates[0].comment_id, "92");
+  assert.equal(result.calls.creates.length, 0);
+});
+
 test("rejects an initially stale expected-open or expected-closed target", async () => {
   const expectedOpen = await publish({
     pullRequests: [{ state: "closed", head: { sha: "head-123" } }],

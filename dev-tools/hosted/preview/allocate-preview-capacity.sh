@@ -149,6 +149,9 @@ if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" 
   echo "Refusing capacity action for stale target PR #${target_pr_number}" >&2
   exit 1
 fi
+if [[ "$target_exists" == "true" ]]; then
+  exit 0
+fi
 if [[ "$target_is_priority" != "true" ]]; then
   if ! unsatisfied_priority_pr="$(find_unsatisfied_priority_pr)"; then
     echo "Refusing ordinary allocation because priority intent could not be evaluated" >&2
@@ -158,9 +161,6 @@ if [[ "$target_is_priority" != "true" ]]; then
     echo "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview" >&2
     exit 1
   fi
-fi
-if [[ "$target_exists" == "true" ]]; then
-  exit 0
 fi
 if (( active_count < max_active )); then
   exit 0
