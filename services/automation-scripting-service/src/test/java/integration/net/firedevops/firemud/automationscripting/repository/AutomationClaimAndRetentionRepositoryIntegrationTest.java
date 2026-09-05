@@ -152,10 +152,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     CountDownLatch ownerLockHeld = new CountDownLatch(1);
     CountDownLatch releaseOwner = new CountDownLatch(1);
+    String ownerApplicationName = "automation-claim-owner-" + System.nanoTime();
+    String reclaimApplicationName = "automation-claim-reclaim-" + System.nanoTime();
+    DSLContext ownerDsl = newDsl(ownerApplicationName);
+    DSLContext reclaimDsl = newDsl(reclaimApplicationName);
     Future<Boolean> renewal =
         executor.submit(
             () ->
-                dsl.transactionResult(
+                ownerDsl.transactionResult(
                     configuration -> {
                       boolean renewed =
                           new ScriptEventIngressAuditRepository(configuration.dsl())
@@ -169,9 +173,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     Future<Optional<ScriptEventIngressAudit>> reclaim =
         executor.submit(
             () ->
-                new ScriptEventIngressAuditRepository(dsl)
+                new ScriptEventIngressAuditRepository(reclaimDsl)
                     .reclaimStaleInProgress(ownerClaim, STALE_BEFORE, RENEWED_AT.plusSeconds(1)));
-    assertThatThrownByTimeout(reclaim);
+    awaitPostgresLockWait(reclaimApplicationName);
     releaseOwner.countDown();
 
     assertThat(get(renewal)).isTrue();
@@ -202,10 +206,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     CountDownLatch parentLockHeld = new CountDownLatch(1);
     CountDownLatch releaseParent = new CountDownLatch(1);
+    String lockApplicationName = "automation-retention-owner-" + System.nanoTime();
+    String cleanupApplicationName = "automation-retention-cleanup-" + System.nanoTime();
+    DSLContext lockDsl = newDsl(lockApplicationName);
+    DSLContext cleanupDsl = newDsl(cleanupApplicationName);
     Future<Void> lock =
         executor.submit(
             () ->
-                dsl.transactionResult(
+                lockDsl.transactionResult(
                     configuration -> {
                       configuration
                           .dsl()
@@ -224,13 +232,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         executor.submit(
             () -> {
               cleanupStarted.countDown();
-              return dsl.transactionResult(
+              return cleanupDsl.transactionResult(
                   configuration ->
                       new ScriptWorkItemRepository(configuration.dsl())
                           .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()));
             });
     assertThat(cleanupStarted.await(5, TimeUnit.SECONDS)).isTrue();
-    assertThatThrownByTimeout(cleanup);
+    awaitPostgresLockWait(cleanupApplicationName);
     releaseParent.countDown();
 
     assertThat(get(lock)).isNull();
@@ -368,13 +376,29 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     return future.get(10, TimeUnit.SECONDS);
   }
 
-  private static void assertThatThrownByTimeout(Future<?> future)
-      throws InterruptedException, ExecutionException {
-    try {
-      future.get(250, TimeUnit.MILLISECONDS);
-      throw new AssertionError("Expected operation to wait on a PostgreSQL row lock");
-    } catch (TimeoutException expected) {
-      // The lock holder is intentionally still open; the caller releases it next.
+  private DSLContext newDsl(String applicationName) {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    dataSource.setUrl(postgres.getJdbcUrl() + "?ApplicationName=" + applicationName);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    return DSL.using(dataSource, SQLDialect.POSTGRES);
+  }
+
+  private void awaitPostgresLockWait(String applicationName) throws InterruptedException {
+    Instant deadline = Instant.now().plusSeconds(5);
+    while (Instant.now().isBefore(deadline)) {
+      Number waitingBackends =
+          (Number)
+              dsl.fetchValue(
+                  "SELECT count(*) FROM pg_stat_activity "
+                      + "WHERE application_name = ? AND wait_event_type = 'Lock'",
+                  applicationName);
+      if (waitingBackends != null && waitingBackends.longValue() > 0) {
+        return;
+      }
+      Thread.sleep(10);
     }
+    throw new AssertionError("PostgreSQL backend did not enter a lock wait: " + applicationName);
   }
 }
