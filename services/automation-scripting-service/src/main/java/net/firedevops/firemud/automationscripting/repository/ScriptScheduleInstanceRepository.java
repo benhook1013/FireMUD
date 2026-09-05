@@ -117,10 +117,6 @@ public class ScriptScheduleInstanceRepository {
             .set(SCRIPT_SCHEDULE_INSTANCES.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_VERSION_ID, entity.getPluginVersionId())
-            .set(
-                SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ACTIVATION_EPOCH,
-                entity.getPluginActivationEpoch())
-            .set(SCRIPT_SCHEDULE_INSTANCES.LIFECYCLE_REVISION, entity.getLifecycleRevision())
             .set(SCRIPT_SCHEDULE_INSTANCES.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_DEFINITION_ID, entity.getScheduleDefinitionId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_KIND, entity.getScheduleKind())
@@ -193,8 +189,6 @@ public class ScriptScheduleInstanceRepository {
     record.setPointerVersion(entity.getPointerVersion());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
-    record.setPluginActivationEpoch(entity.getPluginActivationEpoch());
-    record.setLifecycleRevision(entity.getLifecycleRevision());
     record.setEventType(entity.getEventType());
     record.setScheduleDefinitionId(entity.getScheduleDefinitionId());
     record.setScheduleKind(entity.getScheduleKind());
@@ -238,10 +232,6 @@ public class ScriptScheduleInstanceRepository {
     entity.setPointerVersion(record.get(SCRIPT_SCHEDULE_INSTANCES.POINTER_VERSION));
     entity.setPluginId(record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_VERSION_ID));
-    Long pluginActivationEpoch = record.get(SCRIPT_SCHEDULE_INSTANCES.PLUGIN_ACTIVATION_EPOCH);
-    entity.setPluginActivationEpoch(pluginActivationEpoch == null ? 0L : pluginActivationEpoch);
-    Long lifecycleRevision = record.get(SCRIPT_SCHEDULE_INSTANCES.LIFECYCLE_REVISION);
-    entity.setLifecycleRevision(lifecycleRevision == null ? 0L : lifecycleRevision);
     entity.setEventType(record.get(SCRIPT_SCHEDULE_INSTANCES.EVENT_TYPE));
     entity.setScheduleDefinitionId(record.get(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_DEFINITION_ID));
     entity.setScheduleKind(record.get(SCRIPT_SCHEDULE_INSTANCES.SCHEDULE_KIND));
