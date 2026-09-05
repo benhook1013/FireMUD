@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
@@ -29,11 +30,13 @@ import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressR
 import net.firedevops.firemud.automationscripting.v1.ObserveRuntimeTickProgressResponse;
 import net.firedevops.firemud.automationscripting.v1.PingRequest;
 import net.firedevops.firemud.automationscripting.v1.PingResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.v1.TriggerAdmissionOutcome;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
+import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.AfterEach;
@@ -543,5 +546,65 @@ class AutomationScriptingGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(scriptService);
+  }
+
+  @Test
+  void updateScriptRejectsOmittedBindingIdThroughGrpc() throws SagaException {
+    ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
+    Mockito.doAnswer(
+            invocation -> {
+              ScriptDefinitionDto dto = invocation.getArgument(0);
+              assertEquals("", dto.eventBindings().get(0).bindingId());
+              throw new IllegalArgumentException("binding id is required");
+            })
+        .when(scriptService)
+        .updateScript(Mockito.any());
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            scriptService,
+            Mockito.mock(ScriptDesignDigestService.class),
+            Mockito.mock(ScriptVersionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<UpdateScriptResponse> ref = new AtomicReference<>();
+    service.updateScript(
+        UpdateScriptRequest.newBuilder()
+            .setTenantId("1")
+            .setName("guard-script")
+            .setVersion("v1")
+            .setDefinition("{}")
+            .addEventBindings(
+                ScriptEventBinding.newBuilder()
+                    .setEventType("onCommand")
+                    .setEventSchemaVersion("v1")
+                    .setTargetScopeType("ENTITY")
+                    .setTargetScopeId("entity-1")
+                    .setPriority(1)
+                    .setPriorityTag("normal")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(UpdateScriptResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("binding id is required", ref.get().getError().getMessage());
+    Mockito.verify(scriptService).updateScript(Mockito.any());
   }
 }

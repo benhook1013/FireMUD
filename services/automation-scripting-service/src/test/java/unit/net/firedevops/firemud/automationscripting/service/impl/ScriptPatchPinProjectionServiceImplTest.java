@@ -342,6 +342,80 @@ class ScriptPatchPinProjectionServiceImplTest {
   }
 
   @Test
+  void rejectsIncoherentIncomingRuntimePinTupleWithoutSavingOrReconciling() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.empty());
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    service.observeRuntimeState(
+        "1",
+        "game-1",
+        GameInstanceRuntimeState.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setPinnedScriptPatchVersion("patch-3")
+            .setScriptPinEpoch(3L)
+            .build());
+
+    verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
+  void reportsInvalidRuntimePinTupleWhenProjectionIsMissing() {
+    ScriptPatchPinProjectionRepository repository =
+        Mockito.mock(ScriptPatchPinProjectionRepository.class);
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", ""))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-3")
+                        .setScriptPinEpoch(3L)
+                        .build())
+                .build());
+    ScriptPatchPinProjectionService service =
+        new ScriptPatchPinProjectionServiceImpl(
+            repository,
+            gameSessionControlPlaneClient,
+            rolloutProjectionService,
+            scheduleInstanceService,
+            runtimeProperties());
+
+    ScriptPatchPinProjectionService.PinConvergenceLookup lookup =
+        service.getPinConvergence("1", "game-1");
+
+    assertThat(lookup.summary()).isEmpty();
+    assertThat(lookup.errorCode()).isEqualTo("INVALID_RUNTIME_PIN_TUPLE");
+    assertThat(lookup.errorMessage())
+        .isEqualTo("GetAutomationPinConvergence failed: invalid_runtime_pin_tuple");
+    verify(repository, never()).save(Mockito.any(ScriptPatchPinProjection.class));
+    verifyNoInteractions(rolloutProjectionService, scheduleInstanceService);
+  }
+
+  @Test
   void ignoresOutOfOrderLowerEpochWithoutSavingOrReconciling() {
     ScriptPatchPinProjection existing = new ScriptPatchPinProjection();
     existing.setId(7L);
