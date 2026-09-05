@@ -15,7 +15,8 @@ ALTER TABLE script_patch_pin_projections
         ((script_pin_epoch IS NULL OR script_pin_epoch = 0)
             AND NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NULL
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
-        OR (script_pin_epoch > 0
+        OR (script_pin_epoch IS NOT NULL
+            AND script_pin_epoch > 0
             AND NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL
             AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
     );
