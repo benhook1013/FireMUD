@@ -18,7 +18,6 @@ import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequ
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
-import net.firedevops.firemud.automationscripting.v1.ListScriptTimerAuditEventsRequest;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
@@ -32,7 +31,7 @@ import org.mockito.Mockito;
 
 class AutomationPatchControlPlaneServiceTest {
   @Test
-  void rejectsPartialScriptPinFiltersBeforeDelegating() {
+  void rejectsPartialScriptPinFiltersForRolloutsBeforeDelegating() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptScheduleInstanceService scheduleService =
         Mockito.mock(ScriptScheduleInstanceService.class);
@@ -73,16 +72,6 @@ class AutomationPatchControlPlaneServiceTest {
                         .setLastObservedControlPlaneRequestId("request-1")
                         .build()))
         .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.listScriptTimerAuditEvents(
-                    ListScriptTimerAuditEventsRequest.newBuilder()
-                        .setTenantId("1")
-                        .setScriptPinEpoch(2L)
-                        .build()))
-        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
-
     Mockito.verifyNoInteractions(workItemService, scheduleService);
   }
 

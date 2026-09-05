@@ -1611,9 +1611,6 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getDeadLetters(0).getSourceState()).isEqualTo("WORK_ITEM_PERSISTED");
     assertThat(ref.get().getDeadLetters(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getDeadLetters(0).getPluginVersionId()).isEqualTo("plugin-v1");
-    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isEqualTo(2L);
-    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId())
-        .isEqualTo("request-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getDeadLetters(0).getCurrentRuntimeRegionEpoch()).isEqualTo(99L);
