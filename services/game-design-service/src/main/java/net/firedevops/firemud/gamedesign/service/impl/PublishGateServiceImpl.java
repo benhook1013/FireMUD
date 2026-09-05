@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
@@ -18,7 +19,13 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class PublishGateServiceImpl implements PublishGateService {
-  private static final int SUPPORTED_DIGEST_SCHEMA_VERSION = 1;
+  private static final Map<String, Integer> SUPPORTED_DIGEST_SCHEMA_VERSIONS =
+      Map.of(
+          PublishParticipantKey.WORLD_MANAGEMENT.name(), 2,
+          PublishParticipantKey.ENTITY_MANAGEMENT.name(), 1,
+          PublishParticipantKey.GAME_LOGIC.name(), 1,
+          PublishParticipantKey.AUTOMATION_SCRIPTING.name(), 3,
+          PublishParticipantKey.GAME_DESIGN_CONTROL_PLANE.name(), 1);
   private static final List<PublishParticipantKey> FULL_VERSION_PARTICIPANTS =
       List.of(
           PublishParticipantKey.WORLD_MANAGEMENT,
@@ -94,8 +101,10 @@ public class PublishGateServiceImpl implements PublishGateService {
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH,
                 "publish gate failed: wrong scope from " + digest.participantKey());
           }
+          Integer supportedSchemaVersion =
+              SUPPORTED_DIGEST_SCHEMA_VERSIONS.get(digest.participantKey());
           if (digest.digestSchemaVersion() == null
-              || digest.digestSchemaVersion() != SUPPORTED_DIGEST_SCHEMA_VERSION) {
+              || !digest.digestSchemaVersion().equals(supportedSchemaVersion)) {
             throw new PublishGateFailureException(
                 PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA,
                 "publish gate failed: unsupported digest schema from " + digest.participantKey());

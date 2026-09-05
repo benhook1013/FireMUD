@@ -45,6 +45,7 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("patch-1", digest.scopeValue());
     assertEquals("script-patch:patch-1", digest.appliedCommitId());
+    assertEquals(3, digest.digestSchemaVersion());
   }
 
   @Test
@@ -72,6 +73,7 @@ class ScriptDesignDigestServiceImplTest {
 
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
+    assertEquals(3, digest.digestSchemaVersion());
   }
 
   @Test

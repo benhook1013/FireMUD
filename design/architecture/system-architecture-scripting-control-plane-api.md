@@ -636,6 +636,7 @@ Contract rules:
 - This projection is explicitly non-authoritative and must not be used to admit work unless it is fresh enough and matches the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple together with its associated owner request identity. No stale/local pin override exists; until the observed epoch field exists on the current surface, exact-tuple convergence is unavailable and a missing epoch never matches.
 - When Game Session runtime state reports multiple current admission pointers for one runtime target, Automation must treat the singular runtime-state routing bundle as unavailable and fail closed for any consumer that needs one unambiguous `{worldSlug, realmSlug, pointerVersion}` identity.
 - If refresh from Game Session fails but Automation still has a stored observation, the API must continue returning that stored observation, including its associated pair and request identity, with freshness flags set from the projection timestamp instead of failing closed for operator visibility.
+- When refresh returns a partial or otherwise incoherent owner tuple and no stored projection exists, the live endpoint returns application error `INVALID_RUNTIME_PIN_TUPLE`. Clients must not reinterpret that response as semantic `UNPINNED`; operators repair the Game Session owner record or read path before retrying exact-tuple admission or convergence.
 
 #### `ListScriptScheduleInstances`
 
@@ -775,7 +776,7 @@ Read-model ownership:
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, and the current partial observed-pin pair `scriptPinEpoch` + `lastObservedControlPlaneRequestId` (required together when either is supplied), plus `projectionStatus`, `changedAfter`, `changedBefore`. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and the paired nonblank `scriptPinControlPlaneRequestId` together.
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, and the current partial observed-pin pair `scriptPinEpoch` + `lastObservedControlPlaneRequestId` (required together when either is supplied), plus `projectionStatus`, `changedAfter`, `changedBefore`. Target exact observed-tuple filtering requires `scriptPatchVersion`, `scriptPinEpoch`, and the paired nonblank `lastObservedControlPlaneRequestId` together.
 - `limit` (service-bounded maximum number of rows)
 - `pageToken` (opaque continuation token bound to the tenant and normalized filters)
 

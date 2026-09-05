@@ -62,7 +62,7 @@ class PublishGateServiceImplTest {
     when(worldManagementClient.getDraftDesignDigestForVersion("tenant-1", 7L))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 1, null, null));
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null));
     when(entityManagementClient.getDraftDesignDigestForVersion("tenant-1", 7L))
         .thenReturn(
             new PublishParticipantDigestDto(
@@ -74,7 +74,7 @@ class PublishGateServiceImplTest {
     when(automationScriptingClient.getDraftDesignDigestForVersion("tenant-1", 7L))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 1, null, null));
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 3, null, null));
     when(controlPlaneDigestService.getDigestForVersion(version))
         .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "7", "version:7", "digest-1", 1));
 
@@ -104,7 +104,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
             new PublishParticipantDigestDto(
@@ -146,7 +146,7 @@ class PublishGateServiceImplTest {
                 "patch-1",
                 "script-patch:patch-1",
                 "digest-1",
-                1,
+                3,
                 null,
                 null));
 
