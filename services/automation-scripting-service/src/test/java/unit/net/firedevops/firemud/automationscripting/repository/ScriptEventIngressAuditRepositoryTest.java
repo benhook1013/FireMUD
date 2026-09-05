@@ -155,6 +155,65 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void insertIfAbsentByIdentityClaimsInstanceScopedUnpinnedBranchAtomically() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    ScriptEventIngressAuditRecord row = new ScriptEventIngressAuditRecord();
+    row.setId(12L);
+    row.setTenantId("tenant-1");
+    row.setGameInstanceId("game-1");
+    row.setRegionId("region-1");
+    row.setRegionEpoch(7L);
+    row.setEntityId("entity-1");
+    row.setEventType("onCommand");
+    row.setEventSchemaVersion("v1");
+    row.setScriptPatchVersion("patch-1");
+    row.setScriptEventId("event-1");
+    row.setSourceService("game-session-service");
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
+          fields.add(insertedField);
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, true);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setTenantId("tenant-1");
+    entity.setGameInstanceId("game-1");
+    entity.setRegionId("region-1");
+    entity.setRegionEpoch(7L);
+    entity.setEntityId("entity-1");
+    entity.setEventType("onCommand");
+    entity.setEventSchemaVersion("v1");
+    entity.setScriptPatchVersion("patch-1");
+    entity.setScriptEventId("event-1");
+    entity.setSourceService("game-session-service");
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(result.inserted()).isTrue();
+    assertThat(result.audit().getId()).isEqualTo(12L);
+    String sql = sqlRef.get();
+    int conflictStart = sql.indexOf("on conflict");
+    int targetEnd = sql.indexOf(") where", conflictStart);
+    assertThat(sql.substring(conflictStart, targetEnd))
+        .contains("game_instance_id")
+        .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
+    assertThat(sql).contains("game_instance_id\" is not null", "script_pin_epoch is null");
+  }
+
+  @Test
   void insertIfAbsentByIdentityClaimsPinnedBranchWithMatchingConflictPredicate() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();

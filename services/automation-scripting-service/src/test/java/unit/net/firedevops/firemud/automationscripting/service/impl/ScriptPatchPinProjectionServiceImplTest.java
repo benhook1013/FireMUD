@@ -69,6 +69,7 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.errorCode()).isBlank();
     assertThat(lookup.summary()).isPresent();
     assertThat(lookup.summary().get().observedPinnedScriptPatchVersion()).isEqualTo("patch-7");
+    assertThat(lookup.summary().get().scriptPinEpoch()).isEqualTo(1L);
     assertThat(lookup.summary().get().lastObservedControlPlaneRequestId()).isEqualTo("req-7");
     assertThat(lookup.summary().get().observedAtMs()).isEqualTo(700L);
     assertThat(lookup.summary().get().projectionLagMs()).isZero();

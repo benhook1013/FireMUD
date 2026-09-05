@@ -64,10 +64,7 @@ public class ScriptEventAuditRepository {
       boolean dryRun) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
     String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
-    if ((normalizedScriptPinEpoch != null) != (normalizedScriptPinControlPlaneRequestId != null)) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
-    }
+    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     return SCRIPT_EVENT_AUDIT
         .TENANT_ID
         .eq(tenantId)
@@ -325,6 +322,8 @@ public class ScriptEventAuditRepository {
     if (entity.getId() == null) {
       return insertIfAbsentByHandlerIdentity(entity).audit();
     }
+    requireCoherentPinTuple(
+        normalizedScriptPinEpoch(entity), blankToNull(entity.getScriptPinControlPlaneRequestId()));
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_AUDIT)
@@ -470,6 +469,13 @@ public class ScriptEventAuditRepository {
 
   private static Long normalizedScriptPinEpoch(ScriptEventAudit entity) {
     return normalizeScriptPinEpoch(entity.getScriptPinEpoch());
+  }
+
+  private static void requireCoherentPinTuple(Long scriptPinEpoch, String requestId) {
+    if ((scriptPinEpoch != null) != (requestId != null)) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is required exactly when script_pin_epoch is positive");
+    }
   }
 
   private static Long normalizeScriptPinEpoch(Long epoch) {

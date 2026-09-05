@@ -579,6 +579,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getSchedules(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getSchedules(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getSchedules(0).getScriptPinEpoch()).isEqualTo(9L);
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
@@ -789,6 +790,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsCount()).isEqualTo(1);
     assertThat(ref.get().getEvents(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getEvents(0).getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(ref.get().getEvents(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(ref.get().getEvents(0).getTriggerMode())
         .isEqualTo(TriggerMode.TRIGGER_MODE_CATCH_UP);
     assertThat(ref.get().getEvents(0).getFinalReason()).isEqualTo("catch_up_truncated");
@@ -895,6 +899,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getObservedPinnedScriptPatchVersion()).isEqualTo("patch-2");
+    assertThat(ref.get().getObservedScriptPinEpoch()).isEqualTo(22L);
     assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("req-22");
     assertThat(ref.get().getObservedAtMs()).isEqualTo(222L);
     assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
@@ -1244,6 +1249,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(ref.get().getEvents(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(ref.get().getEvents(0).getTargetGameInstanceId()).isEqualTo("game-2");
     assertThat(ref.get().getEvents(0).getTargetRegionId()).isEqualTo("region-2");
     assertThat(ref.get().getEvents(0).getTargetRegionEpoch()).isEqualTo(17L);
@@ -1472,6 +1480,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getDeadLettersList()).hasSize(1);
     assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isZero();
+    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId()).isEmpty();
     assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");

@@ -62,6 +62,7 @@ WHERE id IN (
                ) AS duplicate_rank
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NOT NULL
+          AND entity_id IS NOT NULL
           AND script_pin_epoch IS NOT NULL
     ) AS ranked
     WHERE ranked.duplicate_rank > 1
@@ -89,6 +90,7 @@ WHERE id IN (
                ) AS duplicate_rank
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NOT NULL
+          AND entity_id IS NOT NULL
           AND script_pin_epoch IS NULL
     ) AS ranked
     WHERE ranked.duplicate_rank > 1
@@ -116,6 +118,7 @@ ALTER TABLE script_event_ingress_audit
         (script_pin_epoch IS NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
+            AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
 
@@ -200,6 +203,7 @@ ALTER TABLE script_event_audit
         (script_pin_epoch IS NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
+            AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
 
