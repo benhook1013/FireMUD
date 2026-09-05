@@ -828,7 +828,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
         .thenThrow(
             new IllegalArgumentException(
-                "script_pin_epoch and control-plane request ID must be supplied together"));
+                "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive"));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -854,7 +854,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isTrue();
     assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(ref.get().getError().getMessage())
-        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+        .isEqualTo(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     Mockito.verify(scheduleInstanceService)
         .listTimerAuditEvents(
             "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25);
@@ -908,7 +909,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
         .thenThrow(
             new IllegalArgumentException(
-                "script_pin_epoch and control-plane request ID must be supplied together"));
+                "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive"));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -934,7 +935,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isTrue();
     assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(ref.get().getError().getMessage())
-        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+        .isEqualTo(
+            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     Mockito.verify(scheduleInstanceService)
         .listTimerAuditEvents(
             "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25);

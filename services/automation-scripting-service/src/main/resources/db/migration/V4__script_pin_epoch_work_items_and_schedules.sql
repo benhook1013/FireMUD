@@ -64,7 +64,7 @@ CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned ON script_work
 ALTER TABLE script_work_items
     ADD CONSTRAINT ck_script_work_items_pin_tuple CHECK (
         (script_pin_epoch = 0
-            AND script_pin_control_plane_request_id IS NULL)
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );

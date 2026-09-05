@@ -145,24 +145,6 @@ ALTER TABLE script_event_ingress_audit
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     );
 
--- Rejected instance-scoped requests may omit the epoch; keep that explicit null branch
--- atomically idempotent without collapsing it into a sentinel value.
-CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_unpinned_identity
-ON script_event_ingress_audit (
-    tenant_id,
-    game_instance_id,
-    region_id,
-    region_epoch,
-    entity_id,
-    playable_state_scope,
-    event_type,
-    event_schema_version,
-    script_patch_version,
-    script_event_id,
-    dry_run,
-    source_service
-) WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NULL;
-
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
     tenant_id,
     script_id,

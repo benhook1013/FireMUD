@@ -28,7 +28,7 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "WHERE script_pin_epoch > 0",
             "CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned",
             "WHERE script_pin_epoch = 0",
-            "script_pin_control_plane_request_id IS NULL",
+            "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL",
             "ADD CONSTRAINT ck_script_work_items_pin_tuple CHECK",
             "script_pin_epoch > 0",
             "NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL")
@@ -67,8 +67,8 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
 
     int pinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON");
-    int pinnedEnd = migration.indexOf(") WHERE", pinnedStart);
     assertThat(pinnedStart).isGreaterThanOrEqualTo(0);
+    int pinnedEnd = migration.indexOf(") WHERE", pinnedStart);
     assertThat(pinnedEnd).isGreaterThan(pinnedStart);
     assertThat(migration.substring(pinnedStart, pinnedEnd))
         .contains("script_pin_epoch", "script_event_id", "dry_run")

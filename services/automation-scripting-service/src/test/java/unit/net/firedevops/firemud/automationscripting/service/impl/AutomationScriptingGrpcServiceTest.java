@@ -551,14 +551,8 @@ class AutomationScriptingGrpcServiceTest {
   @Test
   void updateScriptRejectsOmittedBindingIdThroughGrpc() throws SagaException {
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
-    Mockito.doAnswer(
-            invocation -> {
-              ScriptDefinitionDto dto = invocation.getArgument(0);
-              assertEquals("", dto.eventBindings().get(0).bindingId());
-              throw new IllegalArgumentException("binding id is required");
-            })
-        .when(scriptService)
-        .updateScript(Mockito.any());
+    Mockito.when(scriptService.updateScript(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("binding id is required"));
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
             Mockito.mock(PingService.class),
@@ -605,6 +599,9 @@ class AutomationScriptingGrpcServiceTest {
     assertFalse(ref.get().getSuccess());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("binding id is required", ref.get().getError().getMessage());
-    Mockito.verify(scriptService).updateScript(Mockito.any());
+    org.mockito.ArgumentCaptor<ScriptDefinitionDto> dtoCaptor =
+        org.mockito.ArgumentCaptor.forClass(ScriptDefinitionDto.class);
+    Mockito.verify(scriptService).updateScript(dtoCaptor.capture());
+    assertEquals("", dtoCaptor.getValue().eventBindings().get(0).bindingId());
   }
 }

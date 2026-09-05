@@ -219,7 +219,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
     }
     boolean hasPositiveEpoch = scriptPinEpoch != null && scriptPinEpoch > 0L;
     boolean hasRequestId = blankToNull(requestId) != null;
-    if (hasPositiveEpoch != hasRequestId || (scriptPinEpoch != null && scriptPinEpoch == 0L)) {
+    if (hasPositiveEpoch != hasRequestId) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }

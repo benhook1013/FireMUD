@@ -121,17 +121,28 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   }
 
   @Test
-  void rejectsExplicitZeroPinEpochWithoutOwnerRequestIdBeforeQuery() {
+  void allowsExplicitZeroPinEpochWithoutOwnerRequestIdAsUnpinnedFilter() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS))
+          };
+        };
     ScriptPatchInstanceRolloutEventRepository repository =
-        new ScriptPatchInstanceRolloutEventRepository(DSL.using(SQLDialect.POSTGRES));
+        new ScriptPatchInstanceRolloutEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                repository.findEvents(
-                    "tenant-1", "game-1", "patch-1", 0L, null, "", null, null, Pageable.unpaged()))
-        .withMessage(
-            "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    assertThat(
+            repository.findEvents(
+                "tenant-1", "game-1", "patch-1", 0L, null, "", null, null, Pageable.unpaged()))
+        .isEmpty();
+    assertThat(sqlRef.get()).contains("script_pin_epoch");
+    assertThat(bindingsRef.get()).contains(0L).doesNotContain("pin-request-1");
   }
 
   @Test
@@ -150,11 +161,13 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
   @Test
   void normalizesBlankOwnerRequestIdBeforeUpdate() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
           String sql = context.sql().toLowerCase(java.util.Locale.ROOT);
           if (sql.startsWith("update")) {
+            sqlRef.set(sql);
             bindingsRef.set(context.bindings());
             return new MockResult[] {new MockResult(1)};
           }
@@ -194,6 +207,8 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
     ScriptPatchInstanceRolloutEvent saved = repository.save(event);
 
     assertThat(saved.getLastObservedControlPlaneRequestId()).isNull();
+    assertThat(sqlRef.get()).contains("script_pin_epoch");
+    assertThat(bindingsRef.get()).contains(0L);
     assertThat(bindingsRef.get()).doesNotContain(" ");
   }
 

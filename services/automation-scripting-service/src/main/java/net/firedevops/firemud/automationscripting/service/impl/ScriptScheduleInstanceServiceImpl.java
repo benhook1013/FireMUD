@@ -2241,14 +2241,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String durableIdentity() {
-      return identity(false);
+      return identity();
     }
 
     private String eventIdentity() {
-      return identity(false);
+      return identity();
     }
 
-    private String identity(boolean includeOwnerRequestEvidence) {
+    private String identity() {
       List<String> values =
           new ArrayList<>(
               List.of(
@@ -2269,9 +2269,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                   String.valueOf(scriptPinEpoch)));
       if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
         values.add(applicableBindingId(instance));
-      }
-      if (includeOwnerRequestEvidence) {
-        values.add(scriptPinControlPlaneRequestId);
       }
       values.addAll(
           List.of(

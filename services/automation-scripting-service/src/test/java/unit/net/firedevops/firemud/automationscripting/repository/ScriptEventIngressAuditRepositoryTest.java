@@ -37,6 +37,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setTenantId("tenant-1");
     entity.setGameInstanceId("game-1");
     entity.setScriptPinEpoch(2L);
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
         .isInstanceOf(IllegalArgumentException.class)
@@ -62,6 +63,7 @@ class ScriptEventIngressAuditRepositoryTest {
     ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
     entity.setScriptPinEpoch(2L);
     entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
         .isInstanceOf(IllegalArgumentException.class)
@@ -76,6 +78,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setId(7L);
     entity.setScriptPinEpoch(2L);
     entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(IllegalArgumentException.class)
@@ -102,6 +105,7 @@ class ScriptEventIngressAuditRepositoryTest {
     ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
     entity.setId(7L);
     entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(IllegalArgumentException.class)
@@ -128,6 +132,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setScriptPatchVersion("patch-2");
     entity.setScriptPinEpoch(2L);
     entity.setScriptPinControlPlaneRequestId("pin-request-2");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class)
@@ -279,20 +284,6 @@ class ScriptEventIngressAuditRepositoryTest {
     assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(bindingsRef.get()).doesNotContain(" ");
     assertThat(sqlRef.get()).contains("on conflict", "do update", "script_pin_epoch\" is null");
-  }
-
-  @Test
-  void insertIfAbsentByIdentityRejectsInstanceScopedNullEpochBeforeConflictTarget() {
-    ScriptEventIngressAuditRepository repository =
-        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
-    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
-    entity.setTenantId("tenant-1");
-    entity.setGameInstanceId("game-1");
-    entity.setRequestDigest(REQUEST_DIGEST);
-
-    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("script_pin_epoch is required for an instance-scoped ingress audit");
   }
 
   @Test

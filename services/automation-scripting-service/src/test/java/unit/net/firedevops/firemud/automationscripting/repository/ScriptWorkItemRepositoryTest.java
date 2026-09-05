@@ -54,7 +54,7 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
-  void insertAndHydratePositiveScriptPinEpoch() {
+  void insertRejectsConflictingOwnerEvidenceAgainstExistingIdentity() {
     ScriptWorkItemsRecord row = workItemRecord(9L, 4, 7L);
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
@@ -65,7 +65,6 @@ class ScriptWorkItemRepositoryTest {
           Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
@@ -152,7 +151,6 @@ class ScriptWorkItemRepositoryTest {
           Field<String> requestIdField = SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID;
           List<Field<?>> fields = new ArrayList<>();
           Collections.addAll(fields, SCRIPT_WORK_ITEMS.fields());
-          fields.add(requestIdField);
           fields.add(insertedField);
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);

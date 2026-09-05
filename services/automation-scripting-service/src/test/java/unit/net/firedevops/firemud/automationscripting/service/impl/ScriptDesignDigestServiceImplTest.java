@@ -153,6 +153,29 @@ class ScriptDesignDigestServiceImplTest {
         firstDigest.contentDigest(), secondDigest.contentDigest());
   }
 
+  @Test
+  void getDraftDesignDigestIsIndependentOfBindingOrder() {
+    ScriptDefinition script = new ScriptDefinition();
+    script.setTenantId(1L);
+    script.setName("alpha");
+    script.setScriptVersion("patch-1");
+    script.setDefinition("return 1");
+    ScriptEventBinding first = binding("binding-1");
+    ScriptEventBinding second = binding("binding-2");
+
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(script));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(first, second), List.of(second, first));
+
+    var orderedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var reversedDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+
+    assertEquals(orderedDigest.contentDigest(), reversedDigest.contentDigest());
+  }
+
   private static ScriptEventBinding binding(String bindingId) {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setTenantId(1L);

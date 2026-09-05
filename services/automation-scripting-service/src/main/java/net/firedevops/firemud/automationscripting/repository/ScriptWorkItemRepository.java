@@ -140,7 +140,6 @@ public class ScriptWorkItemRepository {
             eventSchemaVersion,
             scriptPatchVersion,
             scriptPinEpoch,
-            scriptPinControlPlaneRequestId,
             scriptEventId,
             dryRun));
   }
@@ -477,7 +476,6 @@ public class ScriptWorkItemRepository {
               entity.getEventSchemaVersion(),
               entity.getScriptPatchVersion(),
               entity.getScriptPinEpoch(),
-              entity.getScriptPinControlPlaneRequestId(),
               entity.getScriptEventId(),
               entity.isDryRun());
       if (existing.isPresent()) {
@@ -494,7 +492,6 @@ public class ScriptWorkItemRepository {
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_WORK_ITEMS.fields());
-    returningFields.add(SCRIPT_WORK_ITEMS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     returningFields.add(INSERTED_ROW);
     // PostgreSQL waits for a concurrent unique-index winner before resolving
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
@@ -565,7 +562,6 @@ public class ScriptWorkItemRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       long scriptPinEpoch,
-      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
@@ -588,7 +584,6 @@ public class ScriptWorkItemRepository {
                 eventSchemaVersion,
                 scriptPatchVersion,
                 scriptPinEpoch,
-                scriptPinControlPlaneRequestId,
                 scriptEventId,
                 dryRun))
         .fetchOptional(this::toEntity);
@@ -612,7 +607,6 @@ public class ScriptWorkItemRepository {
       String eventSchemaVersion,
       String scriptPatchVersion,
       long scriptPinEpoch,
-      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean dryRun) {
     return SCRIPT_WORK_ITEMS

@@ -2768,7 +2768,6 @@ class ScriptEventIngressServiceImplTest {
             "game-session-service"));
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     when(repository.insertIfAbsentByIdentity(Mockito.any()))
         .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(existing, false));
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
@@ -3527,7 +3526,6 @@ class ScriptEventIngressServiceImplTest {
   void concurrentIdenticalAdmissionsHaveOneClaimingResolver() throws Exception {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptEventAuditRepository eventAuditRepository =
@@ -3651,7 +3649,6 @@ class ScriptEventIngressServiceImplTest {
   void staleInProgressClaimIsReclaimedUnderRowVersionFence() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventIngressAudit stale = new ScriptEventIngressAudit();
     stale.setId(9L);
     stale.setRowVersion(3);
@@ -3734,7 +3731,6 @@ class ScriptEventIngressServiceImplTest {
   void reclaimedClaimFencesStalledOwnerBeforeQuotaOrWorkItemEffects() throws Exception {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -3925,7 +3921,6 @@ class ScriptEventIngressServiceImplTest {
   void finalizedClaimIsReplayedWithoutResolvingOrFanningOut() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventIngressAudit finalized = new ScriptEventIngressAudit();
     finalized.setId(7L);
     finalized.setSourceState("TRIGGER_ADMITTED");
@@ -3995,7 +3990,6 @@ class ScriptEventIngressServiceImplTest {
   void changedPayloadUnderExistingEventIdentityReturnsIdempotencyConflict() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
     existing.setId(17L);
     existing.setSourceState("TRIGGER_ADMITTED");
@@ -4051,7 +4045,6 @@ class ScriptEventIngressServiceImplTest {
   void postClaimFailureLeavesClaimInProgressAndDoesNotFanOut() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
-    stubClaimRepository(repository);
     ScriptEventBindingRepository bindingRepository =
         Mockito.mock(ScriptEventBindingRepository.class);
     ArgumentCaptor<ScriptEventIngressAudit> claimCaptor =
