@@ -62,7 +62,7 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entityId))
                 .and(
                     SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.isNotDistinctFrom(
-                        playableStateScope))
+                        canonicalPlayableStateScope(gameInstanceId, playableStateScope)))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))

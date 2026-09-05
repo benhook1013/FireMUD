@@ -21,6 +21,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration)
         .contains(
             "UPDATE script_event_ingress_audit",
+            "SET claim_started_at = created_at;",
             "SET region_id = COALESCE(region_id, ''),",
             "region_epoch = COALESCE(region_epoch, 0),",
             "playable_state_scope = COALESCE(playable_state_scope, '')",
@@ -80,7 +81,6 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .contains(
             "WHERE game_instance_id IS NOT NULL",
             "AND entity_id IS NOT NULL",
-            "script_pin_epoch IS NOT NULL",
             "script_pin_epoch IS NULL")
         .doesNotContain("NULLS NOT DISTINCT");
 

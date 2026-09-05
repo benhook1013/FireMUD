@@ -12,6 +12,12 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ADD COLUMN claim_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
+-- Existing rows have no claim-start timestamp. Preserve their historical age so stale
+-- in-progress claims can be reclaimed from the original ingress time rather than from the
+-- migration instant; created_at remains the immutable retention anchor.
+UPDATE script_event_ingress_audit
+SET claim_started_at = created_at;
+
 ALTER TABLE script_event_ingress_audit
     ALTER COLUMN playable_state_scope DROP NOT NULL;
 ALTER TABLE script_event_ingress_audit
@@ -57,39 +63,6 @@ WHERE id IN (
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NULL
           AND script_pin_epoch IS NULL
-    ) AS ranked
-    WHERE ranked.duplicate_rank > 1
-);
-
--- The normalization above can make a legacy nullable row collide with a canonical row (or make
--- two legacy rows collide). Retain a deterministic winner before building either runtime index;
--- completed evidence wins over an abandoned in-progress claim, then the lowest id wins ties.
-DELETE FROM script_event_ingress_audit
-WHERE id IN (
-    SELECT ranked.id
-    FROM (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                   PARTITION BY tenant_id,
-                                game_instance_id,
-                                region_id,
-                                region_epoch,
-                                entity_id,
-                                playable_state_scope,
-                                event_type,
-                                event_schema_version,
-                                script_patch_version,
-                                script_pin_epoch,
-                                script_pin_control_plane_request_id,
-                                script_event_id,
-                                dry_run,
-                                source_service
-                   ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id
-               ) AS duplicate_rank
-        FROM script_event_ingress_audit
-        WHERE game_instance_id IS NOT NULL
-          AND entity_id IS NOT NULL
-          AND script_pin_epoch IS NOT NULL
     ) AS ranked
     WHERE ranked.duplicate_rank > 1
 );
