@@ -22,5 +22,6 @@ public record ScriptDefinitionDto(
       String targetScopeId,
       int priority,
       String priorityTag,
-      boolean requiresExclusiveEvent) {}
+      boolean requiresExclusiveEvent,
+      String bindingId) {}
 }

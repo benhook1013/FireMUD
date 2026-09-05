@@ -117,17 +117,18 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
 
   private Map<String, Object> bindingDigest(
       net.firedevops.firemud.automationscripting.entity.ScriptEventBinding binding) {
-    return Map.of(
-        "scriptPatchVersion", binding.getScriptPatchVersion(),
-        "eventType", binding.getEventType(),
-        "eventSchemaVersion", binding.getEventSchemaVersion(),
-        "scriptId", binding.getScriptId(),
-        "targetScopeType", binding.getTargetScopeType(),
-        "targetScopeId", binding.getTargetScopeId(),
-        "priority", binding.getPriority(),
-        "priorityTag", binding.getPriorityTag(),
-        "requiresExclusiveEvent", binding.isRequiresExclusiveEvent(),
-        "enabled", binding.isEnabled());
+    return Map.ofEntries(
+        Map.entry("scriptPatchVersion", binding.getScriptPatchVersion()),
+        Map.entry("eventType", binding.getEventType()),
+        Map.entry("eventSchemaVersion", binding.getEventSchemaVersion()),
+        Map.entry("scriptId", binding.getScriptId()),
+        Map.entry("bindingId", binding.getBindingId()),
+        Map.entry("targetScopeType", binding.getTargetScopeType()),
+        Map.entry("targetScopeId", binding.getTargetScopeId()),
+        Map.entry("priority", binding.getPriority()),
+        Map.entry("priorityTag", binding.getPriorityTag()),
+        Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
+        Map.entry("enabled", binding.isEnabled()));
   }
 
   private String sha256(String value) {

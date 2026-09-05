@@ -22,6 +22,9 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
     assertThat(migration)
         .contains(
             "CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items",
+            "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
+            "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
+            "ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
             "script_pin_control_plane_request_id,",
             "WHERE script_pin_epoch > 0",
             "CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned",

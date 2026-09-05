@@ -778,6 +778,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                     !filterByRequestPluginOwnership
                         || hasMatchingPluginOwner(handler.pluginOwner(), request))
             .toList();
+    if (handlers.stream()
+        .anyMatch(
+            handler ->
+                handler.pluginOwner() != null
+                    && normalize(handler.binding().getBindingId()).isBlank())) {
+      return new TriggerAdmission(
+          false, OUTCOME_VERSION_UNAVAILABLE, "plugin_binding_unresolved", 0);
+    }
     if ((filterByRequestPluginOwnership && handlers.isEmpty())
         || (handlers.isEmpty()
             && scopedBindings.stream()
@@ -925,7 +933,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       long scriptPinEpoch,
       ScriptEventIngressAudit claim) {
     requireCurrentClaim(claim);
-    if (handlerAuditExists(request, schemaVersion, handler.binding())) {
+    if (handlerAuditExists(request, schemaVersion, handler)) {
       return;
     }
     if (!request.getIsDryRun()
@@ -936,6 +944,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
           schemaVersion,
           handler.binding().getScriptId(),
           handler.pluginOwner(),
+          handler.binding(),
           sourceService,
           null,
           "ADMISSION",
@@ -952,6 +961,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         handler.binding().getScriptId(),
         handler.binding().getPriorityTag(),
         handler.pluginOwner(),
+        handler.binding(),
         sourceService,
         requestScopeValues(request),
         admissionState,
@@ -966,6 +976,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String scriptId,
       String priorityTag,
       PluginOwner pluginOwner,
+      ScriptEventBinding binding,
       String sourceService,
       HandlerScopeValues scopeValues,
       AutomationAdmissionStateService.AdmissionStateSummary admissionState,
@@ -983,8 +994,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     item.setRealmSlug(scopeValues.realmSlug());
     item.setPointerVersion(scopeValues.pointerVersion());
     item.setScriptId(scriptId);
+    item.setBindingId(resolveHandlerBindingId(binding, pluginOwner));
     item.setPluginId(resolveHandlerPluginId(request, pluginOwner));
     item.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
+    item.setTargetScopeType(binding == null ? "" : normalize(binding.getTargetScopeType()));
+    item.setTargetScopeId(binding == null ? "" : normalize(binding.getTargetScopeId()));
     item.setEventType(request.getEventType());
     item.setEventSchemaVersion(schemaVersion);
     item.setQuotaClass(ScriptQuotaClasses.normalize(definition.quotaClass()));
@@ -1016,6 +1030,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         schemaVersion,
         scriptId,
         pluginOwner,
+        binding,
         sourceService,
         saved,
         "ADMISSION",
@@ -1042,6 +1057,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
         scriptId,
         priorityTag,
         null,
+        null,
         sourceService,
         requestScopeValues(request),
         admissionState,
@@ -1054,6 +1070,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String schemaVersion,
       String scriptId,
       PluginOwner pluginOwner,
+      ScriptEventBinding binding,
       String sourceService,
       ScriptWorkItem workItem,
       String finalStage,
@@ -1075,8 +1092,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     audit.setRealmSlug(scopeValues.realmSlug());
     audit.setPointerVersion(scopeValues.pointerVersion());
     audit.setScriptId(scriptId);
+    audit.setBindingId(resolveHandlerBindingId(binding, pluginOwner));
     audit.setPluginId(resolveHandlerPluginId(request, pluginOwner));
     audit.setPluginVersionId(resolveHandlerPluginVersionId(request, pluginOwner));
+    audit.setTargetScopeType(binding == null ? "" : normalize(binding.getTargetScopeType()));
+    audit.setTargetScopeId(binding == null ? "" : normalize(binding.getTargetScopeId()));
     audit.setEventType(request.getEventType());
     audit.setEventSchemaVersion(schemaVersion);
     audit.setScriptPatchVersion(request.getScriptPatchVersion());
@@ -1114,6 +1134,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     return pluginOwner == null ? normalize(request.getPluginId()) : pluginOwner.pluginId();
   }
 
+  private static String resolveHandlerBindingId(
+      ScriptEventBinding binding, PluginOwner pluginOwner) {
+    return pluginOwner == null || binding == null ? "" : normalize(binding.getBindingId());
+  }
+
   private static String resolveHandlerPluginVersionId(
       TriggerScriptEventRequest request, PluginOwner pluginOwner) {
     return pluginOwner == null
@@ -1148,27 +1173,55 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean handlerAuditExists(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+      TriggerScriptEventRequest request, String schemaVersion, ResolvedHandler handler) {
     return handlerAuditExistsForScope(
-        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+        request,
+        schemaVersion,
+        handler.binding().getScriptId(),
+        handler.pluginOwner(),
+        resolveHandlerBindingId(handler.binding(), handler.pluginOwner()),
+        requestScopeValues(request));
   }
 
   private boolean handlerAuditExistsForScript(
       TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
     return handlerAuditExistsForScope(
-        request, schemaVersion, scriptId, requestScopeValues(request));
+        request, schemaVersion, scriptId, null, "", requestScopeValues(request));
   }
 
   private boolean handlerAuditExistsForScope(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String scriptId,
+      PluginOwner pluginOwner,
+      String bindingId,
       HandlerScopeValues scopeValues) {
     Long scriptPinEpoch = request.getScriptPinEpoch() > 0L ? request.getScriptPinEpoch() : null;
     String scriptPinControlPlaneRequestId =
         scriptPinEpoch == null ? null : normalize(request.getScriptPinControlPlaneRequestId());
+    if (pluginOwner == null && bindingId.isBlank()) {
+      return eventAuditRepository
+          .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+              request.getTenantId(),
+              normalize(request.getGameInstanceId()),
+              normalize(request.getRegionId()),
+              request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+              scopeValues.entityId(),
+              scopeValues.playableStateScope(),
+              scopeValues.worldSlug(),
+              scopeValues.realmSlug(),
+              scopeValues.pointerVersion(),
+              scriptId,
+              request.getEventType(),
+              schemaVersion,
+              request.getScriptPatchVersion(),
+              scriptPinEpoch,
+              scriptPinControlPlaneRequestId,
+              request.getScriptEventId(),
+              request.getIsDryRun());
+    }
     return eventAuditRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
@@ -1179,6 +1232,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             scopeValues.realmSlug(),
             scopeValues.pointerVersion(),
             scriptId,
+            resolveHandlerPluginId(request, pluginOwner),
+            resolveHandlerPluginVersionId(request, pluginOwner),
+            bindingId,
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),
@@ -1191,25 +1247,49 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   private boolean workItemExists(
       TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
     return workItemExistsForScope(
-        request, schemaVersion, binding.getScriptId(), requestScopeValues(request));
+        request, schemaVersion, binding.getScriptId(), null, "", requestScopeValues(request));
   }
 
   private boolean workItemExistsForScript(
       TriggerScriptEventRequest request, String schemaVersion, String scriptId) {
-    return workItemExistsForScope(request, schemaVersion, scriptId, requestScopeValues(request));
+    return workItemExistsForScope(
+        request, schemaVersion, scriptId, null, "", requestScopeValues(request));
   }
 
   private boolean workItemExistsForScope(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String scriptId,
+      PluginOwner pluginOwner,
+      String bindingId,
       HandlerScopeValues scopeValues) {
     String scriptPinControlPlaneRequestId =
         request.getScriptPinEpoch() > 0L
             ? normalize(request.getScriptPinControlPlaneRequestId())
             : null;
+    if (pluginOwner == null && bindingId.isBlank()) {
+      return workItemRepository
+          .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+              request.getTenantId(),
+              normalize(request.getGameInstanceId()),
+              normalize(request.getRegionId()),
+              request.getRegionEpoch() > 0 ? request.getRegionEpoch() : 0L,
+              scopeValues.entityId(),
+              scopeValues.playableStateScope(),
+              scopeValues.worldSlug(),
+              scopeValues.realmSlug(),
+              scopeValues.pointerVersion(),
+              scriptId,
+              request.getEventType(),
+              schemaVersion,
+              request.getScriptPatchVersion(),
+              request.getScriptPinEpoch(),
+              scriptPinControlPlaneRequestId,
+              request.getScriptEventId(),
+              request.getIsDryRun());
+    }
     return workItemRepository
-        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+        .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
             request.getTenantId(),
             normalize(request.getGameInstanceId()),
             normalize(request.getRegionId()),
@@ -1220,6 +1300,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             scopeValues.realmSlug(),
             scopeValues.pointerVersion(),
             scriptId,
+            resolveHandlerPluginId(request, pluginOwner),
+            resolveHandlerPluginVersionId(request, pluginOwner),
+            bindingId,
             request.getEventType(),
             schemaVersion,
             request.getScriptPatchVersion(),

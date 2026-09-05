@@ -564,6 +564,46 @@ class ScriptEventIngressServiceImplTest {
 
     when(workItemRepository.save(Mockito.any(ScriptWorkItem.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(workItemRepository
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "script-first-party",
+                "onCommand",
+                "v1",
+                "patch-1",
+                1L,
+                "pin-request-1",
+                "event-activation-owned",
+                false))
+        .thenReturn(false, true);
+    when(eventAuditRepository
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "script-first-party",
+                "onCommand",
+                "v1",
+                "patch-1",
+                1L,
+                "pin-request-1",
+                "event-activation-owned",
+                false))
+        .thenReturn(false, true);
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                 "1",
@@ -581,14 +621,24 @@ class ScriptEventIngressServiceImplTest {
                 false,
                 "game-session-service"))
         .thenReturn(Optional.empty());
+    ScriptEventBinding secondCoreBinding =
+        binding("script-first-party", "ENTITY", "entity-1", "higher-core");
+    ScriptEventBinding secondPluginBinding =
+        binding("script-active-plugin", "ENTITY", "entity-1", "medium-2");
+    secondCoreBinding.setBindingId("core-binding-2");
+    secondPluginBinding.setBindingId("binding-2");
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
                 1L, "patch-1", "onCommand", "v1"))
         .thenReturn(
             List.of(
                 binding("script-first-party", "ENTITY", "entity-1", "high"),
+                secondCoreBinding,
                 binding("script-active-plugin", "ENTITY", "entity-1", "medium"),
+                secondPluginBinding,
                 binding("script-stale-plugin", "ENTITY", "entity-1", "low")));
+    // Core handlers intentionally coalesce by script identity; plugin handlers remain distinct
+    // through their stable binding IDs even when all event and runtime scope fields match.
     when(scriptDefinitionRepository.findByTenantIdAndScriptVersionAndNameIn(
             Mockito.eq(1L), Mockito.eq("patch-1"), Mockito.anyList()))
         .thenReturn(
@@ -649,19 +699,33 @@ class ScriptEventIngressServiceImplTest {
                 .build());
 
     assertThat(admission.admitted()).isTrue();
-    assertThat(admission.resolvedHandlerCount()).isEqualTo(2);
+    assertThat(admission.resolvedHandlerCount()).isEqualTo(4);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
+    verify(workItemRepository, Mockito.times(3)).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getScriptId)
-        .containsExactly("script-first-party", "script-active-plugin");
+        .containsExactly("script-first-party", "script-active-plugin", "script-active-plugin");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getPluginId)
-        .containsExactly("", "plugin-1");
+        .containsExactly("", "plugin-1", "plugin-1");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getPluginVersionId)
-        .containsExactly("", "plugin-v1");
-    verify(automationQueueService, Mockito.times(2))
+        .containsExactly("", "plugin-v1", "plugin-v1");
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getBindingId)
+        .containsExactly("", "binding-script-active-plugin-ENTITY-entity-1", "binding-2");
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getTargetScopeType, ScriptWorkItem::getTargetScopeId)
+        .containsExactly(
+            org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"),
+            org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"),
+            org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"));
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository, Mockito.times(3)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .extracting(ScriptEventAudit::getBindingId)
+        .containsExactly("", "binding-script-active-plugin-ENTITY-entity-1", "binding-2");
+    verify(automationQueueService, Mockito.times(3))
         .enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 
@@ -4055,6 +4119,7 @@ class ScriptEventIngressServiceImplTest {
       String scriptId, String scopeType, String scopeId, String priorityTag) {
     ScriptEventBinding binding = new ScriptEventBinding();
     binding.setScriptId(scriptId);
+    binding.setBindingId("binding-" + scriptId + "-" + scopeType + "-" + scopeId);
     binding.setTargetScopeType(scopeType);
     binding.setTargetScopeId(scopeId);
     binding.setPriorityTag(priorityTag);

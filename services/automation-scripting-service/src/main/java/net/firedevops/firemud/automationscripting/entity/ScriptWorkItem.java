@@ -17,8 +17,11 @@ public class ScriptWorkItem {
   private String realmSlug = "";
   private String pointerVersion = "";
   private String scriptId;
+  private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
+  private String targetScopeType = "";
+  private String targetScopeId = "";
   private String eventType;
   private String eventSchemaVersion;
   private String quotaClass = ScriptQuotaClasses.STANDARD_RUNTIME;

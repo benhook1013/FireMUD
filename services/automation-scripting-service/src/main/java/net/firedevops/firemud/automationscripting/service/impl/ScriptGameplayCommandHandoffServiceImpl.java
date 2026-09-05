@@ -603,6 +603,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setAutomationDispatchId(dispatchId)
         .setAutomationWorkItemId(workItem.getId().toString())
         .setScriptId(workItem.getScriptId())
+        .setBindingId(normalize(workItem.getBindingId()))
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
@@ -784,6 +785,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     event.setScriptPinEpoch(workItem.getScriptPinEpoch());
     event.setScriptPinControlPlaneRequestId(workItem.getScriptPinControlPlaneRequestId());
     event.setScriptId(workItem.getScriptId());
+    event.setBindingId(normalize(workItem.getBindingId()));
     event.setPluginId(normalize(workItem.getPluginId()));
     event.setPluginVersionId(normalize(workItem.getPluginVersionId()));
     event.setWorkItemId(workItem.getId());

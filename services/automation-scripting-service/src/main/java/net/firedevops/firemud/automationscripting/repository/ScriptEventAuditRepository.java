@@ -55,6 +55,9 @@ public class ScriptEventAuditRepository {
       String realmSlug,
       String pointerVersion,
       String scriptId,
+      String pluginId,
+      String pluginVersionId,
+      String bindingId,
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
@@ -77,6 +80,9 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.REALM_SLUG.eq(realmSlug))
         .and(SCRIPT_EVENT_AUDIT.POINTER_VERSION.eq(pointerVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
+        .and(SCRIPT_EVENT_AUDIT.PLUGIN_ID.eq(pluginId))
+        .and(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID.eq(pluginVersionId))
+        .and(SCRIPT_EVENT_AUDIT.BINDING_ID.eq(bindingId))
         .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
@@ -100,6 +106,9 @@ public class ScriptEventAuditRepository {
         entity.getRealmSlug(),
         entity.getPointerVersion(),
         entity.getScriptId(),
+        entity.getPluginId(),
+        entity.getPluginVersionId(),
+        entity.getBindingId(),
         entity.getEventType(),
         entity.getEventSchemaVersion(),
         entity.getScriptPatchVersion(),
@@ -128,6 +137,51 @@ public class ScriptEventAuditRepository {
           String scriptPinControlPlaneRequestId,
           String scriptEventId,
           boolean dryRun) {
+    return existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+        tenantId,
+        gameInstanceId,
+        regionId,
+        regionEpoch,
+        entityId,
+        playableStateScope,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        scriptId,
+        "",
+        "",
+        "",
+        eventType,
+        eventSchemaVersion,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        scriptPinControlPlaneRequestId,
+        scriptEventId,
+        dryRun);
+  }
+
+  public boolean
+      existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+          String tenantId,
+          String gameInstanceId,
+          String regionId,
+          Long regionEpoch,
+          String entityId,
+          String playableStateScope,
+          String worldSlug,
+          String realmSlug,
+          String pointerVersion,
+          String scriptId,
+          String pluginId,
+          String pluginVersionId,
+          String bindingId,
+          String eventType,
+          String eventSchemaVersion,
+          String scriptPatchVersion,
+          Long scriptPinEpoch,
+          String scriptPinControlPlaneRequestId,
+          String scriptEventId,
+          boolean dryRun) {
     return dsl.fetchExists(
         SCRIPT_EVENT_AUDIT,
         handlerIdentityCondition(
@@ -141,6 +195,9 @@ public class ScriptEventAuditRepository {
             realmSlug,
             pointerVersion,
             scriptId,
+            pluginId,
+            pluginVersionId,
+            bindingId,
             eventType,
             eventSchemaVersion,
             scriptPatchVersion,
@@ -215,6 +272,9 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT.REALM_SLUG,
                 SCRIPT_EVENT_AUDIT.POINTER_VERSION,
                 SCRIPT_EVENT_AUDIT.SCRIPT_ID,
+                SCRIPT_EVENT_AUDIT.PLUGIN_ID,
+                SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID,
+                SCRIPT_EVENT_AUDIT.BINDING_ID,
                 SCRIPT_EVENT_AUDIT.EVENT_TYPE,
                 SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
                 SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
@@ -333,8 +393,11 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_EVENT_AUDIT.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, entity.getScriptId())
+            .set(SCRIPT_EVENT_AUDIT.BINDING_ID, entity.getBindingId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
+            .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
+            .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, normalizedScriptPinEpoch(entity))
             .set(
                 SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
@@ -389,8 +452,11 @@ public class ScriptEventAuditRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
+    record.setBindingId(entity.getBindingId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
+    record.setTargetScopeType(entity.getTargetScopeType());
+    record.setTargetScopeId(entity.getTargetScopeId());
     record.setScriptPinEpoch(normalizedScriptPinEpoch(entity));
     record.set(
         SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
@@ -429,8 +495,11 @@ public class ScriptEventAuditRepository {
     entity.setRealmSlug(record.get(SCRIPT_EVENT_AUDIT.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_EVENT_AUDIT.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_ID));
+    entity.setBindingId(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID));
     entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
+    entity.setTargetScopeType(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE));
+    entity.setTargetScopeId(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setScriptPinControlPlaneRequestId(

@@ -32,6 +32,9 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "WHERE game_instance_id IS NULL",
             "ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit",
+            "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
+            "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
+            "ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
             "script_pin_control_plane_request_id,",
             ") WHERE script_pin_epoch > 0;",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit",
@@ -39,6 +42,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ALTER TABLE script_handoff_events",
             "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;",
             "ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);",
+            "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
         .doesNotContain("ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE");

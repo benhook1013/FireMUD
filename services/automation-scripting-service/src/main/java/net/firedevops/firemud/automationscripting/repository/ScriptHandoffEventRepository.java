@@ -170,6 +170,7 @@ public class ScriptHandoffEventRepository {
                 SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
                 blankToNull(entity.getScriptPinControlPlaneRequestId()))
             .set(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID, entity.getScriptId())
+            .set(SCRIPT_HANDOFF_EVENTS.BINDING_ID, entity.getBindingId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID, entity.getWorkItemId())
@@ -226,6 +227,7 @@ public class ScriptHandoffEventRepository {
         SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
         blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.setScriptId(entity.getScriptId());
+    record.setBindingId(entity.getBindingId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setWorkItemId(entity.getWorkItemId());
@@ -277,6 +279,7 @@ public class ScriptHandoffEventRepository {
     entity.setScriptPinControlPlaneRequestId(
         blankToNull(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID)));
     entity.setScriptId(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID));
+    entity.setBindingId(record.get(SCRIPT_HANDOFF_EVENTS.BINDING_ID));
     entity.setPluginId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID));
     entity.setPluginVersionId(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID));
     entity.setWorkItemId(record.get(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID));

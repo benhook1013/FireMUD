@@ -198,6 +198,9 @@ class ScriptEventAuditRepositoryTest {
             "realm_slug",
             "pointer_version",
             "script_id",
+            "plugin_id",
+            "plugin_version_id",
+            "binding_id",
             "event_type",
             "event_schema_version",
             "script_patch_version",
@@ -307,6 +310,9 @@ class ScriptEventAuditRepositoryTest {
             "realm_slug",
             "pointer_version",
             "script_id",
+            "plugin_id",
+            "plugin_version_id",
+            "binding_id",
             "event_type",
             "event_schema_version",
             "script_patch_version",
@@ -444,6 +450,9 @@ class ScriptEventAuditRepositoryTest {
     audit.setRealmSlug("realm-1");
     audit.setPointerVersion("1");
     audit.setScriptId("script-1");
+    audit.setPluginId("plugin-1");
+    audit.setPluginVersionId("plugin-v1");
+    audit.setBindingId("binding-1");
     audit.setEventType("onTimerExpire");
     audit.setEventSchemaVersion("v1");
     audit.setScriptPatchVersion("patch-1");

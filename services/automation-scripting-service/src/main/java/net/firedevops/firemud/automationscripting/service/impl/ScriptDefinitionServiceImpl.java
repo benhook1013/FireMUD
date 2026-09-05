@@ -60,6 +60,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
 
   private void validateBinding(ScriptDefinitionDto.EventBindingDto binding) {
     normalizeBinding(binding);
+    requiredText(binding.bindingId(), "binding id");
     normalizePriorityTag(binding.priorityTag());
   }
 
@@ -84,6 +85,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     entity.setEventSchemaVersion(normalized.eventSchemaVersion());
     entity.setTargetScopeType(normalized.targetScopeType());
     entity.setTargetScopeId(normalize(binding.targetScopeId()));
+    entity.setBindingId(requiredText(binding.bindingId(), "binding id"));
     entity.setPriority(binding.priority());
     entity.setPriorityTag(normalizePriorityTag(binding.priorityTag()));
     entity.setRequiresExclusiveEvent(binding.requiresExclusiveEvent());

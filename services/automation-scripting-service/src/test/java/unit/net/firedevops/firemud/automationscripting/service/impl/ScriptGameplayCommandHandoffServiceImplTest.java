@@ -387,6 +387,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(requestCaptor.getValue().getDueTickId()).isEqualTo(34L);
     assertThat(requestCaptor.getValue().getPluginId()).isEqualTo("plugin-1");
     assertThat(requestCaptor.getValue().getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(requestCaptor.getValue().getBindingId()).isEqualTo("binding-1");
     assertThat(requestCaptor.getValue().getPlayableStateScope().name())
         .isEqualTo("PLAYABLE_STATE_SCOPE_SHARED");
     assertThat(requestCaptor.getValue().getWorldSlug()).isEqualTo("demo");
@@ -1781,6 +1782,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     item.setRegionEpoch(12L);
     item.setEntityId("entity-1");
     item.setScriptId("script-1");
+    item.setBindingId("binding-1");
     item.setPluginId("plugin-1");
     item.setPluginVersionId("plugin-v1");
     item.setPlayableStateScope("SHARED");

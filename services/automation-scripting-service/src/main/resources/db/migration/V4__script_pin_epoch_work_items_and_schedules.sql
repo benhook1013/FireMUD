@@ -7,6 +7,15 @@ ALTER TABLE script_work_items
     ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
 
 ALTER TABLE script_work_items
+    ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';
+
+ALTER TABLE script_work_items
+    ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT '';
+
+ALTER TABLE script_work_items
+    ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT '';
+
+ALTER TABLE script_work_items
     DROP CONSTRAINT uq_script_work_item_trigger_identity;
 
 CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items (
@@ -20,6 +29,9 @@ CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items (
         realm_slug,
         pointer_version,
         script_id,
+        plugin_id,
+        plugin_version_id,
+        binding_id,
         event_type,
         event_schema_version,
         script_patch_version,
@@ -40,6 +52,9 @@ CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned ON script_work
         realm_slug,
         pointer_version,
         script_id,
+        plugin_id,
+        plugin_version_id,
+        binding_id,
         event_type,
         event_schema_version,
         script_patch_version,

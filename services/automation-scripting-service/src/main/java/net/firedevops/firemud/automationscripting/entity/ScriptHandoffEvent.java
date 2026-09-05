@@ -13,6 +13,7 @@ public class ScriptHandoffEvent {
   private long scriptPinEpoch;
   private String scriptPinControlPlaneRequestId;
   private String scriptId;
+  private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
   private Long workItemId;

@@ -169,6 +169,15 @@ ALTER TABLE script_event_audit
     ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
 
 ALTER TABLE script_event_audit
+    ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';
+
+ALTER TABLE script_event_audit
+    ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT '';
+
+ALTER TABLE script_event_audit
+    ADD COLUMN target_scope_id VARCHAR(128) NOT NULL DEFAULT '';
+
+ALTER TABLE script_event_audit
     DROP CONSTRAINT uq_script_event_audit_handler_identity;
 
 CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit (
@@ -182,6 +191,9 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit
         realm_slug,
         pointer_version,
         script_id,
+        plugin_id,
+        plugin_version_id,
+        binding_id,
         event_type,
         event_schema_version,
         script_patch_version,
@@ -202,6 +214,9 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_ev
         realm_slug,
         pointer_version,
         script_id,
+        plugin_id,
+        plugin_version_id,
+        binding_id,
         event_type,
         event_schema_version,
         script_patch_version,
@@ -225,6 +240,9 @@ ALTER TABLE script_handoff_events
 
 ALTER TABLE script_handoff_events
     ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
+
+ALTER TABLE script_handoff_events
+    ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';
 
 ALTER TABLE script_handoff_events
     ADD CONSTRAINT ck_script_handoff_events_pin_tuple CHECK (

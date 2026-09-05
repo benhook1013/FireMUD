@@ -333,7 +333,8 @@ public class AutomationScriptingGrpcService
                               binding.getTargetScopeId(),
                               binding.getPriority(),
                               binding.getPriorityTag(),
-                              binding.getRequiresExclusiveEvent()))
+                              binding.getRequiresExclusiveEvent(),
+                              binding.getBindingId()))
                   .toList());
       scriptService.updateScript(dto);
       UpdateScriptResponse resp = UpdateScriptResponse.newBuilder().setSuccess(true).build();

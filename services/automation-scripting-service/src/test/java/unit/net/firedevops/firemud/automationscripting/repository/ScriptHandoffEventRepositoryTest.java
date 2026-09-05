@@ -62,6 +62,7 @@ class ScriptHandoffEventRepositoryTest {
           row.setScriptPinEpoch(2L);
           row.setScriptPinControlPlaneRequestId("pin-request-1");
           row.setScriptId("script-1");
+          row.setBindingId("binding-1");
           row.setWorkItemId(99L);
           row.setCommandOrdinal(0);
           row.setAutomationDispatchId("workItem:99#0");
@@ -88,6 +89,7 @@ class ScriptHandoffEventRepositoryTest {
     event.setScriptPinEpoch(2L);
     event.setScriptPinControlPlaneRequestId("pin-request-1");
     event.setScriptId("script-1");
+    event.setBindingId("binding-1");
     event.setWorkItemId(99L);
     event.setCommandOrdinal(0);
     event.setAutomationDispatchId("workItem:99#0");
@@ -103,6 +105,7 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(saved.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
     assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
+    assertThat(saved.getBindingId()).isEqualTo("binding-1");
     assertThat(insertSql)
         .hasValueSatisfying(
             sql ->

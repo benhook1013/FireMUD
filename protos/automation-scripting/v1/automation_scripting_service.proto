@@ -156,6 +156,8 @@ message ScriptEventBinding {
   int32 priority = 5;
   bool requires_exclusive_event = 6;
   string priority_tag = 7;
+  // Stable signed-bundle binding identity.
+  string binding_id = 8;
 }
 
 message ScriptEventDefinition {

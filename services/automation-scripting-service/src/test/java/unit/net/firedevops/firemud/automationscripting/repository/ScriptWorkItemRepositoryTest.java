@@ -81,6 +81,10 @@ class ScriptWorkItemRepositoryTest {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId("tenant-1");
     item.setGameInstanceId("game-1");
+    item.setScriptId("script-1");
+    item.setPluginId("plugin-1");
+    item.setPluginVersionId("plugin-v1");
+    item.setBindingId("binding-1");
     item.setScriptPinEpoch(7L);
     item.setScriptPinControlPlaneRequestId("pin-request-1");
 
@@ -91,7 +95,13 @@ class ScriptWorkItemRepositoryTest {
             sql ->
                 assertThat(conflictClause(sql))
                     .contains(
-                        "where", "script_pin_epoch", "> 0", "script_pin_control_plane_request_id"));
+                        "where",
+                        "script_pin_epoch",
+                        "> 0",
+                        "plugin_id",
+                        "plugin_version_id",
+                        "binding_id",
+                        "script_pin_control_plane_request_id"));
     assertThat(saved.getScriptPinEpoch()).isEqualTo(7L);
     assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(saved.getId()).isEqualTo(9L);

@@ -78,7 +78,14 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false)));
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    "binding-communication")));
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
@@ -97,7 +104,7 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onUnknown", "v1", "GLOBAL", "", 0, "normal", false)));
+                    "onUnknown", "v1", "GLOBAL", "", 0, "normal", false, "binding-unknown")));
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(IllegalArgumentException.class)
@@ -115,7 +122,7 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false)));
+                    "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false, "binding-look")));
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(IllegalArgumentException.class)

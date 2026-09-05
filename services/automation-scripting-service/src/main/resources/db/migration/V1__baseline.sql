@@ -131,6 +131,7 @@ CREATE TABLE script_event_bindings (
     event_type VARCHAR(128) NOT NULL,
     event_schema_version VARCHAR(32) NOT NULL,
     script_id VARCHAR(128) NOT NULL,
+    binding_id VARCHAR(128) NOT NULL,
     target_scope_type VARCHAR(32) NOT NULL,
     target_scope_id VARCHAR(128) NOT NULL,
     priority INT NOT NULL DEFAULT 0,
