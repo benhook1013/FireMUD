@@ -28,7 +28,7 @@ This document is the current target authority for SQL persistence, schema owners
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
 - Local destructive reset and standalone Gradle Flyway workflows also need the owning service schema and Flyway history table to stay aligned with the runtime service configuration. In this repo that means local tooling should preserve `SERVICE_SCHEMA`, `SPRING_FLYWAY_TABLE`, `FLYWAY_SCHEMAS`, `FLYWAY_DEFAULT_SCHEMA`, and `FLYWAY_TABLE` instead of silently falling back to `public` and the default `flyway_schema_history`.
-- SQL migrations are the default and Java-based callbacks are avoided. Game Session now expresses its complete fresh-schema contract in one `V1__baseline.sql`; the former nontransactional Java index migrations were folded into that baseline after the accepted no-retained-data boundary and are no longer active migration exceptions.
+- SQL migrations are the default and Java-based callbacks are avoided. Automation and Game Session now express their complete fresh-schema contracts in one service-local `V1__baseline.sql` each after the accepted no-retained-data reset. Game Session's former nontransactional Java index migrations were folded into its baseline and are no longer active migration exceptions.
 
 ## Per-Service Organization
 
