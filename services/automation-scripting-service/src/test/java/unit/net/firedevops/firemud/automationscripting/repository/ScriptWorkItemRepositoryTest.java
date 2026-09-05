@@ -180,10 +180,47 @@ class ScriptWorkItemRepositoryTest {
         .isEqualTo(1);
 
     assertThat(sqlStatements).hasSize(4);
-    assertThat(sqlStatements.get(0)).startsWith("select");
+    assertThat(sqlStatements.get(0)).startsWith("select").contains("for update");
     assertThat(sqlStatements.get(1)).contains("script_event_audit");
     assertThat(sqlStatements.get(2)).contains("script_handoff_events");
-    assertThat(sqlStatements.get(3)).contains("script_work_items");
+    assertThat(sqlStatements.get(3))
+        .contains("script_work_items")
+        .contains("status")
+        .contains("updated_at");
+  }
+
+  @Test
+  void excessStatusRetentionLocksOldestRowsAndRechecksStatus() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    List<String> sqlStatements = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          sqlStatements.add(sql);
+          if (sql.startsWith("select")) {
+            Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
+            returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
+            Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
+            result.add(returned);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          return new MockResult[] {new MockResult(1, null)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteOldestByStatus("DEAD_LETTERED", 1)).isEqualTo(1);
+
+    assertThat(sqlStatements).hasSize(4);
+    assertThat(sqlStatements.get(0))
+        .startsWith("select")
+        .contains("status")
+        .contains("order by")
+        .contains("fetch next")
+        .contains("for update");
+    assertThat(sqlStatements.get(1)).contains("script_event_audit");
+    assertThat(sqlStatements.get(2)).contains("script_handoff_events");
+    assertThat(sqlStatements.get(3)).contains("script_work_items").contains("status");
   }
 
   private static ScriptWorkItemsRecord workItemRecord(long id, int rowVersion, long pinEpoch) {
