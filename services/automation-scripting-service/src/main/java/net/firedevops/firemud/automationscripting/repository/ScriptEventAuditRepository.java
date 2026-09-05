@@ -212,6 +212,8 @@ public class ScriptEventAuditRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script event audit is required");
     }
+    requireCoherentPinTuple(
+        normalizedScriptPinEpoch(entity), blankToNull(entity.getScriptPinControlPlaneRequestId()));
     for (int attempt = 0; attempt < MAX_HANDLER_IDENTITY_INSERT_ATTEMPTS; attempt++) {
       Optional<HandlerIdentityInsertResult> inserted = insertHandlerIdentity(entity);
       if (inserted.isPresent()) {
@@ -458,8 +460,7 @@ public class ScriptEventAuditRepository {
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setScriptPinEpoch(normalizedScriptPinEpoch(entity));
-    record.set(
-        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+    record.setScriptPinControlPlaneRequestId(
         blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());

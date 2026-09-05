@@ -52,6 +52,16 @@ class ScriptEventIngressRequestDigestTest {
   }
 
   @Test
+  void preservesDistinctMalformedPayloadsInDigest() {
+    TriggerScriptEventRequest first = request("{\"a\":}");
+    TriggerScriptEventRequest second = request("[1,");
+
+    assertThat(ScriptEventIngressRequestDigest.compute(first, "v1", "game-session-service"))
+        .isNotEqualTo(
+            ScriptEventIngressRequestDigest.compute(second, "v1", "game-session-service"));
+  }
+
+  @Test
   void treatsEquivalentNfcPayloadValuesAsOneDigest() {
     TriggerScriptEventRequest composed = request("{\"value\":\"\\u00e9\"}");
     TriggerScriptEventRequest decomposed = request("{\"value\":\"e\\u0301\"}");

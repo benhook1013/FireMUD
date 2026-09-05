@@ -20,14 +20,14 @@ class V1__baselineBindingIdentityTest {
     int uniqueEnd = migration.indexOf(")", uniqueStart);
     assertThat(uniqueStart).isGreaterThanOrEqualTo(0);
     assertThat(uniqueEnd).isGreaterThan(uniqueStart);
-    assertThat(migration.substring(uniqueStart, uniqueEnd))
-        .contains("script_id,\n        binding_id,\n        target_scope_type");
+    String uniqueColumns = migration.substring(uniqueStart, uniqueEnd).replaceAll("\\s+", " ");
+    assertThat(uniqueColumns).contains("script_id, binding_id, target_scope_type");
 
     int indexStart = migration.indexOf("CREATE INDEX idx_script_event_bindings_resolution");
     int indexEnd = migration.indexOf(");", indexStart);
     assertThat(indexStart).isGreaterThanOrEqualTo(0);
     assertThat(indexEnd).isGreaterThan(indexStart);
-    assertThat(migration.substring(indexStart, indexEnd))
-        .contains("script_id,\n    binding_id,\n    id");
+    String indexColumns = migration.substring(indexStart, indexEnd).replaceAll("\\s+", " ");
+    assertThat(indexColumns).contains("script_id, binding_id, id");
   }
 }

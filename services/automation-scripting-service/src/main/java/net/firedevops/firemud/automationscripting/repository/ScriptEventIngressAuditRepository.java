@@ -35,11 +35,7 @@ public class ScriptEventIngressAuditRepository {
     this.dsl = dsl;
   }
 
-  /**
-   * Looks up one event-scope claim. The request-ID argument is retained for call-site compatibility
-   * but intentionally is not part of the lookup identity: it is owner evidence, while the persisted
-   * request digest adjudicates changed inputs on the one claim row.
-   */
+  /** Looks up one event-scope claim, including exact owner evidence for pinned runtime ingress. */
   public Optional<ScriptEventIngressAudit>
       findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
           String tenantId,
@@ -73,6 +69,9 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
+                .and(
+                    SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
+                        .isNotDistinctFrom(scriptPinControlPlaneRequestId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
@@ -304,6 +303,7 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION));
     if (pinned) {
       fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH);
+      fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID);
     }
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID);
     fields.add(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN);

@@ -64,8 +64,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeEnd).isGreaterThan(runtimeStart);
     assertThat(migration.substring(runtimeStart, runtimeEnd))
-        .contains("playable_state_scope")
-        .doesNotContain("script_pin_control_plane_request_id");
+        .contains(
+            "playable_state_scope", "script_pin_epoch", "script_pin_control_plane_request_id");
     assertThat(migration)
         .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 
