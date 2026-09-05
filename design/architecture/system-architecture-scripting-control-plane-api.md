@@ -694,7 +694,7 @@ Implementation note: the current Automation & Scripting API exposes this read di
 Inputs:
 
 - `tenantId`
-- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `scriptPinEpoch`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`
 - `limit` (bounded by the service)
 
 Outputs:
