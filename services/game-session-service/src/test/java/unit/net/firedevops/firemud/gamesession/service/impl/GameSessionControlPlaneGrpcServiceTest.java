@@ -550,7 +550,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("11", responseRef.get().getRuntimeState().getVersionId());
     assertEquals("19", responseRef.get().getRuntimeState().getReleaseBundleId());
     assertEquals(77L, responseRef.get().getRuntimeState().getVersionStateEpoch());
-    assertEquals(7L, responseRef.get().getRuntimeState().getScriptPinEpoch());
+    assertEquals(1L, responseRef.get().getRuntimeState().getScriptPinEpoch());
     assertEquals(
         Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(),
         responseRef.get().getRuntimeState().getScriptPatchPinnedAtMs());

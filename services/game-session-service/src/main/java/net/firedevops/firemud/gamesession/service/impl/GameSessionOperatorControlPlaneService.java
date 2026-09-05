@@ -156,7 +156,7 @@ final class GameSessionOperatorControlPlaneService {
             request.getControlPlaneRequestId(),
             request.getActorPrincipal(),
             request.getReason(),
-            expected.getKind().name(),
+            canonicalExpectedPinKind(expected),
             expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
                 : null);
@@ -199,7 +199,7 @@ final class GameSessionOperatorControlPlaneService {
             request.getControlPlaneRequestId(),
             request.getActorPrincipal(),
             request.getReason(),
-            expected.getKind().name(),
+            canonicalExpectedPinKind(expected),
             expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
                 : null);
@@ -300,6 +300,20 @@ final class GameSessionOperatorControlPlaneService {
     return expected;
   }
 
+  private String canonicalExpectedPinKind(ExpectedCurrentPin expected) {
+    if (expected == null) {
+      throw new IllegalArgumentException("expected_current_pin kind is required");
+    }
+    return switch (expected.getKind()) {
+      case EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL -> "UNCONDITIONAL";
+      case EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED -> "EXPECT_UNPINNED";
+      case EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH -> "EXPECT_EPOCH";
+      case EXPECTED_CURRENT_PIN_KIND_UNSPECIFIED, UNRECOGNIZED ->
+          throw new IllegalArgumentException("expected_current_pin kind is required");
+      default -> throw new IllegalArgumentException("expected_current_pin kind is not supported");
+    };
+  }
+
   private SetPinnedScriptPatchVersionResponse setPinResponse(ScriptPinMutationResult result) {
     SetPinnedScriptPatchVersionResponse.Builder response =
         SetPinnedScriptPatchVersionResponse.newBuilder()
@@ -384,7 +398,7 @@ final class GameSessionOperatorControlPlaneService {
         controlPlaneRequestId,
         actorPrincipal,
         reason,
-        expected.getKind().name(),
+        canonicalExpectedPinKind(expected),
         expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
             ? expected.getScriptPinEpoch()
             : null,
