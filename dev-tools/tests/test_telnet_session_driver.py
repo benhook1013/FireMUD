@@ -13,7 +13,6 @@ import time
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 TOOL_PATH = ROOT / "dev-tools/gameplay/telnet-session.py"
 SPEC = importlib.util.spec_from_file_location("telnet_session", TOOL_PATH)
@@ -41,7 +40,7 @@ class FakeServer:
             with connection:
                 self.ready.set()
                 self.handler(connection)
-        except Exception as exc:  # surfaced by close_and_check
+        except Exception as exc:  # noqa: BLE001 - surfaced by close_and_check
             self.error = exc
         finally:
             self.listener.close()
@@ -80,7 +79,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             try:
                 while connection.recv(1):
                     pass
-            except (ConnectionResetError, OSError, socket.timeout):
+            except OSError:
                 pass
 
         server = FakeServer(handler)
@@ -156,7 +155,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertFalse(any("\xff" in r.get("text", "") for r in records))
 
     def test_login_echo_redacts_password_in_output_and_transcript(self):
-        secret = "".join(("s", "e", "c", "r", "e", "t", "-", "7"))
+        secret = "secret-7"
 
         def handler(connection):
             command = b""

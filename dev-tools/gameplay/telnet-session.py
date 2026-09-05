@@ -15,10 +15,9 @@ import re
 import socket
 import sys
 import threading
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
-
 
 IAC = 255
 WILL = 251
@@ -232,7 +231,7 @@ class TelnetSession:
         while True:
             try:
                 chunk = self.socket.recv(4096)
-            except socket.timeout:
+            except TimeoutError:
                 if not self.closed and not self.idle_timeout_recorded:
                     self._append("inbound", "timeout", reason="read_idle")
                     self.idle_timeout_recorded = True
