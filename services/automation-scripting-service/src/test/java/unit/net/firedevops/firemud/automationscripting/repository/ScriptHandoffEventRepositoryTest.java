@@ -33,6 +33,7 @@ class ScriptHandoffEventRepositoryTest {
           row.setGameInstanceId("game-1");
           row.setScriptPatchVersion("patch-1");
           row.setScriptPinEpoch(2L);
+          row.setScriptPinControlPlaneRequestId("pin-request-1");
           row.setScriptId("script-1");
           row.setWorkItemId(99L);
           row.setCommandOrdinal(0);
@@ -72,6 +73,9 @@ class ScriptHandoffEventRepositoryTest {
 
     assertThat(saved.getId()).isEqualTo(9L);
     assertThat(saved.getEventId()).isEqualTo("she-work-item-99-command-0");
+    assertThat(saved.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(insertSql)
         .hasValueSatisfying(
             sql ->
@@ -84,5 +88,19 @@ class ScriptHandoffEventRepositoryTest {
                         "do update",
                         "handoff_outcome")
                     .doesNotContain("uuid"));
+    assertThat(conflictTarget(insertSql.get()))
+        .contains("event_id")
+        .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
+  }
+
+  private static String conflictTarget(String sql) {
+    String normalized = sql.toLowerCase(Locale.ROOT);
+    int conflictStart = normalized.indexOf("on conflict");
+    assertThat(conflictStart)
+        .as("SQL must contain an ON CONFLICT marker")
+        .isGreaterThanOrEqualTo(0);
+    int actionStart = normalized.indexOf(" do update", conflictStart);
+    assertThat(actionStart).as("SQL must contain a DO UPDATE marker").isGreaterThan(conflictStart);
+    return normalized.substring(conflictStart, actionStart);
   }
 }
