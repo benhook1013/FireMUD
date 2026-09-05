@@ -1234,6 +1234,33 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void observeRuntimeTickProgressDoesNotResaveFencedRowsWithIncompletePinTuples() {
+    ScriptScheduleInstance fencedTick =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    fencedTick.setScriptPinEpoch(0L);
+    fencedTick.setLastObservedControlPlaneRequestId(null);
+    fencedTick.setMaterializationStatus("FENCED");
+    ScriptScheduleInstance fencedTimer = wallClockTimerInstance();
+    fencedTimer.setScriptPinEpoch(0L);
+    fencedTimer.setLastObservedControlPlaneRequestId(null);
+    fencedTimer.setMaterializationStatus("FENCED");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(fencedTick));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(fencedTimer));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result)
+        .isEqualTo(new ScriptScheduleInstanceService.RuntimeTickProgressResult(0, 0, 0));
+    verify(scheduleInstanceRepository, never()).saveAll(any());
+    verifyNoInteractions(workItemRepository, eventAuditRepository, automationQueueService);
+  }
+
+  @Test
   void observeRuntimeTickProgressLeavesDueStateUntouchedWhileRollbackPaused() {
     ScriptScheduleInstance tickInstance =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 101L);

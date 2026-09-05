@@ -461,6 +461,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .toList();
     int fired = 0;
     for (ScriptScheduleInstance instance : tickInstances) {
+      if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+        continue;
+      }
       if (!hasCompleteScriptPinTuple(instance)) {
         fenceMaterialization(instance, now);
         updates.add(instance);
@@ -500,6 +503,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     for (ScriptScheduleInstance instance : wallClockInstances) {
+      if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+        continue;
+      }
       if (!hasCompleteScriptPinTuple(instance)) {
         fenceMaterialization(instance, now);
         updates.add(instance);

@@ -382,4 +382,39 @@ class ScriptEventIngressAuditRepositoryTest {
         .doesNotContain("world_slug", "realm_slug", "pointer_version");
     assertThat(bindingsRef.get()).contains(4L, "pin-request-1");
   }
+
+  @Test
+  void lookupCanonicalizesNullPlayableStateScopeForInstanceScopedRows() {
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT))
+          };
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
+            "tenant-1",
+            "instance-1",
+            "region-1",
+            7L,
+            "entity-1",
+            null,
+            "onCommand",
+            "v1",
+            "patch-1",
+            null,
+            null,
+            "event-1",
+            false,
+            "game-session-service");
+
+    assertThat(bindingsRef.get()).contains("");
+  }
 }
