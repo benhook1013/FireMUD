@@ -17,6 +17,23 @@ fi
 namespace="${3:-}"
 case "$namespace" in
   pr-101)
+    if [[ "$*" == *"-o json"* ]]; then
+      count=0
+      if [[ -f "$FAKE_NAMESPACE_JSON_CALLS" ]]; then
+        count="$(<"$FAKE_NAMESPACE_JSON_CALLS")"
+      fi
+      count=$((count + 1))
+      printf '%s' "$count" > "$FAKE_NAMESPACE_JSON_CALLS"
+      if [[ "${FAKE_NAMESPACE_JSON_QUERY_FAIL:-false}" == "true" ]]; then
+        exit 1
+      fi
+      if [[ "${FAKE_NAMESPACE_JSON_PARSE_FAIL:-false}" == "true" ]]; then
+        printf '%s' '{not-json'
+        exit 0
+      fi
+      printf '%s\n' "{\"metadata\":{\"name\":\"pr-101\",\"creationTimestamp\":\"2026-01-01T00:00:00Z\",\"labels\":{\"firemud.dev/pr-number\":\"${FAKE_PR_101_OWNER:-101}\"},\"annotations\":{\"firemud.dev/preview-allocated-at\":\"2026-01-02T00:00:00Z\",\"firemud.dev/last-preview-head-sha\":\"head-101\",\"firemud.dev/last-preview-image-tag\":\"${FAKE_PR_101_IMAGE:-image-101}\"}}}"
+      exit 0
+    fi
     case "$*" in
       *pr-number*) printf '%s' "${FAKE_PR_101_OWNER:-101}" ;;
       *creationTimestamp*) printf '2026-01-01T00:00:00Z' ;;
@@ -89,17 +106,21 @@ case "$resource" in
     ;;
   */pulls/102) printf 'open\thead-102\t%s\n' "${FAKE_PR_102_PRIORITY:-true}" ;;
   */issues/comments/*)
-    if [[ "$*" == *"--method PATCH"* ]]; then
+    if [[ "$*" == *"--method DELETE"* ]]; then
+      printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
+    elif [[ "$*" == *"--method PATCH"* ]]; then
       printf '%s\n' PATCH >> "$FAKE_COMMENT_METHOD_LOG"
+      printf '%s\n' "${resource##*/}" > "${FAKE_COMMENT_TARGET_LOG:-/dev/null}"
       for arg in "$@"; do
         if [[ "$arg" == body=@* ]]; then
           cp "${arg#body=@}" "$FAKE_COMMENT_BODY"
         fi
       done
     elif [[ -n "${FAKE_PREVIOUS_COMMENT_BODY:-}" ]]; then
+      printf '%s\n' "${resource##*/}" > "${FAKE_PREVIOUS_COMMENT_ID_LOG:-/dev/null}"
       printf '%s\n' "$FAKE_PREVIOUS_COMMENT_BODY"
     fi
-    ;;
+  ;;
   */issues/*/comments)
     if [[ "$*" == *"--method POST"* && -n "${FAKE_COMMENT_BODY:-}" ]]; then
       printf '%s\n' POST >> "$FAKE_COMMENT_METHOD_LOG"
@@ -108,6 +129,17 @@ case "$resource" in
           cp "${arg#body=@}" "$FAKE_COMMENT_BODY"
         fi
       done
+    elif [[ -n "${FAKE_COMMENT_JSON:-}" ]]; then
+      jq_query='.'
+      jq_query_previous=''
+      for arg in "$@"; do
+        if [[ "$jq_query_previous" == '--jq' ]]; then
+          jq_query="$arg"
+          break
+        fi
+        jq_query_previous="$arg"
+      done
+      jq -r "$jq_query" <<<"$FAKE_COMMENT_JSON"
     elif [[ -n "${FAKE_EXISTING_COMMENT_ID:-}" ]]; then
       printf '%s\n' "$FAKE_EXISTING_COMMENT_ID"
     fi
@@ -164,19 +196,25 @@ export FAKE_PUBLISH_LOG="$TEMP_DIR/publish.log"
 export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
+export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
+export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
+export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LOSES_PRIORITY=false
   export FAKE_PR_101_PRIORITY=false
   export FAKE_PR_101_GAINS_PRIORITY=false
   export FAKE_PR_101_OWNER=101
+  export FAKE_PR_101_IMAGE='image-101'
+  export FAKE_NAMESPACE_JSON_QUERY_FAIL=false
+  export FAKE_NAMESPACE_JSON_PARSE_FAIL=false
   export FAKE_PR_102_PRIORITY=true
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_QUERY_FAIL=false
@@ -187,9 +225,33 @@ reset_case() {
   export FAKE_PUBLISH_FAIL_PHASES=''
   export FAKE_PUBLISH_FAIL_COUNT=0
   export FAKE_EXISTING_COMMENT_ID=''
+  export FAKE_COMMENT_JSON=''
   export FAKE_PREVIOUS_COMMENT_BODY=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+}
+
+assert_marker_count() {
+  local marker="$1"
+  local expected="$2"
+  local actual
+
+  actual="$(
+    awk -v marker="$marker" '
+      {
+        line = $0
+        while ((position = index(line, marker)) > 0) {
+          count++
+          line = substr(line, position + length(marker))
+        }
+      }
+      END { print count + 0 }
+    ' "$FAKE_COMMENT_BODY"
+  )"
+  if [[ "$actual" -ne "$expected" ]]; then
+    echo "expected ${expected} occurrences of ${marker}, found ${actual}" >&2
+    exit 1
+  fi
 }
 
 reset_case
@@ -199,19 +261,23 @@ grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
 grep -qx '101 900 reclaimed' "$FAKE_PUBLISH_LOG"
 grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 grep -qx 'reclaimed_pr=101' "$GITHUB_OUTPUT"
+test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
 
 export FAKE_COMMENT_BODY="$TEMP_DIR/comment-body"
 bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
   101 900 head-101 image-101 pr-101.preview.firedevops.net \
-  '## ✅ Preview Ready' reclaiming
+  $'<!-- firemud-preview-summary -->\n## ✅ Preview Ready' reclaiming
 grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"
 grep -q 'Preview Reclaim In Progress' "$FAKE_COMMENT_BODY"
 grep -q 'unavailable for use during guarded reclaim' "$FAKE_COMMENT_BODY"
 grep -q '## ✅ Preview Ready' "$FAKE_COMMENT_BODY"
+assert_marker_count '<!-- firemud-preview-summary -->' 1
+assert_marker_count '<!-- firemud-preview-reclaimed -->' 1
+assert_marker_count '<!-- firemud-preview-reclaiming -->' 1
 export FAKE_EXISTING_COMMENT_ID=777
 bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
   101 900 head-101 image-101 pr-101.preview.firedevops.net \
-  '## ✅ Preview Ready' reclaimed
+  $'<!-- firemud-preview-summary -->\n<!-- firemud-preview-reclaimed -->\n## ⚠️ Preview Slot Reassigned' reclaimed
 grep -qx 'POST' "$FAKE_COMMENT_METHOD_LOG"
 grep -qx 'PATCH' "$FAKE_COMMENT_METHOD_LOG"
 grep -q '<!-- firemud-preview-reclaimed -->' "$FAKE_COMMENT_BODY"
@@ -221,16 +287,23 @@ if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
 fi
 grep -q 'Reassigned to priority PR: #900' "$FAKE_COMMENT_BODY"
 grep -q 'Previous preview result (historical)' "$FAKE_COMMENT_BODY"
-grep -q '## ✅ Preview Ready' "$FAKE_COMMENT_BODY"
+grep -q '## ⚠️ Preview Slot Reassigned' "$FAKE_COMMENT_BODY"
+assert_marker_count '<!-- firemud-preview-summary -->' 1
+assert_marker_count '<!-- firemud-preview-reclaimed -->' 1
 bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
   101 900 head-101 image-101 pr-101.preview.firedevops.net \
-  '## ✅ Preview Ready' retained
+  $'<!-- firemud-preview-summary -->\n<!-- firemud-preview-reclaimed -->\n<!-- firemud-preview-reclaiming -->\n## ⚠️ Preview Reclaim In Progress' retained
 grep -q '<!-- firemud-preview-reclaim-cancelled -->' "$FAKE_COMMENT_BODY"
 if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
   echo "retained status remained stuck in reclaiming" >&2
   exit 1
 fi
 grep -q 'Preview Reclaim Cancelled' "$FAKE_COMMENT_BODY"
+grep -q '## ⚠️ Preview Reclaim In Progress' "$FAKE_COMMENT_BODY"
+assert_marker_count '<!-- firemud-preview-summary -->' 1
+assert_marker_count '<!-- firemud-preview-reclaim-cancelled -->' 1
+assert_marker_count '<!-- firemud-preview-reclaimed -->' 0
+assert_marker_count '<!-- firemud-preview-reclaiming -->' 0
 bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
   101 900 head-101 image-101 pr-101.preview.firedevops.net \
   '## ✅ Preview Ready' failure
@@ -240,6 +313,41 @@ if grep -q '<!-- firemud-preview-reclaiming -->' "$FAKE_COMMENT_BODY"; then
   exit 1
 fi
 grep -q '## ❌ Preview Failed' "$FAKE_COMMENT_BODY"
+assert_marker_count '<!-- firemud-preview-summary -->' 1
+assert_marker_count '<!-- firemud-preview-reclaim-failed -->' 1
+
+reset_case
+export FAKE_COMMENT_BODY="$TEMP_DIR/comment-body"
+export FAKE_COMMENT_JSON='[
+  {"id":300,"created_at":"2026-01-06T00:00:00Z","updated_at":"2026-01-04T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":200,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy canonical"},
+  {"id":100,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":400,"created_at":"2026-01-03T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy duplicate"},
+  {"id":999,"created_at":"2026-01-07T00:00:00Z","updated_at":"2026-01-07T00:00:00Z","user":{"login":"human"},"body":"### Preview Summary\nHuman comment"}
+]'
+bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
+  101 900 head-101 image-101 pr-101.preview.firedevops.net \
+  'previous preview result' reclaimed
+grep -qx 'DELETE 100' "$FAKE_COMMENT_METHOD_LOG"
+grep -qx 'DELETE 300' "$FAKE_COMMENT_METHOD_LOG"
+grep -qx 'DELETE 400' "$FAKE_COMMENT_METHOD_LOG"
+grep -qx 'PATCH' "$FAKE_COMMENT_METHOD_LOG"
+grep -qx '200' "$FAKE_COMMENT_TARGET_LOG"
+if grep -q 'DELETE 200' "$FAKE_COMMENT_METHOD_LOG"; then
+  echo "canonical latest preview comment was deleted" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_COMMENT_JSON='[
+  {"id":300,"created_at":"2026-01-06T00:00:00Z","updated_at":"2026-01-04T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":200,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy canonical"},
+  {"id":100,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":400,"created_at":"2026-01-03T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy duplicate"}
+]'
+export FAKE_PREVIOUS_COMMENT_BODY=$'### Preview Summary\nLegacy canonical'
+bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+grep -qx '200' "$FAKE_PREVIOUS_COMMENT_ID_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
@@ -286,7 +394,54 @@ if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   exit 1
 fi
 test ! -e "$FAKE_DELETE_LOG"
-grep -qx 'reclaiming' "$FAKE_PUBLISHED_STATE"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+
+reset_case
+export FAKE_NAMESPACE_JSON_QUERY_FAIL=true
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim proceeded after victim namespace snapshot failed" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
+
+reset_case
+export FAKE_NAMESPACE_JSON_PARSE_FAIL=true
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim proceeded after victim namespace snapshot was malformed" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
+
+reset_case
+export FAKE_PR_101_IMAGE='image-101\n'
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "reclaim proceeded after victim image tag contained a trailing newline" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
+
+for unsafe_image in 'image-101|' 'image-101\t' 'image-101\r' 'image-101\u0001' 'image-101\u007f'; do
+  reset_case
+  export FAKE_PR_101_IMAGE="$unsafe_image"
+  if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+    echo "reclaim proceeded after victim image tag contained an unsafe character" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
+  grep -qx '101 900 failure' "$FAKE_PUBLISH_LOG"
+  grep -qx 'failure' "$FAKE_PUBLISHED_STATE"
+  test "$(<"$FAKE_NAMESPACE_JSON_CALLS")" -eq 1
+done
 
 reset_case
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|preview-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'

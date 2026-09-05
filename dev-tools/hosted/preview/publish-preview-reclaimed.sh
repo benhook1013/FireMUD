@@ -19,6 +19,14 @@ previous_summary="$6"
 phase="$7"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Historical summaries remain visible evidence, but their hidden lifecycle
+# markers must not be interpreted as the current state by body-wide readers.
+sanitize_historical_summary() {
+  printf '%s' "$1" | sed -E 's/<!--[[:space:]]*firemud-preview-[[:alnum:]_-]+[[:space:]]*-->//g'
+}
+
+previous_summary="$(sanitize_historical_summary "$previous_summary")"
+
 case "$phase" in
   reclaiming)
     summary="$(cat <<EOF
@@ -98,11 +106,52 @@ trap 'rm -f "$body_file"' EXIT
   fi
 } > "$body_file"
 
-comment_id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
-  --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body | contains("<!-- firemud-preview-summary -->")) or (.body | startswith("### Preview Summary")))) | .id' \
-  | tail -n 1)"
+preview_comment_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" \
+  --jq '
+    .[]
+    | select(
+        .user.login == "github-actions[bot]"
+        and (
+          ((.body // "") | contains("<!-- firemud-preview-summary -->"))
+          or ((.body // "") | startswith("### Preview Summary"))
+        )
+      )
+    | [
+        (.id | tostring),
+        (if ((.updated_at // "") | length) > 0 then .updated_at else (.created_at // "") end)
+      ]
+    | @tsv' \
+  )"
+
+sort_preview_comment_rows() {
+  local comment_rows="$1"
+  local comment_id
+  local timestamp
+  local parsed_timestamp
+
+  while IFS=$'\t' read -r comment_id timestamp; do
+    if [[ -z "$comment_id" ]]; then
+      continue
+    fi
+    if [[ -n "$timestamp" ]]; then
+      parsed_timestamp="$(date -u -d "$timestamp" +%s 2>/dev/null || printf '0')"
+    else
+      parsed_timestamp=0
+    fi
+    printf '%s\t%s\n' "$parsed_timestamp" "$comment_id"
+  done <<< "$comment_rows" | LC_ALL=C sort -t $'\t' -k1,1n -k2,2n
+}
+
+sorted_preview_comment_rows="$(sort_preview_comment_rows "$preview_comment_rows")"
+comment_id="$(awk -F '\t' 'NF >= 2 { latest = $2 } END { print latest }' <<< "$sorted_preview_comment_rows")"
 
 if [[ -n "$comment_id" ]]; then
+  while IFS=$'\t' read -r _ duplicate_comment_id; do
+    if [[ -z "$duplicate_comment_id" || "$duplicate_comment_id" == "$comment_id" ]]; then
+      continue
+    fi
+    gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${duplicate_comment_id}" >/dev/null
+  done <<< "$sorted_preview_comment_rows"
   gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -F "body=@${body_file}" >/dev/null
 else
   gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" -F "body=@${body_file}" >/dev/null

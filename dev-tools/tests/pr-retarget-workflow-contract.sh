@@ -256,6 +256,10 @@ image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 preview_janitor_path="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
+preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
+
+node --test "$preview_comment_test_path"
 
 for path in "$ci_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
@@ -353,16 +357,47 @@ if grep -Eq '^concurrency:' "$preview_janitor_path"; then
 fi
 assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
 assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
+assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'
+assert_job_excludes preview.yml preview-plan 'write-preview-summary.sh'
 for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'Publish preview lifecycle state'
-  assert_job_contains preview.yml "$job" 'const isStaleTarget ='
-  assert_job_contains preview.yml "$job" 'pullRequest.head?.sha !== headSha'
-  assert_job_contains preview.yml "$job" 'github.paginate('
-  assert_job_contains preview.yml "$job" 'updated_at || comment.created_at'
-  assert_job_contains preview.yml "$job" 'comment.user?.login === "github-actions[bot]"'
-  assert_job_contains preview.yml "$job" 'firemud-preview-summary'
-  assert_job_contains preview.yml "$job" 'isLegacyWorkflowComment'
+  assert_job_contains preview.yml "$job" 'publish-preview-comment.js'
+  assert_job_contains preview.yml "$job" 'publishPreviewComment({'
 done
+assert_job_contains preview.yml preview-deploy 'mode: "deploying"'
+assert_job_contains preview.yml preview-deploy 'markerPolicy: "preserve-reclaimed"'
+assert_job_contains preview.yml preview-deploy 'statePolicy: "expected-open"'
+assert_job_contains preview.yml preview-destroy 'mode: "cleanup"'
+assert_job_contains preview.yml preview-destroy 'markerPolicy: "replace"'
+assert_job_contains preview.yml preview-destroy 'statePolicy ='
+assert_job_contains preview.yml preview-destroy '"expected-closed"'
+assert_job_contains preview.yml preview-destroy '"manual-any"'
+for duplicate in \
+  'const isBotAuthored' \
+  'const isWorkflowComment' \
+  'const isLegacyWorkflowComment' \
+  'const commentTimestamp' \
+  'const deleteCommentIfPresent'; do
+  if grep -Fq "$duplicate" "$preview_path"; then
+    echo "Preview workflow must keep shared comment logic in the canonical publisher: $duplicate" >&2
+    exit 1
+  fi
+done
+for helper in \
+  'function commentTimestamp' \
+  'const isBotAuthored' \
+  'const isWorkflowComment' \
+  'const isLegacyWorkflowComment' \
+  'const existing = previewComments.reduce' \
+  'async function deleteCommentIfPresent' \
+  'markerPolicy === "preserve-reclaimed"' \
+  'statePolicy = "manual-any"' \
+  'module.exports = { publishPreviewComment };'; do
+  require_contains "$preview_comment_publisher_path" "$helper"
+done
+if [[ "$(grep -Fc 'publish-preview-comment.js' "$preview_path")" -ne 4 ]]; then
+  echo "Preview workflow must load the canonical publisher from all four comment steps" >&2
+  exit 1
+fi
 assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
 assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
 assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
@@ -386,7 +421,8 @@ if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
 fi
 require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
 require_contains "$preview_path" '? "removed"'
-require_contains "$preview_path" 'mode = isCleanup ? "cleanup" : "deploying"'
+require_contains "$preview_path" 'mode: "deploying"'
+require_contains "$preview_path" 'mode: "cleanup"'
 for mode in deploying target unavailable success cleanup removed reclaimed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done

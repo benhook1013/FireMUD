@@ -201,9 +201,44 @@ fi
 
 IFS='|' read -r selected_allocated_at selected_namespace selected_pr selected_head selected_image <<<"$selected"
 
-previous_comment_id="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${selected_pr}/comments" \
-  --jq '.[] | select(.user.login == "github-actions[bot]" and ((.body | contains("<!-- firemud-preview-summary -->")) or (.body | startswith("### Preview Summary")))) | .id' \
-  | tail -n 1)"
+preview_comment_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${selected_pr}/comments" \
+  --jq '
+    .[]
+    | select(
+        .user.login == "github-actions[bot]"
+        and (
+          ((.body // "") | contains("<!-- firemud-preview-summary -->"))
+          or ((.body // "") | startswith("### Preview Summary"))
+        )
+      )
+    | [
+        (.id | tostring),
+        (if ((.updated_at // "") | length) > 0 then .updated_at else (.created_at // "") end)
+      ]
+    | @tsv' \
+  )"
+
+sort_preview_comment_rows() {
+  local comment_rows="$1"
+  local comment_id
+  local timestamp
+  local parsed_timestamp
+
+  while IFS=$'\t' read -r comment_id timestamp; do
+    if [[ -z "$comment_id" ]]; then
+      continue
+    fi
+    if [[ -n "$timestamp" ]]; then
+      parsed_timestamp="$(date -u -d "$timestamp" +%s 2>/dev/null || printf '0')"
+    else
+      parsed_timestamp=0
+    fi
+    printf '%s\t%s\n' "$parsed_timestamp" "$comment_id"
+  done <<< "$comment_rows" | LC_ALL=C sort -t $'\t' -k1,1n -k2,2n
+}
+
+sorted_preview_comment_rows="$(sort_preview_comment_rows "$preview_comment_rows")"
+previous_comment_id="$(awk -F '\t' 'NF >= 2 { latest = $2 } END { print latest }' <<< "$sorted_preview_comment_rows")"
 previous_summary=""
 if [[ -n "$previous_comment_id" ]]; then
   previous_summary="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${previous_comment_id}" --jq '.body')"
@@ -260,25 +295,63 @@ elif [[ -z "$revalidation_failure" ]]; then
 fi
 
 namespace_state_available=true
-if ! current_owner="$(kubectl get namespace "$selected_namespace" -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}')"; then
+current_owner=""
+current_created_at=""
+current_allocated_at=""
+current_head=""
+current_image=""
+namespace_fields_sentinel='|firemud-preview-namespace-fields-v1'
+if ! current_namespace_json="$(kubectl get namespace "$selected_namespace" -o json)"; then
   namespace_state_available=false
-  current_owner=""
-fi
-if ! current_created_at="$(kubectl get namespace "$selected_namespace" -o jsonpath='{.metadata.creationTimestamp}')"; then
+elif ! current_namespace_fields_encoded="$(jq -e -r '
+  def field($value):
+    if $value == null then ""
+    elif ($value | type) == "string" then $value
+    else error("namespace metadata field is not a string")
+    end;
+  if type != "object" or (.metadata | type) != "object" then
+    error("namespace snapshot is not an object with metadata")
+  elif ((.metadata.labels // {}) | type) != "object" or
+    ((.metadata.annotations // {}) | type) != "object" then
+    error("namespace metadata labels or annotations are not objects")
+  else
+    [
+      field(.metadata.labels["firemud.dev/pr-number"]),
+      field(.metadata.creationTimestamp),
+      field(.metadata.annotations["firemud.dev/preview-allocated-at"]),
+      field(.metadata.annotations["firemud.dev/last-preview-head-sha"]),
+      field(.metadata.annotations["firemud.dev/last-preview-image-tag"])
+    ] as $fields
+    | if any($fields[]; test("[|\u0000-\u001f\u007f]")) then
+        error("namespace metadata contains an unsafe delimiter or control")
+      else
+        ($fields | map(@base64) | join("|")) + "|firemud-preview-namespace-fields-v1"
+      end
+  end
+' <<<"$current_namespace_json")"; then
   namespace_state_available=false
-  current_created_at=""
-fi
-if ! current_allocated_at="$(kubectl get namespace "$selected_namespace" -o jsonpath='{.metadata.annotations.firemud\.dev/preview-allocated-at}')"; then
-  namespace_state_available=false
-  current_allocated_at=""
-fi
-if ! current_head="$(kubectl get namespace "$selected_namespace" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}')"; then
-  namespace_state_available=false
-  current_head=""
-fi
-if ! current_image="$(kubectl get namespace "$selected_namespace" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-image-tag}')"; then
-  namespace_state_available=false
-  current_image=""
+else
+  namespace_fields_payload="${current_namespace_fields_encoded%"$namespace_fields_sentinel"}"
+  if [[ "$current_namespace_fields_encoded" != *"$namespace_fields_sentinel" ]]; then
+    namespace_state_available=false
+  else
+    IFS='|' read -r owner_encoded created_encoded allocated_encoded head_encoded image_encoded extra \
+      <<<"$namespace_fields_payload"
+    if [[ -n "${extra:-}" ]] ||
+      ! [[ "$owner_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$created_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$allocated_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$head_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] ||
+      ! [[ "$image_encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]]; then
+      namespace_state_available=false
+    elif ! current_owner="$(printf '%s' "$owner_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_created_at="$(printf '%s' "$created_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_allocated_at="$(printf '%s' "$allocated_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_head="$(printf '%s' "$head_encoded" | base64 --decode 2>/dev/null)" ||
+      ! current_image="$(printf '%s' "$image_encoded" | base64 --decode 2>/dev/null)"; then
+      namespace_state_available=false
+    fi
+  fi
 fi
 current_effective_allocated_at="${current_allocated_at:-$current_created_at}"
 namespace_intact=false
@@ -298,6 +371,10 @@ if [[ -n "$revalidation_failure" ]]; then
     if ! publish_reclaim_state retained; then
       echo "Unable to publish retained status; conservative unavailable status remains" >&2
     fi
+  elif ! publish_reclaim_state failure; then
+    echo "Unable to publish failure status after namespace identity changed; preserving the conservative reclaiming status" >&2
+  else
+    echo "Namespace identity changed; durable failure status recorded" >&2
   fi
   echo "Refusing reclaim because ${revalidation_failure}" >&2
   exit 1
