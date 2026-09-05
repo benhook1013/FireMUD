@@ -477,10 +477,6 @@ public class ScriptEventAuditRepository {
         .fetchOptional(this::toEntity);
   }
 
-  private void populate(ScriptEventAuditRecord record, ScriptEventAudit entity) {
-    populate(record, entity, normalizedScriptPinEpoch(entity));
-  }
-
   private void populate(
       ScriptEventAuditRecord record, ScriptEventAudit entity, Long normalizedScriptPinEpoch) {
     record.setTenantId(entity.getTenantId());
