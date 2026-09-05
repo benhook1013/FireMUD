@@ -129,3 +129,8 @@ Entry format:
   - Context: tightening local Compose smoke project binding and lifecycle checks.
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
+
+- `2026-09-06`: Preview priority requires lifecycle serialization, not only capacity ordering
+  - Context: adding a small priority override to the automatic pull-request preview pool.
+  - Observation: selecting an ordinary victim under a capacity check is unsafe if deployment or hosted proof can still be using that namespace, and an unaware reconciler can immediately recreate a displaced environment.
+  - Expected pattern: follow the [deployment-environment preview contract](../architecture/infrastructure/deployment-environments.md): serialize allocation, deployment, proof, reclaim, and cleanup without cancelling the active lifecycle; re-read target and victim priority at the destructive boundary; and make reconciliation capacity-aware so ordinary requests wait instead of forming a reclaim loop.

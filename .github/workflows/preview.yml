@@ -13,6 +13,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - labeled
       - closed
   workflow_dispatch:
     inputs:
@@ -50,16 +51,16 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
-  # Reconciler deploys must not cancel the PR check they are meant to repair.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}
-
 jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
+    # Only supersede the non-mutating plan. Deploy, proof, and cleanup retain
+    # their place in the shared non-cancelling lifecycle queue below.
+    concurrency:
+      group: preview-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
+      cancel-in-progress: true
     outputs:
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
@@ -218,15 +219,29 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
+  preview-deploy:
+    name: Deploy Preview Release
+    runs-on:
+      - self-hosted
+      - preview
+    needs: preview-plan
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
+    environment: pr-preview
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Publish preview lifecycle state
-        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          PREVIEW_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
-          PREVIEW_ACTION: ${{ steps.derive.outputs.action }}
-          PREVIEW_HEAD_SHA: ${{ steps.derive.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ steps.derive.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ steps.derive.outputs.hostname }}
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
         with:
           script: |
             const { execFileSync } = require("child_process");
@@ -302,6 +317,11 @@ jobs:
               return Number(comment.id) > Number(latest.id) ? comment : latest;
             }, null);
 
+            if (!isCleanup && existing?.body.includes("<!-- firemud-preview-reclaimed -->")) {
+              core.info(`Preserving the reclaimed preview status for PR #${prNumber} until capacity is allocated.`);
+              return;
+            }
+
             const { data: latestPullRequest } = await getCurrentPullRequest();
             if (isStaleTarget(latestPullRequest)) {
               core.info(
@@ -340,17 +360,6 @@ jobs:
                 body,
               });
             }
-
-  preview-deploy:
-    name: Deploy Preview Release
-    runs-on:
-      - self-hosted
-      - preview
-    needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
-    environment: pr-preview
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
@@ -427,12 +436,15 @@ jobs:
         id: preview-capacity
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
           echo "PREVIEW_STAGE=capacity" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/preview/check-preview-capacity.sh \
+          bash ./dev-tools/hosted/preview/allocate-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-1}"
+            "${PREVIEW_MAX_ACTIVE:-1}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"
 
       - name: Reset preview namespace for clean deploy
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -555,7 +567,8 @@ jobs:
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
             "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}"
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
 
       - name: Summarize preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -794,6 +807,15 @@ jobs:
               return Number(comment.id) > Number(latest.id) ? comment : latest;
             }, null);
 
+            if (
+              mode === "unavailable" &&
+              failureStage === "capacity" &&
+              existing?.body.includes("<!-- firemud-preview-reclaimed -->")
+            ) {
+              core.info(`Preserving the reclaimed preview status for PR #${prNumber} while capacity remains full.`);
+              return;
+            }
+
             const { data: latestPullRequest } = await getCurrentPullRequest();
             if (isStaleTarget(latestPullRequest)) {
               core.info(
@@ -862,8 +884,139 @@ jobs:
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Publish preview lifecycle state
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
+        with:
+          script: |
+            const { execFileSync } = require("child_process");
+
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.info("No PR number available for preview lifecycle reporting.");
+              return;
+            }
+
+            const headSha = process.env.PREVIEW_HEAD_SHA || "";
+            const action = process.env.PREVIEW_ACTION || "deploy";
+            const isCleanup = action === "destroy";
+            const mode = isCleanup ? "cleanup" : "deploying";
+            const isStaleTarget = (pullRequest) =>
+              pullRequest.head?.sha !== headSha ||
+              (!isCleanup && pullRequest.state !== "open");
+            const getCurrentPullRequest = () => github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+
+            const { data: currentPullRequest } = await getCurrentPullRequest();
+            if (isStaleTarget(currentPullRequest)) {
+              core.info(
+                `Skipping stale preview lifecycle state for PR #${prNumber}: ` +
+                `expected ${headSha}, current ${currentPullRequest.state}/${currentPullRequest.head?.sha}`
+              );
+              return;
+            }
+
+            const args = [
+              "./dev-tools/hosted/preview/write-preview-summary.sh",
+              mode,
+              String(prNumber),
+              headSha,
+              process.env.PREVIEW_IMAGE_TAG || "",
+              process.env.PREVIEW_HOSTNAME || "",
+              "unavailable",
+            ];
+            const summaryText = execFileSync("bash", args, { encoding: "utf8" });
+            const body = `<!-- firemud-preview-summary -->\n### Preview Summary\n\n${summaryText.trimEnd()}\n`;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                ...context.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              }
+            );
+
+            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
+            const isWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
+            const isLegacyWorkflowComment = (comment) =>
+              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
+            const generatedComments = comments.filter(isWorkflowComment);
+            const legacyComments = comments.filter(isLegacyWorkflowComment);
+            const previewComments = [...generatedComments, ...legacyComments];
+
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
+              return Number.isNaN(parsed) ? 0 : parsed;
+            };
+            const existing = previewComments.reduce((latest, comment) => {
+              if (!latest) return comment;
+              const latestTimestamp = commentTimestamp(latest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== latestTimestamp) {
+                return candidateTimestamp > latestTimestamp ? comment : latest;
+              }
+              return Number(comment.id) > Number(latest.id) ? comment : latest;
+            }, null);
+
+            if (!isCleanup && existing?.body.includes("<!-- firemud-preview-reclaimed -->")) {
+              core.info(`Preserving the reclaimed preview status for PR #${prNumber} until capacity is allocated.`);
+              return;
+            }
+
+            const { data: latestPullRequest } = await getCurrentPullRequest();
+            if (isStaleTarget(latestPullRequest)) {
+              core.info(
+                `Skipping superseded preview lifecycle state for PR #${prNumber}: ` +
+                `expected ${headSha}, current ${latestPullRequest.state}/${latestPullRequest.head?.sha}`
+              );
+              return;
+            }
+
+            const deleteCommentIfPresent = async (comment) => {
+              try {
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+
+            for (const comment of previewComments) {
+              if (comment.id === existing?.id) continue;
+              await deleteCommentIfPresent(comment);
+            }
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5

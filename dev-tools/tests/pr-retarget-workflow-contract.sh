@@ -255,6 +255,7 @@ smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
+preview_janitor_path="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 
 for path in "$ci_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
@@ -332,9 +333,28 @@ require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying w
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
-require_contains "$preview_path" "cancel-in-progress: \${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}"
-assert_job_contains preview.yml preview-plan 'Publish preview lifecycle state'
-for job in preview-plan preview-deploy preview-destroy; do
+if grep -Eq '^concurrency:' "$preview_path"; then
+  echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
+  exit 1
+fi
+assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event_name == '\''pull_request'\'' && github.event.pull_request.number || inputs.pr_number || github.ref }}'
+assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+for job in preview-deploy preview-destroy; do
+  assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
+  assert_job_contains preview.yml "$job" 'cancel-in-progress: false'
+  assert_job_contains preview.yml "$job" 'queue: max'
+done
+require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
+require_contains "$preview_janitor_path" 'cancel-in-progress: false'
+require_contains "$preview_janitor_path" 'queue: max'
+if grep -Eq '^concurrency:' "$preview_janitor_path"; then
+  echo "Preview janitor must not cancel an active lifecycle from workflow-level concurrency" >&2
+  exit 1
+fi
+assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
+assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
+for job in preview-deploy preview-destroy; do
+  assert_job_contains preview.yml "$job" 'Publish preview lifecycle state'
   assert_job_contains preview.yml "$job" 'const isStaleTarget ='
   assert_job_contains preview.yml "$job" 'pullRequest.head?.sha !== headSha'
   assert_job_contains preview.yml "$job" 'github.paginate('
@@ -353,7 +373,7 @@ fi
 require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
 require_contains "$preview_path" '? "removed"'
 require_contains "$preview_path" 'mode = isCleanup ? "cleanup" : "deploying"'
-for mode in deploying target unavailable success cleanup removed failure; do
+for mode in deploying target unavailable success cleanup removed reclaimed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '## ✅ Preview Removed'
@@ -363,6 +383,8 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
+require_contains "$preview_reconciler_path" 'gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100"'
+require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
 if grep -Fq 'displayTitle == "PR Preview Environment"' "$preview_reconciler_path"; then
   echo "Preview reconciler must not identify PR-triggered runs by display title" >&2
