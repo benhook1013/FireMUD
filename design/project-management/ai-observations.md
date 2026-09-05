@@ -139,3 +139,8 @@ Entry format:
   - Context: the dev-demo account bootstrap used a local Gateway port-forward and failed because the deployer identity lacked `pods/portforward`, although the hosted application was reachable.
   - Observation: granting port-forward solely to CI expands cluster privilege for a setup hop that can run inside the existing namespace.
   - Expected pattern: perform account and session bootstrap through one short-lived in-cluster pod with the minimum existing access, and require a hosted rerun before claiming deployment proof.
+
+- `2026-09-06`: Assign bounded operational ownership before bulk investigation
+  - Context: the gameplay implementation lane repeatedly kept substantial CI diagnosis and preview-allocation review in the main task until the human redirected it to Workers.
+  - Observation: late delegation consumes the main integration context and makes model/tier routing invisible at checkpoints, even when the eventual Worker assignments are disjoint and useful.
+  - Expected pattern: apply the [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) workflow before bulk operational work; give Workers bounded ownership, retain integration and targeted verification in the main task, and make model/tier routing visible in checkpoint summaries.
