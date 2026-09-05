@@ -56,6 +56,14 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "DELETE FROM script_event_ingress_audit",
             "ROW_NUMBER() OVER");
 
+    int requestDigestConstraint =
+        migration.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK");
+    int requestDigestEnd = migration.indexOf(";", requestDigestConstraint);
+    assertThat(requestDigestConstraint).isGreaterThanOrEqualTo(0);
+    assertThat(requestDigestEnd).isGreaterThan(requestDigestConstraint);
+    assertThat(migration.substring(requestDigestConstraint, requestDigestEnd))
+        .contains("request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'", "NOT VALID");
+
     assertThat(migration)
         .contains(
             "ck_script_event_ingress_audit_pin_tuple CHECK",

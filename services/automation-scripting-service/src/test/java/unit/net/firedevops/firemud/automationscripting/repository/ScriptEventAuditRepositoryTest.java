@@ -29,6 +29,14 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
+  void newAuditUsesEmptyPluginIdentitySentinels() {
+    ScriptEventAudit audit = new ScriptEventAudit();
+
+    assertThat(audit.getPluginId()).isEmpty();
+    assertThat(audit.getPluginVersionId()).isEmpty();
+  }
+
+  @Test
   void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
     AtomicReference<String> sql = new AtomicReference<>();
     MockDataProvider provider =
@@ -318,6 +326,41 @@ class ScriptEventAuditRepositoryTest {
     assertThat(conflictClause).doesNotContain("script_pin_control_plane_request_id");
     assertThat(conflictClause).contains("where", "script_pin_epoch", "> 0");
     assertThat(conflictClause).doesNotContain("is not null");
+  }
+
+  @Test
+  void insertIfAbsentByHandlerIdentityNormalizesZeroEpochToTheUnpinnedPredicate() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(8L, now, now);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          Field<Boolean> insertedField = DSL.field("xmax = 0", Boolean.class).as("inserted");
+          List<Field<?>> fields = new ArrayList<>();
+          Collections.addAll(fields, SCRIPT_EVENT_AUDIT.fields());
+          fields.add(insertedField);
+          Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
+          Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
+          returned.from(row);
+          returned.set(insertedField, false);
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setScriptPinEpoch(0L);
+    ScriptEventAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByHandlerIdentity(entity);
+
+    assertThat(result.inserted()).isFalse();
+    String conflictClause = conflictClause(sqlRef.get());
+    assertThat(conflictClause).contains("where", "script_pin_epoch", "is null");
+    assertThat(conflictClause).doesNotContain("script_pin_epoch,");
   }
 
   @Test

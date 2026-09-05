@@ -84,4 +84,28 @@ class GameInstanceRepositoryTest {
 
     verifyNoInteractions(dsl);
   }
+
+  @Test
+  void saveRejectsIncoherentScriptPinTupleBeforeInsertOrUpdate() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameInstanceRepository repository = new GameInstanceRepository(dsl);
+
+    for (Long id : new Long[] {null, 7L}) {
+      net.firedevops.firemud.gamesession.entity.GameInstance instance =
+          new net.firedevops.firemud.gamesession.entity.GameInstance();
+      instance.setId(id);
+      instance.setScriptPatchVersion("patch-1");
+      instance.setScriptPinEpoch(null);
+      instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
+
+      IllegalArgumentException error =
+          assertThrows(IllegalArgumentException.class, () -> repository.save(instance));
+
+      assertEquals(
+          "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
+          error.getMessage());
+    }
+
+    verifyNoInteractions(dsl);
+  }
 }

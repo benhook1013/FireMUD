@@ -33,6 +33,11 @@ CREATE TABLE script_pin_operation (
         (expected_pin_kind = 'EXPECT_EPOCH' AND expected_script_pin_epoch IS NOT NULL AND expected_script_pin_epoch > 0)
         OR
         (expected_pin_kind = 'UNCONDITIONAL' AND expected_script_pin_epoch IS NULL)
+    ),
+    CONSTRAINT ck_script_pin_operation_outcome_error CHECK (
+        (outcome = 'COMMITTED' AND error_code IS NULL)
+        OR
+        (outcome = 'FAILED' AND error_code IS NOT NULL AND BTRIM(error_code) <> '')
     )
 );
 

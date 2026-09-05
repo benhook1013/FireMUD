@@ -245,8 +245,10 @@ public class ScriptEventAuditRepository {
   }
 
   private Optional<HandlerIdentityInsertResult> insertHandlerIdentity(ScriptEventAudit entity) {
+    Long normalizedScriptPinEpoch = normalizedScriptPinEpoch(entity);
+    boolean pinned = normalizedScriptPinEpoch != null;
     ScriptEventAuditRecord record = dsl.newRecord(SCRIPT_EVENT_AUDIT);
-    populate(record, entity);
+    populate(record, entity, normalizedScriptPinEpoch);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
     Collections.addAll(returningFields, SCRIPT_EVENT_AUDIT.fields());
     returningFields.add(INSERTED_ROW);
@@ -254,10 +256,9 @@ public class ScriptEventAuditRepository {
     // ON CONFLICT DO UPDATE. Returning xmax distinguishes the inserted row
     // from the existing row returned by the no-op conflict update, avoiding a
     // race between DO NOTHING and a separate readback query.
-    boolean pinned = entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L;
     return dsl.insertInto(SCRIPT_EVENT_AUDIT)
         .set(record)
-        .onConflict(handlerConflictFields(entity))
+        .onConflict(handlerConflictFields(pinned))
         .where(
             pinned
                 ? SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.gt(0L)
@@ -273,7 +274,7 @@ public class ScriptEventAuditRepository {
 
   private record HandlerIdentityInsertResult(ScriptEventAudit audit, boolean inserted) {}
 
-  private static Field<?>[] handlerConflictFields(ScriptEventAudit entity) {
+  private static Field<?>[] handlerConflictFields(boolean pinned) {
     List<Field<?>> fields =
         new ArrayList<>(
             List.of(
@@ -293,7 +294,7 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT.EVENT_TYPE,
                 SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION,
                 SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION));
-    if (entity.getScriptPinEpoch() != null && entity.getScriptPinEpoch() > 0L) {
+    if (pinned) {
       fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
     }
     fields.add(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID);
@@ -477,6 +478,11 @@ public class ScriptEventAuditRepository {
   }
 
   private void populate(ScriptEventAuditRecord record, ScriptEventAudit entity) {
+    populate(record, entity, normalizedScriptPinEpoch(entity));
+  }
+
+  private void populate(
+      ScriptEventAuditRecord record, ScriptEventAudit entity, Long normalizedScriptPinEpoch) {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setRegionId(entity.getRegionId());
@@ -488,11 +494,11 @@ public class ScriptEventAuditRepository {
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
     record.setBindingId(entity.getBindingId());
-    record.setPluginId(entity.getPluginId());
-    record.setPluginVersionId(entity.getPluginVersionId());
+    record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
+    record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
-    record.setScriptPinEpoch(normalizedScriptPinEpoch(entity));
+    record.setScriptPinEpoch(normalizedScriptPinEpoch);
     record.setScriptPinControlPlaneRequestId(
         blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.setEventType(entity.getEventType());
@@ -530,8 +536,9 @@ public class ScriptEventAuditRepository {
     entity.setPointerVersion(record.get(SCRIPT_EVENT_AUDIT.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_ID));
     entity.setBindingId(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID));
-    entity.setPluginId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID));
-    entity.setPluginVersionId(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID));
+    entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID)));
+    entity.setPluginVersionId(
+        normalizePluginIdentity(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID)));
     entity.setTargetScopeType(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
@@ -592,5 +599,9 @@ public class ScriptEventAuditRepository {
       throw new IllegalArgumentException("script_pin_epoch must be non-negative");
     }
     return epoch;
+  }
+
+  private static String normalizePluginIdentity(String value) {
+    return value == null ? "" : value;
   }
 }

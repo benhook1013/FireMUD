@@ -26,6 +26,7 @@ class V10__validate_script_pin_epoch_constraintsTest {
             "VALIDATE CONSTRAINT ck_script_patch_pin_projections_pin_tuple",
             "VALIDATE CONSTRAINT ck_script_patch_instance_rollout_projections_pin_tuple",
             "VALIDATE CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple",
+            "VALIDATE CONSTRAINT ck_script_event_ingress_audit_request_digest",
             "VALIDATE CONSTRAINT ck_script_event_ingress_audit_pin_tuple",
             "VALIDATE CONSTRAINT ck_script_event_audit_pin_tuple",
             "VALIDATE CONSTRAINT ck_script_handoff_events_pin_tuple",
@@ -45,6 +46,8 @@ class V10__validate_script_pin_epoch_constraintsTest {
         migration.indexOf("VALIDATE CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple");
     int ingressValidation =
         migration.indexOf("VALIDATE CONSTRAINT ck_script_event_ingress_audit_pin_tuple");
+    int requestDigestValidation =
+        migration.indexOf("VALIDATE CONSTRAINT ck_script_event_ingress_audit_request_digest");
     int auditValidation = migration.indexOf("VALIDATE CONSTRAINT ck_script_event_audit_pin_tuple");
     int handoffValidation =
         migration.indexOf("VALIDATE CONSTRAINT ck_script_handoff_events_pin_tuple");
@@ -53,7 +56,8 @@ class V10__validate_script_pin_epoch_constraintsTest {
     assertThat(projectionValidation).isGreaterThan(scheduleValidation);
     assertThat(rolloutProjectionValidation).isGreaterThan(projectionValidation);
     assertThat(rolloutEventValidation).isGreaterThan(rolloutProjectionValidation);
-    assertThat(ingressValidation).isGreaterThan(rolloutEventValidation);
+    assertThat(requestDigestValidation).isGreaterThan(rolloutEventValidation);
+    assertThat(ingressValidation).isGreaterThan(requestDigestValidation);
     assertThat(auditValidation).isGreaterThan(ingressValidation);
     assertThat(handoffValidation).isGreaterThan(auditValidation);
   }

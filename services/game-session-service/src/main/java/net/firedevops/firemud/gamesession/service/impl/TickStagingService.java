@@ -838,11 +838,11 @@ final class TickStagingService {
           command.getScriptPinEpoch(),
           command.getScriptPinControlPlaneRequestId(),
           "local Automation command " + command.getCommandId());
-      if (!Objects.equals(command.getScriptPatchVersion(), instance.getScriptPatchVersion())
+      if (!normalizeText(command.getScriptPatchVersion())
+              .equals(normalizeText(instance.getScriptPatchVersion()))
           || !Objects.equals(command.getScriptPinEpoch(), instance.getScriptPinEpoch())
-          || !Objects.equals(
-              command.getScriptPinControlPlaneRequestId(),
-              instance.getScriptPatchPinnedControlPlaneRequestId())) {
+          || !normalizeText(command.getScriptPinControlPlaneRequestId())
+              .equals(normalizeText(instance.getScriptPatchPinnedControlPlaneRequestId()))) {
         throw new IllegalStateException(
             "Local Automation command script pin tuple does not match the authoritative game instance commandId="
                 + command.getCommandId());
@@ -876,12 +876,11 @@ final class TickStagingService {
         throw new IllegalStateException(
             "Sealed local Automation replay is missing its locked GameInstance");
       }
-      if (!Objects.equals(
-              sealedCommand.scriptPatchVersion(), lockedInstance.getScriptPatchVersion())
+      if (!normalizeText(sealedCommand.scriptPatchVersion())
+              .equals(normalizeText(lockedInstance.getScriptPatchVersion()))
           || !Objects.equals(sealedCommand.scriptPinEpoch(), lockedInstance.getScriptPinEpoch())
-          || !Objects.equals(
-              sealedCommand.scriptPinControlPlaneRequestId(),
-              lockedInstance.getScriptPatchPinnedControlPlaneRequestId())) {
+          || !normalizeText(sealedCommand.scriptPinControlPlaneRequestId())
+              .equals(normalizeText(lockedInstance.getScriptPatchPinnedControlPlaneRequestId()))) {
         throw new IllegalStateException(
             "Sealed local Automation replay pin tuple does not match the locked GameInstance "
                 + "commandId="
@@ -895,8 +894,8 @@ final class TickStagingService {
     boolean localAutomation = isLocalAutomationCommand(command);
     if (sealedCommand.scriptPatchVersionPresent()
         && !Objects.equals(
-            blankToNull(sealedCommand.scriptPatchVersion()),
-            blankToNull(command.getScriptPatchVersion()))) {
+            normalizeText(sealedCommand.scriptPatchVersion()),
+            normalizeText(command.getScriptPatchVersion()))) {
       throw new IllegalStateException(
           "Sealed replay script patch evidence does not match gameplay command commandId="
               + sealedCommand.commandId()
@@ -928,11 +927,11 @@ final class TickStagingService {
         sealedCommand.scriptPinEpoch(),
         sealedCommand.scriptPinControlPlaneRequestId(),
         "sealed local Automation command " + sealedCommand.commandId());
-    if (!Objects.equals(sealedCommand.scriptPatchVersion(), command.getScriptPatchVersion())
+    if (!normalizeText(sealedCommand.scriptPatchVersion())
+            .equals(normalizeText(command.getScriptPatchVersion()))
         || !Objects.equals(sealedCommand.scriptPinEpoch(), command.getScriptPinEpoch())
-        || !Objects.equals(
-            sealedCommand.scriptPinControlPlaneRequestId(),
-            command.getScriptPinControlPlaneRequestId())) {
+        || !normalizeText(sealedCommand.scriptPinControlPlaneRequestId())
+            .equals(normalizeText(command.getScriptPinControlPlaneRequestId()))) {
       throw new IllegalStateException(
           "Sealed local Automation replay pin tuple does not match gameplay command commandId="
               + sealedCommand.commandId()
@@ -960,16 +959,16 @@ final class TickStagingService {
 
   private boolean isLocalAutomationCommand(GameplayCommand command) {
     return command != null
-        && "AUTOMATION".equals(normalize(command.getSourceType()))
-        && normalize(command.getRemoteFollowupId()).isEmpty();
+        && "AUTOMATION".equals(normalizeSourceType(command.getSourceType()))
+        && normalizeText(command.getRemoteFollowupId()).isEmpty();
   }
 
-  private static String normalize(String value) {
+  private static String normalizeSourceType(String value) {
     return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
   }
 
-  private static String blankToNull(String value) {
-    return value == null || value.isBlank() ? null : value;
+  private static String normalizeText(String value) {
+    return value == null ? "" : value.trim();
   }
 
   private boolean uniformMode(List<TickQueuedCommandEnvelope> entries, String source) {

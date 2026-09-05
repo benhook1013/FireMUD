@@ -558,7 +558,11 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
     assertTrue(result.accepted());
     assertEquals("ENQUEUED", result.admissionOutcome());
-    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(any());
+    assertEquals("rfcmd-remote-followup-normalized", result.commandId());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
+    assertEquals("REMOTE_FOLLOWUP", commandCaptor.getValue().getSourceType());
   }
 
   @Test

@@ -115,6 +115,10 @@ public class GameInstanceRepository {
   }
 
   public GameInstance save(GameInstance entity) {
+    ScriptPinTupleCoherence.requireCoherent(
+        entity.getScriptPatchVersion(),
+        entity.getScriptPinEpoch(),
+        entity.getScriptPatchPinnedControlPlaneRequestId());
     if (entity.getId() == null) {
       GameInstancesRecord record = dsl.newRecord(GAME_INSTANCES);
       populate(record, entity);

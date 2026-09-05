@@ -306,10 +306,19 @@ class ScriptWorkItemRepositoryTest {
 
   @Test
   void deletingWorkItemsDisposesChildEvidenceBeforeParentRows() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     List<String> sqlStatements = new ArrayList<>();
     MockDataProvider provider =
         context -> {
-          sqlStatements.add(context.sql().toLowerCase(Locale.ROOT));
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          sqlStatements.add(sql);
+          if (sql.startsWith("select")) {
+            Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
+            returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
+            Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
+            result.add(returned);
+            return new MockResult[] {new MockResult(1, result)};
+          }
           return new MockResult[] {new MockResult(1, null)};
         };
     ScriptWorkItemRepository repository =
@@ -319,13 +328,55 @@ class ScriptWorkItemRepositoryTest {
 
     repository.deleteAll(List.of(item));
 
-    assertThat(sqlStatements).hasSize(3);
-    assertThat(sqlStatements.get(0))
+    assertThat(sqlStatements).hasSize(4);
+    assertThat(sqlStatements.get(0)).startsWith("select").contains("for update", "status");
+    assertThat(sqlStatements.get(1))
         .startsWith("update")
         .contains("script_event_audit")
         .contains("work_item_id");
-    assertThat(sqlStatements.get(1)).contains("script_handoff_events");
-    assertThat(sqlStatements.get(2)).contains("script_work_items");
+    assertThat(sqlStatements.get(2)).contains("script_handoff_events");
+    assertThat(sqlStatements.get(3)).contains("script_work_items");
+  }
+
+  @Test
+  void genericDeletionPreservesEvidenceForIneligibleParentIds() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    List<String> sqlStatements = new ArrayList<>();
+    List<Object[]> bindings = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          sqlStatements.add(sql);
+          bindings.add(context.bindings());
+          if (sql.startsWith("select")) {
+            Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
+            returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
+            Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
+            result.add(returned);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          return new MockResult[] {new MockResult(1, null)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptWorkItem eligible = new ScriptWorkItem();
+    eligible.setId(99L);
+    ScriptWorkItem deadLettered = new ScriptWorkItem();
+    deadLettered.setId(100L);
+
+    repository.deleteAll(List.of(eligible, deadLettered));
+
+    assertThat(sqlStatements).hasSize(4);
+    assertThat(sqlStatements.get(0)).startsWith("select").contains("for update", "status");
+    assertThat(sqlStatements.get(1))
+        .startsWith("update")
+        .contains("script_event_audit", "work_item_id");
+    assertThat(sqlStatements.get(2)).contains("script_handoff_events", "work_item_id");
+    assertThat(sqlStatements.get(3)).contains("script_work_items", "status");
+    assertThat(bindings.get(1)).contains(99L).doesNotContain(100L);
+    assertThat(bindings.get(2)).contains(99L).doesNotContain(100L);
+    assertThat(bindings.get(3)).contains(99L).doesNotContain(100L);
   }
 
   @Test

@@ -699,6 +699,30 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void createBatchAcceptsPaddedScriptPinEvidenceWhenTupleIsSemanticallyEqual() {
+    GameplayCommand command = gameplayCommand("cmd-padded-pin");
+    command.setSourceType(" automation ");
+    command.setScriptPatchVersion(" patch-1 ");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId(" request-1 ");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-padded-pin")))
+        .thenReturn(List.of(command));
+
+    TickBatch batch =
+        service.createBatch(
+            "FRESH_STAGE",
+            1L,
+            2L,
+            false,
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-padded-pin", "look")));
+
+    assertEquals("FRESH_STAGE", batch.getBatchSource());
+    verify(tickBatchRepository).save(any());
+    verify(tickEffectRepository).saveAll(any());
+  }
+
+  @Test
   void createBatchRejectsLocalAutomationCommandWithSamePatchAndDifferentEpoch() {
     GameplayCommand command = gameplayCommand("cmd-different-epoch");
     command.setSourceType("AUTOMATION");

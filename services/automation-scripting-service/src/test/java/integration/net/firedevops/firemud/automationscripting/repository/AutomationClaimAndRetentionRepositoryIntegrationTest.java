@@ -408,6 +408,44 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void genericDeletionPreservesDeadLetterEvidenceForMixedParentIds() {
+    ScriptWorkItem eligible = workItemRepository.save(retainedWorkItem());
+    ScriptWorkItem deadLettered =
+        workItemRepository.save(deadLetteredWorkItem("dead-letter-generic-delete"));
+
+    ScriptEventAudit eligibleAudit = retainedEventAudit(eligible.getId());
+    eligibleAudit.setScriptEventId("retained-generic-delete");
+    ScriptEventAudit deadLetterAudit = retainedEventAudit(deadLettered.getId());
+    deadLetterAudit.setScriptEventId("dead-letter-generic-delete");
+    eventAuditRepository.save(eligibleAudit);
+    eventAuditRepository.save(deadLetterAudit);
+
+    ScriptHandoffEvent eligibleHandoff = retainedHandoff(eligible.getId());
+    eligibleHandoff.setEventId("retained-generic-delete-handoff");
+    ScriptHandoffEvent deadLetterHandoff = retainedHandoff(deadLettered.getId());
+    deadLetterHandoff.setEventId("dead-letter-generic-delete-handoff");
+    handoffRepository.save(eligibleHandoff);
+    handoffRepository.save(deadLetterHandoff);
+
+    dsl.transaction(
+        configuration ->
+            new ScriptWorkItemRepository(configuration.dsl())
+                .deleteAll(List.of(eligible, deadLettered)));
+
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(2);
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_EVENT_AUDIT.WORK_ITEM_ID, SCRIPT_EVENT_AUDIT.ID.eq(eligibleAudit.getId())))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_EVENT_AUDIT.WORK_ITEM_ID, SCRIPT_EVENT_AUDIT.ID.eq(deadLetterAudit.getId())))
+        .isEqualTo(deadLettered.getId());
+  }
+
+  @Test
   void deadLetterAgeRetentionLeavesParentWhenChildOutcomeIsIncomplete() {
     ScriptWorkItem parent = workItemRepository.save(deadLetteredWorkItem("dead-letter-age"));
     ScriptHandoffEvent handoff = retainedHandoff(parent.getId());

@@ -6,17 +6,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
-class BeforeEachMigrateTest {
+class AutomationScriptingBeforeEachMigrateTest {
   @Test
   void preflightsOnlyAfterV4ShapeAndChecksBothNormalizedIdentityBranches() throws IOException {
-    String callback;
-    try (var stream =
-        getClass().getClassLoader().getResourceAsStream("db/migration/beforeEachMigrate.sql")) {
-      assertThat(stream).isNotNull();
-      callback = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-    }
+    String callback = callbackSql();
 
     assertThat(callback)
+        .contains("/* [jooq ignore start] */\nDO $$\nBEGIN")
         .contains("to_regclass('script_work_items') IS NULL")
         .contains("attname = 'script_pin_epoch'")
         .contains("NULLIF(BTRIM(plugin_id), '') IS NULL")
@@ -35,33 +31,28 @@ class BeforeEachMigrateTest {
 
   @Test
   void callbackIsOrderedToRunBeforeVersionEightNormalization() throws IOException {
-    String callback;
+    String callback = callbackSql();
     String v8;
-    try (var callbackStream =
-            getClass().getClassLoader().getResourceAsStream("db/migration/beforeEachMigrate.sql");
-        var v8Stream =
-            getClass()
-                .getClassLoader()
-                .getResourceAsStream(
-                    "db/migration/V8__normalize_script_work_item_plugin_identity.sql")) {
-      assertThat(callbackStream).isNotNull();
-      assertThat(v8Stream).isNotNull();
-      callback = new String(callbackStream.readAllBytes(), StandardCharsets.UTF_8);
-      v8 = new String(v8Stream.readAllBytes(), StandardCharsets.UTF_8);
+    try (var stream =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(
+                "db/migration/V8__normalize_script_work_item_plugin_identity.sql")) {
+      assertThat(stream).isNotNull();
+      v8 = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
-    assertThat(callback).contains("script_pin_epoch");
+    int markerGuard = callback.indexOf("attname IN ('plugin_id', 'plugin_version_id')");
+    int oneSidedPairGuard =
+        callback.indexOf("script_work_items contains a one-sided plugin identity pair");
+    assertThat(markerGuard).isGreaterThanOrEqualTo(0);
+    assertThat(oneSidedPairGuard).isGreaterThan(markerGuard);
     assertThat(v8).contains("UPDATE script_work_items");
   }
 
   @Test
   void defersPluginPairPreflightUntilVersionEightHasMadeThePairRequired() throws IOException {
-    String callback;
-    try (var stream =
-        getClass().getClassLoader().getResourceAsStream("db/migration/beforeEachMigrate.sql")) {
-      assertThat(stream).isNotNull();
-      callback = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-    }
+    String callback = callbackSql();
 
     int marker = callback.indexOf("attname IN ('plugin_id', 'plugin_version_id')");
     int preflight = callback.indexOf("script_work_items contains a one-sided plugin identity pair");
@@ -72,5 +63,13 @@ class BeforeEachMigrateTest {
         .contains("HAVING COUNT(*) = 2")
         .contains("NULLIF(BTRIM(plugin_id), '') IS NULL")
         .contains("NULLIF(BTRIM(plugin_version_id), '') IS NULL");
+  }
+
+  private String callbackSql() throws IOException {
+    try (var stream =
+        getClass().getClassLoader().getResourceAsStream("db/migration/beforeEachMigrate.sql")) {
+      assertThat(stream).isNotNull();
+      return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+    }
   }
 }

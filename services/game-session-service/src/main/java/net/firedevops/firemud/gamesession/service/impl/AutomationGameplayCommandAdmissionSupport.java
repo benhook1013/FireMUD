@@ -395,11 +395,7 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static boolean sameSourceType(String left, String right) {
-    if ("AUTOMATION".equals(normalizeSourceType(left))
-        && "AUTOMATION".equals(normalizeSourceType(right))) {
-      return true;
-    }
-    return sameText(left, right);
+    return Objects.equals(normalizeSourceType(left), normalizeSourceType(right));
   }
 
   private static String normalizeSourceType(String value) {
@@ -736,10 +732,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAcceptedAt(now);
     command.setLastAttemptAt(now);
     command.setAttemptCount(1);
-    command.setSourceType(
-        isLocalAutomation(request)
-            ? normalizeSourceType(request.sourceType())
-            : request.sourceType());
+    command.setSourceType(normalizeSourceType(request.sourceType()));
     command.setAutomationDispatchId(blankToNull(request.automationDispatchId()));
     command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
     command.setScriptId(blankToNull(request.scriptId()));
@@ -772,7 +765,7 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static String commandId(AdmissionRequest request) {
-    if ("REMOTE_FOLLOWUP".equals(request.sourceType())
+    if ("REMOTE_FOLLOWUP".equals(normalizeSourceType(request.sourceType()))
         && request.remoteFollowupId() != null
         && !request.remoteFollowupId().isBlank()) {
       return "rfcmd-" + request.remoteFollowupId();
