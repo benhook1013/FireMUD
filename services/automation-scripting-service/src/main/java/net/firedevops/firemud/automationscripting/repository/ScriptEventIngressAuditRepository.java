@@ -4,7 +4,6 @@ import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEvent
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
-import static org.jooq.impl.DSL.condition;
 import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -81,6 +80,7 @@ public class ScriptEventIngressAuditRepository {
     if (entity.getId() == null) {
       return insertIfAbsentByIdentity(entity).audit();
     }
+    requireCoherentPinTuple(entity);
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
@@ -250,19 +250,33 @@ public class ScriptEventIngressAuditRepository {
   public record IdempotentInsertResult(ScriptEventIngressAudit audit, boolean inserted) {}
 
   private static boolean requireCoherentPinTuple(ScriptEventIngressAudit entity) {
-    boolean hasEpoch = entity.getScriptPinEpoch() != null;
+    Long scriptPinEpoch = entity.getScriptPinEpoch();
     boolean hasRequestId =
         entity.getScriptPinControlPlaneRequestId() != null
             && !entity.getScriptPinControlPlaneRequestId().isBlank();
-    if (hasEpoch != hasRequestId || (hasEpoch && entity.getScriptPinEpoch() <= 0L)) {
+    if (scriptPinEpoch == null) {
+      if (hasRequestId) {
+        throw new IllegalArgumentException(
+            "script_pin_control_plane_request_id requires a positive script_pin_epoch");
+      }
+      return false;
+    }
+    if (scriptPinEpoch <= 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be positive when present");
+    }
+    if (entity.getGameInstanceId() == null) {
+      throw new IllegalArgumentException(
+          "game_instance_id is required for a positive script_pin_epoch");
+    }
+    if (!hasRequestId) {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
-    return hasEpoch;
+    return true;
   }
 
   private static Condition nullScriptPinEpochCondition() {
-    return condition("script_pin_epoch is null");
+    return SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNull();
   }
 
   private static List<SelectFieldOrAsterisk> selectFields() {
