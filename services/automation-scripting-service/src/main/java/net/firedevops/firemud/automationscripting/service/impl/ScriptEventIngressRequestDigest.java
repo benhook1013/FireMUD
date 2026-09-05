@@ -4,17 +4,21 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
+import java.text.Normalizer;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Computes the immutable event-scope idempotency digest defined by ADR 0172. */
 final class ScriptEventIngressRequestDigest {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper STRICT_OBJECT_MAPPER =
+      JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
 
   private ScriptEventIngressRequestDigest() {}
 
@@ -49,7 +53,7 @@ final class ScriptEventIngressRequestDigest {
   }
 
   private static void append(StringBuilder preimage, String name, String value) {
-    String normalized = value == null ? "" : value;
+    String normalized = value == null ? "" : normalize(value);
     byte[] bytes = normalized.getBytes(StandardCharsets.UTF_8);
     preimage
         .append(name)
@@ -65,11 +69,16 @@ final class ScriptEventIngressRequestDigest {
       return "null";
     }
     try {
-      return canonicalize(OBJECT_MAPPER.readTree(rawJson));
-    } catch (JacksonException ex) {
-      // Validation will reject malformed built-in payloads. Preserve malformed/custom input in
-      // the digest so a retry cannot alias a different rejected request.
-      return quote(rawJson);
+      return canonicalize(STRICT_OBJECT_MAPPER.readTree(rawJson));
+    } catch (JacksonException strictFailure) {
+      try {
+        OBJECT_MAPPER.readTree(rawJson);
+      } catch (JacksonException malformedInput) {
+        // Validation rejects malformed built-in payloads. Preserve malformed/custom input in the
+        // digest so a retry cannot alias a different rejected request.
+        return quote(rawJson);
+      }
+      throw new IllegalArgumentException("JSON payload contains duplicate keys", strictFailure);
     }
   }
 
@@ -78,9 +87,11 @@ final class ScriptEventIngressRequestDigest {
       return "null";
     }
     if (node.isObject()) {
-      List<Map.Entry<String, JsonNode>> entries = new ArrayList<>();
-      node.properties().forEach(entry -> entries.add(Map.entry(entry.getKey(), entry.getValue())));
-      entries.sort(Map.Entry.comparingByKey());
+      List<Map.Entry<String, JsonNode>> entries =
+          node.properties().stream()
+              .map(entry -> Map.entry(normalize(entry.getKey()), entry.getValue()))
+              .sorted(Map.Entry.comparingByKey())
+              .toList();
       StringBuilder result = new StringBuilder("{");
       for (int index = 0; index < entries.size(); index++) {
         if (index > 0) {
@@ -88,7 +99,8 @@ final class ScriptEventIngressRequestDigest {
         }
         Map.Entry<String, JsonNode> entry = entries.get(index);
         if (index > 0 && entry.getKey().equals(entries.get(index - 1).getKey())) {
-          throw new IllegalArgumentException("JSON object contains duplicate keys");
+          throw new IllegalArgumentException(
+              "JSON object contains duplicate keys after NFC normalization: " + entry.getKey());
         }
         result.append(quote(entry.getKey())).append(':').append(canonicalize(entry.getValue()));
       }
@@ -116,10 +128,14 @@ final class ScriptEventIngressRequestDigest {
 
   private static String quote(String value) {
     try {
-      return OBJECT_MAPPER.writeValueAsString(value);
+      return OBJECT_MAPPER.writeValueAsString(normalize(value));
     } catch (JacksonException ex) {
       throw new IllegalStateException("failed to canonicalize ingress digest value", ex);
     }
+  }
+
+  private static String normalize(String value) {
+    return Normalizer.normalize(value, Normalizer.Form.NFC);
   }
 
   private static String sha256(String value) {

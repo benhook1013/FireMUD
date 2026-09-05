@@ -7,6 +7,17 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);
 
+-- Bind each event-scope claim to the immutable semantic request that first owned its
+-- producer-namespaced scriptEventId. Existing pre-v1 rows remain explicitly unbound and are
+-- replay-rejected until reconciled; they must never silently accept changed request inputs.
+ALTER TABLE script_event_ingress_audit
+    ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';
+
+ALTER TABLE script_event_ingress_audit
+    ADD CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK (
+        request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'
+    );
+
 -- A bounded claim lease lets a later retry recover a crashed claimant while optimistic row
 -- versioning fences the abandoned owner. Keep created_at as the retention anchor.
 ALTER TABLE script_event_ingress_audit
@@ -118,7 +129,6 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     event_schema_version,
     script_patch_version,
     script_pin_epoch,
-    script_pin_control_plane_request_id,
     script_event_id,
     dry_run,
     source_service

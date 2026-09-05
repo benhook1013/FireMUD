@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,40 @@ class ScriptEventIngressRequestDigestTest {
     assertThat(ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"))
         .isNotEqualTo(
             ScriptEventIngressRequestDigest.compute(changedOwner, "v1", "game-session-service"));
+  }
+
+  @Test
+  void rejectsDuplicateJsonObjectKeys() {
+    TriggerScriptEventRequest duplicateKeys = request("{\"a\":1,\"a\":2}");
+
+    assertThatThrownBy(
+            () ->
+                ScriptEventIngressRequestDigest.compute(
+                    duplicateKeys, "v1", "game-session-service"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("JSON payload contains duplicate keys");
+  }
+
+  @Test
+  void rejectsDuplicateKeysAfterNfcNormalization() {
+    TriggerScriptEventRequest duplicateKeys = request("{\"\\u00e9\":1,\"e\\u0301\":2}");
+
+    assertThatThrownBy(
+            () ->
+                ScriptEventIngressRequestDigest.compute(
+                    duplicateKeys, "v1", "game-session-service"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("duplicate keys after NFC normalization");
+  }
+
+  @Test
+  void treatsEquivalentNfcPayloadValuesAsOneDigest() {
+    TriggerScriptEventRequest composed = request("{\"value\":\"\\u00e9\"}");
+    TriggerScriptEventRequest decomposed = request("{\"value\":\"e\\u0301\"}");
+
+    assertThat(ScriptEventIngressRequestDigest.compute(composed, "v1", "game-session-service"))
+        .isEqualTo(
+            ScriptEventIngressRequestDigest.compute(decomposed, "v1", "game-session-service"));
   }
 
   private static TriggerScriptEventRequest request(String payload) {

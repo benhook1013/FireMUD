@@ -43,6 +43,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;",
             "ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';",
+            "ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';",
+            "ck_script_event_ingress_audit_request_digest",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
         .doesNotContain("ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE");
@@ -61,7 +63,9 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     int runtimeEnd = migration.indexOf(") WHERE", runtimeStart);
     assertThat(runtimeStart).isGreaterThanOrEqualTo(0);
     assertThat(runtimeEnd).isGreaterThan(runtimeStart);
-    assertThat(migration.substring(runtimeStart, runtimeEnd)).contains("playable_state_scope");
+    assertThat(migration.substring(runtimeStart, runtimeEnd))
+        .contains("playable_state_scope")
+        .doesNotContain("script_pin_control_plane_request_id");
     assertThat(migration)
         .contains(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;");
 

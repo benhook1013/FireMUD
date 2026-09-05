@@ -150,7 +150,7 @@ public class ScriptHandoffEventRepository {
               .eq(entity.getScriptPatchVersion())
               .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
               .and(
-                  SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
+                  SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
                       entity.getScriptPinControlPlaneRequestId()));
       ScriptHandoffEvent replay =
           dsl.insertInto(SCRIPT_HANDOFF_EVENTS)
