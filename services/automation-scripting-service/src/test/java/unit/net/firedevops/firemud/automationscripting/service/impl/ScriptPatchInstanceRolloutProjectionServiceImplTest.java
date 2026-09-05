@@ -75,6 +75,58 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
   }
 
   @Test
+  void rejectsZeroEpochWithOwnerRequestIdOnFullReads() {
+    ScriptPatchInstanceRolloutProjectionRepository repository =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
+    ScriptPatchInstanceRolloutEventRepository eventRepository =
+        Mockito.mock(ScriptPatchInstanceRolloutEventRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
+    ScriptPatchInstanceRolloutProjectionServiceImpl service =
+        new ScriptPatchInstanceRolloutProjectionServiceImpl(
+            repository,
+            eventRepository,
+            workItemRepository,
+            pinProjectionService,
+            new ScriptRuntimeProperties());
+
+    assertThatThrownBy(() -> service.getProjection("1", "game-1", "patch-1", 0L, "request-1"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    assertThatThrownBy(
+            () ->
+                service.listProjections(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    0L,
+                    "request-1",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    assertThatThrownBy(
+            () ->
+                service.listEvents(
+                    "1",
+                    "game-1",
+                    "patch-1",
+                    0L,
+                    "request-1",
+                    ScriptPatchInstanceRolloutStatus
+                        .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
+                    0L,
+                    0L,
+                    25))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_pin_control_plane_request_id_required");
+    verifyNoInteractions(repository, eventRepository, workItemRepository, pinProjectionService);
+  }
+
+  @Test
   void marksProjectionRepinnedWhenPatchReturnsAfterRollback() {
     ScriptPatchInstanceRolloutProjectionRepository repository =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionRepository.class);
