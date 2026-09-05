@@ -40,12 +40,60 @@ final class GameplayCommandExecutionFenceService {
           "Gameplay command game instance is unavailable for execution fencing");
     }
 
+    String sourceType = normalize(command.getSourceType());
+    boolean localAutomationCommand =
+        "AUTOMATION".equals(sourceType) && normalize(command.getRemoteFollowupId()).isEmpty();
     String commandPatch = normalize(command.getScriptPatchVersion());
-    if ("AUTOMATION".equals(normalize(command.getSourceType())) && commandPatch.isEmpty()) {
+    if (localAutomationCommand && commandPatch.isEmpty()) {
       return failure(
           "INCOMPLETE_SCRIPT_PATCH_FENCE",
           "Automation gameplay command must include its admitted script patch");
     }
+    if (localAutomationCommand
+        && (command.getScriptPinEpoch() == null
+            || command.getScriptPinEpoch() <= 0
+            || normalize(command.getScriptPinControlPlaneRequestId()).isEmpty())) {
+      return failure(
+          "INCOMPLETE_SCRIPT_PIN_FENCE",
+          "Automation gameplay command must include its complete script pin tuple");
+    }
+
+    if (localAutomationCommand) {
+      String currentPatch = normalize(instance.getScriptPatchVersion());
+      Long currentEpoch = instance.getScriptPinEpoch();
+      String currentRequestId = normalize(instance.getScriptPatchPinnedControlPlaneRequestId());
+      boolean semanticUnpinned =
+          currentPatch.isEmpty() && currentEpoch == null && currentRequestId.isEmpty();
+      if (semanticUnpinned) {
+        return failure(
+            "STALE_SCRIPT_PIN_EPOCH",
+            "Automation gameplay command cannot execute against an unpinned game instance");
+      }
+      if (currentPatch.isEmpty()
+          || currentEpoch == null
+          || currentEpoch <= 0
+          || currentRequestId.isEmpty()) {
+        return failure(
+            "INCOMPLETE_SCRIPT_PIN_FENCE",
+            "Game instance does not have a complete current script pin tuple");
+      }
+      if (!commandPatch.equals(currentPatch)) {
+        return failure(
+            "STALE_SCRIPT_PATCH_VERSION",
+            "Gameplay command script patch no longer matches the pinned instance patch");
+      }
+      if (!command.getScriptPinEpoch().equals(currentEpoch)) {
+        return failure(
+            "STALE_SCRIPT_PIN_EPOCH",
+            "Gameplay command script pin epoch no longer matches the pinned instance epoch");
+      }
+      if (!normalize(command.getScriptPinControlPlaneRequestId()).equals(currentRequestId)) {
+        return failure(
+            "STALE_SCRIPT_PIN_REQUEST_ID",
+            "Gameplay command script pin request identity no longer matches the pinned instance");
+      }
+    }
+
     if (!commandPatch.isEmpty()
         && !commandPatch.equals(normalize(instance.getScriptPatchVersion()))) {
       return failure(

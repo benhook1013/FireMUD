@@ -551,6 +551,38 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void executeDurableEffectsTerminalizesFinalScriptPinFenceRejectionWithoutGameplayMutation() {
+    TickBatch batch = drainedBatch("tb-script-pin-fence", "fence-a");
+    TickEffect effect = drainedEffect("tb-script-pin-fence", "cmd-script-pin-fence");
+    GameplayCommand command = gameplayCommand("cmd-script-pin-fence");
+    command.setSourceType("AUTOMATION");
+    when(tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
+            1L, 2L, "DRAINED"))
+        .thenReturn(List.of(batch));
+    when(tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
+            "tb-script-pin-fence", "DRAINED"))
+        .thenReturn(List.of(effect), List.of());
+    when(gameplayCommandRepository.findByTenantIdAndGameInstanceIdAndCommandId(
+            1L, 2L, "cmd-script-pin-fence"))
+        .thenReturn(Optional.of(command));
+    when(gameplayCommandExecutionFenceService.validate(batch, command))
+        .thenReturn(
+            Optional.of(
+                new GameplayCommandExecutionFenceService.FenceFailure(
+                    "STALE_SCRIPT_PIN_EPOCH",
+                    "Gameplay command script pin epoch no longer matches the pinned instance epoch")));
+
+    service.executeDurableEffects(1L, 2L);
+
+    assertEquals("REJECTED", effect.getStatus());
+    assertEquals("STALE_SCRIPT_PIN_EPOCH", effect.getFailureCode());
+    assertEquals("COMPLETED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertEquals("STALE_SCRIPT_PIN_EPOCH", command.getFailureCode());
+    verify(durableGameplayCommandExecutionService, never()).execute(any(), any());
+  }
+
+  @Test
   void executeDurableEffectsNeverLoadsOrMutatesCommandOutsideBatchScope() {
     TickBatch batch = drainedBatch("tb-cross-scope", "fence-a");
     batch.setExpectedEffectCount(1);

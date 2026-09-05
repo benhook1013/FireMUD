@@ -44,6 +44,16 @@ class GameplayCommandExecutionFenceServiceTest {
   }
 
   @Test
+  void acceptsLocalAutomationCommandWithExactCurrentScriptPinTuple() {
+    GameplayCommand command = automationCommand();
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    assertTrue(service.validate(batch(), command).isEmpty());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
   void rejectsCommandFromOldRuntimeTimeline() {
     GameplayCommand command = command();
     command.setRegionEpoch(6L);
@@ -77,6 +87,85 @@ class GameplayCommandExecutionFenceServiceTest {
         service.validate(batch(), command).orElseThrow();
 
     assertEquals("INCOMPLETE_SCRIPT_PATCH_FENCE", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void rejectsLocalAutomationCommandWithoutCompleteScriptPinTuple() {
+    GameplayCommand command = automationCommand();
+    command.setScriptPinEpoch(null);
+    command.setScriptPinControlPlaneRequestId(null);
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void rejectsLocalAutomationCommandAgainstCurrentSemanticUnpinnedInstance() {
+    GameplayCommand command = automationCommand();
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("STALE_SCRIPT_PIN_EPOCH", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void rejectsLocalAutomationCommandFromDifferentScriptPinEpoch() {
+    GameplayCommand command = automationCommand();
+    command.setScriptPinEpoch(3L);
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("STALE_SCRIPT_PIN_EPOCH", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void rejectsLocalAutomationCommandFromDifferentScriptPinOwnerRequest() {
+    GameplayCommand command = automationCommand();
+    command.setScriptPinControlPlaneRequestId("request-old");
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("STALE_SCRIPT_PIN_REQUEST_ID", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void leavesRemoteFollowupCommandsOutsideLocalAutomationPinTupleFence() {
+    GameplayCommand command = command();
+    command.setSourceType("REMOTE_FOLLOWUP");
+    command.setRemoteFollowupId("followup-1");
+    command.setScriptPatchVersion(null);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));
+
+    assertTrue(service.validate(batch(), command).isEmpty());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void leavesAutomationCommandsWithRemoteFollowupIdentityOutsideLocalPinTupleFence() {
+    GameplayCommand command = command();
+    command.setSourceType("AUTOMATION");
+    command.setRemoteFollowupId("followup-1");
+    command.setScriptPatchVersion(null);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));
+
+    assertTrue(service.validate(batch(), command).isEmpty());
     verifyNoInteractions(automationScriptingControlPlaneClient);
   }
 
@@ -158,11 +247,27 @@ class GameplayCommandExecutionFenceServiceTest {
     return command;
   }
 
+  private static GameplayCommand automationCommand() {
+    GameplayCommand command = command();
+    command.setSourceType("AUTOMATION");
+    command.setScriptPinEpoch(4L);
+    command.setScriptPinControlPlaneRequestId("request-1");
+    return command;
+  }
+
   private static GameInstance instance(String scriptPatchVersion) {
     GameInstance instance = new GameInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion(scriptPatchVersion);
+    return instance;
+  }
+
+  private static GameInstance pinnedInstance(
+      String scriptPatchVersion, long scriptPinEpoch, String controlPlaneRequestId) {
+    GameInstance instance = instance(scriptPatchVersion);
+    instance.setScriptPinEpoch(scriptPinEpoch);
+    instance.setScriptPatchPinnedControlPlaneRequestId(controlPlaneRequestId);
     return instance;
   }
 }
