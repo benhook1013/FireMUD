@@ -460,6 +460,10 @@ public class AutomationScriptingGrpcService
                   "NotifyScriptVersionUpdate",
                   "INVALID_ARGUMENT",
                   ex.getMessage()));
+    } catch (ScriptIngressInProgressException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
+      return;
     } catch (AdminAuthorizationException ex) {
       response.setSuccess(false).setError(authorizationError("NotifyScriptVersionUpdate", ex));
     }

@@ -408,6 +408,52 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
+  void notifyScriptVersionUpdateMapsActiveOnLoadClaimToRetryableUnavailableWithoutResponse() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.doThrow(new ScriptIngressInProgressException())
+        .when(versionService)
+        .notifyUpdate("1", "patch-1", List.of("guard-script"));
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            Mockito.mock(ScriptDesignDigestService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry());
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNull(response.get());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    assertEquals("ingress_in_progress", Status.fromThrowable(error.get()).getDescription());
+  }
+
+  @Test
   void observeRuntimeTickProgressDelegatesToScheduleInstanceService() {
     ScriptScheduleInstanceService scheduleInstanceService =
         Mockito.mock(ScriptScheduleInstanceService.class);

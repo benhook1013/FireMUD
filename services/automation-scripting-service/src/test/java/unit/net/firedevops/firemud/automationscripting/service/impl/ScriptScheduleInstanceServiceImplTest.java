@@ -2810,6 +2810,41 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void timerAuditLookupAllowsOwnerRequestIdWithoutEpoch() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(0L),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(0L),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
   void listTimerAuditEventsReturnsBoundedSummariesFromAuditRows() {
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId("1");

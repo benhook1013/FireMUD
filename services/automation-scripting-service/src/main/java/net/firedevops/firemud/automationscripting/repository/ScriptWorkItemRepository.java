@@ -1,5 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
@@ -259,13 +261,16 @@ public class ScriptWorkItemRepository {
   }
 
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
-    return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
-        .where(
-            SCRIPT_WORK_ITEMS
-                .STATUS
-                .eq(status)
-                .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
-        .execute();
+    List<Long> ids =
+        dsl.select(SCRIPT_WORK_ITEMS.ID)
+            .from(SCRIPT_WORK_ITEMS)
+            .where(
+                SCRIPT_WORK_ITEMS
+                    .STATUS
+                    .eq(status)
+                    .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
+            .fetch(SCRIPT_WORK_ITEMS.ID);
+    return deleteByIds(ids);
   }
 
   public List<ScriptWorkItem> findAllById(Collection<Long> ids) {
@@ -540,7 +545,23 @@ public class ScriptWorkItemRepository {
     if (ids.isEmpty()) {
       return;
     }
-    dsl.deleteFrom(SCRIPT_WORK_ITEMS).where(SCRIPT_WORK_ITEMS.ID.in(ids)).execute();
+    deleteByIds(ids);
+  }
+
+  /**
+   * Deletes terminal work-item evidence in child-first order under the caller's transaction. Both
+   * child tables use non-cascading foreign keys so parent deletion must dispose the same retention
+   * cohort explicitly before removing the work-item row.
+   */
+  private long deleteByIds(Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return 0L;
+    }
+    dsl.deleteFrom(SCRIPT_EVENT_AUDIT).where(SCRIPT_EVENT_AUDIT.WORK_ITEM_ID.in(ids)).execute();
+    dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.in(ids))
+        .execute();
+    return dsl.deleteFrom(SCRIPT_WORK_ITEMS).where(SCRIPT_WORK_ITEMS.ID.in(ids)).execute();
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {
