@@ -279,13 +279,10 @@ final class AutomationPatchControlPlaneService {
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
     requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
-    boolean hasEpoch = request.getScriptPinEpoch() > 0L;
-    boolean hasRequestId = !request.getScriptPinControlPlaneRequestId().isBlank();
-    if (hasEpoch != hasRequestId) {
-      throw new IllegalArgumentException(
-          "script pin filters require both a positive script_pin_epoch and request ID");
-    }
-    String requestId = hasEpoch ? request.getScriptPinControlPlaneRequestId() : null;
+    String requestId =
+        request.getScriptPinControlPlaneRequestId().isBlank()
+            ? null
+            : request.getScriptPinControlPlaneRequestId();
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
         scriptScheduleInstanceService.listTimerAuditEvents(
             request.getTenantId(),
@@ -1076,11 +1073,18 @@ final class AutomationPatchControlPlaneService {
   }
 
   private static void requireCoherentScriptPinFilter(long scriptPinEpoch, String requestId) {
+    requireCoherentScriptPinFilter(
+        scriptPinEpoch,
+        requestId,
+        "script_pin_epoch and control-plane request ID must be supplied together");
+  }
+
+  private static void requireCoherentScriptPinFilter(
+      long scriptPinEpoch, String requestId, String mismatchMessage) {
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     boolean hasRequestId = requestId != null && !requestId.isBlank();
     if ((scriptPinEpoch > 0) != hasRequestId) {
-      throw new IllegalArgumentException(
-          "script_pin_epoch and control-plane request ID must be supplied together");
+      throw new IllegalArgumentException(mismatchMessage);
     }
   }
 

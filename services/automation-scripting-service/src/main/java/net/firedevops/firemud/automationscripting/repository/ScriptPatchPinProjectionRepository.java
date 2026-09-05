@@ -69,8 +69,7 @@ public class ScriptPatchPinProjectionRepository {
       if (id == null) {
         throw new IllegalStateException("Saved script patch projection did not return an id");
       }
-      record.setId(id);
-      return findById(record.getId()).orElseThrow();
+      return findById(id).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =

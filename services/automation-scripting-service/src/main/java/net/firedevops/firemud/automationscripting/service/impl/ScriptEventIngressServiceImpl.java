@@ -242,9 +242,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       }
     }
 
-    PinEpochHolder pinEpoch = new PinEpochHolder();
-    TriggerAdmission admission =
-        validate(request, schemaVersion, sourceService, definition, pinEpoch, claimRequest);
+    ValidationResult validation =
+        validate(request, schemaVersion, sourceService, definition, claimRequest);
+    TriggerAdmission admission = validation.admission();
     if (admission.admitted()) {
       AdmissionStateValidation stateValidation = validateAdmissionState(request);
       admission = stateValidation.admission();
@@ -260,7 +260,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
                     sourceService,
                     tenantKey,
                     stateValidation.state(),
-                    pinEpoch.value,
+                    validation.scriptPinEpoch(),
                     claimRequest);
       }
     }
@@ -354,12 +354,11 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
             .isBefore(Instant.now());
   }
 
-  private TriggerAdmission validate(
+  private ValidationResult validate(
       TriggerScriptEventRequest request,
       String schemaVersion,
       String sourceService,
       ScriptEventRegistryService.EventDefinition definition,
-      PinEpochHolder pinEpoch,
       ScriptEventIngressAudit claim) {
     requiredText(request.getTenantId(), "tenant_id");
     requiredText(request.getEventType(), "event_type");
@@ -367,58 +366,64 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     requiredText(request.getScriptEventId(), "script_event_id");
     if (request.getPayloadJson().getBytes(StandardCharsets.UTF_8).length
         > outputProperties.getMaxSerializedWorkItemBytes()) {
-      return new TriggerAdmission(
-          false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0);
+      return validation(
+          new TriggerAdmission(
+              false, OUTCOME_OUTPUT_BUDGET_EXCEEDED, "work_item_size_exceeded", 0));
     }
     if (definition == null) {
-      return rejected("unknown_event_type");
+      return validation(rejected("unknown_event_type"));
     }
     if (!definition.allowedProducerPrincipals().contains(sourceService)) {
-      return rejected("unauthorized_producer");
+      return validation(rejected("unauthorized_producer"));
     }
     if (definition.snapshotAuthority().equals("PRODUCER_SUPPLIED_TOKEN")
         && request.getReadSnapshotToken().isBlank()) {
-      return rejected("missing_snapshot_token");
+      return validation(rejected("missing_snapshot_token"));
     }
     TriggerAdmission payloadAdmission = validateBuiltInPayload(request);
     if (payloadAdmission != null) {
-      return payloadAdmission;
+      return validation(payloadAdmission);
     }
     if (isOnLoadRequest(request) && request.getScriptId().isBlank()) {
-      return rejected("missing_script_identity");
+      return validation(rejected("missing_script_identity"));
     }
     if (definition.requiredTriggerIdentityFields().contains("regionEpoch")) {
       if (request.getGameInstanceId().isBlank()
           || request.getRegionId().isBlank()
           || request.getRegionEpoch() <= 0
           || request.getEntityId().isBlank()) {
-        return rejected("missing_trigger_identity");
+        return validation(rejected("missing_trigger_identity"));
       }
     }
     if (definition.requiredTriggerIdentityFields().contains("playableStateScope")
         && (request.getPlayableStateScopeValue() == 0
             || request.getPlayableStateScope().name().equals("UNRECOGNIZED"))) {
-      return rejected("missing_trigger_identity");
+      return validation(rejected("missing_trigger_identity"));
     }
     TriggerAdmission routingAdmission = validateGameplayRoutingBundle(request, sourceService);
     if (routingAdmission != null) {
-      return routingAdmission;
+      return validation(routingAdmission);
     }
     PinValidation pinValidation = validatePinnedPatch(request, claim);
     TriggerAdmission pinAdmission = pinValidation.admission();
-    pinEpoch.value = pinValidation.scriptPinEpoch();
     if (pinAdmission != null) {
-      return pinAdmission;
+      return new ValidationResult(pinAdmission, pinValidation.scriptPinEpoch());
     }
     TriggerAdmission pluginAdmission = validatePluginRuntimeState(request);
     if (pluginAdmission != null) {
-      return pluginAdmission;
+      return new ValidationResult(pluginAdmission, pinValidation.scriptPinEpoch());
     }
-    return new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0);
+    return new ValidationResult(
+        new TriggerAdmission(true, OUTCOME_ADMITTED, "admitted_for_handler_resolution", 0),
+        pinValidation.scriptPinEpoch());
   }
 
   private TriggerAdmission rejected(String reason) {
     return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, reason, 0);
+  }
+
+  private static ValidationResult validation(TriggerAdmission admission) {
+    return new ValidationResult(admission, 0L);
   }
 
   /** Validates the nullable/unpinned branches before they can reach the durable claim. */
@@ -1428,9 +1433,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       String realmSlug,
       String pointerVersion) {}
 
-  private static final class PinEpochHolder {
-    private Long value;
-  }
+  private record ValidationResult(TriggerAdmission admission, long scriptPinEpoch) {}
 
   private record PinValidation(TriggerAdmission admission, Long scriptPinEpoch) {}
 

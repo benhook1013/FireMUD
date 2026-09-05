@@ -279,25 +279,17 @@ public class ScriptWorkItemRepository {
   }
 
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
+    Condition eligibility = cleanupEligibility(status, updatedAt);
     List<Long> ids =
         dsl.select(SCRIPT_WORK_ITEMS.ID)
             .from(SCRIPT_WORK_ITEMS)
-            .where(
-                SCRIPT_WORK_ITEMS
-                    .STATUS
-                    .eq(status)
-                    .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))))
+            .where(eligibility)
             // The cleanup service calls this method in its existing transaction. Lock the
             // eligibility decision until child evidence and the parent are deleted so a replay
             // cannot revive a row after this select but before the delete.
             .forUpdate()
             .fetch(SCRIPT_WORK_ITEMS.ID);
-    return deleteByIds(
-        ids,
-        SCRIPT_WORK_ITEMS
-            .STATUS
-            .eq(status)
-            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt))));
+    return deleteByIds(ids, eligibility);
   }
 
   /**
@@ -618,6 +610,13 @@ public class ScriptWorkItemRepository {
     return dsl.deleteFrom(SCRIPT_WORK_ITEMS)
         .where(SCRIPT_WORK_ITEMS.ID.in(ids).and(parentEligibility))
         .execute();
+  }
+
+  private static Condition cleanupEligibility(String status, Instant updatedAt) {
+    return SCRIPT_WORK_ITEMS
+        .STATUS
+        .eq(status)
+        .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {
