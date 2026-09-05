@@ -7,6 +7,7 @@ This document collects Logging & Admin operational behavior, readiness expectati
 - Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - REST endpoints listen on port `8080` and gRPC on port `6565`.
+- The accepted no-retained-data reset replaces the former V1-V3 migration chain with one canonical `V1__baseline.sql` containing moderation actions, player reports, and log events. It supports fresh schema creation only and is not an in-place upgrade path for an existing Logging & Admin database.
 
 ## Availability and Degradation Expectations
 
