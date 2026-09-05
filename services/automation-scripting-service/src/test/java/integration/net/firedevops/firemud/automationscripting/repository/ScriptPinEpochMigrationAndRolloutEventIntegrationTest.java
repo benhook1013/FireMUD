@@ -205,8 +205,11 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
   private DriverManagerDataSource dataSource(String schemaName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
+    String baseUrl = postgres.getJdbcUrl();
     dataSource.setUrl(
-        postgres.getJdbcUrl() + (schemaName == null ? "" : "?currentSchema=" + schemaName));
+        schemaName == null
+            ? baseUrl
+            : baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + schemaName);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;

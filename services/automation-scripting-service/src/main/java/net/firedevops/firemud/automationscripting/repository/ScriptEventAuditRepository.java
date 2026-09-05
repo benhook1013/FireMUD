@@ -392,11 +392,10 @@ public class ScriptEventAuditRepository {
     if (entity.getId() == null) {
       return insertIfAbsentByHandlerIdentity(entity).audit();
     }
-    requireCoherentPinTuple(
-        normalizedScriptPinEpoch(entity), blankToNull(entity.getScriptPinControlPlaneRequestId()));
     Long normalizedScriptPinEpoch = normalizedScriptPinEpoch(entity);
     String normalizedScriptPinControlPlaneRequestId =
         blankToNull(entity.getScriptPinControlPlaneRequestId());
+    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_AUDIT)
@@ -415,10 +414,10 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID, entity.getTargetScopeId())
-            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, normalizedScriptPinEpoch(entity))
+            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, normalizedScriptPinEpoch)
             .set(
                 SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                blankToNull(entity.getScriptPinControlPlaneRequestId()))
+                normalizedScriptPinControlPlaneRequestId)
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())

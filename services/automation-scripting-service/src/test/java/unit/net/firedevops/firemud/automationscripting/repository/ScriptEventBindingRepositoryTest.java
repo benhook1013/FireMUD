@@ -63,7 +63,8 @@ class ScriptEventBindingRepositoryTest {
             1L, "patch-1", "onCommand", "v1");
 
     assertThat(sql.get())
-        .contains("order by", "priority\" asc", "script_id\" asc", "binding_id\" asc", "id\" asc");
+        .containsSubsequence(
+            "order by", "priority\" asc", "script_id\" asc", "binding_id\" asc", "id\" asc");
   }
 
   private static ScriptEventBinding binding(Long id, String bindingId) {

@@ -99,6 +99,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         normalized.indexOf("The legacy nullable game-instance column allowed");
     assertThat(normalizedOnLoadDedup).isGreaterThanOrEqualTo(0);
     assertThat(preInstanceNormalization).isLessThan(normalizedOnLoadDedup);
+    assertThat(reconciliationStart).isLessThan(normalizedOnLoadDedup);
     assertThat(normalized.substring(reconciliationStart, normalizedOnLoadDedup))
         .contains("entity_id = COALESCE(entity_id, '')", "WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
@@ -132,6 +133,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         normalized.indexOf(
             "CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity",
             normalizedIngressTupleStart);
+    assertThat(normalizedIngressTupleStart).isGreaterThanOrEqualTo(0);
+    assertThat(normalizedIngressTupleEnd).isGreaterThan(normalizedIngressTupleStart);
     assertThat(normalized.substring(normalizedIngressTupleStart, normalizedIngressTupleEnd))
         .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 

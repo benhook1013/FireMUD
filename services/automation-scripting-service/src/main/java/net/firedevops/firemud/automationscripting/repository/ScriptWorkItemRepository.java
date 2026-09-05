@@ -795,7 +795,7 @@ public class ScriptWorkItemRepository {
     entity.setRealmSlug(record.get(SCRIPT_WORK_ITEMS.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_WORK_ITEMS.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_ID));
-    entity.setBindingId(record.get(SCRIPT_WORK_ITEMS.BINDING_ID));
+    entity.setBindingId(normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.BINDING_ID)));
     entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
     entity.setPluginVersionId(
         normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
