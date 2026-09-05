@@ -29,12 +29,14 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     ScriptPatchInstanceRolloutEventRepository eventRepository =
         Mockito.mock(ScriptPatchInstanceRolloutEventRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchPinProjectionService pinProjectionService =
+        Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptPatchInstanceRolloutProjectionServiceImpl service =
         new ScriptPatchInstanceRolloutProjectionServiceImpl(
             repository,
             eventRepository,
             workItemRepository,
-            Mockito.mock(ScriptPatchPinProjectionService.class),
+            pinProjectionService,
             new ScriptRuntimeProperties());
 
     assertThatThrownBy(() -> service.getProjection("1", "game-1", "patch-1", 2L, null))
@@ -69,7 +71,7 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
                     25))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("script_pin_control_plane_request_id_required");
-    verifyNoInteractions(repository, eventRepository, workItemRepository);
+    verifyNoInteractions(repository, eventRepository, workItemRepository, pinProjectionService);
   }
 
   @Test

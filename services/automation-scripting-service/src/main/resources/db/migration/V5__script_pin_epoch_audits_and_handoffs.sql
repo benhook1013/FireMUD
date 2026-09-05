@@ -35,6 +35,32 @@ SET region_id = COALESCE(region_id, ''),
 WHERE game_instance_id IS NOT NULL
   AND (region_id IS NULL OR region_epoch IS NULL OR playable_state_scope IS NULL);
 
+-- The legacy nullable game-instance column allowed duplicate pre-instance onLoad rows because
+-- PostgreSQL treats NULL identity values as distinct. Retain one deterministic row before the
+-- dedicated non-null-safe onLoad identity index is created.
+DELETE FROM script_event_ingress_audit
+WHERE id IN (
+    SELECT ranked.id
+    FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY tenant_id,
+                                script_id,
+                                event_type,
+                                event_schema_version,
+                                script_patch_version,
+                                script_event_id,
+                                dry_run,
+                                source_service
+                   ORDER BY CASE WHEN source_state = 'IN_PROGRESS' THEN 1 ELSE 0 END, id
+               ) AS duplicate_rank
+        FROM script_event_ingress_audit
+        WHERE game_instance_id IS NULL
+          AND script_pin_epoch IS NULL
+    ) AS ranked
+    WHERE ranked.duplicate_rank > 1
+);
+
 -- The normalization above can make a legacy nullable row collide with a canonical row (or make
 -- two legacy rows collide). Retain a deterministic winner before building either runtime index;
 -- completed evidence wins over an abandoned in-progress claim, then the lowest id wins ties.

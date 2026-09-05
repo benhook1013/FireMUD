@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +56,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @SuppressFBWarnings(
@@ -109,6 +111,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
+  private final ObjectMapper objectMapper;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
@@ -123,7 +126,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
@@ -137,6 +141,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
+    this.objectMapper = objectMapper;
   }
 
   @Override
@@ -629,9 +634,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     requireText(tenantId, "tenant_id");
     if (scriptPinEpoch < 0) {
       throw new IllegalArgumentException("script_pin_epoch must be non-negative");
-    }
-    if ((scriptPinEpoch > 0) != !blankToEmpty(scriptPinControlPlaneRequestId).isBlank()) {
-      throw new IllegalArgumentException(REASON_SCRIPT_PIN_REQUEST_ID_REQUIRED);
     }
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
     String normalizedTenant = tenantId;
@@ -1945,28 +1947,26 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + shortHash(instance.getScheduleDefinitionId());
   }
 
-  private static String timerPayload(TimerFiringCandidate candidate) {
+  private String timerPayload(TimerFiringCandidate candidate) {
     ScriptScheduleInstance instance = candidate.instance();
-    String dueField =
-        candidate.wallClock()
-            ? "\"dueAt\":" + candidate.dueAt().toEpochMilli()
-            : "\"dueTickId\":" + candidate.dueTickId();
-    return "{\"scheduleId\":\""
-        + escape(instance.getScheduleDefinitionId())
-        + "\","
-        + "\"scriptPatchVersion\":\""
-        + escape(instance.getScriptPatchVersion())
-        + "\",\"scriptPinEpoch\":"
-        + candidate.scriptPinEpoch()
-        + ",\"scriptPinControlPlaneRequestId\":\""
-        + escape(candidate.scriptPinControlPlaneRequestId())
-        + "\","
-        + dueField
-        + ",\"targetScopeType\":\""
-        + escape(instance.getTargetScopeType())
-        + "\",\"targetScopeId\":\""
-        + escape(instance.getTargetScopeId())
-        + "\"}";
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("scheduleId", blankToEmpty(instance.getScheduleDefinitionId()));
+    payload.put("scriptPatchVersion", blankToEmpty(instance.getScriptPatchVersion()));
+    payload.put("scriptPinEpoch", candidate.scriptPinEpoch());
+    payload.put(
+        "scriptPinControlPlaneRequestId", blankToEmpty(candidate.scriptPinControlPlaneRequestId()));
+    if (candidate.wallClock()) {
+      payload.put("dueAt", candidate.dueAt().toEpochMilli());
+    } else {
+      payload.put("dueTickId", candidate.dueTickId());
+    }
+    payload.put("targetScopeType", blankToEmpty(instance.getTargetScopeType()));
+    payload.put("targetScopeId", blankToEmpty(instance.getTargetScopeId()));
+    try {
+      return objectMapper.writeValueAsString(payload);
+    } catch (Exception ex) {
+      throw new IllegalStateException("timer_payload_json_invalid", ex);
+    }
   }
 
   private static String scheduleKey(ScriptScheduleInstance instance) {
@@ -1995,10 +1995,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     } catch (NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 not available", ex);
     }
-  }
-
-  private static String escape(String value) {
-    return blankToEmpty(value).replace("\\", "\\\\").replace("\"", "\\\"");
   }
 
   private ScheduleInstanceSummary toSummary(ScriptScheduleInstance instance) {

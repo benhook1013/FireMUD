@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -25,6 +26,20 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptEventIngressAuditRepositoryTest {
+  @Test
+  void rejectsMismatchedPinTupleBeforeSelectingConflictTarget() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setTenantId("tenant-1");
+    entity.setGameInstanceId("game-1");
+    entity.setScriptPinEpoch(2L);
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("script_pin_control_plane_request_id");
+  }
+
   @Test
   void staleInProgressReclaimUsesRowVersionFenceAndRefreshesClaimLease() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
