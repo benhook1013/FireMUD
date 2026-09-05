@@ -76,6 +76,35 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(migration.substring(reconciliationStart, onLoadDedup))
         .contains("WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
+    assertThat(migration.substring(onLoadDedup, runtimeStart))
+        .contains(
+            "WHERE game_instance_id IS NOT NULL",
+            "AND entity_id IS NOT NULL",
+            "script_pin_epoch IS NOT NULL",
+            "script_pin_epoch IS NULL")
+        .doesNotContain("NULLS NOT DISTINCT");
+
+    int ingressTupleStart =
+        migration.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_pin_tuple");
+    int ingressTupleEnd =
+        migration.indexOf("-- Rejected instance-scoped requests", ingressTupleStart);
+    assertThat(ingressTupleStart).isGreaterThanOrEqualTo(0);
+    assertThat(ingressTupleEnd).isGreaterThan(ingressTupleStart);
+    assertThat(migration.substring(ingressTupleStart, ingressTupleEnd))
+        .contains(
+            "script_pin_epoch > 0",
+            "game_instance_id IS NOT NULL",
+            "script_pin_control_plane_request_id");
+
+    int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
+    int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);
+    assertThat(auditTupleStart).isGreaterThanOrEqualTo(0);
+    assertThat(auditTupleEnd).isGreaterThan(auditTupleStart);
+    assertThat(migration.substring(auditTupleStart, auditTupleEnd))
+        .contains(
+            "script_pin_epoch > 0",
+            "game_instance_id IS NOT NULL",
+            "script_pin_control_plane_request_id");
 
     int onLoadStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");

@@ -549,7 +549,6 @@ Inputs:
 - `tenantId`
 - Optional `gameInstanceId`
 - Optional `scriptPatchVersion`
-- Optional exact source pin filter (`scriptPinEpoch`)
 - Optional source runtime scope filters (`playableStateScope`, `regionId`, `regionEpoch`)
 - Optional `workItemId`
 - Optional `handoffOutcome`
@@ -558,6 +557,8 @@ Inputs:
 - Optional origin identity filters (`scriptId`, `pluginId`, `automationDispatchId`)
 - Optional `changedAfter` / `changedBefore`
 - Optional bounded `limit`
+
+The persisted source owner tuple (`scriptPatchVersion`, `scriptPinEpoch`, `scriptPinControlPlaneRequestId`) is response data only; `ListScriptHandoffEvents` does not accept a source-pin epoch or request-ID filter.
 
 Outputs:
 
