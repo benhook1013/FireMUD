@@ -43,6 +43,7 @@ import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -150,7 +151,7 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
-  void resolveMoveReturnsDestinationLook() {
+  void resolveMoveReturnsDestinationRoom() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
@@ -160,7 +161,16 @@ class GameLogicGrpcServiceTest {
         Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     GameLogicDraftDesignDigestService digestService = mockDigestService();
-    MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
+    MoveResult moveResult =
+        MoveResult.newBuilder()
+            .setSuccess(true)
+            .setDestinationRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId("22")
+                    .setGameInstanceId("7")
+                    .setRoomInstanceId("R-2045")
+                    .build())
+            .build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
         new GameLogicGrpcService(
@@ -194,6 +204,7 @@ class GameLogicGrpcServiceTest {
 
     Mockito.verify(moveAggregationService).resolve(any());
     assertTrue(holder.get().getSuccess());
+    assertEquals("R-2045", holder.get().getDestinationRoomInstance().getRoomInstanceId());
   }
 
   @Test

@@ -162,7 +162,7 @@ public final class LookCommandHandler {
     return output;
   }
 
-  private LookResult resolveLook(SessionContext context) {
+  LookResult resolveLook(SessionContext context) {
     String roomId =
         StringUtils.hasText(context.roomInstanceId())
             ? context.roomInstanceId()

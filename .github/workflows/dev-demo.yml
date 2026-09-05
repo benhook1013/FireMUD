@@ -453,37 +453,24 @@ jobs:
               f"{last_status}: {sanitize_error_body(last_body)}"
             )
 
-          gateway_base_url = ""
-          if bootstrap_mode == "account":
-            gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]
-            wait_for_ready(
-              "spring-cloud-gateway",
-              f"{gateway_base_url}/actuator/health/readiness",
-            )
-            status, bootstrap_body = issue_player_bootstrap()
-            if status >= 400:
-              raise SystemExit(
-                "Player bootstrap failed with status "
-                f"{status}: {sanitize_error_body(bootstrap_body)}"
-              )
-            bootstrap_payload = json.loads(bootstrap_body or "{}")
-            account_id = (((bootstrap_payload.get("data") or {}).get("accountId")))
-            if not account_id:
-              raise SystemExit("Dev-demo bootstrap response did not include account id")
-            with open(os.environ["BOOTSTRAP_ACCOUNT_ID_FILE"], "w", encoding="utf-8") as account_file:
-              account_file.write(str(account_id))
-            raise SystemExit(0)
-
-          if bootstrap_mode != "session":
+          if bootstrap_mode != "all":
             raise SystemExit(f"Unsupported dev-demo bootstrap mode: {bootstrap_mode}")
 
-          try:
-            with open("/tmp/account-id", encoding="utf-8") as account_file:
-              account_id = account_file.read().strip()
-          except OSError as exc:
-            raise SystemExit(f"Dev-demo bootstrap account id could not be read: {exc}")
+          gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]
+          wait_for_ready(
+            "spring-cloud-gateway",
+            f"{gateway_base_url}/actuator/health/readiness",
+          )
+          status, bootstrap_body = issue_player_bootstrap()
+          if status >= 400:
+            raise SystemExit(
+              "Player bootstrap failed with status "
+              f"{status}: {sanitize_error_body(bootstrap_body)}"
+            )
+          bootstrap_payload = json.loads(bootstrap_body or "{}")
+          account_id = ((bootstrap_payload.get("data") or {}).get("accountId"))
           if not account_id:
-            raise SystemExit("Dev-demo bootstrap account id was empty")
+            raise SystemExit("Dev-demo bootstrap response did not include account id")
 
           wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
           wait_for_ready("entity-management-service", "http://entity-management-service:8080/actuator/health/readiness")
@@ -493,32 +480,15 @@ jobs:
           wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
           wait_for_ready("spring-cloud-gateway", "http://spring-cloud-gateway/actuator/health/readiness")
 
-          status, session_body = bootstrap_session(account_id)
+          status, session_body = bootstrap_session(str(account_id))
+          if status >= 400:
+            raise SystemExit(
+              "Dev-demo smoke session bootstrap failed with status "
+              f"{status}: {sanitize_error_body(session_body)}"
+            )
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
           BOOTSTRAP_SECRET_DIR=
-          BOOTSTRAP_ACCOUNT_ID_FILE=/tmp/dev-demo-account-id
-          BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log
-          BOOTSTRAP_PORT_FORWARD_PID=
-          cleanup_bootstrap_port_forward() {
-            if [[ -z "${BOOTSTRAP_PORT_FORWARD_PID:-}" ]]; then
-              return 0
-            fi
-            kill "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
-            wait "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
-            BOOTSTRAP_PORT_FORWARD_PID=
-          }
-          cleanup_bootstrap_account_id_file() {
-            if [[ -z "${BOOTSTRAP_ACCOUNT_ID_FILE:-}" ]]; then
-              return 0
-            fi
-            if rm -f "${BOOTSTRAP_ACCOUNT_ID_FILE}"; then
-              BOOTSTRAP_ACCOUNT_ID_FILE=
-              return 0
-            fi
-            echo "::error::Failed to remove dev-demo bootstrap account id file" >&2
-            return 1
-          }
           cleanup_bootstrap_temp_dir() {
             if [[ -z "${BOOTSTRAP_SECRET_DIR}" ]]; then
               return 0
@@ -545,12 +515,8 @@ jobs:
           cleanup_bootstrap_resources() {
             local status=$?
             set +e
-            cleanup_bootstrap_port_forward
             kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1
             kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1
-            if ! cleanup_bootstrap_account_id_file; then
-              status=1
-            fi
             if ! cleanup_bootstrap_temp_dir; then
               status=1
             fi
@@ -570,56 +536,8 @@ jobs:
             fi
           done
           BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
-          BOOTSTRAP_GATEWAY_PORT=
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward \
-            --address 127.0.0.1 \
-            service/spring-cloud-gateway \
-            :80 \
-            >"${BOOTSTRAP_PORT_FORWARD_LOG}" 2>&1 &
-          BOOTSTRAP_PORT_FORWARD_PID=$!
-          for attempt in {1..30}; do
-            if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-              echo "::error::Dev-demo Gateway port-forward exited before binding" >&2
-              cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-              exit 1
-            fi
-            BOOTSTRAP_GATEWAY_PORT="$({
-              sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80$/\1/p' \
-                "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            } | head -n1)"
-            if [[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-              && (( BOOTSTRAP_GATEWAY_PORT > 0 && BOOTSTRAP_GATEWAY_PORT <= 65535 )); then
-              break
-            fi
-            sleep 1
-          done
-          if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-            echo "::error::Dev-demo Gateway port-forward exited before account bootstrap" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
-          if [[ ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-            || (( BOOTSTRAP_GATEWAY_PORT < 1 || BOOTSTRAP_GATEWAY_PORT > 65535 )); then
-            echo "::error::Dev-demo Gateway port-forward did not report a valid local port" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
-          if ! BOOTSTRAP_MODE=account \
-            BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
-            BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
-            python3 "${BOOTSTRAP_SCRIPT}"; then
-            echo "Dev-demo Gateway port-forward account bootstrap failed."
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
-          cleanup_bootstrap_port_forward
-          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then
-            echo "::error::Dev-demo bootstrap did not write an account id" >&2
-            exit 1
-          fi
           kubectl -n "${PREVIEW_NAMESPACE}" create configmap dev-demo-bootstrap-script \
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
-            --from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
             --dry-run=client -o yaml | kubectl apply -f -
           (
             umask 077
@@ -652,7 +570,9 @@ jobs:
                 command: ["python", "/tmp/bootstrap.py"]
                 env:
                   - name: BOOTSTRAP_MODE
-                    value: session
+                    value: all
+                  - name: BOOTSTRAP_GATEWAY_BASE_URL
+                    value: http://spring-cloud-gateway
                 envFrom:
                   - secretRef:
                       name: dev-demo-bootstrap-env

@@ -193,20 +193,15 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_non_text_account_id_write(self):
+    def test_validate_workflow_rejects_account_id_file_plumbing(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        self.assertIn("account_file.write(str(account_id))", bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            "account_file.write(str(account_id))",
-            "account_file.write(account_id)",
-            1,
-        )
+        invalid_manifest = bootstrap_manifest + "\n--from-file=account-id=/tmp/account-id"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
                 AssertionError,
-                "dev-demo bootstrap must write the account id as text",
+                "legacy .*account-id file plumbing",
             ):
                 self.validator.validate_workflow(root)
 
@@ -276,66 +271,58 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_fixed_player_bootstrap_port(self):
+    def test_validate_workflow_rejects_legacy_port_forward_transport(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
-        self.assertIn(dynamic_forward, bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            dynamic_forward,
-            'service/spring-cloud-gateway \\\n  "${BOOTSTRAP_GATEWAY_PORT}:80" \\\n',
-            1,
-        )
+        invalid_manifest = bootstrap_manifest + "\nkubectl port-forward service/spring-cloud-gateway :80"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "dynamic :80 local-port syntax"
+                AssertionError, "legacy .*account-id file plumbing"
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_literal_bootstrap_port_assignment(self):
+    def test_validate_workflow_rejects_non_gateway_endpoint(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        dynamic_assignment = "BOOTSTRAP_GATEWAY_PORT="
-        dynamic_forward = "service/spring-cloud-gateway \\\n  :80 \\\n"
+        dynamic_assignment = "value: http://spring-cloud-gateway"
+        dynamic_forward = dynamic_assignment
         self.assertIn(dynamic_assignment, bootstrap_manifest)
         self.assertIn(dynamic_forward, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            dynamic_assignment, "BOOTSTRAP_GATEWAY_PORT=12345", 1
+            dynamic_assignment, "value: http://account-service:8080", 1
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "dynamically selected local port"
+                AssertionError, "one in-cluster pod; missing"
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_missing_pre_python_liveness_check(self):
+    def test_validate_workflow_rejects_missing_gateway_endpoint(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        liveness_check = (
-            'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
-        )
-        self.assertEqual(2, bootstrap_manifest.count(liveness_check))
-        invalid_manifest = bootstrap_manifest.replace(liveness_check, "", 1)
+        gateway_endpoint = "value: http://spring-cloud-gateway"
+        self.assertIn(gateway_endpoint, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(gateway_endpoint, "", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "recheck port-forward liveness before invoking Python"
+                AssertionError, "one in-cluster pod; missing"
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_unbounded_port_forward_readiness(self):
+    def test_validate_workflow_rejects_split_bootstrap_mode(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        self.assertIn("for attempt in {1..30}; do", bootstrap_manifest)
+        self.assertIn("value: all", bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            "for attempt in {1..30}; do", "while true; do", 1
+            "value: all", "value: session", 1
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "short bounded port-forward readiness loop"
+                AssertionError, "legacy .*account-id file plumbing"
             ):
                 self.validator.validate_workflow(root)
 

@@ -129,3 +129,13 @@ Entry format:
   - Context: tightening local Compose smoke project binding and lifecycle checks.
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
+
+- `2026-09-06`: Unit mocks can miss destination-bound gameplay identity failures
+  - Context: hosted movement reached the destination room read with an attestation issued for the source room, while unit tests mocked World and Entity boundaries independently.
+  - Observation: passing participant mocks do not prove that a cross-service identity remains valid across a room transition.
+  - Expected pattern: assert the attestation or equivalent scoped identity at destination transitions in cross-service proof, while keeping room-bound validation fail-closed.
+
+- `2026-09-06`: CI bootstrap should use an authorized in-cluster path
+  - Context: the dev-demo account bootstrap used a local Gateway port-forward and failed because the deployer identity lacked `pods/portforward`, although the hosted application was reachable.
+  - Observation: granting port-forward solely to CI expands cluster privilege for a setup hop that can run inside the existing namespace.
+  - Expected pattern: perform account and session bootstrap through one short-lived in-cluster pod with the minimum existing access, and require a hosted rerun before claiming deployment proof.

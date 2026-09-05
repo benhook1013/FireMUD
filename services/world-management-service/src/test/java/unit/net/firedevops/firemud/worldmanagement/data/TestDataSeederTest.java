@@ -105,6 +105,9 @@ class TestDataSeederTest {
     when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
             1L, 1L, 30L, 31L, "NORTH"))
         .thenReturn(Optional.empty());
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 31L, 30L, "SOUTH"))
+        .thenReturn(Optional.empty());
     when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
@@ -125,8 +128,14 @@ class TestDataSeederTest {
     verify(regionInstanceRepository).save(any());
     ArgumentCaptor<net.firedevops.firemud.worldmanagement.entity.RoomExit> exitCaptor =
         ArgumentCaptor.forClass(net.firedevops.firemud.worldmanagement.entity.RoomExit.class);
-    verify(roomExitRepository).save(exitCaptor.capture());
-    assertEquals("NORTH", exitCaptor.getValue().getDirection());
+    verify(roomExitRepository, times(2)).save(exitCaptor.capture());
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        exitCaptor.getAllValues().stream().map(RoomExit::getDirection).toList());
+    assertEquals(30L, exitCaptor.getAllValues().get(0).getFromRoom().getId());
+    assertEquals(31L, exitCaptor.getAllValues().get(0).getToRoom().getId());
+    assertEquals(31L, exitCaptor.getAllValues().get(1).getFromRoom().getId());
+    assertEquals(30L, exitCaptor.getAllValues().get(1).getToRoom().getId());
   }
 
   @Test
@@ -159,7 +168,10 @@ class TestDataSeederTest {
     when(roomRepository.save(any())).thenReturn(existingRoom1, existingRoom2);
     when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
             1L, 1L, 30L, 31L, "NORTH"))
-        .thenReturn(Optional.of(new net.firedevops.firemud.worldmanagement.entity.RoomExit()));
+        .thenReturn(Optional.of(existingExit(40L)));
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 31L, 30L, "SOUTH"))
+        .thenReturn(Optional.of(existingExit(41L)));
     when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L)).thenReturn(List.of());
@@ -176,7 +188,13 @@ class TestDataSeederTest {
     verify(regionRepository).save(any());
     verify(zoneRepository).save(any());
     verify(roomRepository, times(2)).save(any());
-    verify(roomExitRepository).save(any());
+    ArgumentCaptor<RoomExit> exitCaptor = ArgumentCaptor.forClass(RoomExit.class);
+    verify(roomExitRepository, times(2)).save(exitCaptor.capture());
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        exitCaptor.getAllValues().stream().map(RoomExit::getDirection).toList());
+    assertEquals(
+        List.of(40L, 41L), exitCaptor.getAllValues().stream().map(RoomExit::getId).toList());
     verify(regionRepository, never()).count();
   }
 
@@ -202,6 +220,11 @@ class TestDataSeederTest {
     templateExit.setToRoom(templateRoom2);
     templateExit.setDirection("NORTH");
     templateExit.setCost(1);
+    RoomExit reverseTemplateExit = new RoomExit();
+    reverseTemplateExit.setFromRoom(templateRoom2);
+    reverseTemplateExit.setToRoom(templateRoom1);
+    reverseTemplateExit.setDirection("SOUTH");
+    reverseTemplateExit.setCost(1);
     WorldInstance existingWorld = new WorldInstance();
     existingWorld.setId(200L);
     existingWorld.setTenantId(1L);
@@ -225,12 +248,15 @@ class TestDataSeederTest {
     when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
             1L, 1L, 30L, 31L, "NORTH"))
         .thenReturn(Optional.of(templateExit));
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 31L, 30L, "SOUTH"))
+        .thenReturn(Optional.of(reverseTemplateExit));
     when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
         .thenReturn(List.of(existingZone));
     when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
         .thenReturn(List.of(templateRoom1, templateRoom2));
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
-        .thenReturn(List.of(templateExit));
+        .thenReturn(List.of(templateExit, reverseTemplateExit));
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(1L, 1L))
         .thenReturn(Optional.of(existingWorld));
     when(worldInstanceRepository.save(any()))
@@ -249,6 +275,9 @@ class TestDataSeederTest {
     when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
             1L, 1L, 1021L))
         .thenReturn(List.of());
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+            1L, 1L, 2045L))
+        .thenReturn(List.of());
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> withRoomInstanceExitId(invocation.getArgument(0)));
 
@@ -264,10 +293,14 @@ class TestDataSeederTest {
     assertEquals(1021L, savedRooms.get(0).getRoomInstanceRowId());
     assertEquals(2045L, savedRooms.get(1).getRoomInstanceRowId());
     ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
-    verify(roomInstanceExitRepository).save(exitCaptor.capture());
-    assertEquals("NORTH", exitCaptor.getValue().getDirection());
-    assertNotNull(exitCaptor.getValue().getFromRoomInstance());
-    assertNotNull(exitCaptor.getValue().getToRoomInstance());
+    verify(roomInstanceExitRepository, times(2)).save(exitCaptor.capture());
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        exitCaptor.getAllValues().stream().map(RoomInstanceExit::getDirection).toList());
+    assertNotNull(exitCaptor.getAllValues().get(0).getFromRoomInstance());
+    assertNotNull(exitCaptor.getAllValues().get(0).getToRoomInstance());
+    assertNotNull(exitCaptor.getAllValues().get(1).getFromRoomInstance());
+    assertNotNull(exitCaptor.getAllValues().get(1).getToRoomInstance());
   }
 
   @Test
@@ -312,6 +345,11 @@ class TestDataSeederTest {
     templateExit.setToRoom(templateRoom2);
     templateExit.setDirection("NORTH");
     templateExit.setCost(1);
+    RoomExit reverseTemplateExit = new RoomExit();
+    reverseTemplateExit.setFromRoom(templateRoom2);
+    reverseTemplateExit.setToRoom(templateRoom1);
+    reverseTemplateExit.setDirection("SOUTH");
+    reverseTemplateExit.setCost(1);
 
     when(regionRepository.findFirstByTenantIdAndVersionIdAndShardIdAndName(
             1L, 1L, 0, "Demo Region"))
@@ -330,12 +368,15 @@ class TestDataSeederTest {
     when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
             1L, 1L, 30L, 31L, "NORTH"))
         .thenReturn(Optional.of(templateExit));
+    when(roomExitRepository.findFirstByTenantIdAndVersionIdAndFromRoomIdAndToRoomIdAndDirection(
+            1L, 1L, 31L, 30L, "SOUTH"))
+        .thenReturn(Optional.of(reverseTemplateExit));
     when(zoneRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
         .thenReturn(List.of(existingZone));
     when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
         .thenReturn(List.of(templateRoom1, templateRoom2));
     when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(1L, 1L))
-        .thenReturn(List.of(templateExit));
+        .thenReturn(List.of(templateExit, reverseTemplateExit));
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(2L, 55L))
         .thenReturn(Optional.empty());
     when(worldInstanceRepository.save(any()))
@@ -353,6 +394,9 @@ class TestDataSeederTest {
         .thenAnswer(invocation -> withRoomInstanceRowId(invocation.getArgument(0)));
     when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
             2L, 55L, 1021L))
+        .thenReturn(List.of());
+    when(roomInstanceExitRepository.findByTenantIdAndGameInstanceIdAndFromRoomInstanceRecordId(
+            2L, 55L, 2045L))
         .thenReturn(List.of());
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> withRoomInstanceExitId(invocation.getArgument(0)));
@@ -375,6 +419,12 @@ class TestDataSeederTest {
       worldInstance.setRowVersion(0L);
     }
     return worldInstance;
+  }
+
+  private RoomExit existingExit(long id) {
+    RoomExit exit = new RoomExit();
+    exit.setId(id);
+    return exit;
   }
 
   private RegionInstance withRegionInstanceId(RegionInstance regionInstance) {

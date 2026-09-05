@@ -83,37 +83,26 @@ BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
 )
-BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
-    "cleanup_bootstrap_port_forward() {",
-    "BOOTSTRAP_PORT_FORWARD_PID=$!",
-    "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward",
-    "--address 127.0.0.1",
-    "service/spring-cloud-gateway",
-    ":80",
-    "BOOTSTRAP_MODE=account",
-    'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
+BOOTSTRAP_IN_CLUSTER_REQUIRED_MARKERS = (
+    'if bootstrap_mode != "all":',
     'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
     'return f"{gateway_base_url}/api/account{path}"',
-    'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
-    '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
-    'value: session',
+    'status, bootstrap_body = issue_player_bootstrap()',
+    'account_id = ((bootstrap_payload.get("data") or {}).get("accountId"))',
+    'status, session_body = bootstrap_session(str(account_id))',
+    "value: all",
+    "value: http://spring-cloud-gateway",
 )
-BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS = (
-    'BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log',
-    'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then',
-    "Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80",
-    'BOOTSTRAP_GATEWAY_PORT="$({ sed -nE',
-    '[[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
-    "BOOTSTRAP_GATEWAY_PORT <= 65535",
-    'cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true',
+BOOTSTRAP_LEGACY_TRANSPORT_MARKERS = (
+    "port-forward",
+    "BOOTSTRAP_PORT_FORWARD",
+    "BOOTSTRAP_GATEWAY_PORT",
+    "BOOTSTRAP_ACCOUNT_ID_FILE",
+    "BOOTSTRAP_MODE=account",
+    "value: session",
+    "127.0.0.1",
+    "account-id",
 )
-BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN = re.compile(
-    r"service/spring-cloud-gateway(?:\s+\\)?\s+:80"
-)
-BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN = re.compile(
-    r"for attempt in \{1\.\.(?P<attempts>[0-9]+)\}; do"
-)
-BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER = "account_file.write(str(account_id))"
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
   if [[ -z "${!credential:-}" ]]; then
     echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
@@ -674,11 +663,29 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap pod spec.containers[0] must be a mapping"
         )
-    if containers[0].get("envFrom", []) != [
+    container = containers[0]
+    if container.get("command") != ["python", "/tmp/bootstrap.py"]:
+        raise AssertionError(
+            "dev-demo bootstrap pod must execute the single in-cluster bootstrap script"
+        )
+    if container.get("envFrom", []) != [
         {"secretRef": {"name": "dev-demo-bootstrap-env"}}
     ]:
         raise AssertionError(
             "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
+        )
+    environment = {
+        item.get("name"): item.get("value")
+        for item in container.get("env", [])
+        if isinstance(item, dict)
+    }
+    if environment.get("BOOTSTRAP_MODE") != "all":
+        raise AssertionError(
+            "dev-demo bootstrap pod must run account and session bootstrap together"
+        )
+    if environment.get("BOOTSTRAP_GATEWAY_BASE_URL") != "http://spring-cloud-gateway":
+        raise AssertionError(
+            "dev-demo bootstrap pod must use the in-cluster Gateway service"
         )
 
 
@@ -774,60 +781,23 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             raise AssertionError(
                 f"dev-demo bootstrap step contract missing: {expected}"
             )
-    for expected in BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS:
+    legacy_markers = [
+        marker
+        for marker in BOOTSTRAP_LEGACY_TRANSPORT_MARKERS
+        if normalize_script(marker) in normalized
+    ]
+    if legacy_markers:
+        raise AssertionError(
+            "dev-demo bootstrap must use the in-cluster transport without legacy "
+            "port-forward or account-id file plumbing; offending markers: "
+            + ", ".join(legacy_markers)
+        )
+    for expected in BOOTSTRAP_IN_CLUSTER_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
-                "dev-demo player bootstrap must use the authenticated Kubernetes "
-                f"port-forward transport; missing: {expected}"
+                "dev-demo bootstrap must run account and session setup in one "
+                f"in-cluster pod; missing: {expected}"
             )
-    if re.search(r"\bBOOTSTRAP_GATEWAY_PORT\s*=\s*[0-9]+\b", normalized):
-        raise AssertionError(
-            "dev-demo player bootstrap must use kubectl's dynamically selected local port"
-        )
-    if BOOTSTRAP_DYNAMIC_PORT_FORWARD_PATTERN.search(normalized) is None:
-        raise AssertionError(
-            "dev-demo player bootstrap must use kubectl's dynamic :80 local-port syntax"
-        )
-    for expected in BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS:
-        if normalize_script(expected) not in normalized:
-            raise AssertionError(
-                "dev-demo player bootstrap must prove the dynamic port-forward binding; "
-                f"missing: {expected}"
-            )
-    readiness_loop_match = BOOTSTRAP_PORT_FORWARD_LOOP_PATTERN.search(normalized)
-    if readiness_loop_match is None or not 1 <= int(
-        readiness_loop_match["attempts"]
-    ) <= 60:
-        raise AssertionError(
-            "dev-demo player bootstrap must use a short bounded port-forward readiness loop"
-        )
-    readiness_loop = readiness_loop_match.group(0)
-    python_invocation = normalize_script('python3 "${BOOTSTRAP_SCRIPT}"')
-    liveness_check = normalize_script(
-        'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
-    )
-    python_index = normalized.find(python_invocation)
-    if python_index == -1:
-        raise AssertionError(
-            'dev-demo player bootstrap must invoke Python as python3 "${BOOTSTRAP_SCRIPT}"'
-        )
-    if normalized.find(readiness_loop) > python_index:
-        raise AssertionError(
-            "dev-demo player bootstrap must prove the port-forward before invoking Python"
-        )
-    if (
-        normalized.count(liveness_check) < 2
-        or normalized.rfind(liveness_check) > python_index
-    ):
-        raise AssertionError(
-            "dev-demo player bootstrap must recheck port-forward liveness before invoking Python"
-        )
-    if normalize_script(BOOTSTRAP_ACCOUNT_ID_REQUIRED_MARKER) not in normalized:
-        raise AssertionError(
-            "dev-demo bootstrap must write the account id as text to preserve the "
-            "account-id file flow"
-        )
-
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
     credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
     if credential_validation not in normalized_lines:
@@ -899,6 +869,16 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap must send exactly accountIdentifier and secret "
             "to /auth/player-bootstrap"
+        )
+
+    session_index = normalized.find(
+        normalize_script('status, session_body = bootstrap_session(str(account_id))')
+    )
+    if session_index < normalized.find(
+        normalize_script('status, bootstrap_body = issue_player_bootstrap()')
+    ):
+        raise AssertionError(
+            "dev-demo bootstrap must obtain the account id before session bootstrap"
         )
 
     bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]

@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,8 +9,6 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.gamelogic.test.LookTestFixtures;
-import net.firedevops.firemud.gamelogic.v1.LookRequest;
-import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -22,7 +19,6 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
@@ -30,18 +26,16 @@ import org.slf4j.MDC;
 @ExtendWith(MockitoExtension.class)
 class MoveAggregationServiceTest {
   @Mock private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub worldStub;
-  @Mock private LookAggregationService lookAggregationService;
 
   private MoveAggregationService service;
 
   @BeforeEach
   void setUp() {
-    service =
-        new MoveAggregationService(worldStub, lookAggregationService, new SimpleMeterRegistry());
+    service = new MoveAggregationService(worldStub, new SimpleMeterRegistry());
   }
 
   @Test
-  void resolveReturnsDestinationLookForMatchingDirection() {
+  void resolveReturnsDestinationRoomForMatchingDirection() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
             .setTenantId(LookTestFixtures.TENANT)
@@ -67,17 +61,6 @@ class MoveAggregationServiceTest {
             .build();
     when(worldStub.getRoomSnapshot(any()))
         .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
-    LookResult destination =
-        LookTestFixtures.sampleLookResult().toBuilder()
-            .setRoomInstance(
-                RoomInstanceRef.newBuilder()
-                    .setTenantId(LookTestFixtures.TENANT)
-                    .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
-                    .setRoomInstanceId("R-2045")
-                    .build())
-            .build();
-    when(lookAggregationService.resolve(any())).thenReturn(destination);
-
     MoveResult result =
         service.resolve(
             MoveRequest.newBuilder()
@@ -94,16 +77,11 @@ class MoveAggregationServiceTest {
                 .build());
 
     assertThat(result.getSuccess()).isTrue();
-    assertThat(result.getDestinationLook().getRoomInstance().getRoomInstanceId())
-        .isEqualTo("R-2045");
-
-    ArgumentCaptor<LookRequest> lookRequestCaptor = ArgumentCaptor.forClass(LookRequest.class);
-    verify(lookAggregationService).resolve(lookRequestCaptor.capture());
-    assertThat(lookRequestCaptor.getValue().getRoomInstance().getRoomInstanceId())
-        .isEqualTo("R-2045");
-    assertThat(lookRequestCaptor.getValue().getRoomInstance().getGameInstanceId())
+    assertThat(result.getDestinationRoomInstance().getRoomInstanceId()).isEqualTo("R-2045");
+    assertThat(result.getDestinationRoomInstance().getTenantId())
+        .isEqualTo(LookTestFixtures.TENANT);
+    assertThat(result.getDestinationRoomInstance().getGameInstanceId())
         .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
-    assertThat(lookRequestCaptor.getValue().getPreferredLocale()).isEqualTo("fr");
     verify(worldStub).getRoomSnapshot(any());
   }
 
@@ -127,8 +105,7 @@ class MoveAggregationServiceTest {
     assertThat(result.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.getError().getMessage())
         .contains("room_instance.room_instance_id must be a runtime room id like R-1021");
-    verify(worldStub, never()).getRoomSnapshot(any());
-    verify(lookAggregationService, never()).resolve(any());
+    verify(worldStub, org.mockito.Mockito.never()).getRoomSnapshot(any());
   }
 
   @Test
@@ -148,29 +125,26 @@ class MoveAggregationServiceTest {
             .build();
     when(worldStub.getRoomSnapshot(any()))
         .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
-    when(lookAggregationService.resolve(any())).thenReturn(LookTestFixtures.sampleLookResult());
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId(LookTestFixtures.TENANT)
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setPreferredLocale("en-NZ")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId(LookTestFixtures.TENANT)
+                        .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                        .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                        .build())
+                .setDirection("north")
+                .build());
 
-    service.resolve(
-        MoveRequest.newBuilder()
-            .setTenantId(LookTestFixtures.TENANT)
-            .setSessionId("session-1")
-            .setCharacterId("player-1")
-            .setPreferredLocale("en-NZ")
-            .setRoomInstance(
-                RoomInstanceRef.newBuilder()
-                    .setTenantId(LookTestFixtures.TENANT)
-                    .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
-                    .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
-                    .build())
-            .setDirection("north")
-            .build());
-
-    ArgumentCaptor<LookRequest> lookRequestCaptor = ArgumentCaptor.forClass(LookRequest.class);
-    verify(lookAggregationService).resolve(lookRequestCaptor.capture());
-    assertThat(lookRequestCaptor.getValue().getRoomInstance().getGameInstanceId())
+    assertThat(result.getSuccess()).isTrue();
+    assertThat(result.getDestinationRoomInstance().getGameInstanceId())
         .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
-    assertThat(lookRequestCaptor.getValue().getRoomInstance().getRoomInstanceId())
-        .isEqualTo("R-3042");
+    assertThat(result.getDestinationRoomInstance().getRoomInstanceId()).isEqualTo("R-3042");
   }
 
   @Test
@@ -209,7 +183,6 @@ class MoveAggregationServiceTest {
 
     assertThat(result.getSuccess()).isFalse();
     assertThat(result.getError().getCode()).isEqualTo("INVALID_EXIT");
-    verify(lookAggregationService, never()).resolve(any());
   }
 
   @Test
@@ -261,15 +234,6 @@ class MoveAggregationServiceTest {
                           .build())
                   .build();
             });
-    when(lookAggregationService.resolve(any()))
-        .thenAnswer(
-            ignored -> {
-              assertThat(MDC.get("tenantId")).isEqualTo(LookTestFixtures.TENANT);
-              assertThat(MDC.get("characterId")).isEqualTo("player-1");
-              assertThat(MDC.get("gameInstanceId")).isNull();
-              return LookTestFixtures.sampleLookResult();
-            });
-
     service.resolve(
         MoveRequest.newBuilder()
             .setTenantId(LookTestFixtures.TENANT)
