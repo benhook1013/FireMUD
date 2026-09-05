@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,6 +15,7 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.GameplayCommandSourceCoherence;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import net.firedevops.firemud.gamesession.service.TickService;
 
@@ -395,11 +395,9 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static boolean sameSourceType(String left, String right) {
-    return Objects.equals(normalizeSourceType(left), normalizeSourceType(right));
-  }
-
-  private static String normalizeSourceType(String value) {
-    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+    return Objects.equals(
+        GameplayCommandSourceCoherence.normalizeSourceType(left),
+        GameplayCommandSourceCoherence.normalizeSourceType(right));
   }
 
   private static boolean samePlayableStateScope(String left, String right) {
@@ -447,7 +445,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     requireText(request.regionId(), "region_id is required");
     ControlPlaneRequestParser.requirePositive(request.regionEpoch(), "region_epoch");
     requireText(request.sourceType(), "source_type is required");
-    String normalizedSourceType = normalizeSourceType(request.sourceType());
+    String normalizedSourceType =
+        GameplayCommandSourceCoherence.normalizeSourceType(request.sourceType());
     if ("AUTOMATION".equals(normalizedSourceType)) {
       requireText(request.automationDispatchId(), "automation_dispatch_id is required");
       requireText(request.automationWorkItemId(), "automation_work_item_id is required");
@@ -704,13 +703,12 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static boolean isLocalAutomation(AdmissionRequest request) {
-    return "AUTOMATION".equals(normalizeSourceType(request.sourceType()))
-        && blankToNull(request.remoteFollowupId()) == null;
+    return GameplayCommandSourceCoherence.isLocalAutomation(
+        request.sourceType(), request.remoteFollowupId());
   }
 
   private static boolean isLocalAutomation(GameplayCommand command) {
-    return "AUTOMATION".equals(normalizeSourceType(command.getSourceType()))
-        && blankToNull(command.getRemoteFollowupId()) == null;
+    return GameplayCommandSourceCoherence.isLocalAutomation(command);
   }
 
   private static GameplayCommand acceptedAutomationCommand(AdmissionRequest request) {
@@ -732,7 +730,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAcceptedAt(now);
     command.setLastAttemptAt(now);
     command.setAttemptCount(1);
-    command.setSourceType(normalizeSourceType(request.sourceType()));
+    command.setSourceType(GameplayCommandSourceCoherence.normalizeSourceType(request.sourceType()));
     command.setAutomationDispatchId(blankToNull(request.automationDispatchId()));
     command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
     command.setScriptId(blankToNull(request.scriptId()));
@@ -765,7 +763,8 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static String commandId(AdmissionRequest request) {
-    if ("REMOTE_FOLLOWUP".equals(normalizeSourceType(request.sourceType()))
+    if ("REMOTE_FOLLOWUP"
+            .equals(GameplayCommandSourceCoherence.normalizeSourceType(request.sourceType()))
         && request.remoteFollowupId() != null
         && !request.remoteFollowupId().isBlank()) {
       return "rfcmd-" + request.remoteFollowupId();

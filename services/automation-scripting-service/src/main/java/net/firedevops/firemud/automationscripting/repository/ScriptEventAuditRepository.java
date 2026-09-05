@@ -538,7 +538,7 @@ public class ScriptEventAuditRepository {
     entity.setTargetScopeType(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID));
     Long scriptPinEpoch = record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH);
-    entity.setScriptPinEpoch(scriptPinEpoch);
+    entity.setScriptPinEpoch(normalizeScriptPinEpoch(scriptPinEpoch));
     entity.setScriptPinControlPlaneRequestId(
         blankToNull(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID)));
     entity.setEventType(record.get(SCRIPT_EVENT_AUDIT.EVENT_TYPE));

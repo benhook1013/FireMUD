@@ -25,7 +25,8 @@ final class TriggerScriptEventRequestFactory {
             .setEntityId(commonFields.entityId())
             .setEventType(commonFields.eventType())
             .setEventSchemaVersion(commonFields.eventSchemaVersion())
-            .setScriptPatchVersion(commonFields.scriptPatchVersion())
+            .setScriptPatchVersion(
+                commonFields.scriptPatchVersion() == null ? "" : commonFields.scriptPatchVersion())
             .setScriptPinEpoch(commonFields.scriptPinEpoch())
             .setScriptPinControlPlaneRequestId(
                 commonFields.scriptPinControlPlaneRequestId() == null

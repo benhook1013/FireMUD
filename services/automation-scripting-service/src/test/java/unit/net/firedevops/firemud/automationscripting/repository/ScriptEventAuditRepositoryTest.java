@@ -364,9 +364,10 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
-  void insertIfAbsentByHandlerIdentityReadsBackExistingConflictWithoutChangingIdentity() {
+  void insertIfAbsentByHandlerIdentityReadsBackLegacyZeroEpochAsCanonicalNull() {
     Instant now = Instant.parse("2026-08-01T00:00:00Z");
     ScriptEventAuditRecord row = auditRecord(9L, now, now.plusSeconds(1));
+    row.setScriptPinEpoch(0L);
     row.setFinalReason("original_reason");
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<Integer> calls = new AtomicReference<>(0);

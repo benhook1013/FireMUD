@@ -112,15 +112,14 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "UPDATE script_event_ingress_audit SET region_id = COALESCE(region_id, ''), region_epoch = COALESCE(region_epoch, 0), entity_id = COALESCE(entity_id, ''),");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
     assertThat(normalizedRuntimeStart).isGreaterThan(reconciliationStart);
-    int normalizedOnLoadDedup =
-        normalized.indexOf("The legacy nullable game-instance column allowed");
-    assertThat(normalizedOnLoadDedup).isGreaterThanOrEqualTo(0);
-    assertThat(preInstanceNormalization).isLessThan(normalizedOnLoadDedup);
-    assertThat(reconciliationStart).isLessThan(normalizedOnLoadDedup);
-    assertThat(normalized.substring(reconciliationStart, normalizedOnLoadDedup))
+    int duplicateIdentityGuardStart = normalized.indexOf("DO $$", reconciliationStart);
+    assertThat(duplicateIdentityGuardStart).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isLessThan(duplicateIdentityGuardStart);
+    assertThat(reconciliationStart).isLessThan(duplicateIdentityGuardStart);
+    assertThat(normalized.substring(reconciliationStart, duplicateIdentityGuardStart))
         .contains("entity_id = COALESCE(entity_id, '')", "WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
-    assertThat(normalized.substring(normalizedOnLoadDedup, normalizedRuntimeStart))
+    assertThat(normalized.substring(duplicateIdentityGuardStart, normalizedRuntimeStart))
         .contains(
             "WHERE game_instance_id IS NULL",
             "AND script_id IS NOT NULL",
@@ -179,7 +178,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     int normalizedOnLoadEnd = normalized.indexOf(") WHERE", normalizedOnLoadStart);
     assertThat(normalizedOnLoadStart).isGreaterThan(normalizedRuntimeStart);
     assertThat(normalizedOnLoadStart).isGreaterThanOrEqualTo(0);
-    assertThat(normalizedOnLoadStart).isGreaterThan(normalizedOnLoadDedup);
+    assertThat(normalizedOnLoadStart).isGreaterThan(duplicateIdentityGuardStart);
     assertThat(normalizedOnLoadEnd).isGreaterThan(normalizedOnLoadStart);
     assertThat(normalized.substring(normalizedOnLoadStart, normalizedOnLoadEnd))
         .contains("script_id")

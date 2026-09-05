@@ -1281,60 +1281,6 @@ class GameInstanceServiceImplTest {
                                     .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
                             .build())
                     .build());
-    when(worldManagementClient.prepareWorldInstance(
-            anyLong(),
-            anyLong(),
-            anyLong(),
-            anyString(),
-            anyString(),
-            anyLong(),
-            any(),
-            any(),
-            anyString(),
-            anyLong(),
-            anyString(),
-            anyLong(),
-            any()))
-        .thenAnswer(
-            invocation ->
-                worldPreparationSnapshot(
-                    Long.toString(invocation.getArgument(0, Long.class)),
-                    Long.toString(invocation.getArgument(1, Long.class)),
-                    1L));
-    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
-        .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
-                    .newBuilder()
-                    .setWorldInstance(
-                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                            .newBuilder()
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
-                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
-                            .setLifecycleEpoch(2L)
-                            .setStatus(
-                                net.firedevops.firemud.worldmanagement.v1
-                                    .WorldInstanceLifecycleStatus
-                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                            .build())
-                    .build());
-    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
-        .thenAnswer(
-            invocation ->
-                net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse
-                    .newBuilder()
-                    .setWorldInstance(
-                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                            .newBuilder()
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
-                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
-                            .setLifecycleEpoch(2L)
-                            .setStatus(
-                                net.firedevops.firemud.worldmanagement.v1
-                                    .WorldInstanceLifecycleStatus
-                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
-                            .build())
-                    .build());
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), anyString(), anyString()))
         .thenAnswer(

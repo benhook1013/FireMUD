@@ -27,10 +27,10 @@ class V6__script_pin_epoch_projectionTest {
     assertThat(migration)
         .contains(
             "UPDATE script_patch_pin_projections",
-            "SET observed_pinned_script_patch_version = '',",
+            "SET script_pin_epoch = NULL,",
+            "observed_pinned_script_patch_version = '',",
             "last_observed_control_plane_request_id = ''",
             "ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple CHECK",
-            "script_pin_epoch IS NULL OR script_pin_epoch = 0",
             "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
             "script_pin_epoch IS NOT NULL",
@@ -38,6 +38,15 @@ class V6__script_pin_epoch_projectionTest {
             "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL",
             "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
+
+    int constraintStart =
+        migration.indexOf("ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple");
+    int constraintEnd = migration.indexOf("NOT VALID", constraintStart);
+    assertThat(constraintStart).isGreaterThanOrEqualTo(0);
+    assertThat(constraintEnd).isGreaterThan(constraintStart);
+    assertThat(migration.substring(constraintStart, constraintEnd))
+        .contains("script_pin_epoch IS NULL")
+        .doesNotContain("script_pin_epoch = 0");
 
     assertThat(migration.indexOf("UPDATE script_patch_pin_projections"))
         .isLessThan(migration.indexOf("ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple"));

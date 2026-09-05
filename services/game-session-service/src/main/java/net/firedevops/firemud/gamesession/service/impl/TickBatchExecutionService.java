@@ -187,41 +187,69 @@ final class TickBatchExecutionService {
         """
         local pending = KEYS[1]
         local queue = KEYS[2]
-        local argumentIndex = 1
-
-        local pendingCount = tonumber(ARGV[argumentIndex])
-        argumentIndex = argumentIndex + 1
-        if not pendingCount or pendingCount < 0 then
+        local argumentCount = #ARGV
+        local pendingCount = tonumber(ARGV[1])
+        if not pendingCount
+            or pendingCount < 0
+            or pendingCount ~= math.floor(pendingCount) then
           return 0
         end
+
+        local pendingPayloadStartIndex = 2
+        local sealedCountIndex = pendingPayloadStartIndex + pendingCount
+        if sealedCountIndex > argumentCount then
+          return 0
+        end
+        local sealedCount = tonumber(ARGV[sealedCountIndex])
+        if not sealedCount
+            or sealedCount < 0
+            or sealedCount ~= math.floor(sealedCount) then
+          return 0
+        end
+
+        local sealedPayloadStartIndex = sealedCountIndex + 1
+        local redisOnlyCountIndex = sealedPayloadStartIndex + sealedCount
+        if redisOnlyCountIndex > argumentCount then
+          return 0
+        end
+        local redisOnlyCount = tonumber(ARGV[redisOnlyCountIndex])
+        if not redisOnlyCount
+            or redisOnlyCount < 0
+            or redisOnlyCount ~= math.floor(redisOnlyCount) then
+          return 0
+        end
+
+        local redisOnlyPayloadStartIndex = redisOnlyCountIndex + 1
+        local expectedArgumentCount = redisOnlyPayloadStartIndex + redisOnlyCount - 1
+        if expectedArgumentCount ~= argumentCount then
+          return 0
+        end
+
+        local pendingPayloadIndex = pendingPayloadStartIndex
         for index = 1, pendingCount do
-          redis.call('LREM', pending, 0, ARGV[argumentIndex])
-          argumentIndex = argumentIndex + 1
+          redis.call('LREM', pending, 0, ARGV[pendingPayloadIndex])
+          pendingPayloadIndex = pendingPayloadIndex + 1
         end
 
-        local sealedCount = tonumber(ARGV[argumentIndex])
-        argumentIndex = argumentIndex + 1
-        if not sealedCount or sealedCount < 0 then
-          return 0
-        end
+        local sealedPayloadIndex = sealedPayloadStartIndex
         for index = 1, sealedCount do
-          redis.call('RPUSH', pending, ARGV[argumentIndex])
-          argumentIndex = argumentIndex + 1
+          redis.call('RPUSH', pending, ARGV[sealedPayloadIndex])
+          sealedPayloadIndex = sealedPayloadIndex + 1
         end
 
-        local redisOnlyCount = tonumber(ARGV[argumentIndex])
-        argumentIndex = argumentIndex + 1
-        if not redisOnlyCount or redisOnlyCount < 0 then
-          return 0
-        end
+        local redisOnlyPayloadIndex = redisOnlyPayloadStartIndex
         for index = redisOnlyCount, 1, -1 do
-          local payload = ARGV[argumentIndex + index - 1]
+          local payload = ARGV[redisOnlyPayloadIndex + index - 1]
           redis.call('LREM', queue, 0, payload)
           redis.call('LPUSH', queue, payload)
         end
         return 1
         """);
     return script;
+  }
+
+  static String restorePendingProjectionScriptText() {
+    return RESTORE_PENDING_PROJECTION_SCRIPT.getScriptAsString();
   }
 
   void markBatchManifestMismatch(

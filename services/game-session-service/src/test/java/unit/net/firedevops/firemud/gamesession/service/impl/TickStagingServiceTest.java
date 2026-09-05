@@ -718,6 +718,7 @@ class TickStagingServiceTest {
             List.of(new TickQueuedCommandEnvelope(false, "cmd-padded-pin", "look")));
 
     assertEquals("FRESH_STAGE", batch.getBatchSource());
+    verify(gameInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
     verify(tickBatchRepository).save(any());
     verify(tickEffectRepository).saveAll(any());
   }

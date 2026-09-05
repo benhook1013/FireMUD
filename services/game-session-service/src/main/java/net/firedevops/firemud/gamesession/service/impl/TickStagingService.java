@@ -6,7 +6,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,6 +22,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.GameplayCommandSourceCoherence;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.slf4j.Logger;
@@ -811,7 +811,7 @@ final class TickStagingService {
     List<GameplayCommand> localAutomationCommands =
         selections.stream()
             .map(CommandSelection::command)
-            .filter(this::isLocalAutomationCommand)
+            .filter(GameplayCommandSourceCoherence::isLocalAutomation)
             .toList();
     if (localAutomationCommands.isEmpty()) {
       return null;
@@ -838,11 +838,15 @@ final class TickStagingService {
           command.getScriptPinEpoch(),
           command.getScriptPinControlPlaneRequestId(),
           "local Automation command " + command.getCommandId());
-      if (!normalizeText(command.getScriptPatchVersion())
-              .equals(normalizeText(instance.getScriptPatchVersion()))
+      if (!GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion())
+              .equals(
+                  GameplayCommandSourceCoherence.normalizeText(instance.getScriptPatchVersion()))
           || !Objects.equals(command.getScriptPinEpoch(), instance.getScriptPinEpoch())
-          || !normalizeText(command.getScriptPinControlPlaneRequestId())
-              .equals(normalizeText(instance.getScriptPatchPinnedControlPlaneRequestId()))) {
+          || !GameplayCommandSourceCoherence.normalizeText(
+                  command.getScriptPinControlPlaneRequestId())
+              .equals(
+                  GameplayCommandSourceCoherence.normalizeText(
+                      instance.getScriptPatchPinnedControlPlaneRequestId()))) {
         throw new IllegalStateException(
             "Local Automation command script pin tuple does not match the authoritative game instance commandId="
                 + command.getCommandId());
@@ -869,18 +873,23 @@ final class TickStagingService {
             "Sealed replay manifest command evidence is not loaded for commandId="
                 + sealedCommand.commandId());
       }
-      if (!isLocalAutomationCommand(command)) {
+      if (!GameplayCommandSourceCoherence.isLocalAutomation(command)) {
         continue;
       }
       if (lockedInstance == null) {
         throw new IllegalStateException(
             "Sealed local Automation replay is missing its locked GameInstance");
       }
-      if (!normalizeText(sealedCommand.scriptPatchVersion())
-              .equals(normalizeText(lockedInstance.getScriptPatchVersion()))
+      if (!GameplayCommandSourceCoherence.normalizeText(sealedCommand.scriptPatchVersion())
+              .equals(
+                  GameplayCommandSourceCoherence.normalizeText(
+                      lockedInstance.getScriptPatchVersion()))
           || !Objects.equals(sealedCommand.scriptPinEpoch(), lockedInstance.getScriptPinEpoch())
-          || !normalizeText(sealedCommand.scriptPinControlPlaneRequestId())
-              .equals(normalizeText(lockedInstance.getScriptPatchPinnedControlPlaneRequestId()))) {
+          || !GameplayCommandSourceCoherence.normalizeText(
+                  sealedCommand.scriptPinControlPlaneRequestId())
+              .equals(
+                  GameplayCommandSourceCoherence.normalizeText(
+                      lockedInstance.getScriptPatchPinnedControlPlaneRequestId()))) {
         throw new IllegalStateException(
             "Sealed local Automation replay pin tuple does not match the locked GameInstance "
                 + "commandId="
@@ -891,11 +900,11 @@ final class TickStagingService {
 
   private void requireSealedReplayCommandEvidence(
       SealedReplayCommand sealedCommand, GameplayCommand command, String tickBatchId) {
-    boolean localAutomation = isLocalAutomationCommand(command);
+    boolean localAutomation = GameplayCommandSourceCoherence.isLocalAutomation(command);
     if (sealedCommand.scriptPatchVersionPresent()
         && !Objects.equals(
-            normalizeText(sealedCommand.scriptPatchVersion()),
-            normalizeText(command.getScriptPatchVersion()))) {
+            GameplayCommandSourceCoherence.normalizeText(sealedCommand.scriptPatchVersion()),
+            GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion()))) {
       throw new IllegalStateException(
           "Sealed replay script patch evidence does not match gameplay command commandId="
               + sealedCommand.commandId()
@@ -927,11 +936,14 @@ final class TickStagingService {
         sealedCommand.scriptPinEpoch(),
         sealedCommand.scriptPinControlPlaneRequestId(),
         "sealed local Automation command " + sealedCommand.commandId());
-    if (!normalizeText(sealedCommand.scriptPatchVersion())
-            .equals(normalizeText(command.getScriptPatchVersion()))
+    if (!GameplayCommandSourceCoherence.normalizeText(sealedCommand.scriptPatchVersion())
+            .equals(GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion()))
         || !Objects.equals(sealedCommand.scriptPinEpoch(), command.getScriptPinEpoch())
-        || !normalizeText(sealedCommand.scriptPinControlPlaneRequestId())
-            .equals(normalizeText(command.getScriptPinControlPlaneRequestId()))) {
+        || !GameplayCommandSourceCoherence.normalizeText(
+                sealedCommand.scriptPinControlPlaneRequestId())
+            .equals(
+                GameplayCommandSourceCoherence.normalizeText(
+                    command.getScriptPinControlPlaneRequestId()))) {
       throw new IllegalStateException(
           "Sealed local Automation replay pin tuple does not match gameplay command commandId="
               + sealedCommand.commandId()
@@ -955,20 +967,6 @@ final class TickStagingService {
         || controlPlaneRequestId.isBlank()) {
       throw new IllegalStateException(subject + " must have a complete script pin tuple");
     }
-  }
-
-  private boolean isLocalAutomationCommand(GameplayCommand command) {
-    return command != null
-        && "AUTOMATION".equals(normalizeSourceType(command.getSourceType()))
-        && normalizeText(command.getRemoteFollowupId()).isEmpty();
-  }
-
-  private static String normalizeSourceType(String value) {
-    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
-  }
-
-  private static String normalizeText(String value) {
-    return value == null ? "" : value.trim();
   }
 
   private boolean uniformMode(List<TickQueuedCommandEnvelope> entries, String source) {
@@ -1104,7 +1102,7 @@ final class TickStagingService {
       appendJsonStringField(builder, "scriptId", command == null ? null : command.getScriptId());
       appendJsonStringField(
           builder, "scriptPatchVersion", command == null ? null : command.getScriptPatchVersion());
-      if (isLocalAutomationCommand(command)) {
+      if (GameplayCommandSourceCoherence.isLocalAutomation(command)) {
         appendJsonNumberField(builder, "scriptPinEpoch", command.getScriptPinEpoch());
         appendJsonStringField(
             builder, "scriptPinControlPlaneRequestId", command.getScriptPinControlPlaneRequestId());

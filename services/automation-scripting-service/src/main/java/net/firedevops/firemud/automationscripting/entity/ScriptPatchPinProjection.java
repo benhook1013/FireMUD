@@ -14,7 +14,9 @@ public class ScriptPatchPinProjection {
   private String realmSlug = "";
   private String pointerVersion = "";
 
-  /** Null is the canonical absent/unpinned projection value; zero is legacy-only. */
+  /**
+   * Null is the canonical absent/unpinned projection value; wire-level zero is normalized to null.
+   */
   private Long scriptPinEpoch;
 
   private String runtimeRegionId = "";

@@ -1016,6 +1016,23 @@ class TickBatchExecutionServiceTest {
     verify(listOps, never()).rightPush(anyString(), any());
   }
 
+  @Test
+  void restorePendingProjectionValidatesAllLuaArgumentsBeforeMutatingRedis() {
+    String script = TickBatchExecutionService.restorePendingProjectionScriptText();
+    int firstMutation = script.indexOf("redis.call('LREM'");
+
+    assertTrue(script.contains("pendingCount ~= math.floor(pendingCount)"));
+    assertTrue(script.contains("sealedCount ~= math.floor(sealedCount)"));
+    assertTrue(script.contains("redisOnlyCount ~= math.floor(redisOnlyCount)"));
+    assertTrue(script.contains("pendingPayloadStartIndex = 2"));
+    assertTrue(script.contains("sealedCountIndex = pendingPayloadStartIndex + pendingCount"));
+    assertTrue(script.contains("sealedPayloadStartIndex = sealedCountIndex + 1"));
+    assertTrue(script.contains("redisOnlyCountIndex = sealedPayloadStartIndex + sealedCount"));
+    assertTrue(script.contains("redisOnlyPayloadStartIndex = redisOnlyCountIndex + 1"));
+    assertTrue(script.contains("expectedArgumentCount ~= argumentCount"));
+    assertTrue(script.indexOf("expectedArgumentCount ~= argumentCount") < firstMutation);
+  }
+
   private static GameplayCommand gameplayCommand(String commandId) {
     GameplayCommand command = new GameplayCommand();
     command.setCommandId(commandId);
