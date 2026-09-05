@@ -2001,6 +2001,79 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickRollsBackAndAbandonsFreshStageAfterReplayReplacement() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|look", "N|cmd-2|wave"), List.of("N|cmd-2|wave"));
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-2|wave");
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replacement-before-fresh-stage");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
+    first.setEnqueueSeq(4L);
+    net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
+    second.setCommandText("wave");
+    second.setSanitizedCommandText("wave");
+    second.setEnqueueSeq(5L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(first, second));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
+    List<net.firedevops.firemud.gamesession.entity.TickBatch> savedBatches = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch saved = invocation.getArgument(0);
+              savedBatches.add(saved);
+              return saved;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              if ("FRESH_STAGE".equals(batch.getBatchSource())) {
+                throw new IllegalStateException("fresh stage ownership changed");
+              }
+              return null;
+            })
+        .when(tickBatchExecutionService)
+        .markBatchDrained(any(), any());
+
+    service.processTick(1L, 2L);
+
+    net.firedevops.firemud.gamesession.entity.TickBatch freshStage =
+        savedBatches.stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .reduce((leftBatch, rightBatch) -> rightBatch)
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", freshStage.getStatus());
+    verify(tickBatchExecutionService)
+        .markBatchAbandoned(eq(freshStage), any(), any(String.class), any(String.class));
+    verify(redisTemplate).execute(eq(rollbackMarker), any(), any(Object[].class));
+  }
+
+  @Test
   void processTickRequeuesRedisOnlyEntriesWhenReplayFallsBackToSealedManifest() {
     when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
         .thenReturn(true);

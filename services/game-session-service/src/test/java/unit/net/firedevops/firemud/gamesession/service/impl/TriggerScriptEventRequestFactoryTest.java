@@ -34,6 +34,40 @@ class TriggerScriptEventRequestFactoryTest {
   }
 
   @Test
+  void preservesCompleteScriptPinTupleAndRoutingEvidence() {
+    TriggerScriptEventRequestFactory.CommonFields fields =
+        new TriggerScriptEventRequestFactory.CommonFields(
+            "tenant",
+            "instance",
+            "region",
+            4L,
+            "entity",
+            "onCommand",
+            "v1",
+            "patch-7",
+            9L,
+            "pin-request-9",
+            "event-9",
+            false,
+            TriggerMode.TRIGGER_MODE_NORMAL,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
+            "snapshot-9",
+            "{\"action\":\"say\"}");
+
+    var request =
+        TriggerScriptEventRequestFactory.builder(
+                fields, new TriggerScriptEventRequestFactory.RoutingBundle("world", "realm", "v3"))
+            .build();
+
+    assertEquals("patch-7", request.getScriptPatchVersion());
+    assertEquals(9L, request.getScriptPinEpoch());
+    assertEquals("pin-request-9", request.getScriptPinControlPlaneRequestId());
+    assertEquals("world", request.getWorldSlug());
+    assertEquals("realm", request.getRealmSlug());
+    assertEquals("v3", request.getPointerVersion());
+  }
+
+  @Test
   void rejectsNullScriptPatchVersionWhenPinEpochIsPositive() {
     TriggerScriptEventRequestFactory.CommonFields fields =
         new TriggerScriptEventRequestFactory.CommonFields(

@@ -69,10 +69,9 @@ public class ScriptEventAuditRepository {
       String scriptEventId,
       boolean dryRun) {
     Long normalizedScriptPinEpoch = normalizeScriptPinEpoch(scriptPinEpoch);
-    String normalizedScriptPinControlPlaneRequestId = blankToNull(scriptPinControlPlaneRequestId);
     String normalizedPluginId = normalizePluginIdentity(pluginId);
     String normalizedPluginVersionId = normalizePluginIdentity(pluginVersionId);
-    requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
+    String normalizedBindingId = normalizePluginIdentity(bindingId);
     return SCRIPT_EVENT_AUDIT
         .TENANT_ID
         .eq(tenantId)
@@ -87,7 +86,7 @@ public class ScriptEventAuditRepository {
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_ID.eq(scriptId))
         .and(SCRIPT_EVENT_AUDIT.PLUGIN_ID.eq(normalizedPluginId))
         .and(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID.eq(normalizedPluginVersionId))
-        .and(SCRIPT_EVENT_AUDIT.BINDING_ID.eq(bindingId))
+        .and(SCRIPT_EVENT_AUDIT.BINDING_ID.eq(normalizedBindingId))
         .and(SCRIPT_EVENT_AUDIT.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
@@ -412,7 +411,7 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_EVENT_AUDIT.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, entity.getScriptId())
-            .set(SCRIPT_EVENT_AUDIT.BINDING_ID, entity.getBindingId())
+            .set(SCRIPT_EVENT_AUDIT.BINDING_ID, normalizePluginIdentity(entity.getBindingId()))
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
@@ -457,7 +456,8 @@ public class ScriptEventAuditRepository {
       Optional<ScriptEventAudit> existing = findById(entity.getId());
       if (existing.isPresent()) {
         ScriptEventAudit existingAudit = existing.get();
-        if (Objects.equals(existingAudit.getScriptPatchVersion(), entity.getScriptPatchVersion())
+        if (existingAudit.getRowVersion() == entity.getRowVersion()
+            && Objects.equals(existingAudit.getScriptPatchVersion(), entity.getScriptPatchVersion())
             && Objects.equals(
                 normalizeScriptPinEpoch(existingAudit.getScriptPinEpoch()),
                 normalizedScriptPinEpoch)) {
@@ -491,7 +491,7 @@ public class ScriptEventAuditRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
-    record.setBindingId(entity.getBindingId());
+    record.setBindingId(normalizePluginIdentity(entity.getBindingId()));
     record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
     record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
     record.setTargetScopeType(entity.getTargetScopeType());
@@ -533,7 +533,7 @@ public class ScriptEventAuditRepository {
     entity.setRealmSlug(record.get(SCRIPT_EVENT_AUDIT.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_EVENT_AUDIT.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_EVENT_AUDIT.SCRIPT_ID));
-    entity.setBindingId(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID));
+    entity.setBindingId(normalizePluginIdentity(record.get(SCRIPT_EVENT_AUDIT.BINDING_ID)));
     entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_ID)));
     entity.setPluginVersionId(
         normalizePluginIdentity(record.get(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID)));

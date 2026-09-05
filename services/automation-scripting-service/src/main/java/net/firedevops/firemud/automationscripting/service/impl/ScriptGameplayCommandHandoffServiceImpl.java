@@ -541,8 +541,13 @@ public class ScriptGameplayCommandHandoffServiceImpl
           ex);
       return RuntimeRegionScopeStatus.UNAVAILABLE;
     }
-    if (runtimeState == null || runtimeState.hasError()) {
+    if (runtimeState == null) {
       return RuntimeRegionScopeStatus.UNAVAILABLE;
+    }
+    if (runtimeState.hasError()) {
+      return normalize(runtimeState.getError().getCode()).isBlank()
+          ? RuntimeRegionScopeStatus.MALFORMED
+          : RuntimeRegionScopeStatus.UNAVAILABLE;
     }
     if (!runtimeState.hasRuntimeState()) {
       return RuntimeRegionScopeStatus.MALFORMED;

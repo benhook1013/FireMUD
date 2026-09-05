@@ -159,3 +159,8 @@ Entry format:
   - Context: exact-pin tick replay initially drained the original Redis selection before preserving Redis-only commands and treated post-commit Redis failures as generic staging failures.
   - Observation: once a replacement batch is durably committed, its manifest and effective drain set are authoritative; Redis is only a projection and a reconciliation failure must not roll back or abandon that committed replacement through a generic failure path.
   - Expected pattern: persist the replacement and any Redis-only retry state in one database transaction, reconcile Redis atomically and idempotently afterward, and carry an explicit committed-replacement fact through later failure handling and retries.
+
+- `2026-09-06`: Scope replay-preservation state to the replay phase
+  - Context: a tick could commit a durable replay replacement, then begin a fresh stage whose later failure still observed the earlier replay-preservation flag.
+  - Observation: a durable replay decision protects that replay batch and its immediate reconciliation, but it cannot suppress rollback or abandonment for independently staged work later in the same tick.
+  - Expected pattern: track whether fresh staging has begun and preserve the replay decision only before that phase; failures after fresh staging starts must run the normal fenced rollback and durable batch-abandonment path.

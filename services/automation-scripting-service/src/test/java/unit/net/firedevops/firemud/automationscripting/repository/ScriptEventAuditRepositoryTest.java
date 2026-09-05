@@ -80,6 +80,69 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
+  void existenceLookupReturnsFalseForIncompletePinTuple() {
+    AtomicInteger calls = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          calls.incrementAndGet();
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    7L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "pointer-1",
+                    "script-1",
+                    null,
+                    null,
+                    null,
+                    "onCommand",
+                    "v1",
+                    "patch-1",
+                    2L,
+                    null,
+                    "event-1",
+                    false))
+        .isFalse();
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    7L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "pointer-1",
+                    "script-1",
+                    null,
+                    null,
+                    null,
+                    "onCommand",
+                    "v1",
+                    "patch-1",
+                    null,
+                    "pin-request-1",
+                    "event-1",
+                    false))
+        .isFalse();
+    assertThat(calls).hasValue(2);
+  }
+
+  @Test
   void timerAuditLookupAllowsIndependentPinFilters() {
     List<String> queries = new ArrayList<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
@@ -392,6 +455,7 @@ class ScriptEventAuditRepositoryTest {
     ScriptEventAudit entity = auditEntity(now);
     entity.setPluginId(null);
     entity.setPluginVersionId(null);
+    entity.setBindingId(null);
     ScriptEventAuditRepository.IdempotentInsertResult result =
         repository.insertIfAbsentByHandlerIdentity(entity);
 
@@ -400,6 +464,7 @@ class ScriptEventAuditRepositoryTest {
     assertThat(result.audit().getTenantId()).isEqualTo("tenant-1");
     assertThat(result.audit().getScriptEventId()).isEqualTo("event-1");
     assertThat(result.audit().getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.audit().getBindingId()).isEmpty();
     assertThat(result.audit().getScriptPinEpoch()).isNull();
     assertThat(result.audit().getScriptPinControlPlaneRequestId()).isNull();
     assertThat(result.audit().getFinalReason()).isEqualTo("original_reason");
@@ -430,7 +495,7 @@ class ScriptEventAuditRepositoryTest {
             "script_event_id",
             "dry_run");
     assertThat(whereClause(selectSqlRef.get()))
-        .contains("\"plugin_id\" = ?", "\"plugin_version_id\" = ?");
+        .contains("\"plugin_id\" = ?", "\"plugin_version_id\" = ?", "\"binding_id\" = ?");
     assertThat(whereClause(selectSqlRef.get()))
         .doesNotContain("script_pin_control_plane_request_id");
   }
@@ -570,6 +635,42 @@ class ScriptEventAuditRepositoryTest {
     assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(calls.get()).isEqualTo(2);
+  }
+
+  @Test
+  void existingAuditUpdateClassifiesRowVersionMismatchAsStaleBeforeOwnerConflict() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now);
+    row.setScriptPatchVersion("patch-2");
+    row.setScriptPinEpoch(2L);
+    row.setScriptPinControlPlaneRequestId("pin-request-1");
+    row.setRowVersion(4);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger calls = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          if (calls.incrementAndGet() == 1) {
+            return new MockResult[] {new MockResult(0)};
+          }
+          Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setId(9L);
+    entity.setRowVersion(3);
+    entity.setScriptPatchVersion("patch-2");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class)
+        .hasMessage("Stale write rejected for script_event_audit id=9");
     assertThat(calls.get()).isEqualTo(2);
   }
 

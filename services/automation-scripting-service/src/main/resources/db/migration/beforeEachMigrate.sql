@@ -57,11 +57,13 @@ BEGIN
             pointer_version,
             script_id,
             CASE
-                WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+                  OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
                 ELSE plugin_id
             END,
             CASE
-                WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+                  OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
                 ELSE plugin_version_id
             END,
             binding_id,
@@ -94,11 +96,13 @@ BEGIN
             pointer_version,
             script_id,
             CASE
-                WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+                  OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
                 ELSE plugin_id
             END,
             CASE
-                WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                WHEN NULLIF(BTRIM(plugin_id), '') IS NULL
+                  OR NULLIF(BTRIM(plugin_version_id), '') IS NULL THEN ''
                 ELSE plugin_version_id
             END,
             binding_id,

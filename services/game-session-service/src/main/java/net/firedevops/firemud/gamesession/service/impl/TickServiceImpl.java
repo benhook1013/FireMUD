@@ -308,6 +308,7 @@ public class TickServiceImpl implements TickService {
         List<TickQueuedCommandEnvelope> activeBatchEntries = List.of();
         boolean activeBatchDurablyDrained = false;
         boolean durableReplayDecisionCommitted = false;
+        boolean freshStageStarted = false;
         boolean tickSucceeded = false;
         RuntimeRegionStatus tickProgressToPublish = null;
         try {
@@ -384,6 +385,7 @@ public class TickServiceImpl implements TickService {
                       tickQueueControlService.queueKey(normalizedTenantId, normalizedQueueTargetId),
                       0);
           head = headObj != null ? headObj.toString() : null;
+          freshStageStarted = head != null;
           solo = head != null && tickStagingService.requiresSoloTickFromQueueEntry(head);
           int max = solo ? 1 : tickMaxCommands;
           String stageMode = solo ? "S" : "N";
@@ -446,10 +448,13 @@ public class TickServiceImpl implements TickService {
               "session:" + normalizedTenantId + ":" + normalizedQueueTargetId);
           if (lease.isOwned()) {
             boolean rollbackSucceeded = false;
-            if (durableReplayDecisionCommitted) {
+            boolean preserveDurableReplayDecision =
+                ex instanceof TickStagingService.ReplayReconciliationFailure
+                    || (durableReplayDecisionCommitted && !freshStageStarted);
+            if (preserveDurableReplayDecision) {
               logger.warn(
-                  "Durable replay decision committed before Redis reconciliation failure; "
-                      + "preserving batch and coordination state "
+                  "Durable replay decision committed before tick failure; preserving batch and "
+                      + "coordination state "
                       + "for tenantId={} gameInstanceId={}",
                   normalizedTenantId,
                   normalizedQueueTargetId);
