@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -95,7 +96,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -167,7 +168,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -219,13 +220,15 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 null,
                 "say hello",
                 false,
-                null),
+                null,
+                1L,
+                "request-1"),
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             tickService);
 
-    assertEquals(true, result.accepted());
+    assertTrue(result.accepted());
     org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
         org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
     verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
@@ -236,6 +239,202 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void rejectsAutomationCommandWithSamePatchButDifferentPinEpochBeforeDuplicateReplay() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = automationInstance();
+    instance.setScriptPinEpoch(2L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
+    assertEquals("STALE_TIMELINE", result.errorCode());
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            1L, 2L, "region-alpha", 7L, "dispatch-1");
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void rejectsAutomationCommandWhenPinOwnerRequestIdDiffersBeforeDuplicateReplay() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = automationInstance();
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-2");
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
+    assertEquals("STALE_TIMELINE", result.errorCode());
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            1L, 2L, "region-alpha", 7L, "dispatch-1");
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void rejectsAutomationCommandWithPartialPinTupleBeforeDuplicateReplay() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+
+    AdmissionRequest request =
+        new AdmissionRequest(
+            1L,
+            2L,
+            "region-alpha",
+            7L,
+            "AUTOMATION",
+            "dispatch-1",
+            "work-item-1",
+            "script-1",
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "npc-alpha",
+            null,
+            null,
+            "say hello",
+            false,
+            null,
+            1L,
+            null);
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("REJECTED", result.admissionOutcome());
+    assertEquals("STALE_TIMELINE", result.errorCode());
+    verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void remoteAutomationRetainsLegacyAdmissionWithoutLocalPinTuple() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    TickService tickService = mock(TickService.class);
+
+    GameInstance instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(1L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndRemoteFollowupId(
+                1L, 2L, "region-alpha", 7L, "remote-followup-1"))
+        .thenReturn(Optional.empty());
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(1L);
+    ownership.setGameInstanceId(2L);
+    ownership.setRegionId("region-alpha");
+    ownership.setRegionEpoch(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(ownership));
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
+    when(pointerAuthority.listByRuntimeTarget(1L, 2L))
+        .thenReturn(List.of(currentPointer("demo", "production", 17L)));
+
+    AdmissionRequest request =
+        new AdmissionRequest(
+            1L,
+            2L,
+            "region-alpha",
+            7L,
+            "AUTOMATION",
+            "remote-dispatch-1",
+            "remote-work-1",
+            "script-1",
+            "patch-1",
+            "plugin-1",
+            "plugin-v1",
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            "REMOTE_FOLLOWUP",
+            "TARGET_REGION_EXECUTED",
+            1L,
+            1L,
+            null,
+            "npc-alpha",
+            "coordinator-1",
+            "remote-followup-1",
+            "say hello",
+            false,
+            null);
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitRemoteIfAbsent(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            pointerAuthority,
+            tickService);
+
+    assertEquals(true, result.accepted());
+    assertEquals("ENQUEUED", result.admissionOutcome());
+    org.mockito.ArgumentCaptor<GameplayCommand> commandCaptor =
+        org.mockito.ArgumentCaptor.forClass(GameplayCommand.class);
+    verify(gameplayCommandRepository).insertIfAbsentByIdempotencyIdentity(commandCaptor.capture());
+    assertNull(commandCaptor.getValue().getScriptPinEpoch());
+    assertNull(commandCaptor.getValue().getScriptPinControlPlaneRequestId());
+  }
+
+  @Test
   void rejectsDuplicateWhileAdmissionIsStillAcceptedAndDoesNotQueue() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
@@ -243,7 +442,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -277,6 +476,70 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void rejectsDuplicateWhenStoredAutomationPinEpochDiffers() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(automationInstance()));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, automationRequest());
+    existing.setScriptPinEpoch(2L);
+    existing.setCommandId("auto-existing");
+    existing.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
+  void rejectsDuplicateWhenStoredAutomationPinOwnerRequestDiffers() {
+    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(automationInstance()));
+
+    GameplayCommand existing = new GameplayCommand();
+    populateAdmissionFields(existing, automationRequest());
+    existing.setScriptPinControlPlaneRequestId("request-2");
+    existing.setCommandId("auto-existing");
+    existing.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.of(existing));
+
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
+            automationRequest(),
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            tickService);
+
+    assertFalse(result.accepted());
+    assertEquals("IDEMPOTENCY_CONFLICT", result.errorCode());
+    verifyNoTickEnqueue(tickService);
+  }
+
+  @Test
   void reusesStagedCommandReturnedByAtomicInsertConflict() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
@@ -284,7 +547,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -331,7 +594,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -411,7 +674,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
             null,
             "say hello",
             false,
-            null);
+            null,
+            1L,
+            "request-1");
 
     AdmissionResult result =
         admitWithCurrentPointers(List.of(currentPointer("demo", "production", 17L)), request);
@@ -440,7 +705,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(GameplayAdmissionPointerAuthorityService.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(request.gameInstanceId());
     instance.setTenantId(request.tenantId());
     when(gameInstanceRepository.findById(request.gameInstanceId()))
@@ -537,7 +802,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
             null,
             "say hello",
             false,
-            null);
+            null,
+            1L,
+            "request-1");
 
     AdmissionResult result =
         admitWithCurrentPointers(List.of(currentPointer("demo", "production", 17L)), request);
@@ -557,7 +824,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     GameplayAdmissionPointerAuthorityService pointerAuthority =
         mock(GameplayAdmissionPointerAuthorityService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -593,7 +860,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -644,7 +911,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -685,7 +952,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -734,7 +1001,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -929,7 +1196,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         mock(RuntimeRegionStatusRepository.class);
     TickService tickService = mock(TickService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(2L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
@@ -970,7 +1237,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
                 null,
                 "say hello",
                 false,
-                null),
+                null,
+                1L,
+                "request-1"),
             gameInstanceRepository,
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
@@ -1009,7 +1278,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
         null,
         "say hello",
         false,
-        null);
+        null,
+        1L,
+        "request-1");
   }
 
   private static AdmissionRequest automationRequestForGameInstance(long gameInstanceId) {
@@ -1040,7 +1311,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
         base.remoteFollowupId(),
         base.command(),
         base.requiresSoloTick(),
-        base.dueTickId());
+        base.dueTickId(),
+        base.scriptPinEpoch(),
+        base.scriptPinControlPlaneRequestId());
   }
 
   private static AdmissionRequest remoteFollowupRequest(String remoteFollowupId) {
@@ -1102,7 +1375,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.remoteFollowupId(),
           "say goodbye",
           base.requiresSoloTick(),
-          base.dueTickId()),
+          base.dueTickId(),
+          base.scriptPinEpoch(),
+          base.scriptPinControlPlaneRequestId()),
       new AdmissionRequest(
           base.tenantId(),
           base.gameInstanceId(),
@@ -1129,7 +1404,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.remoteFollowupId(),
           base.command(),
           base.requiresSoloTick(),
-          base.dueTickId()),
+          base.dueTickId(),
+          base.scriptPinEpoch(),
+          base.scriptPinControlPlaneRequestId()),
       new AdmissionRequest(
           base.tenantId(),
           base.gameInstanceId(),
@@ -1156,7 +1433,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.remoteFollowupId(),
           base.command(),
           true,
-          base.dueTickId()),
+          base.dueTickId(),
+          base.scriptPinEpoch(),
+          base.scriptPinControlPlaneRequestId()),
       new AdmissionRequest(
           base.tenantId(),
           base.gameInstanceId(),
@@ -1183,7 +1462,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
           base.remoteFollowupId(),
           base.command(),
           base.requiresSoloTick(),
-          base.dueTickId())
+          base.dueTickId(),
+          base.scriptPinEpoch(),
+          base.scriptPinControlPlaneRequestId())
     };
   }
 
@@ -1225,7 +1506,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
         base.remoteFollowupId(),
         base.command(),
         base.requiresSoloTick(),
-        dueTickId);
+        dueTickId,
+        base.scriptPinEpoch(),
+        base.scriptPinControlPlaneRequestId());
   }
 
   private static void populateAdmissionFields(GameplayCommand command, AdmissionRequest request) {
@@ -1241,6 +1524,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
     command.setAutomationWorkItemId(request.automationWorkItemId());
     command.setScriptId(request.scriptId());
     command.setScriptPatchVersion(request.scriptPatchVersion());
+    command.setScriptPinEpoch(request.scriptPinEpoch());
+    command.setScriptPinControlPlaneRequestId(request.scriptPinControlPlaneRequestId());
     command.setPluginId(request.pluginId());
     command.setPluginVersionId(request.pluginVersionId());
     command.setPlayableStateScope(request.playableStateScope());
@@ -1260,6 +1545,19 @@ class AutomationGameplayCommandAdmissionSupportTest {
     command.setDueTickId(request.dueTickId());
   }
 
+  private static GameInstance automationInstance() {
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
+    return instance;
+  }
+
+  private static void verifyNoTickEnqueue(TickService tickService) {
+    verify(tickService, never())
+        .enqueueCommand(anyLong(), anyLong(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
   private static AdmissionResult admitWithCurrentPointers(
       List<GameplayAdmissionPointerSnapshot> currentPointers) {
     return admitWithCurrentPointers(currentPointers, automationRequest());
@@ -1275,9 +1573,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
     GameplayAdmissionPointerAuthorityService pointerAuthority =
         mock(GameplayAdmissionPointerAuthorityService.class);
 
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(request.gameInstanceId());
     instance.setTenantId(request.tenantId());
+    instance.setScriptPatchVersion(request.scriptPatchVersion());
+    instance.setScriptPinEpoch(request.scriptPinEpoch());
+    instance.setScriptPatchPinnedControlPlaneRequestId(
+        request.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(request.gameInstanceId()))
         .thenReturn(Optional.of(instance));
     when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))
@@ -1316,9 +1618,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
   @Test
   void routedAdmissionRetriesWhenCurrentPointerCasRejectsInsert() {
     AdmissionRequest request = automationRequest();
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(request.gameInstanceId());
     instance.setTenantId(request.tenantId());
+    instance.setScriptPatchVersion(request.scriptPatchVersion());
+    instance.setScriptPinEpoch(request.scriptPinEpoch());
+    instance.setScriptPatchPinnedControlPlaneRequestId(
+        request.scriptPinControlPlaneRequestId());
     when(gameInstanceRepository.findById(request.gameInstanceId()))
         .thenReturn(Optional.of(instance));
     when(pointerAuthority.listByRuntimeTarget(request.tenantId(), request.gameInstanceId()))
@@ -1724,7 +2030,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     when(remoteCommandCoordinatorRepository.findByTenantIdAndFollowupId(
             1L, followup.getFollowupId()))
         .thenReturn(Optional.of(coordinator));
-    GameInstance instance = new GameInstance();
+    GameInstance instance = automationInstance();
     instance.setId(9L);
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(9L)).thenReturn(Optional.of(instance));
