@@ -1146,9 +1146,9 @@ message RollbackScriptPatchVersionResponse {
 message ExpectedCurrentPin {
   enum Kind {
     EXPECTED_CURRENT_PIN_KIND_UNSPECIFIED = 0;
-    UNCONDITIONAL = 1;
-    EXPECT_UNPINNED = 2;
-    EXPECT_EPOCH = 3;
+    EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL = 1;
+    EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED = 2;
+    EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH = 3;
   }
 
   Kind kind = 1;

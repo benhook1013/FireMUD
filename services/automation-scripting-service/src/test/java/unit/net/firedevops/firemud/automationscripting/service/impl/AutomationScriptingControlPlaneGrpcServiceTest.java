@@ -1029,15 +1029,17 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsScriptPatchInstanceRolloutStatusFromReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    Mockito.when(workItemService.getPatchInstanceRolloutStatus("1", "game-1", "patch-1", 0L, null))
+    Mockito.when(
+            workItemService.getPatchInstanceRolloutStatus(
+                "1", "game-1", "patch-1", 4L, "pin-request-4"))
         .thenReturn(
             Optional.of(
                 new ScriptWorkItemService.PatchInstanceRolloutSummary(
                     "1",
                     "game-1",
                     "patch-1",
-                    0L,
-                    "",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
                     "runtime_pin_matches_patch",
                     123L,
@@ -1066,6 +1068,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .build(),
         observer(ref));
 
@@ -1073,6 +1077,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
     assertThat(ref.get().getProjectionLagMs()).isZero();
+    assertThat(ref.get().getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("pin-request-4");
     assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
   }
 

@@ -215,19 +215,19 @@ public class ScriptPatchInstanceRolloutProjectionServiceImpl
       return;
     }
     Instant now = Instant.now();
-    List<ScriptWorkItem> workItems =
-        workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-            tenantId, gameInstanceId, scriptPatchVersion);
     Optional<ScriptPatchPinProjectionService.PinConvergenceSummary> pin =
         pinProjectionService.getPinConvergence(tenantId, gameInstanceId).summary();
-    Optional<ScriptPatchInstanceRolloutProjection> existing =
-        repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
-            tenantId, gameInstanceId, scriptPatchVersion);
     // Runtime pin evidence is authoritative. Do not infer rollback or delete an existing
     // projection while the authority is unavailable or has not supplied a positive epoch.
     if (pin.isEmpty() || !usableRuntimePin(pin.get())) {
       return;
     }
+    List<ScriptWorkItem> workItems =
+        workItemRepository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+            tenantId, gameInstanceId, scriptPatchVersion);
+    Optional<ScriptPatchInstanceRolloutProjection> existing =
+        repository.findByTenantIdAndGameInstanceIdAndScriptPatchVersion(
+            tenantId, gameInstanceId, scriptPatchVersion);
     ScriptPatchPinProjectionService.PinConvergenceSummary runtimePin = pin.get();
     Optional<ProjectionSnapshot> snapshot =
         buildSnapshot(

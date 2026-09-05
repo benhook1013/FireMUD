@@ -240,8 +240,9 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     assertThat(summary).isPresent();
     assertThat(summary.get().rolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
-    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
-    Mockito.verify(repository, Mockito.never()).delete(Mockito.any());
+    verifyNoInteractions(workItemRepository);
+    Mockito.verify(repository)
+        .findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1");
     verifyNoInteractions(eventRepository);
   }
 }
