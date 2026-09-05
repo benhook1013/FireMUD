@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -124,7 +125,48 @@ class ScriptHandoffEventRepositoryTest {
   }
 
   @Test
-  void preservesExistingEventWhenRetryCarriesDifferentPinOwnerTuple() {
+  void normalizesBlankOwnerRequestIdBeforeConflictComparison() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          bindingsRef.set(context.bindings());
+          ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
+          row.setId(9L);
+          row.setEventId("event-1");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-1");
+          row.setScriptPinEpoch(0L);
+          row.setScriptId("script-1");
+          row.setHandoffOutcome("enqueued");
+          row.setObservedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
+          Record returned = resultDsl.newRecord(SCRIPT_HANDOFF_EVENTS.fields());
+          returned.from(row);
+          Result<Record> result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setEventId("event-1");
+    event.setTenantId("tenant-1");
+    event.setGameInstanceId("game-1");
+    event.setScriptPatchVersion("patch-1");
+    event.setScriptPinControlPlaneRequestId(" ");
+    event.setHandoffOutcome("enqueued");
+
+    ScriptHandoffEvent saved = repository.save(event);
+
+    assertThat(saved.getScriptPinControlPlaneRequestId()).isNull();
+    assertThat(bindingsRef.get()).doesNotContain(" ");
+  }
+
+  @Test
+  void rejectsRetryWhenExistingEventCarriesDifferentPinOwnerTuple() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
     MockDataProvider provider =
@@ -166,11 +208,9 @@ class ScriptHandoffEventRepositoryTest {
     retry.setHandoffOutcome("enqueued");
     retry.setHandoffReason("changed-input");
 
-    ScriptHandoffEvent saved = repository.save(retry);
-
-    assertThat(saved.getScriptPatchVersion()).isEqualTo("patch-original");
-    assertThat(saved.getScriptPinEpoch()).isEqualTo(2L);
-    assertThat(saved.getScriptPinControlPlaneRequestId()).isEqualTo("owner-original");
+    assertThatThrownBy(() -> repository.save(retry))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Handoff event owner tuple conflict");
     assertThat(insertSql.get()).contains("script_patch_version", "script_pin_epoch");
   }
 

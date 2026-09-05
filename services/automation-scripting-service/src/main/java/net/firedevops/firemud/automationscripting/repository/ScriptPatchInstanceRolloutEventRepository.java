@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
@@ -103,6 +104,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
   }
 
   public ScriptPatchInstanceRolloutEvent save(ScriptPatchInstanceRolloutEvent entity) {
+    requireCoherentPinTuple(entity);
     if (entity.getId() == null) {
       ScriptPatchInstanceRolloutEventsRecord record =
           dsl.newRecord(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS);
@@ -122,7 +124,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
-                entity.getLastObservedControlPlaneRequestId())
+                blankToNull(entity.getLastObservedControlPlaneRequestId()))
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -161,7 +163,8 @@ public class ScriptPatchInstanceRolloutEventRepository {
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.setLastObservedControlPlaneRequestId(entity.getLastObservedControlPlaneRequestId());
+    record.setLastObservedControlPlaneRequestId(
+        blankToNull(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
@@ -180,7 +183,9 @@ public class ScriptPatchInstanceRolloutEventRepository {
     Long scriptPinEpoch = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH);
     entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
     entity.setLastObservedControlPlaneRequestId(
-        record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID));
+        blankToNull(
+            record.get(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID)));
     entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON));
     entity.setObservedAt(toInstant(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT)));
@@ -189,5 +194,16 @@ public class ScriptPatchInstanceRolloutEventRepository {
     Integer rowVersion = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
+  }
+
+  private static void requireCoherentPinTuple(ScriptPatchInstanceRolloutEvent entity) {
+    if (entity.getScriptPinEpoch() < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    boolean hasRequestId = blankToNull(entity.getLastObservedControlPlaneRequestId()) != null;
+    if ((entity.getScriptPinEpoch() > 0L) != hasRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    }
   }
 }

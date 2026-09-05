@@ -1813,6 +1813,54 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void timerReadSnapshotTokenIncludesPatchAndPositivePinEpoch() {
+    ScriptScheduleInstance patchOne =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance patchTwo =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    patchTwo.setScriptPatchVersion("patch-2");
+    ScriptScheduleInstance epochTwo =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    epochTwo.setScriptPinEpoch(2L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(patchOne), List.of(patchTwo), List.of(epochTwo));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of(), List.of());
+    GetGameInstanceRuntimeStateResponse epochTwoRuntime =
+        runtimeStateResponse("patch-1", "req-1").toBuilder()
+            .setRuntimeState(
+                runtimeStateResponse("patch-1", "req-1").getRuntimeState().toBuilder()
+                    .setScriptPinEpoch(2L)
+                    .build())
+            .build();
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            runtimeStateResponse("patch-1", "req-1"),
+            runtimeStateResponse("patch-2", "req-1"),
+            epochTwoRuntime);
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(3))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
+    assertThat(workItems)
+        .extracting(ScriptWorkItem::getScriptPatchVersion)
+        .containsExactly("patch-1", "patch-2", "patch-1");
+    assertThat(workItems).extracting(ScriptWorkItem::getScriptPinEpoch).containsExactly(1L, 1L, 2L);
+    assertThat(workItems.get(0).getReadSnapshotToken()).contains(":patch-1:1:req-1:");
+    assertThat(workItems.get(0).getReadSnapshotToken())
+        .isNotEqualTo(workItems.get(1).getReadSnapshotToken());
+    assertThat(workItems.get(0).getReadSnapshotToken())
+        .isNotEqualTo(workItems.get(2).getReadSnapshotToken());
+  }
+
+  @Test
   void observeRuntimeTickProgressFencesTimerScopeMismatchWithoutReusingIdentity() {
     ScriptScheduleInstance shared =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);

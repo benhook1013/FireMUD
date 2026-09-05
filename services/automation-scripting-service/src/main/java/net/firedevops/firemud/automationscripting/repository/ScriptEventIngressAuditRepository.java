@@ -207,6 +207,7 @@ public class ScriptEventIngressAuditRepository {
       throw new IllegalArgumentException("A new script event ingress audit is required");
     }
     boolean pinned = requireCoherentPinTuple(entity);
+    requireCanonicalRequestDigest(entity.getRequestDigest());
     ScriptEventIngressAuditRecord record = dsl.newRecord(SCRIPT_EVENT_INGRESS_AUDIT);
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
@@ -276,6 +277,13 @@ public class ScriptEventIngressAuditRepository {
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
     return true;
+  }
+
+  private static void requireCanonicalRequestDigest(String requestDigest) {
+    if (requestDigest == null || !requestDigest.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException(
+          "request_digest must be a canonical 64-character hexadecimal digest");
+    }
   }
 
   private static Condition nullScriptPinEpochCondition() {

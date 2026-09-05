@@ -940,7 +940,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       ScriptEventIngressAudit claim) {
     requireCurrentClaim(claim);
     if (handlerAuditExists(request, schemaVersion, handler)
-        || workItemExists(request, schemaVersion, handler.binding())) {
+        || workItemExists(request, schemaVersion, handler)) {
       return;
     }
     if (!request.getIsDryRun()
@@ -1251,9 +1251,15 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private boolean workItemExists(
-      TriggerScriptEventRequest request, String schemaVersion, ScriptEventBinding binding) {
+      TriggerScriptEventRequest request, String schemaVersion, ResolvedHandler handler) {
+    ScriptEventBinding binding = handler.binding();
     return workItemExistsForScope(
-        request, schemaVersion, binding.getScriptId(), null, "", requestScopeValues(request));
+        request,
+        schemaVersion,
+        binding.getScriptId(),
+        handler.pluginOwner(),
+        resolveHandlerBindingId(binding, handler.pluginOwner()),
+        requestScopeValues(request));
   }
 
   private boolean workItemExistsForScript(

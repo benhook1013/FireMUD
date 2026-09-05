@@ -26,6 +26,8 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptEventIngressAuditRepositoryTest {
+  private static final String REQUEST_DIGEST = "a".repeat(64);
+
   @Test
   void rejectsMismatchedPinTupleBeforeSelectingConflictTarget() {
     ScriptEventIngressAuditRepository repository =
@@ -38,6 +40,18 @@ class ScriptEventIngressAuditRepositoryTest {
     assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("script_pin_control_plane_request_id");
+  }
+
+  @Test
+  void rejectsNewClaimWithoutCanonicalRequestDigest() {
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(DSL.using(SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setRequestDigest("not-a-sha256-digest");
+
+    assertThatThrownBy(() -> repository.insertIfAbsentByIdentity(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("request_digest must be a canonical 64-character hexadecimal digest");
   }
 
   @Test
@@ -203,6 +217,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setScriptPatchVersion("patch-1");
     entity.setScriptEventId("event-1");
     entity.setScriptPinControlPlaneRequestId(" ");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     ScriptEventIngressAuditRepository.IdempotentInsertResult result =
         repository.insertIfAbsentByIdentity(entity);
@@ -258,6 +273,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setScriptPatchVersion("patch-1");
     entity.setScriptEventId("event-1");
     entity.setSourceService("game-session-service");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     ScriptEventIngressAuditRepository.IdempotentInsertResult result =
         repository.insertIfAbsentByIdentity(entity);
@@ -323,6 +339,7 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setScriptPinControlPlaneRequestId("pin-request-1");
     entity.setScriptEventId("event-1");
     entity.setSourceService("game-session-service");
+    entity.setRequestDigest(REQUEST_DIGEST);
 
     ScriptEventIngressAuditRepository.IdempotentInsertResult result =
         repository.insertIfAbsentByIdentity(entity);

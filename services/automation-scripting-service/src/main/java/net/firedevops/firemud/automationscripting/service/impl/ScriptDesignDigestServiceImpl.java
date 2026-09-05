@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
@@ -18,7 +19,7 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repositories and mapper are internal Spring collaborators.")
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 3;
+  private static final int DIGEST_SCHEMA_VERSION = 4;
 
   private final ScriptDefinitionRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -40,10 +41,11 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
         repository.findByTenantIdOrderByNameAscScriptVersionAsc(tenantKey).stream()
             .map(
                 script ->
-                    Map.<String, Object>of(
-                        "name", script.getName(),
-                        "version", script.getScriptVersion(),
-                        "definition", script.getDefinition()))
+                    canonicalMap(
+                        Map.of(
+                            "name", script.getName(),
+                            "version", script.getScriptVersion(),
+                            "definition", script.getDefinition())))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
@@ -55,11 +57,12 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of(
-                  "tenantId", tenantId,
-                  "versionId", versionId,
-                  "scripts", scripts,
-                  "eventBindings", bindings));
+              canonicalMap(
+                  Map.of(
+                      "tenantId", tenantId,
+                      "versionId", versionId,
+                      "scripts", scripts,
+                      "eventBindings", bindings)));
       return new ScriptDraftDesignDigest(
           tenantId,
           versionId,
@@ -81,10 +84,11 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
             .stream()
             .map(
                 script ->
-                    Map.<String, Object>of(
-                        "name", script.getName(),
-                        "version", script.getScriptVersion(),
-                        "definition", script.getDefinition()))
+                    canonicalMap(
+                        Map.of(
+                            "name", script.getName(),
+                            "version", script.getScriptVersion(),
+                            "definition", script.getDefinition())))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
@@ -99,11 +103,12 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of(
-                  "tenantId", tenantId,
-                  "scriptPatchVersion", scriptPatchVersion,
-                  "scripts", scripts,
-                  "eventBindings", bindings));
+              canonicalMap(
+                  Map.of(
+                      "tenantId", tenantId,
+                      "scriptPatchVersion", scriptPatchVersion,
+                      "scripts", scripts,
+                      "eventBindings", bindings)));
       return new ScriptDraftDesignDigest(
           tenantId,
           scriptPatchVersion,
@@ -117,18 +122,23 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
 
   private Map<String, Object> bindingDigest(
       net.firedevops.firemud.automationscripting.entity.ScriptEventBinding binding) {
-    return Map.ofEntries(
-        Map.entry("scriptPatchVersion", binding.getScriptPatchVersion()),
-        Map.entry("eventType", binding.getEventType()),
-        Map.entry("eventSchemaVersion", binding.getEventSchemaVersion()),
-        Map.entry("scriptId", binding.getScriptId()),
-        Map.entry("bindingId", binding.getBindingId()),
-        Map.entry("targetScopeType", binding.getTargetScopeType()),
-        Map.entry("targetScopeId", binding.getTargetScopeId()),
-        Map.entry("priority", binding.getPriority()),
-        Map.entry("priorityTag", binding.getPriorityTag()),
-        Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
-        Map.entry("enabled", binding.isEnabled()));
+    return canonicalMap(
+        Map.ofEntries(
+            Map.entry("scriptPatchVersion", binding.getScriptPatchVersion()),
+            Map.entry("eventType", binding.getEventType()),
+            Map.entry("eventSchemaVersion", binding.getEventSchemaVersion()),
+            Map.entry("scriptId", binding.getScriptId()),
+            Map.entry("bindingId", binding.getBindingId()),
+            Map.entry("targetScopeType", binding.getTargetScopeType()),
+            Map.entry("targetScopeId", binding.getTargetScopeId()),
+            Map.entry("priority", binding.getPriority()),
+            Map.entry("priorityTag", binding.getPriorityTag()),
+            Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
+            Map.entry("enabled", binding.isEnabled())));
+  }
+
+  private static Map<String, Object> canonicalMap(Map<String, Object> values) {
+    return new TreeMap<>(values);
   }
 
   private String sha256(String value) {

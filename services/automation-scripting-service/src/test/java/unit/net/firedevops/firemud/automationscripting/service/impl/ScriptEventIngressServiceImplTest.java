@@ -590,6 +590,29 @@ class ScriptEventIngressServiceImplTest {
                 "event-activation-owned",
                 false))
         .thenReturn(false, true);
+    when(workItemRepository
+            .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                "1",
+                "game-1",
+                "region-1",
+                7L,
+                "entity-1",
+                "SHARED",
+                "demo",
+                "production",
+                "17",
+                "script-active-plugin",
+                "plugin-1",
+                "plugin-v1",
+                "binding-script-active-plugin-ENTITY-entity-1",
+                "onCommand",
+                "v1",
+                "patch-1",
+                1L,
+                "pin-request-1",
+                "event-activation-owned",
+                false))
+        .thenReturn(true);
     when(repository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRunAndSourceService(
                 "1",
@@ -687,31 +710,30 @@ class ScriptEventIngressServiceImplTest {
     assertThat(admission.admitted()).isTrue();
     assertThat(admission.resolvedHandlerCount()).isEqualTo(4);
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
-    verify(workItemRepository, Mockito.times(3)).save(workItemCaptor.capture());
+    verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getScriptId)
-        .containsExactly("script-first-party", "script-active-plugin", "script-active-plugin");
+        .containsExactly("script-first-party", "script-active-plugin");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getPluginId)
-        .containsExactly("", "plugin-1", "plugin-1");
+        .containsExactly("", "plugin-1");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getPluginVersionId)
-        .containsExactly("", "plugin-v1", "plugin-v1");
+        .containsExactly("", "plugin-v1");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getBindingId)
-        .containsExactly("", "binding-script-active-plugin-ENTITY-entity-1", "binding-2");
+        .containsExactly("", "binding-2");
     assertThat(workItemCaptor.getAllValues())
         .extracting(ScriptWorkItem::getTargetScopeType, ScriptWorkItem::getTargetScopeId)
         .containsExactly(
             org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"),
-            org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"),
             org.assertj.core.groups.Tuple.tuple("ENTITY", "entity-1"));
     ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
-    verify(eventAuditRepository, Mockito.times(3)).save(auditCaptor.capture());
+    verify(eventAuditRepository, Mockito.times(2)).save(auditCaptor.capture());
     assertThat(auditCaptor.getAllValues())
         .extracting(ScriptEventAudit::getBindingId)
-        .containsExactly("", "binding-script-active-plugin-ENTITY-entity-1", "binding-2");
-    verify(automationQueueService, Mockito.times(3))
+        .containsExactly("", "binding-2");
+    verify(automationQueueService, Mockito.times(2))
         .enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
   }
 
