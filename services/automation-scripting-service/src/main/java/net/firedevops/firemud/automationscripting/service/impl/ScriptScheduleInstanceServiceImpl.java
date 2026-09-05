@@ -553,11 +553,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     Set<String> selectedIdentities =
         selectedCandidates.stream()
-            .map(TimerFiringCandidate::identity)
+            .map(TimerFiringCandidate::durableIdentity)
             .collect(java.util.stream.Collectors.toSet());
     List<TimerFiringCandidate> truncatedCandidates =
         candidates.stream()
-            .filter(candidate -> !selectedIdentities.contains(candidate.identity()))
+            .filter(candidate -> !selectedIdentities.contains(candidate.durableIdentity()))
             .toList();
     recordSkippedCandidates(suppressedCandidates, REASON_RUNTIME_SCOPE_CHANGED, now);
     boolean authorityUnavailable = false;
@@ -1706,7 +1706,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String timerScriptEventId(TimerFiringCandidate candidate) {
-    return "timer-" + shortHash(candidate.identity());
+    return "timer-" + shortHash(candidate.eventIdentity());
   }
 
   private TimerAuditEventSummary withPublication(String tenantId, TimerAuditEventSummary summary) {
@@ -2175,28 +2175,43 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return wallClock ? dueAt.toEpochMilli() : dueTickId;
     }
 
-    private String identity() {
-      return lengthPrefixedIdentity(
-          instance.getTenantId(),
-          instance.getGameInstanceId(),
-          instance.getPlayableStateScope(),
-          regionId,
-          String.valueOf(regionEpoch),
-          blankToEmpty(instance.getTargetScopeType()),
-          blankToEmpty(instance.getTargetScopeId()),
-          targetEntityId(instance),
-          instance.getScriptId(),
-          blankToEmpty(instance.getPluginId()),
-          blankToEmpty(instance.getPluginVersionId()),
-          instance.getEventType(),
-          DEFAULT_SCHEMA_VERSION,
-          instance.getScriptPatchVersion(),
-          String.valueOf(scriptPinEpoch),
-          scriptPinControlPlaneRequestId,
-          instance.getScheduleDefinitionId(),
-          wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
-          Boolean.toString(SCHEDULER_IS_DRY_RUN),
-          SCHEDULER_TRIGGER_MODE);
+    private String durableIdentity() {
+      return identity(true);
+    }
+
+    private String eventIdentity() {
+      return identity(false);
+    }
+
+    private String identity(boolean includeOwnerRequestEvidence) {
+      List<String> values =
+          new ArrayList<>(
+              List.of(
+                  instance.getTenantId(),
+                  instance.getGameInstanceId(),
+                  instance.getPlayableStateScope(),
+                  regionId,
+                  String.valueOf(regionEpoch),
+                  blankToEmpty(instance.getTargetScopeType()),
+                  blankToEmpty(instance.getTargetScopeId()),
+                  targetEntityId(instance),
+                  instance.getScriptId(),
+                  blankToEmpty(instance.getPluginId()),
+                  blankToEmpty(instance.getPluginVersionId()),
+                  instance.getEventType(),
+                  DEFAULT_SCHEMA_VERSION,
+                  instance.getScriptPatchVersion(),
+                  String.valueOf(scriptPinEpoch)));
+      if (includeOwnerRequestEvidence) {
+        values.add(scriptPinControlPlaneRequestId);
+      }
+      values.addAll(
+          List.of(
+              instance.getScheduleDefinitionId(),
+              wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
+              Boolean.toString(SCHEDULER_IS_DRY_RUN),
+              SCHEDULER_TRIGGER_MODE));
+      return lengthPrefixedIdentity(values.toArray(String[]::new));
     }
 
     private String finalReason() {
