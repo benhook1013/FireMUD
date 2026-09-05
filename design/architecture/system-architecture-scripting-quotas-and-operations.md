@@ -267,7 +267,7 @@ The **target-state** canonical `script_event_audit` schema includes:
 
 For tenant-readiness `onLoad` triggers, `gameInstanceId`, `playableStateScope`, `regionId`, `regionEpoch`, `entityId`, and `scriptPinEpoch` are omitted; they must not be populated with sentinel values. Their existing identity remains `<tenantId, scriptId, eventSchemaVersion, scriptPatchVersion, eventType=onLoad, isDryRun, scriptEventId>`. Gameplay/runtime triggers require `scriptPinEpoch` with `scriptPatchVersion` and include the other fields when applicable according to the normative Trigger Identity table.
 
-Current instance-scoped ingress validates the exact owner tuple before handler work is admitted, and Automation persists that tuple on work-item and handoff-audit evidence. The remaining downstream gap is the distinct-instance remote source/target binding plus Game Session handoff, staging, and final-effect enforcement; see the [Automation & Scripting Service implementation status](./microservices/automation-scripting-service/runtime-and-data.md#implementation-status).
+Current instance-scoped ingress validates the exact owner tuple before handler work is admitted, Automation persists that tuple on work-item and handoff-audit evidence, and the local Game Session handoff, durable staging/replay, and final execution boundaries revalidate it. The remaining downstream gap is distinct-instance remote source/target binding and remote final-effect fencing; see the [Automation & Scripting Service implementation status](./microservices/automation-scripting-service/runtime-and-data.md#implementation-status).
 
 - **Stage-aware outcome**
   - `finalStage` – the last stage reached for the trigger (for example `ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`).

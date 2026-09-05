@@ -451,6 +451,18 @@ public class ScriptEventAuditRepository {
                             normalizedScriptPinControlPlaneRequestId)))
             .execute();
     if (updated != 1) {
+      Optional<ScriptEventAudit> existing = findById(entity.getId());
+      if (existing.isPresent()) {
+        ScriptEventAudit existingAudit = existing.get();
+        if (Objects.equals(existingAudit.getScriptPatchVersion(), entity.getScriptPatchVersion())
+            && Objects.equals(
+                normalizeScriptPinEpoch(existingAudit.getScriptPinEpoch()),
+                normalizedScriptPinEpoch)) {
+          requireMatchingPinOwnerEvidence(
+              normalizedScriptPinControlPlaneRequestId,
+              existingAudit.getScriptPinControlPlaneRequestId());
+        }
+      }
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
           "script_event_audit", entity.getId());
     }

@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventAuditRecord;
@@ -420,11 +421,17 @@ class ScriptEventAuditRepositoryTest {
   void existingAuditUpdateCasIncludesNormalizedPinTuple() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger calls = new AtomicInteger();
     MockDataProvider provider =
         context -> {
-          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
-          bindingsRef.set(context.bindings());
-          return new MockResult[] {new MockResult(0)};
+          if (calls.incrementAndGet() == 1) {
+            sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+            bindingsRef.set(context.bindings());
+          }
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_AUDIT))
+          };
         };
     ScriptEventAuditRepository repository =
         new ScriptEventAuditRepository(
@@ -444,6 +451,115 @@ class ScriptEventAuditRepositoryTest {
         .contains(
             "script_patch_version", "script_pin_epoch", "script_pin_control_plane_request_id");
     assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2");
+  }
+
+  @Test
+  void existingAuditUpdateReturnsTheUpdatedRowWhenCasSucceeds() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now);
+    row.setScriptPatchVersion("patch-2");
+    row.setScriptPinEpoch(2L);
+    row.setScriptPinControlPlaneRequestId("pin-request-2");
+    row.setRowVersion(4);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger calls = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          if (calls.incrementAndGet() == 1) {
+            return new MockResult[] {new MockResult(1)};
+          }
+          Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setId(9L);
+    entity.setRowVersion(3);
+    entity.setScriptPatchVersion("patch-2");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    ScriptEventAudit saved = repository.save(entity);
+
+    assertThat(saved.getId()).isEqualTo(9L);
+    assertThat(saved.getRowVersion()).isEqualTo(4);
+    assertThat(calls.get()).isEqualTo(2);
+  }
+
+  @Test
+  void existingAuditUpdateClassifiesChangedOwnerEvidenceAsConflict() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now);
+    row.setScriptPatchVersion("patch-2");
+    row.setScriptPinEpoch(2L);
+    row.setScriptPinControlPlaneRequestId("pin-request-1");
+    row.setRowVersion(3);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger calls = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          if (calls.incrementAndGet() == 1) {
+            return new MockResult[] {new MockResult(0)};
+          }
+          Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setId(9L);
+    entity.setRowVersion(3);
+    entity.setScriptPatchVersion("patch-2");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script_pin_control_plane_request_id conflicts with existing identity");
+    assertThat(calls.get()).isEqualTo(2);
+  }
+
+  @Test
+  void existingAuditUpdateKeepsStaleClassificationForChangedIdentity() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now);
+    row.setScriptPatchVersion("patch-1");
+    row.setScriptPinEpoch(2L);
+    row.setScriptPinControlPlaneRequestId("pin-request-2");
+    row.setRowVersion(3);
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger calls = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          if (calls.incrementAndGet() == 1) {
+            return new MockResult[] {new MockResult(0)};
+          }
+          Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setId(9L);
+    entity.setRowVersion(3);
+    entity.setScriptPatchVersion("patch-2");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-2");
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class)
+        .hasMessage("Stale write rejected for script_event_audit id=9");
+    assertThat(calls.get()).isEqualTo(2);
   }
 
   @Test

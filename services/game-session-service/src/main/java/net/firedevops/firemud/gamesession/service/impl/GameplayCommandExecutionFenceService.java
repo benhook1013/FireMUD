@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.GetPluginStatusResponse;
@@ -40,7 +41,7 @@ final class GameplayCommandExecutionFenceService {
           "Gameplay command game instance is unavailable for execution fencing");
     }
 
-    String sourceType = normalize(command.getSourceType());
+    String sourceType = normalize(command.getSourceType()).toUpperCase(Locale.ROOT);
     boolean localAutomationCommand =
         "AUTOMATION".equals(sourceType) && normalize(command.getRemoteFollowupId()).isEmpty();
     String commandPatch = normalize(command.getScriptPatchVersion());

@@ -46,6 +46,7 @@ class GameplayCommandExecutionFenceServiceTest {
   @Test
   void acceptsLocalAutomationCommandWithExactCurrentScriptPinTuple() {
     GameplayCommand command = automationCommand();
+    command.setSourceType(" aUtOmAtIoN ");
     when(gameInstanceRepository.findById(2L))
         .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
 

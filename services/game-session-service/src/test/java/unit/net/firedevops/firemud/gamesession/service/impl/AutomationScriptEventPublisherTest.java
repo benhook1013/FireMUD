@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.Optional;
+import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -134,7 +136,11 @@ class AutomationScriptEventPublisherTest {
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
     instance.setScriptPinEpoch(1L);
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
             client,
@@ -147,6 +153,33 @@ class AutomationScriptEventPublisherTest {
     publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
+  @Test
+  void rejectsIncompleteScriptPinTupleBeforeBuildingRequest() {
+    assertThatThrownBy(
+            () ->
+                TriggerScriptEventRequestFactory.builder(
+                    new TriggerScriptEventRequestFactory.CommonFields(
+                        "tenant",
+                        "instance",
+                        "region",
+                        1L,
+                        "entity",
+                        "onCommand",
+                        "v1",
+                        "patch-1",
+                        0L,
+                        "",
+                        "event-1",
+                        false,
+                        TriggerMode.TRIGGER_MODE_NORMAL,
+                        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                        "snapshot",
+                        "{}"),
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
   }
 
   @ParameterizedTest

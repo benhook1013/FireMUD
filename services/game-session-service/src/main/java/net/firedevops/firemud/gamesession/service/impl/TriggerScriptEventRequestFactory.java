@@ -3,12 +3,17 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 
 final class TriggerScriptEventRequestFactory {
   private TriggerScriptEventRequestFactory() {}
 
   static TriggerScriptEventRequest.Builder builder(
       CommonFields commonFields, RoutingBundle routingBundle) {
+    ScriptPinTupleCoherence.requireCoherent(
+        commonFields.scriptPatchVersion(),
+        commonFields.scriptPinEpoch() == 0L ? null : commonFields.scriptPinEpoch(),
+        commonFields.scriptPinControlPlaneRequestId());
     PlayableStateScope playableStateScope =
         requirePlayableStateScope(commonFields.playableStateScope());
     TriggerScriptEventRequest.Builder builder =

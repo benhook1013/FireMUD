@@ -1300,7 +1300,7 @@ message EnqueueAutomationCommandIfAbsentRequest {
   int64 origin_source_ordinal = 21;
   int64 origin_source_due_tick_id = 22;
   int64 origin_source_due_at_ms = 23;
-  // Stable handler binding identity; field 24 is reserved by the cross-service contract.
+  // Stable handler binding identity assigned by the cross-service contract.
   string binding_id = 24;
   // Exact script pin evidence captured by Automation. The Game Session owner/admission boundary
   // compares both fields with its authoritative current tuple before staging or replaying; a
