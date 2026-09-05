@@ -31,7 +31,7 @@ Automation's **target-state only** contract exposes stage-aware dead-letter reco
 
 The current `ReplayDeadLetteredWorkItems` implementation still requeues eligible parent rows as `PENDING_EVALUATION` and returns aggregate counts; it does not prove stage-specific frozen-input retry or stored-output continuation.
 
-The current Automation pin projection and wire contract now retain the observed exact `{scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId}` owner tuple; instance admission, scheduling, and replay reject absent or mismatched epoch evidence. Exact final-effect fencing, complete source/target remote tuple proof, and stage-aware recovery remain implementation/proof gaps.
+The current Automation pin projection and wire contract now retain the observed exact `{scriptPatchVersion, scriptPinEpoch, lastObservedControlPlaneRequestId}` owner tuple; instance admission, scheduling, and replay reject absent or mismatched epoch evidence. Exact final-effect fencing, complete source/target remote tuple proof, and stage-aware recovery remain implementation/proof gaps.
 
 ## Key Features
 
