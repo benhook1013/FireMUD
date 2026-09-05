@@ -73,9 +73,6 @@ public class ScriptEventIngressAuditRepository {
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(scriptPinEpoch))
-                .and(
-                    SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
-                        .isNotDistinctFrom(blankToNull(scriptPinControlPlaneRequestId)))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(scriptEventId))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(dryRun))
                 .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(sourceService)))
