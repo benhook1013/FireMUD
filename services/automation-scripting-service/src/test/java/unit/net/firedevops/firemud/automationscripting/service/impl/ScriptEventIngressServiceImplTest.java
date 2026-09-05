@@ -858,6 +858,7 @@ class ScriptEventIngressServiceImplTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong());
     verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));
     verify(automationQueueService, never()).enqueueWorkItem(Mockito.any(ScriptWorkItem.class));
+    verify(eventAuditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
   }
 
   private static Stream<Arguments> unresolvedBindingDefinitions() {
@@ -3603,8 +3604,9 @@ class ScriptEventIngressServiceImplTest {
           .isTrue();
       Future<ScriptEventIngressService.TriggerAdmission> loser =
           executor.submit(() -> second.admit(request, "game-session-service"));
-      ScriptEventIngressService.TriggerAdmission loserResult = loser.get(5, TimeUnit.SECONDS);
-      assertThat(loserResult.reason()).isEqualTo("ingress_in_progress");
+      ExecutionException failure =
+          assertThrows(ExecutionException.class, () -> loser.get(5, TimeUnit.SECONDS));
+      assertThat(failure).hasCauseInstanceOf(ScriptIngressInProgressException.class);
       verifyNoInteractions(
           bindingRepository, workItemRepository, eventAuditRepository, quotaService);
       allowWinnerToContinue.countDown();
@@ -3713,10 +3715,18 @@ class ScriptEventIngressServiceImplTest {
               return new ScriptEventIngressAuditRepository.IdempotentInsertResult(row.get(), false);
             });
     when(repository.reclaimStaleInProgress(Mockito.any(), Mockito.any(), Mockito.any()))
-        .thenReturn(Optional.of(reclaimed));
-    AtomicInteger renewals = new AtomicInteger();
+        .thenAnswer(
+            invocation -> {
+              row.get().setRowVersion(1);
+              return Optional.of(reclaimed);
+            });
     when(repository.renewClaimIfCurrent(Mockito.any(), Mockito.any()))
-        .thenAnswer(invocation -> renewals.getAndIncrement() < 2);
+        .thenAnswer(
+            invocation -> {
+              ScriptEventIngressAudit claim = invocation.getArgument(0);
+              return (claim == row.get() && claim.getRowVersion() == 0)
+                  || (claim == reclaimed && claim.getRowVersion() == 1);
+            });
     when(repository.save(Mockito.any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(bindingRepository
             .findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(

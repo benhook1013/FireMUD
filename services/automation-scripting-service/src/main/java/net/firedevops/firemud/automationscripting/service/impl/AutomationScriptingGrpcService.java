@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -145,6 +146,10 @@ public class AutomationScriptingGrpcService
                 admission.outcome(),
                 admission.reason()));
       }
+    } catch (ScriptIngressInProgressException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
+      return;
     } catch (IllegalArgumentException ex) {
       response
           .setAdmissionReason("invalid_argument")

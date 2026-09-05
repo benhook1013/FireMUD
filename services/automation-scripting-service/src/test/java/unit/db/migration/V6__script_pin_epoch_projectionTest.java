@@ -27,11 +27,17 @@ class V6__script_pin_epoch_projectionTest {
     assertThat(migration)
         .contains(
             "UPDATE script_patch_pin_projections",
-            "SET last_observed_control_plane_request_id = ''",
+            "SET observed_pinned_script_patch_version = '',",
+            "last_observed_control_plane_request_id = ''",
             "ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple CHECK",
             "script_pin_epoch IS NULL OR script_pin_epoch = 0",
+            "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL",
             "script_pin_epoch > 0",
+            "NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL",
             "NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL");
+
+    assertThat(migration.indexOf("UPDATE script_patch_pin_projections"))
+        .isLessThan(migration.indexOf("ADD CONSTRAINT ck_script_patch_pin_projections_pin_tuple"));
   }
 }

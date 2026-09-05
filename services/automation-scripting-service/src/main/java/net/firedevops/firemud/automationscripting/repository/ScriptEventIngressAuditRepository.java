@@ -203,6 +203,7 @@ public class ScriptEventIngressAuditRepository {
     if (entity.getId() != null) {
       throw new IllegalArgumentException("A new script event ingress audit is required");
     }
+    boolean pinned = requireCoherentPinTuple(entity);
     ScriptEventIngressAuditRecord record = dsl.newRecord(SCRIPT_EVENT_INGRESS_AUDIT);
     populate(record, entity);
     List<SelectFieldOrAsterisk> returningFields = new ArrayList<>();
@@ -210,19 +211,16 @@ public class ScriptEventIngressAuditRepository {
     returningFields.add(INSERTED_ROW);
     boolean instanceScoped = entity.getGameInstanceId() != null;
     Field<?>[] conflictFields =
-        instanceScoped
-            ? runtimeConflictFields(
-                entity.getScriptPinEpoch() != null, entity.getScriptPinEpoch() != null)
-            : onLoadConflictFields();
+        instanceScoped ? runtimeConflictFields(pinned, pinned) : onLoadConflictFields();
     Condition conflictPredicate =
         instanceScoped
             ? SCRIPT_EVENT_INGRESS_AUDIT
                 .GAME_INSTANCE_ID
                 .isNotNull()
                 .and(
-                    entity.getScriptPinEpoch() == null
-                        ? nullScriptPinEpochCondition()
-                        : SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotNull())
+                    pinned
+                        ? SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotNull()
+                        : nullScriptPinEpochCondition())
             : SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNull();
     if (!instanceScoped) {
       // Keep the explicit pre-instance/null-pin branch visible in the claim predicate. The
@@ -250,6 +248,18 @@ public class ScriptEventIngressAuditRepository {
       value = "EI_EXPOSE_REP",
       justification = "The claimed ingress audit is the repository result contract.")
   public record IdempotentInsertResult(ScriptEventIngressAudit audit, boolean inserted) {}
+
+  private static boolean requireCoherentPinTuple(ScriptEventIngressAudit entity) {
+    boolean hasEpoch = entity.getScriptPinEpoch() != null;
+    boolean hasRequestId =
+        entity.getScriptPinControlPlaneRequestId() != null
+            && !entity.getScriptPinControlPlaneRequestId().isBlank();
+    if (hasEpoch != hasRequestId || (hasEpoch && entity.getScriptPinEpoch() <= 0L)) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    }
+    return hasEpoch;
+  }
 
   private static Condition nullScriptPinEpochCondition() {
     return condition("script_pin_epoch is null");
