@@ -199,13 +199,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 tenantKey, scriptPatchVersion);
     Map<String, List<ScriptEventBinding>> bindingsByScriptEvent =
         bindingsByScriptEvent(tenantKey, scriptPatchVersion);
-    Map<String, PluginRuntimeState> activePluginStates =
-        activePluginStates(
+    Map<String, String> activePluginVersions =
+        activePluginVersions(
             tenantId,
             gameInstanceId,
             new AutomationRuntimeScopeSupport.RuntimeScope(
                 blankToEmpty(runtimeState.getRegionId()), runtimeState.getRegionEpoch()));
-    Map<String, String> activePluginVersions = activePluginVersions(activePluginStates);
     List<ScriptScheduleInstance> existing =
         scheduleInstanceRepository
             .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
@@ -254,7 +253,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               definition,
               binding,
               runtimeState,
-              activePluginStates,
               pinObservedAt,
               shouldApplyTransitionSeed(definition, nonPinTransitionSeed, transitionPluginId)
                   ? nonPinTransitionSeed
@@ -680,11 +678,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         .toList();
   }
 
-  private Map<String, PluginRuntimeState> activePluginStates(
+  private Map<String, String> activePluginVersions(
       String tenantId,
       String gameInstanceId,
       AutomationRuntimeScopeSupport.RuntimeScope runtimeScope) {
-    Map<String, PluginRuntimeState> active = new HashMap<>();
+    Map<String, String> active = new HashMap<>();
     for (PluginRuntimeState state :
         pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)) {
       if (!PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())) {
@@ -696,22 +694,10 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String pluginId = blankToEmpty(state.getPluginId());
       String activePluginVersionId = blankToEmpty(state.getActivePluginVersionId());
       if (!pluginId.isBlank() && !activePluginVersionId.isBlank()) {
-        active.put(pluginId, state);
+        active.put(pluginId, activePluginVersionId);
       }
     }
     return active;
-  }
-
-  private static Map<String, String> activePluginVersions(
-      Map<String, PluginRuntimeState> activePluginStates) {
-    Map<String, String> activeVersions = new HashMap<>();
-    for (Map.Entry<String, PluginRuntimeState> entry : activePluginStates.entrySet()) {
-      String activePluginVersionId = blankToEmpty(entry.getValue().getActivePluginVersionId());
-      if (!activePluginVersionId.isBlank()) {
-        activeVersions.put(entry.getKey(), activePluginVersionId);
-      }
-    }
-    return activeVersions;
   }
 
   private static boolean shouldMaterialize(
@@ -759,7 +745,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleDefinition definition,
       ScriptEventBinding binding,
       GameInstanceRuntimeState runtimeState,
-      Map<String, PluginRuntimeState> activePluginStates,
       Instant pinObservedAt,
       Instant nonPinTransitionSeed,
       Instant now) {
@@ -783,22 +768,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPointerVersion(routingBundle.pointerVersion());
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
-    if (!instance.getPluginId().isBlank()) {
-      PluginRuntimeState pluginState = activePluginStates.get(instance.getPluginId());
-      if (pluginState != null
-          && instance
-              .getPluginVersionId()
-              .equals(blankToEmpty(pluginState.getActivePluginVersionId()))) {
-        instance.setPluginActivationEpoch(pluginState.getPluginActivationEpoch());
-        instance.setLifecycleRevision(pluginState.getLifecycleRevision());
-      } else {
-        instance.setPluginActivationEpoch(0L);
-        instance.setLifecycleRevision(0L);
-      }
-    } else {
-      instance.setPluginActivationEpoch(0L);
-      instance.setLifecycleRevision(0L);
-    }
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -1499,10 +1468,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       return PluginState.PLUGIN_STATE_ENABLED.name().equals(state.getPluginState())
               && Objects.equals(pluginId, blankToEmpty(state.getPluginId()))
               && Objects.equals(blankToEmpty(state.getActivePluginVersionId()), pluginVersionId)
-              && candidate.pluginActivationEpoch() > 0
-              && candidate.lifecycleRevision() > 0
-              && state.getPluginActivationEpoch() == candidate.pluginActivationEpoch()
-              && state.getLifecycleRevision() == candidate.lifecycleRevision()
               && AutomationRuntimeScopeSupport.matches(
                   state,
                   new AutomationRuntimeScopeSupport.RuntimeScope(
@@ -2135,8 +2100,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       Long regionEpoch,
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
-      long pluginActivationEpoch,
-      long lifecycleRevision,
       Long dueTickId,
       Instant dueAt,
       boolean wallClock) {
@@ -2147,8 +2110,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance.getRuntimeRegionEpoch(),
           requirePositiveScriptPinEpoch(instance),
           requireScriptPinControlPlaneRequestId(instance),
-          instance.getPluginActivationEpoch(),
-          instance.getLifecycleRevision(),
           dueTickId,
           null,
           false);
@@ -2162,8 +2123,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           regionEpoch,
           requirePositiveScriptPinEpoch(instance),
           requireScriptPinControlPlaneRequestId(instance),
-          instance.getPluginActivationEpoch(),
-          instance.getLifecycleRevision(),
           dueTickId,
           null,
           false);
@@ -2177,8 +2136,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           regionEpoch,
           requirePositiveScriptPinEpoch(instance),
           requireScriptPinControlPlaneRequestId(instance),
-          instance.getPluginActivationEpoch(),
-          instance.getLifecycleRevision(),
           null,
           dueAt,
           true);
@@ -2192,8 +2149,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           regionEpoch,
           requirePositiveScriptPinEpoch(instance),
           requireScriptPinControlPlaneRequestId(instance),
-          instance.getPluginActivationEpoch(),
-          instance.getLifecycleRevision(),
           dueTickId,
           null,
           false);
@@ -2207,8 +2162,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           regionEpoch,
           requirePositiveScriptPinEpoch(instance),
           requireScriptPinControlPlaneRequestId(instance),
-          instance.getPluginActivationEpoch(),
-          instance.getLifecycleRevision(),
           null,
           dueAt,
           true);
@@ -2249,9 +2202,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                   DEFAULT_SCHEMA_VERSION,
                   instance.getScriptPatchVersion(),
                   String.valueOf(scriptPinEpoch)));
-      if (!blankToEmpty(instance.getPluginId()).isBlank()) {
-        values.add("pluginActivationEpoch:" + pluginActivationEpoch);
-      }
       if (includeOwnerRequestEvidence) {
         values.add(scriptPinControlPlaneRequestId);
       }

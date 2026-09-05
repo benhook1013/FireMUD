@@ -223,8 +223,6 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(stateCaptor.getValue().getRuntimeRegionId()).isEqualTo("region-7");
     assertThat(stateCaptor.getValue().getRuntimeRegionEpoch()).isEqualTo(12L);
     assertThat(stateCaptor.getValue().getStatusReason()).isEqualTo("activation");
-    assertThat(stateCaptor.getValue().getPluginActivationEpoch()).isEqualTo(1L);
-    assertThat(stateCaptor.getValue().getLifecycleRevision()).isEqualTo(1L);
   }
 
   @Test
@@ -278,8 +276,6 @@ class PluginRuntimeStateServiceImplTest {
     assertThat(existing.getStatusReason()).isEqualTo("maintenance");
     assertThat(existing.getRuntimeRegionId()).isEqualTo("region-8");
     assertThat(existing.getRuntimeRegionEpoch()).isEqualTo(21L);
-    assertThat(existing.getPluginActivationEpoch()).isEqualTo(1L);
-    assertThat(existing.getLifecycleRevision()).isEqualTo(1L);
     Mockito.verify(repository, Mockito.atLeast(2)).save(existing);
     Mockito.verify(eventRepository).save(Mockito.any(PluginRuntimeEvent.class));
     ArgumentCaptor<Instant> transitionSeedCaptor = ArgumentCaptor.forClass(Instant.class);
