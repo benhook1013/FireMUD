@@ -56,6 +56,20 @@ public class GameInstanceRepository {
     return selectGameInstances().where(GAME_INSTANCES.ID.eq(id)).fetchOptional(this::toEntity);
   }
 
+  /**
+   * Reads the authoritative game instance while holding its row lock.
+   *
+   * <p>Callers must invoke this method inside their admission/staging transaction. The tenant is
+   * part of the predicate so an instance from another tenant cannot be used as lock evidence.
+   */
+  public Optional<GameInstance> findByTenantIdAndGameInstanceIdForUpdate(
+      Long tenantId, Long gameInstanceId) {
+    return selectGameInstances()
+        .where(GAME_INSTANCES.ID.eq(gameInstanceId).and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
   public long count() {
     return dsl.fetchCount(GAME_INSTANCES);
   }

@@ -166,6 +166,7 @@ class TickServiceImplTest {
     tickStagingService =
         new TickStagingService(
             redisTemplate,
+            repository,
             gameplayCommandRepository,
             remoteFollowupRepository,
             tickBatchRepository,
@@ -199,7 +200,12 @@ class TickServiceImplTest {
     setField(tickRuntimeProgressService, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
+    when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
+        .thenReturn(java.util.Optional.of(instance));
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -1635,6 +1641,8 @@ class TickServiceImplTest {
     command.setAutomationWorkItemId("work-1");
     command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
@@ -1783,6 +1791,15 @@ class TickServiceImplTest {
     command.setSourceType("AUTOMATION");
     command.setAutomationDispatchId("dispatch-2");
     command.setScriptPatchVersion("patch-2");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
+    var patch2Instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
+    patch2Instance.setTenantId(1L);
+    patch2Instance.setScriptPatchVersion("patch-2");
+    patch2Instance.setScriptPinEpoch(1L);
+    patch2Instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    when(repository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
+        .thenReturn(java.util.Optional.of(patch2Instance));
     command.setTargetEntityId("entity-2");
     command.setDueTickId(21L);
     command.setEnqueueSeq(78L);
@@ -1850,6 +1867,9 @@ class TickServiceImplTest {
         .thenReturn(List.of("N|cmd-1|say hello"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
     command.setCharacterId(44L);
     command.setTargetEntityId("44");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
@@ -1931,6 +1951,9 @@ class TickServiceImplTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("AUTOMATION");
+    second.setScriptPatchVersion("patch-1");
+    second.setScriptPinEpoch(1L);
+    second.setScriptPinControlPlaneRequestId("req-1");
     List<net.firedevops.firemud.gamesession.entity.GameplayCommand> savedSnapshots =
         new ArrayList<>();
     doAnswer(

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -43,10 +44,29 @@ final class AutomationGameplayCommandAdmissionSupport {
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       TickService tickService) {
+    DurableAdmission durableAdmission =
+        admitIfAbsentDurably(
+            request,
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            gameplayAdmissionPointerAuthorityService);
+    return materializeAcceptedCommand(
+        durableAdmission, request, gameplayCommandRepository, tickService);
+  }
+
+  static DurableAdmission admitIfAbsentDurably(
+      AdmissionRequest request,
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     validate(request);
     GameInstance instance =
-        gameInstanceRepository
-            .findById(request.gameInstanceId())
+        (isLocalAutomation(request)
+                ? gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(
+                    request.tenantId(), request.gameInstanceId())
+                : gameInstanceRepository.findById(request.gameInstanceId()))
             .orElseThrow(() -> new IllegalArgumentException("game_instance_id not found"));
     if (!request.tenantId().equals(instance.getTenantId())) {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
@@ -54,23 +74,23 @@ final class AutomationGameplayCommandAdmissionSupport {
 
     Optional<AdmissionResult> scriptPinRejected = rejectIfScriptPinTupleMismatch(request, instance);
     if (scriptPinRejected.isPresent()) {
-      return scriptPinRejected.orElseThrow();
+      return new DurableAdmission(scriptPinRejected.orElseThrow(), null, false);
     }
 
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return existingAdmissionResult(existing.orElseThrow(), requestedCommand);
+      return new DurableAdmission(
+          existingAdmissionResult(existing.orElseThrow(), requestedCommand), null, false);
     }
 
-    return admitFresh(
+    return admitFreshDurably(
         request,
         requestedCommand,
         gameplayCommandRepository,
         runtimeRegionStatusRepository,
         gameplayAdmissionPointerAuthorityService,
-        null,
-        tickService);
+        null);
   }
 
   static AdmissionResult admitRemoteIfAbsent(
@@ -182,17 +202,36 @@ final class AutomationGameplayCommandAdmissionSupport {
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers,
       TickService tickService) {
+    DurableAdmission durableAdmission =
+        admitFreshDurably(
+            request,
+            requestedCommand,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            gameplayAdmissionPointerAuthorityService,
+            preReadCurrentPointers);
+    return materializeAcceptedCommand(
+        durableAdmission, request, gameplayCommandRepository, tickService);
+  }
+
+  private static DurableAdmission admitFreshDurably(
+      AdmissionRequest request,
+      GameplayCommand requestedCommand,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      List<GameplayAdmissionPointerSnapshot> preReadCurrentPointers) {
     Optional<AdmissionResult> pointerRejected =
         rejectIfCurrentPointerAuthorityMismatch(
             request, gameplayAdmissionPointerAuthorityService, preReadCurrentPointers);
     if (pointerRejected.isPresent()) {
-      return pointerRejected.orElseThrow();
+      return new DurableAdmission(pointerRejected.orElseThrow(), null, false);
     }
 
     Optional<AdmissionResult> rejected =
         rejectIfOwnershipClosed(request, runtimeRegionStatusRepository);
     if (rejected.isPresent()) {
-      return rejected.orElseThrow();
+      return new DurableAdmission(rejected.orElseThrow(), null, false);
     }
 
     GameplayCommand command = requestedCommand;
@@ -200,12 +239,24 @@ final class AutomationGameplayCommandAdmissionSupport {
     try {
       insertResult = gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(command);
     } catch (GameplayCommandRepository.AdmissionPointerUnavailableException ex) {
-      return temporaryPointerAuthorityUnavailable(false);
+      return new DurableAdmission(temporaryPointerAuthorityUnavailable(false), null, false);
     }
     command = insertResult.command();
     if (!insertResult.inserted()) {
-      return existingAdmissionResult(command, requestedCommand);
+      return new DurableAdmission(existingAdmissionResult(command, requestedCommand), null, false);
     }
+    return new DurableAdmission(null, command, true);
+  }
+
+  static AdmissionResult materializeAcceptedCommand(
+      DurableAdmission durableAdmission,
+      AdmissionRequest request,
+      GameplayCommandRepository gameplayCommandRepository,
+      TickService tickService) {
+    if (!durableAdmission.inserted()) {
+      return durableAdmission.result();
+    }
+    GameplayCommand command = durableAdmission.command();
     try {
       tickService.enqueueCommand(
           request.tenantId(),
@@ -230,6 +281,8 @@ final class AutomationGameplayCommandAdmissionSupport {
       return new AdmissionResult(false, "REJECTED", command.getCommandId(), "UNAVAILABLE", message);
     }
   }
+
+  record DurableAdmission(AdmissionResult result, GameplayCommand command, boolean inserted) {}
 
   private static AdmissionResult existingAdmissionResult(
       GameplayCommand command, GameplayCommand requestedCommand) {
@@ -284,7 +337,7 @@ final class AutomationGameplayCommandAdmissionSupport {
   private static boolean sameAdmissionPayload(GameplayCommand existing, GameplayCommand requested) {
     return Objects.equals(existing.getTenantId(), requested.getTenantId())
         && Objects.equals(existing.getGameInstanceId(), requested.getGameInstanceId())
-        && sameText(existing.getSourceType(), requested.getSourceType())
+        && sameSourceType(existing.getSourceType(), requested.getSourceType())
         && sameText(existing.getAutomationDispatchId(), requested.getAutomationDispatchId())
         && sameText(existing.getAutomationWorkItemId(), requested.getAutomationWorkItemId())
         && sameText(existing.getScriptId(), requested.getScriptId())
@@ -341,6 +394,18 @@ final class AutomationGameplayCommandAdmissionSupport {
     return Objects.equals(blankToNull(left), blankToNull(right));
   }
 
+  private static boolean sameSourceType(String left, String right) {
+    if ("AUTOMATION".equals(normalizeSourceType(left))
+        && "AUTOMATION".equals(normalizeSourceType(right))) {
+      return true;
+    }
+    return sameText(left, right);
+  }
+
+  private static String normalizeSourceType(String value) {
+    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
   private static boolean samePlayableStateScope(String left, String right) {
     String normalizedLeft = normalizePlayableStateScope(left);
     String normalizedRight = normalizePlayableStateScope(right);
@@ -386,7 +451,8 @@ final class AutomationGameplayCommandAdmissionSupport {
     requireText(request.regionId(), "region_id is required");
     ControlPlaneRequestParser.requirePositive(request.regionEpoch(), "region_epoch");
     requireText(request.sourceType(), "source_type is required");
-    if ("AUTOMATION".equals(request.sourceType())) {
+    String normalizedSourceType = normalizeSourceType(request.sourceType());
+    if ("AUTOMATION".equals(normalizedSourceType)) {
       requireText(request.automationDispatchId(), "automation_dispatch_id is required");
       requireText(request.automationWorkItemId(), "automation_work_item_id is required");
       requireText(request.scriptId(), "script_id is required");
@@ -642,12 +708,12 @@ final class AutomationGameplayCommandAdmissionSupport {
   }
 
   private static boolean isLocalAutomation(AdmissionRequest request) {
-    return "AUTOMATION".equals(request.sourceType())
+    return "AUTOMATION".equals(normalizeSourceType(request.sourceType()))
         && blankToNull(request.remoteFollowupId()) == null;
   }
 
   private static boolean isLocalAutomation(GameplayCommand command) {
-    return "AUTOMATION".equals(command.getSourceType())
+    return "AUTOMATION".equals(normalizeSourceType(command.getSourceType()))
         && blankToNull(command.getRemoteFollowupId()) == null;
   }
 
@@ -670,7 +736,10 @@ final class AutomationGameplayCommandAdmissionSupport {
     command.setAcceptedAt(now);
     command.setLastAttemptAt(now);
     command.setAttemptCount(1);
-    command.setSourceType(request.sourceType());
+    command.setSourceType(
+        isLocalAutomation(request)
+            ? normalizeSourceType(request.sourceType())
+            : request.sourceType());
     command.setAutomationDispatchId(blankToNull(request.automationDispatchId()));
     command.setAutomationWorkItemId(blankToNull(request.automationWorkItemId()));
     command.setScriptId(blankToNull(request.scriptId()));

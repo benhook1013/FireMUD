@@ -6,21 +6,25 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.TickBatchRepository;
 import net.firedevops.firemud.gamesession.repository.TickEffectRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +39,7 @@ final class TickStagingService {
   private static final Logger logger = LoggingUtil.getLogger(TickStagingService.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
+  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayCommandRepository gameplayCommandRepository;
   private final RemoteFollowupRepository remoteFollowupRepository;
   private final TickBatchRepository tickBatchRepository;
@@ -51,6 +56,7 @@ final class TickStagingService {
   @Autowired
   TickStagingService(
       RedisTemplate<String, Object> redisTemplate,
+      GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       TickBatchRepository tickBatchRepository,
@@ -61,6 +67,7 @@ final class TickStagingService {
       PlatformTransactionManager transactionManager) {
     this(
         redisTemplate,
+        gameInstanceRepository,
         gameplayCommandRepository,
         remoteFollowupRepository,
         tickBatchRepository,
@@ -73,6 +80,7 @@ final class TickStagingService {
 
   TickStagingService(
       RedisTemplate<String, Object> redisTemplate,
+      GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RemoteFollowupRepository remoteFollowupRepository,
       TickBatchRepository tickBatchRepository,
@@ -82,6 +90,7 @@ final class TickStagingService {
       TickBatchExecutionService tickBatchExecutionService,
       TransactionOperations transactionOperations) {
     this.redisTemplate = redisTemplate;
+    this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.tickBatchRepository = tickBatchRepository;
@@ -262,6 +271,22 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
+    return transactionOperations.execute(
+        status ->
+            resolveReplayBatchInTransaction(tenantId, gameInstanceId, replayEntries, ownership));
+  }
+
+  private TickBatch resolveReplayBatchInTransaction(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      TickQueueControlService.OwnershipSnapshot ownership) {
+    List<CommandSelection> replaySelections = commandSelections(replayEntries);
+    requireExactCommandSetAndScope(
+        replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
+    // The lock and tuple check must remain in the replay transaction through the durable replay
+    // decision. Remote follow-ups are intentionally outside this local tuple boundary.
+    requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
     Optional<TickBatch> existing =
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
@@ -271,9 +296,6 @@ final class TickStagingService {
           "PENDING_REPLAY", tenantId, gameInstanceId, replaySolo, ownership, replayEntries);
     }
     TickBatch batch = existing.orElseThrow();
-    List<CommandSelection> replaySelections = commandSelections(replayEntries);
-    requireExactCommandSetAndScope(
-        replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
     // Pending Redis entries are volatile coordination evidence. Reject an
     // internally mixed pending list, but let a uniform stale mode reconcile
     // against the durable sealed manifest below.
@@ -303,6 +325,11 @@ final class TickStagingService {
           "Sealed replay mode does not match durable tick batch mode for tickBatchId="
               + batch.getTickBatchId());
     }
+    List<CommandSelection> sealedSelections = commandSelections(sealedEntries);
+    requireExactCommandSetAndScope(
+        sealedEntries, sealedSelections, tenantId, gameInstanceId, ownership);
+    requireDurableModeAgreement(sealedSelections);
+    requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, sealedSelections);
     tickBatchExecutionService.restorePendingProjection(
         tenantId, gameInstanceId, replayEntries, sealedEntries);
     tickBatchExecutionService.markBatchManifestMismatch(batch, sealedEntries, replayDigest);
@@ -348,6 +375,8 @@ final class TickStagingService {
               requireExactCommandSetAndScope(
                   entries, transactionSelections, tenantId, gameInstanceId, ownership);
               requireDurableModeAgreement(transactionSelections);
+              requireCurrentLocalAutomationPinTuple(
+                  tenantId, gameInstanceId, transactionSelections);
               requireCurrentStagingOwnership(tenantId, gameInstanceId, batch);
               String transactionManifest =
                   selectedWorkManifest(ownership.regionId(), transactionSelections);
@@ -694,6 +723,77 @@ final class TickStagingService {
     }
   }
 
+  private void requireCurrentLocalAutomationPinTuple(
+      Long tenantId, Long gameInstanceId, List<CommandSelection> selections) {
+    List<GameplayCommand> localAutomationCommands =
+        selections.stream()
+            .map(CommandSelection::command)
+            .filter(this::isLocalAutomationCommand)
+            .toList();
+    if (localAutomationCommands.isEmpty()) {
+      return;
+    }
+    GameInstance instance =
+        gameInstanceRepository
+            .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Authoritative game instance is unavailable for local Automation staging"));
+    if (!Objects.equals(tenantId, instance.getTenantId())) {
+      throw new IllegalStateException(
+          "Authoritative game instance tenant does not match local Automation staging");
+    }
+    requireCompleteScriptPinTuple(
+        instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId(),
+        "authoritative game instance");
+    for (GameplayCommand command : localAutomationCommands) {
+      requireCompleteScriptPinTuple(
+          command.getScriptPatchVersion(),
+          command.getScriptPinEpoch(),
+          command.getScriptPinControlPlaneRequestId(),
+          "local Automation command " + command.getCommandId());
+      if (!Objects.equals(command.getScriptPatchVersion(), instance.getScriptPatchVersion())
+          || !Objects.equals(command.getScriptPinEpoch(), instance.getScriptPinEpoch())
+          || !Objects.equals(
+              command.getScriptPinControlPlaneRequestId(),
+              instance.getScriptPatchPinnedControlPlaneRequestId())) {
+        throw new IllegalStateException(
+            "Local Automation command script pin tuple does not match the authoritative game instance commandId="
+                + command.getCommandId());
+      }
+    }
+  }
+
+  private void requireCompleteScriptPinTuple(
+      String patchVersion, Long pinEpoch, String controlPlaneRequestId, String subject) {
+    try {
+      ScriptPinTupleCoherence.requireCoherent(patchVersion, pinEpoch, controlPlaneRequestId);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(subject + " has an incoherent script pin tuple", ex);
+    }
+    if (patchVersion == null
+        || patchVersion.isBlank()
+        || pinEpoch == null
+        || pinEpoch <= 0L
+        || controlPlaneRequestId == null
+        || controlPlaneRequestId.isBlank()) {
+      throw new IllegalStateException(subject + " must have a complete script pin tuple");
+    }
+  }
+
+  private boolean isLocalAutomationCommand(GameplayCommand command) {
+    return command != null
+        && "AUTOMATION".equals(normalize(command.getSourceType()))
+        && normalize(command.getRemoteFollowupId()).isEmpty();
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
   private boolean uniformMode(List<TickQueuedCommandEnvelope> entries, String source) {
     if (entries.isEmpty()) {
       throw new IllegalStateException("Cannot derive tick mode from empty " + source);
@@ -827,6 +927,11 @@ final class TickStagingService {
       appendJsonStringField(builder, "scriptId", command == null ? null : command.getScriptId());
       appendJsonStringField(
           builder, "scriptPatchVersion", command == null ? null : command.getScriptPatchVersion());
+      if (isLocalAutomationCommand(command)) {
+        appendJsonNumberField(builder, "scriptPinEpoch", command.getScriptPinEpoch());
+        appendJsonStringField(
+            builder, "scriptPinControlPlaneRequestId", command.getScriptPinControlPlaneRequestId());
+      }
       appendJsonStringField(builder, "pluginId", command == null ? null : command.getPluginId());
       appendJsonStringField(
           builder, "pluginVersionId", command == null ? null : command.getPluginVersionId());

@@ -268,6 +268,9 @@ class AutomationScriptEventPublisherTest {
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getEventType()).isEqualTo("onSpawn");
     assertThat(request.getScriptEventId()).isEqualTo("play-spawn:17:99:44:7");
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getPlayableStateScope())
         .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(request.getWorldSlug()).isEqualTo("demo");
@@ -316,6 +319,15 @@ class AutomationScriptEventPublisherTest {
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getScriptEventId)
         .containsExactly("effect-1:leave", "effect-1:enter");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPatchVersion)
+        .containsOnly("patch-1");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPinEpoch)
+        .containsOnly(1L);
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPinControlPlaneRequestId)
+        .containsOnly("req-1");
     assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPlayableStateScope)
         .containsOnly(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
@@ -405,6 +417,9 @@ class AutomationScriptEventPublisherTest {
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getEventType()).isEqualTo("onLeaveRegion");
     assertThat(request.getScriptEventId()).isEqualTo("disconnect:transport_loss:17:99:44");
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getReadSnapshotToken())
         .isEqualTo("game-session:onLeaveRegion:99:7:disconnect:transport_loss:17:99:44");
     assertThat(request.getPayloadJson()).contains("\"fromRegionId\":\"R-101\"");

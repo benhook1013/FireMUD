@@ -8,9 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,10 +43,14 @@ import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionRequest;
 import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionResult;
+import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.DurableAdmission;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 class AutomationGameplayCommandAdmissionSupportTest {
   private RemoteFollowupRepository remoteFollowupRepository;
@@ -62,7 +68,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   void setupRemoteFollowupFixture() {
     remoteFollowupRepository = mock(RemoteFollowupRepository.class);
     remoteCommandCoordinatorRepository = mock(RemoteCommandCoordinatorRepository.class);
-    gameInstanceRepository = mock(GameInstanceRepository.class);
+    gameInstanceRepository = mockGameInstanceRepository();
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     tickService = mock(TickService.class);
@@ -90,7 +96,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void terminalizesUnexpectedQueueFailureAndReturnsSameRejectionOnRetry() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -132,7 +138,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
         .when(tickService)
         .enqueueCommand(1L, 2L, "auto-failed", "say hello", false);
 
-    AdmissionRequest request = automationRequest();
+    AdmissionRequest request = automationRequestWithSourceType(" automation ");
     AdmissionResult first =
         AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
             request,
@@ -152,6 +158,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("REJECTED", first.admissionOutcome());
     assertEquals("UNAVAILABLE", first.errorCode());
     assertEquals(first, retry);
+    verify(gameInstanceRepository, times(2)).findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
     verify(gameplayCommandRepository)
         .markAcceptedCommandFailed(
             eq("auto-failed"),
@@ -161,8 +168,82 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
+  void durableAdmissionCommitsBeforeQueueMaterialization() {
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
+    GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        mock(RuntimeRegionStatusRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = automationInstance();
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
+    when(gameplayCommandRepository
+            .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+                1L, 2L, "region-alpha", 7L, "dispatch-1"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
+        .thenAnswer(
+            invocation ->
+                new GameplayCommandRepository.IdempotentInsertResult(
+                    invocation.getArgument(0), true));
+    RuntimeRegionStatus ownership = new RuntimeRegionStatus();
+    ownership.setTenantId(1L);
+    ownership.setGameInstanceId(2L);
+    ownership.setRegionId("region-alpha");
+    ownership.setRegionEpoch(7L);
+    when(runtimeRegionStatusRepository.findByTenantIdAndRegionId(1L, "region-alpha"))
+        .thenReturn(Optional.of(ownership));
+
+    List<String> events = new java.util.ArrayList<>();
+    TransactionOperations transactionOperations =
+        new TransactionOperations() {
+          @Override
+          public <T> T execute(TransactionCallback<T> action) {
+            events.add("transaction-begin");
+            T result = action.doInTransaction(new SimpleTransactionStatus());
+            events.add("transaction-commit");
+            return result;
+          }
+        };
+    doAnswer(
+            invocation -> {
+              events.add("redis-enqueue");
+              return null;
+            })
+        .when(tickService)
+        .enqueueCommand(
+            anyLong(), anyLong(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    doAnswer(
+            invocation -> {
+              events.add("immediate-tick");
+              return null;
+            })
+        .when(tickService)
+        .processTick(anyLong(), anyLong());
+
+    AdmissionRequest request = automationRequest();
+    DurableAdmission durableAdmission =
+        transactionOperations.execute(
+            status ->
+                AutomationGameplayCommandAdmissionSupport.admitIfAbsentDurably(
+                    request,
+                    gameInstanceRepository,
+                    gameplayCommandRepository,
+                    runtimeRegionStatusRepository,
+                    null));
+    AdmissionResult result =
+        AutomationGameplayCommandAdmissionSupport.materializeAcceptedCommand(
+            durableAdmission, request, gameplayCommandRepository, tickService);
+
+    assertTrue(result.accepted());
+    assertEquals("ENQUEUED", result.admissionOutcome());
+    assertEquals(
+        List.of("transaction-begin", "transaction-commit", "redis-enqueue", "immediate-tick"),
+        events);
+  }
+
+  @Test
   void acceptsAutomationCommandWithMalformedTargetEntityAndLeavesCharacterIdUnset() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -240,7 +321,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWithSamePatchButDifferentPinEpochBeforeDuplicateReplay() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -270,7 +351,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWhenPinOwnerRequestIdDiffersBeforeDuplicateReplay() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -300,7 +381,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWithPartialPinTupleBeforeDuplicateReplay() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -356,7 +437,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void remoteAutomationRetainsLegacyAdmissionWithoutLocalPinTuple() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -436,7 +517,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsDuplicateWhileAdmissionIsStillAcceptedAndDoesNotQueue() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -477,7 +558,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsDuplicateWhenStoredAutomationPinEpochDiffers() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -509,7 +590,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsDuplicateWhenStoredAutomationPinOwnerRequestDiffers() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -541,7 +622,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void reusesStagedCommandReturnedByAtomicInsertConflict() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -588,7 +669,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void reusesDuplicateWhenRoutingSlugsDifferOnlyByCase() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -697,7 +778,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   @Test
   void failsClosedWhenCurrentPointerAuthorityCannotBeRead() {
     AdmissionRequest request = automationRequest();
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -816,7 +897,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void reusesExactDuplicateAfterPointerCutoverWithoutFreshAdmission() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -854,7 +935,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void reusesDuplicateWhenPlayableStateScopeOnlyDiffersByCaseAndWhitespace() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -905,7 +986,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   private void assertPreReadReuseConflict(AdmissionRequest changed) {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -949,7 +1030,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsChangedAdmissionWhenAtomicInsertLosesRace() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -998,7 +1079,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void concurrentExactAndChangedAdmissionsKeepOneRowAndOnlyExactRetryIsReusable() throws Exception {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -1074,7 +1155,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWhenRoutingBundleIsIncomplete() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -1145,7 +1226,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWhenRegionEpochIsZero() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -1193,7 +1274,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   @Test
   void rejectsAutomationCommandWhenRegionOwnershipBelongsToDifferentGameInstance() {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);
@@ -1284,6 +1365,39 @@ class AutomationGameplayCommandAdmissionSupportTest {
         null,
         1L,
         "request-1");
+  }
+
+  private static AdmissionRequest automationRequestWithSourceType(String sourceType) {
+    AdmissionRequest base = automationRequest();
+    return new AdmissionRequest(
+        base.tenantId(),
+        base.gameInstanceId(),
+        base.regionId(),
+        base.regionEpoch(),
+        sourceType,
+        base.automationDispatchId(),
+        base.automationWorkItemId(),
+        base.scriptId(),
+        base.scriptPatchVersion(),
+        base.pluginId(),
+        base.pluginVersionId(),
+        base.playableStateScope(),
+        base.worldSlug(),
+        base.realmSlug(),
+        base.pointerVersion(),
+        base.originSourceKind(),
+        base.originSourceState(),
+        base.originSourceOrdinal(),
+        base.originSourceDueTickId(),
+        base.originSourceDueAtMs(),
+        base.targetEntityId(),
+        base.remoteCoordinatorId(),
+        base.remoteFollowupId(),
+        base.command(),
+        base.requiresSoloTick(),
+        base.dueTickId(),
+        base.scriptPinEpoch(),
+        base.scriptPinControlPlaneRequestId());
   }
 
   private static AdmissionRequest automationRequestForGameInstance(long gameInstanceId) {
@@ -1558,6 +1672,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
     return instance;
   }
 
+  private static GameInstanceRepository mockGameInstanceRepository() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
+        .thenAnswer(invocation -> repository.findById(invocation.getArgument(1, Long.class)));
+    return repository;
+  }
+
   private static void verifyNoTickEnqueue(TickService tickService) {
     verify(tickService, never())
         .enqueueCommand(
@@ -1571,7 +1692,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
 
   private static AdmissionResult admitWithCurrentPointers(
       List<GameplayAdmissionPointerSnapshot> currentPointers, AdmissionRequest request) {
-    GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
+    GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
         mock(RuntimeRegionStatusRepository.class);

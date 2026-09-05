@@ -111,6 +111,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 class GameSessionControlPlaneGrpcServiceTest {
   private static AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient() {
@@ -8008,6 +8011,12 @@ class GameSessionControlPlaneGrpcServiceTest {
       GameSessionProperties gameSessionProperties,
       AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient,
       WorldManagementClient worldManagementClient) {
+    Mockito.lenient()
+        .when(
+            gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(
+                Mockito.anyLong(), Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> gameInstanceRepository.findById(invocation.getArgument(1, Long.class)));
     GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService =
         new GameSessionRuntimeControlPlaneReadService(
             gameInstanceRepository,
@@ -8045,7 +8054,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameDesignClient,
             builtInTextCommandAliasResolver,
             tickService,
-            meterRegistry);
+            meterRegistry,
+            immediateTransactionOperations());
     GameSessionOperatorControlPlaneService operatorControlPlaneService =
         automationScriptingControlPlaneClient == null
             ? new GameSessionOperatorControlPlaneService(
@@ -8067,6 +8077,15 @@ class GameSessionControlPlaneGrpcServiceTest {
         operatorControlPlaneService,
         versionUpgradeControlPlaneService,
         meterRegistry);
+  }
+
+  private static TransactionOperations immediateTransactionOperations() {
+    return new TransactionOperations() {
+      @Override
+      public <T> T execute(TransactionCallback<T> action) {
+        return action.doInTransaction(new SimpleTransactionStatus());
+      }
+    };
   }
 
   private static GameSessionControlPlaneGrpcService controlPlaneService(
