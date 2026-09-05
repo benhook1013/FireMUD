@@ -55,24 +55,28 @@ class GameInstanceServiceImplTest {
   private AtomicLong nextId;
 
   @Test
-  void legacyDtoConstructorNormalizesPinToUnpinnedWithoutCompleteTuple() {
-    GameInstanceDto dto =
-        new GameInstanceDto(
-            7L,
-            1L,
-            "runtime-1",
-            "patch-1",
-            3L,
-            "launch-1",
-            11L,
-            12L,
-            13L,
-            "generation-1",
-            42L,
-            "RUNNING");
+  void legacyDtoConstructorRejectsNonblankPatchWithoutCompleteTuple() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new GameInstanceDto(
+                    7L,
+                    1L,
+                    "runtime-1",
+                    "patch-1",
+                    3L,
+                    "launch-1",
+                    11L,
+                    12L,
+                    13L,
+                    "generation-1",
+                    42L,
+                    "RUNNING"));
 
-    assertNull(dto.scriptPatchVersion());
-    assertNull(dto.scriptPinEpoch());
+    assertEquals(
+        "scriptPatchVersion requires scriptPinEpoch and script pin owner request id",
+        exception.getMessage());
   }
 
   @BeforeEach
