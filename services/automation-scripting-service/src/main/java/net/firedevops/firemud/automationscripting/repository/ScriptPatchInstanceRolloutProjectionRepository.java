@@ -117,7 +117,7 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
                 entity.getScriptPinEpoch())
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
-                blankToNull(entity.getLastObservedControlPlaneRequestId()))
+                storageValue(entity.getLastObservedControlPlaneRequestId()))
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON, entity.getStatusReason())
@@ -167,7 +167,7 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setLastObservedControlPlaneRequestId(
-        blankToNull(entity.getLastObservedControlPlaneRequestId()));
+        storageValue(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
@@ -198,5 +198,9 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     Integer rowVersion = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
+  }
+
+  private static String storageValue(String value) {
+    return value == null || value.isBlank() ? "" : value;
   }
 }

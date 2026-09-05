@@ -407,6 +407,33 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isNull();
   }
 
+  @Test
+  void deadLetterAgeRetentionLeavesParentWhenChildOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(deadLetteredWorkItem("dead-letter-age"));
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-age-handoff");
+    handoff.setHandoffOutcome("");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("DEAD_LETTERED", Instant.now()))
+        .isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
+  @Test
+  void deadLetterRowCapLeavesParentWhenChildOutcomeIsIncomplete() {
+    ScriptWorkItem parent = workItemRepository.save(deadLetteredWorkItem("dead-letter-cap"));
+    ScriptHandoffEvent handoff = retainedHandoff(parent.getId());
+    handoff.setEventId("incomplete-cap-handoff");
+    handoff.setHandoffOutcome("   ");
+    handoffRepository.save(handoff);
+
+    assertThat(workItemRepository.deleteOldestByStatus("DEAD_LETTERED", 1)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isEqualTo(1);
+  }
+
   private void markIngressInProgress(Long id, Instant claimStartedAt, int rowVersion) {
     dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
         .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE, "IN_PROGRESS")
@@ -496,6 +523,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     item.setStatus("HANDED_OFF");
     item.setCreatedAt(OLD);
     item.setUpdatedAt(OLD);
+    return item;
+  }
+
+  private ScriptWorkItem deadLetteredWorkItem(String eventId) {
+    ScriptWorkItem item = retainedWorkItem();
+    item.setScriptEventId(eventId);
+    item.setStatus("DEAD_LETTERED");
     return item;
   }
 

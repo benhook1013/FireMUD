@@ -334,6 +334,12 @@ public class ScriptWorkItemRepository {
    * deletion. The caller must invoke this inside a transaction so the row locks remain held.
    */
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
+    if ("DEAD_LETTERED".equals(status)) {
+      // The live schema has no recovery aggregate, generation/claim state, expected-child ledger,
+      // or evidence-retention horizons. Deleting a dead-letter parent cannot prove that its
+      // recovery and supporting evidence are terminal and retention-eligible.
+      return 0L;
+    }
     Condition eligibility = cleanupEligibility(status, updatedAt);
     List<Long> ids =
         dsl.select(SCRIPT_WORK_ITEMS.ID)
@@ -352,18 +358,19 @@ public class ScriptWorkItemRepository {
    * deliberately held until the child evidence and parent rows are disposed.
    */
   public long deleteOldestByStatus(String status, int limit) {
-    if (limit <= 0) {
+    if (limit <= 0 || "DEAD_LETTERED".equals(status)) {
+      // Row-cap cleanup uses the same fail-closed gate as age cleanup.
       return 0L;
     }
     List<Long> ids =
         dsl.select(SCRIPT_WORK_ITEMS.ID)
             .from(SCRIPT_WORK_ITEMS)
-            .where(SCRIPT_WORK_ITEMS.STATUS.eq(status))
+            .where(cleanupEligibility(status, null))
             .orderBy(SCRIPT_WORK_ITEMS.UPDATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
             .limit(limit)
             .forUpdate()
             .fetch(SCRIPT_WORK_ITEMS.ID);
-    return deleteByIds(ids, SCRIPT_WORK_ITEMS.STATUS.eq(status));
+    return deleteByIds(ids, cleanupEligibility(status, null));
   }
 
   public List<ScriptWorkItem> findAllById(Collection<Long> ids) {
@@ -689,10 +696,10 @@ public class ScriptWorkItemRepository {
   }
 
   private static Condition cleanupEligibility(String status, Instant updatedAt) {
-    return SCRIPT_WORK_ITEMS
-        .STATUS
-        .eq(status)
-        .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
+    Condition condition = SCRIPT_WORK_ITEMS.STATUS.eq(status);
+    return updatedAt == null
+        ? condition
+        : condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {

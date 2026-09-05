@@ -410,13 +410,14 @@ message TriggerScriptEventRequest {
 
   // Exact Game Session source pin generation captured when this trigger was created. Required as
   // a positive value for every instance-scoped gameplay/runtime or scheduler trigger, and paired
-  // with a nonblank script_pin_control_plane_request_id; omitted only for tenant-readiness onLoad
-  // ingress, which is pre-instance.
+  // with a nonblank script_pin_control_plane_request_id; omitted with the entire tuple only for
+  // pre-instance ingress such as tenant-readiness onLoad. Epoch zero never admits an
+  // instance-scoped gameplay/runtime or scheduler trigger.
   int64 script_pin_epoch = 23;
 
   // Canonical control-plane request identity paired with script_pin_epoch. Required and nonblank
-  // for every instance-scoped gameplay/runtime or scheduler trigger; omitted only for
-  // tenant-readiness onLoad ingress.
+  // for every instance-scoped gameplay/runtime or scheduler trigger; omitted with the entire
+  // tuple only for pre-instance ingress such as tenant-readiness onLoad.
   string script_pin_control_plane_request_id = 24;
 }
 
