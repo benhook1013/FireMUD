@@ -278,12 +278,11 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
-    requireCoherentScriptPinFilter(
-        request.getScriptPinEpoch(),
-        request.getScriptPinControlPlaneRequestId(),
-        "script pin filters require both a positive script_pin_epoch and request ID");
+    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
     String requestId =
-        request.getScriptPinEpoch() > 0 ? request.getScriptPinControlPlaneRequestId() : null;
+        request.getScriptPinControlPlaneRequestId().isBlank()
+            ? null
+            : request.getScriptPinControlPlaneRequestId();
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
         scriptScheduleInstanceService.listTimerAuditEvents(
             request.getTenantId(),
