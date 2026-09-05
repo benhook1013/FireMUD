@@ -53,7 +53,9 @@ class ScriptEventAuditRepositoryTest {
                 null,
                 PageRequest.of(0, 25)))
         .isEmpty();
-    assertThat(whereClause(sqlRef.get())).contains("script_pin_epoch");
+    assertThat(whereClause(sqlRef.get()))
+        .contains("script_pin_epoch")
+        .doesNotContain("script_pin_control_plane_request_id");
 
     assertThat(
             repository.findTimerAuditEvents(
@@ -69,7 +71,9 @@ class ScriptEventAuditRepositoryTest {
                 null,
                 PageRequest.of(0, 25)))
         .isEmpty();
-    assertThat(whereClause(sqlRef.get())).contains("script_pin_control_plane_request_id");
+    assertThat(whereClause(sqlRef.get()))
+        .contains("script_pin_control_plane_request_id")
+        .doesNotContain("script_pin_epoch");
   }
 
   @Test
