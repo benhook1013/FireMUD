@@ -157,7 +157,7 @@ final class GameSessionOperatorControlPlaneService {
             request.getActorPrincipal(),
             request.getReason(),
             expected.getKind().name(),
-            expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_EPOCH
+            expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
                 : null);
     return setPinResponse(result);
@@ -200,7 +200,7 @@ final class GameSessionOperatorControlPlaneService {
             request.getActorPrincipal(),
             request.getReason(),
             expected.getKind().name(),
-            expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_EPOCH
+            expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
                 ? expected.getScriptPinEpoch()
                 : null);
     return rollbackPinResponse(result);
@@ -279,21 +279,21 @@ final class GameSessionOperatorControlPlaneService {
         || expected.getKind() == ExpectedCurrentPin.Kind.UNRECOGNIZED) {
       throw new IllegalArgumentException("expected_current_pin kind is required");
     }
-    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_EPOCH
+    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
         && expected.getScriptPinEpoch() <= 0L) {
       throw new IllegalArgumentException("expected_current_pin script_pin_epoch must be positive");
     }
-    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_UNPINNED
+    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED
         && expected.getScriptPinEpoch() != 0L) {
       throw new IllegalArgumentException(
           "expected_current_pin script_pin_epoch must be absent for EXPECT_UNPINNED");
     }
-    if (expected.getKind() == ExpectedCurrentPin.Kind.UNCONDITIONAL
+    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL
         && expected.getScriptPinEpoch() != 0L) {
       throw new IllegalArgumentException(
           "expected_current_pin script_pin_epoch must be absent for UNCONDITIONAL");
     }
-    if (expected.getKind() == ExpectedCurrentPin.Kind.UNCONDITIONAL
+    if (expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL
         && !SessionContext.getGlobalRoles().contains("platformAdmin")) {
       throw new AdminAuthorizationException("UNCONDITIONAL requires platformAdmin");
     }
@@ -385,7 +385,7 @@ final class GameSessionOperatorControlPlaneService {
         actorPrincipal,
         reason,
         expected.getKind().name(),
-        expected.getKind() == ExpectedCurrentPin.Kind.EXPECT_EPOCH
+        expected.getKind() == ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH
             ? expected.getScriptPinEpoch()
             : null,
         errorCode);

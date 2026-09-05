@@ -80,7 +80,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         setRequest("request-1").toBuilder()
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                     .setScriptPinEpoch(7L)
                     .build())
             .build();
@@ -105,7 +105,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         setRequest("request-1").toBuilder()
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.UNCONDITIONAL)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL)
                     .setScriptPinEpoch(7L)
                     .build())
             .build();
@@ -132,7 +132,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         setRequest("request-1").toBuilder()
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.UNCONDITIONAL)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL)
                     .build())
             .build();
 
@@ -187,7 +187,7 @@ class GameSessionOperatorControlPlaneServiceTest {
             .setReason("rollback")
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
                     .setScriptPinEpoch(3L)
                     .build())
             .build();
@@ -442,7 +442,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                 .setReason("pin")
                 .setExpectedCurrentPin(
                     ExpectedCurrentPin.newBuilder()
-                        .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                        .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
                         .setScriptPinEpoch(Long.MAX_VALUE)
                         .build())
                 .build());
@@ -541,7 +541,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setReason("pin")
                         .setExpectedCurrentPin(
                             ExpectedCurrentPin.newBuilder()
-                                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                                .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                                 .build())
                         .build()))
         .withMessage(
@@ -651,7 +651,7 @@ class GameSessionOperatorControlPlaneServiceTest {
                         .setReason("pin")
                         .setExpectedCurrentPin(
                             ExpectedCurrentPin.newBuilder()
-                                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                                .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                                 .build())
                         .build()))
         .withMessage("target_script_patch_version must contain at most 100 characters");
@@ -875,7 +875,7 @@ class GameSessionOperatorControlPlaneServiceTest {
         .setReason("pin")
         .setExpectedCurrentPin(
             ExpectedCurrentPin.newBuilder()
-                .setKind(ExpectedCurrentPin.Kind.EXPECT_UNPINNED)
+                .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED)
                 .build())
         .build();
   }

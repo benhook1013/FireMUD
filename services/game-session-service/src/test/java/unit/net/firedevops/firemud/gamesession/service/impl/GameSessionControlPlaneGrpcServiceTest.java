@@ -275,7 +275,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setControlPlaneRequestId("req-1")
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
                     .setScriptPinEpoch(1L)
                     .build())
             .build(),
@@ -376,7 +376,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setControlPlaneRequestId("req-rollback-1")
             .setExpectedCurrentPin(
                 ExpectedCurrentPin.newBuilder()
-                    .setKind(ExpectedCurrentPin.Kind.EXPECT_EPOCH)
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
                     .setScriptPinEpoch(1L)
                     .build())
             .build(),
@@ -8071,7 +8071,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
-        controlPlaneServiceWithWorld(
+        controlPlaneService(
             repository,
             Mockito.mock(GameplayCommandRepository.class),
             runtimeRepository,
@@ -8087,6 +8087,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             Mockito.mock(TickService.class),
             meterRegistry,
             new GameSessionProperties(),
+            null,
             world);
     AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
     service.getGameInstanceRuntimeState(
