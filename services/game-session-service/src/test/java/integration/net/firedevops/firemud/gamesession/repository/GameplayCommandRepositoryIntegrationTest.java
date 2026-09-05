@@ -375,6 +375,9 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommand command = automationCommand("remote-concurrent", "dispatch-unused");
     command.setAutomationDispatchId(null);
     command.setRemoteFollowupId("followup-concurrent");
+    command.setScriptPatchVersion(null);
+    command.setScriptPinEpoch(null);
+    command.setScriptPinControlPlaneRequestId(null);
     assertRoutedAdmissionLocksPointerMutation(command);
   }
 
@@ -488,6 +491,8 @@ class GameplayCommandRepositoryIntegrationTest {
     command.setAutomationWorkItemId("work-1");
     command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("pin-request-1");
     command.setPlayableStateScope("");
     command.setWorldSlug("");
     command.setRealmSlug("");
