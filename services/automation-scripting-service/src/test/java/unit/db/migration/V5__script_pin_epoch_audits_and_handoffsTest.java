@@ -47,29 +47,12 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';",
             "request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'",
             "ck_script_event_ingress_audit_request_digest",
-            "ck_script_event_ingress_audit_pin_tuple",
-            "ck_script_event_audit_pin_tuple",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
         .doesNotContain(
             "ADD CONSTRAINT uq_script_event_audit_handler_identity UNIQUE",
             "DELETE FROM script_event_ingress_audit",
             "ROW_NUMBER() OVER");
-
-    int requestDigestConstraint =
-        migration.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK");
-    int requestDigestEnd = migration.indexOf(";", requestDigestConstraint);
-    assertThat(requestDigestConstraint).isGreaterThanOrEqualTo(0);
-    assertThat(requestDigestEnd).isGreaterThan(requestDigestConstraint);
-    assertThat(migration.substring(requestDigestConstraint, requestDigestEnd))
-        .contains("request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'", "NOT VALID");
-
-    assertThat(migration)
-        .contains(
-            "ck_script_event_ingress_audit_pin_tuple CHECK",
-            "ck_script_event_audit_pin_tuple CHECK",
-            "ck_script_handoff_events_pin_tuple CHECK",
-            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
 
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned");
@@ -112,14 +95,15 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "UPDATE script_event_ingress_audit SET region_id = COALESCE(region_id, ''), region_epoch = COALESCE(region_epoch, 0), entity_id = COALESCE(entity_id, ''),");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
     assertThat(normalizedRuntimeStart).isGreaterThan(reconciliationStart);
-    int duplicateIdentityGuardStart = normalized.indexOf("DO $$", reconciliationStart);
-    assertThat(duplicateIdentityGuardStart).isGreaterThanOrEqualTo(0);
-    assertThat(preInstanceNormalization).isLessThan(duplicateIdentityGuardStart);
-    assertThat(reconciliationStart).isLessThan(duplicateIdentityGuardStart);
-    assertThat(normalized.substring(reconciliationStart, duplicateIdentityGuardStart))
+    int normalizedOnLoadDedup =
+        normalized.indexOf("The legacy nullable game-instance column allowed");
+    assertThat(normalizedOnLoadDedup).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isLessThan(normalizedOnLoadDedup);
+    assertThat(reconciliationStart).isLessThan(normalizedOnLoadDedup);
+    assertThat(normalized.substring(reconciliationStart, normalizedOnLoadDedup))
         .contains("entity_id = COALESCE(entity_id, '')", "WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
-    assertThat(normalized.substring(duplicateIdentityGuardStart, normalizedRuntimeStart))
+    assertThat(normalized.substring(normalizedOnLoadDedup, normalizedRuntimeStart))
         .contains(
             "WHERE game_instance_id IS NULL",
             "AND script_id IS NOT NULL",
@@ -155,7 +139,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 
     int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
-    int auditTupleEnd = migration.indexOf("ALTER TABLE script_handoff_events", auditTupleStart);
+    int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);
     assertThat(auditTupleStart).isGreaterThanOrEqualTo(0);
     assertThat(auditTupleEnd).isGreaterThan(auditTupleStart);
     assertThat(migration.substring(auditTupleStart, auditTupleEnd))
@@ -178,7 +162,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     int normalizedOnLoadEnd = normalized.indexOf(") WHERE", normalizedOnLoadStart);
     assertThat(normalizedOnLoadStart).isGreaterThan(normalizedRuntimeStart);
     assertThat(normalizedOnLoadStart).isGreaterThanOrEqualTo(0);
-    assertThat(normalizedOnLoadStart).isGreaterThan(duplicateIdentityGuardStart);
+    assertThat(normalizedOnLoadStart).isGreaterThan(normalizedOnLoadDedup);
     assertThat(normalizedOnLoadEnd).isGreaterThan(normalizedOnLoadStart);
     assertThat(normalized.substring(normalizedOnLoadStart, normalizedOnLoadEnd))
         .contains("script_id")

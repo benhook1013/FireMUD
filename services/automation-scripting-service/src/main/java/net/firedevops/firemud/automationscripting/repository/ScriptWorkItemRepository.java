@@ -667,27 +667,18 @@ public class ScriptWorkItemRepository {
     if (ids.isEmpty()) {
       return;
     }
-    // Generic repository deletion is still terminal cleanup: select and lock only the statuses
-    // whose child evidence is allowed to be disposed. In particular, never detach or delete
-    // evidence for a DEAD_LETTERED parent through this broad entry point.
-    Condition eligibility = terminalCleanupEligibility();
-    List<Long> eligibleIds =
-        dsl.select(SCRIPT_WORK_ITEMS.ID)
-            .from(SCRIPT_WORK_ITEMS)
-            .where(SCRIPT_WORK_ITEMS.ID.in(ids).and(eligibility))
-            .forUpdate()
-            .fetch(SCRIPT_WORK_ITEMS.ID);
-    deleteByIds(eligibleIds, eligibility);
+    deleteByIds(ids);
   }
 
   /**
    * Deletes terminal work-item evidence in FK-safe order under the caller's transaction. Handoff
    * rows are disposed with the parent, while audit rows remain under their independent retention
-   * policy and are detached from the deleted work-item through their nullable foreign key. The
-   * caller must select and lock eligible IDs before invoking this method. The parent predicate is
-   * retained on the final delete as a defensive status recheck; child evidence is never mutated
-   * before that eligibility decision.
+   * policy and are detached from the deleted work-item through their nullable foreign key.
    */
+  private long deleteByIds(Collection<Long> ids) {
+    return deleteByIds(ids, org.jooq.impl.DSL.noCondition());
+  }
+
   private long deleteByIds(Collection<Long> ids, Condition parentEligibility) {
     if (ids == null || ids.isEmpty()) {
       return 0L;
@@ -709,10 +700,6 @@ public class ScriptWorkItemRepository {
     return updatedAt == null
         ? condition
         : condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
-  }
-
-  private static Condition terminalCleanupEligibility() {
-    return SCRIPT_WORK_ITEMS.STATUS.in("HANDED_OFF", "CANCELED");
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {

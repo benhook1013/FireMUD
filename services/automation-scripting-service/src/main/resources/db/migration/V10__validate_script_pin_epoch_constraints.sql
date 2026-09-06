@@ -25,23 +25,3 @@ ALTER TABLE script_patch_instance_rollout_projections
 ALTER TABLE script_patch_instance_rollout_events
     VALIDATE CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple;
 /* [jooq ignore stop] */
-
-/* [jooq ignore start] */
-ALTER TABLE script_event_ingress_audit
-    VALIDATE CONSTRAINT ck_script_event_ingress_audit_request_digest;
-/* [jooq ignore stop] */
-
-/* [jooq ignore start] */
-ALTER TABLE script_event_ingress_audit
-    VALIDATE CONSTRAINT ck_script_event_ingress_audit_pin_tuple;
-/* [jooq ignore stop] */
-
-/* [jooq ignore start] */
-ALTER TABLE script_event_audit
-    VALIDATE CONSTRAINT ck_script_event_audit_pin_tuple;
-/* [jooq ignore stop] */
-
-/* [jooq ignore start] */
-ALTER TABLE script_handoff_events
-    VALIDATE CONSTRAINT ck_script_handoff_events_pin_tuple;
-/* [jooq ignore stop] */

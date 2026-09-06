@@ -48,11 +48,6 @@ public interface ScriptScheduleInstanceService {
   List<ScheduleInstanceSummary> listInstances(
       String tenantId, String gameInstanceId, String scriptPatchVersion, int limit);
 
-  /**
-   * Lists timer audit events with an optional exact pin filter. Epoch zero together with a blank
-   * request ID means unfiltered; a positive epoch requires a matching nonblank request ID, and a
-   * negative epoch is invalid.
-   */
   List<TimerAuditEventSummary> listTimerAuditEvents(
       String tenantId,
       String gameInstanceId,

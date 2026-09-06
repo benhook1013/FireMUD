@@ -17,7 +17,7 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ADD CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK (
         request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'
-    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
+    );
 
 -- A bounded claim lease lets a later retry recover a crashed claimant while optimistic row
 -- versioning fences the abandoned owner. Keep created_at as the retention anchor.
@@ -143,7 +143,7 @@ ALTER TABLE script_event_ingress_audit
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
+    );
 
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
     tenant_id,
@@ -224,7 +224,7 @@ ALTER TABLE script_event_audit
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
+    );
 
 -- Every instance-scoped handoff retains the source owner's exact observed pin tuple.
 -- Zero/blank remains an explicit fail-closed legacy sentinel until a pinned work item is observed.
@@ -243,4 +243,4 @@ ALTER TABLE script_handoff_events
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
-    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
+    );

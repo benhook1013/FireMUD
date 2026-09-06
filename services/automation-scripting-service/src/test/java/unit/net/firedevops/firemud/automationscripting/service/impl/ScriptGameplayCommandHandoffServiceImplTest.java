@@ -338,45 +338,6 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
-  void handoffEventsCanonicalizeMissingOwnerRequestEvidence() {
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
-    AutomationAdmissionStateService admissionService =
-        Mockito.mock(AutomationAdmissionStateService.class);
-    when(admissionService.getState("1", "7", "region-1"))
-        .thenReturn(
-            new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "7", "region-1", "PAUSED_FOR_ROLLBACK", 1L, "", "", "", 100L));
-    ScriptHandoffEventRepository handoffEventRepository =
-        Mockito.mock(ScriptHandoffEventRepository.class);
-    ScriptGameplayCommandHandoffService service =
-        new ScriptGameplayCommandHandoffServiceImpl(
-            gameSessionClient,
-            Mockito.mock(ScriptWorkItemRepository.class),
-            Mockito.mock(ScriptEventAuditRepository.class),
-            handoffEventRepository,
-            admissionService,
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
-
-    ScriptWorkItem nullRequestWorkItem = workItem();
-    nullRequestWorkItem.setScriptPinControlPlaneRequestId(null);
-    service.handoff(
-        nullRequestWorkItem, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
-    ScriptWorkItem blankRequestWorkItem = workItem();
-    blankRequestWorkItem.setScriptPinControlPlaneRequestId("   ");
-    service.handoff(
-        blankRequestWorkItem,
-        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
-
-    ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
-        ArgumentCaptor.forClass(ScriptHandoffEvent.class);
-    verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
-    assertThat(handoffCaptor.getAllValues())
-        .extracting(ScriptHandoffEvent::getScriptPinControlPlaneRequestId)
-        .containsExactly("", "");
-  }
-
-  @Test
   void acceptedGameSessionOutcomeLeavesAggregateTerminalizationToExecutor() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
@@ -1740,12 +1701,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
-        .thenReturn(
-            null,
-            GetGameInstanceRuntimeStateResponse.newBuilder().build(),
-            GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setMessage("missing code").build())
-                .build());
+        .thenReturn(null, GetGameInstanceRuntimeStateResponse.newBuilder().build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptHandoffEventRepository handoffEventRepository =
@@ -1766,16 +1722,11 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.HandoffResult malformed =
         service.handoff(
             workItem(), emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
-    ScriptGameplayCommandHandoffService.HandoffResult malformedError =
-        service.handoff(
-            workItem(), emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
 
     assertThat(unavailable.accepted()).isFalse();
     assertThat(unavailable.errorCode()).isEqualTo("AUTHORITY_UNAVAILABLE");
     assertThat(malformed.accepted()).isFalse();
     assertThat(malformed.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
-    assertThat(malformedError.accepted()).isFalse();
-    assertThat(malformedError.errorCode()).isEqualTo("REMOTE_RESPONSE_INVALID");
     verify(gameSessionClient, Mockito.never()).scheduleRemoteFollowup(Mockito.any());
   }
 

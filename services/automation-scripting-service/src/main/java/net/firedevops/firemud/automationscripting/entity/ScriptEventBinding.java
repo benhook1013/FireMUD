@@ -10,7 +10,7 @@ public class ScriptEventBinding {
   private String eventType;
   private String eventSchemaVersion;
   private String scriptId;
-  private String bindingId = "";
+  private String bindingId;
   private String targetScopeType;
   private String targetScopeId;
   private int priority;

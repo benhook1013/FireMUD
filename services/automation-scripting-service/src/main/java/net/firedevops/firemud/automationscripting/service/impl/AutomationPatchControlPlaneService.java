@@ -596,30 +596,14 @@ final class AutomationPatchControlPlaneService {
             .setPluginVersionId(summary.pluginVersionId())
             .setEventType(summary.eventType())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptEventId(summary.scriptEventId())
             .setStatus(summary.status())
             .setReason(summary.reason())
             .setCreatedAtMs(summary.createdAtMs())
             .setUpdatedAtMs(summary.updatedAtMs())
             .setPublication(toProto(summary.publication()));
-    boolean instanceScoped =
-        summary.gameInstanceId() != null && !summary.gameInstanceId().isBlank();
-    boolean hasControlPlaneRequestId =
-        summary.scriptPinControlPlaneRequestId() != null
-            && !summary.scriptPinControlPlaneRequestId().isBlank();
-    if (instanceScoped && (summary.scriptPinEpoch() <= 0 || !hasControlPlaneRequestId)) {
-      throw new IllegalArgumentException(
-          "dead-letter script pin tuple must be complete for instance-scoped work");
-    }
-    if (!instanceScoped && (summary.scriptPinEpoch() != 0 || hasControlPlaneRequestId)) {
-      throw new IllegalArgumentException(
-          "pre-instance dead-letter must not contain script pin owner evidence");
-    }
-    if (instanceScoped) {
-      builder
-          .setScriptPinEpoch(summary.scriptPinEpoch())
-          .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId());
-    }
     if (summary.pluginPublication() != null) {
       builder.setPluginPublication(toProto(summary.pluginPublication()));
     }

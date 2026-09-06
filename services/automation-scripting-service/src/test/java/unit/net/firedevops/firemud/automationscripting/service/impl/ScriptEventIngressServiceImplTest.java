@@ -3085,6 +3085,7 @@ class ScriptEventIngressServiceImplTest {
 
     assertThat(admission.admitted()).isFalse();
     assertThat(admission.reason()).isEqualTo("script_pin_control_plane_request_id_mismatch");
+    verify(repository).save(Mockito.any(ScriptEventIngressAudit.class));
     verifyNoInteractions(projectionService);
     verifyNoInteractions(eventAuditRepository);
     verify(workItemRepository, never()).save(Mockito.any(ScriptWorkItem.class));

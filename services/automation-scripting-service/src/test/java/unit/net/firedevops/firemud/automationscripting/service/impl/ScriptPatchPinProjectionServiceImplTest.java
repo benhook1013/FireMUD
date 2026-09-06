@@ -7,7 +7,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Instant;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
@@ -80,46 +79,6 @@ class ScriptPatchPinProjectionServiceImplTest {
     assertThat(lookup.summary().get().worldSlug()).isEqualTo("demo");
     assertThat(lookup.summary().get().realmSlug()).isEqualTo("production");
     assertThat(lookup.summary().get().pointerVersion()).isEqualTo("17");
-  }
-
-  @Test
-  void persistsWireUnpinnedZeroEpochAsCanonicalNull() {
-    ScriptPatchPinProjectionRepository repository =
-        Mockito.mock(ScriptPatchPinProjectionRepository.class);
-    AtomicReference<ScriptPatchPinProjection> saved = new AtomicReference<>();
-    Mockito.when(repository.findByTenantIdAndGameInstanceId("1", "game-1"))
-        .thenReturn(Optional.empty());
-    Mockito.when(repository.save(Mockito.any(ScriptPatchPinProjection.class)))
-        .thenAnswer(
-            invocation -> {
-              saved.set(invocation.getArgument(0));
-              return invocation.getArgument(0);
-            });
-
-    ScriptPatchPinProjectionService service =
-        new ScriptPatchPinProjectionServiceImpl(
-            repository,
-            Mockito.mock(GameSessionControlPlaneClient.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            Mockito.mock(ScriptScheduleInstanceService.class),
-            runtimeProperties());
-
-    service.observeRuntimeState(
-        "1",
-        "game-1",
-        GameInstanceRuntimeState.newBuilder()
-            .setTenantId("1")
-            .setGameInstanceId("game-1")
-            .setScriptPinEpoch(0L)
-            .build());
-
-    assertThat(saved)
-        .hasValueSatisfying(
-            projection -> {
-              assertThat(projection.getScriptPinEpoch()).isNull();
-              assertThat(projection.getObservedPinnedScriptPatchVersion()).isBlank();
-              assertThat(projection.getLastObservedControlPlaneRequestId()).isBlank();
-            });
   }
 
   @Test

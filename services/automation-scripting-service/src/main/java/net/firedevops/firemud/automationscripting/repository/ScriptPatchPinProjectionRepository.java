@@ -127,8 +127,7 @@ public class ScriptPatchPinProjectionRepository {
     entity.setRealmSlug(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.POINTER_VERSION));
     Long scriptPinEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.SCRIPT_PIN_EPOCH);
-    entity.setScriptPinEpoch(
-        scriptPinEpoch == null || scriptPinEpoch == 0L ? null : scriptPinEpoch);
+    entity.setScriptPinEpoch(scriptPinEpoch);
     entity.setRuntimeRegionId(record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_ID));
     Long runtimeRegionEpoch = record.get(SCRIPT_PATCH_PIN_PROJECTIONS.RUNTIME_REGION_EPOCH);
     entity.setRuntimeRegionEpoch(runtimeRegionEpoch == null ? 0L : runtimeRegionEpoch);

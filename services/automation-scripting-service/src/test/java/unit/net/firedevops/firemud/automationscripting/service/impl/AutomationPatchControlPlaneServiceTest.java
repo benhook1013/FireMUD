@@ -1,7 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.util.List;
 import net.firedevops.firemud.automationscripting.client.GameDesignControlPlaneClient;
@@ -12,11 +11,8 @@ import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjecti
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
-import net.firedevops.firemud.automationscripting.v1.GetScriptPatchInstanceRolloutStatusRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptDeadLettersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptHandoffEventsRequest;
-import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutEventsRequest;
-import net.firedevops.firemud.automationscripting.v1.ListScriptPatchInstanceRolloutsRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptScheduleInstancesRequest;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
@@ -30,50 +26,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AutomationPatchControlPlaneServiceTest {
-  @Test
-  void rejectsPartialScriptPinFiltersForRolloutsBeforeDelegating() {
-    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    ScriptScheduleInstanceService scheduleService =
-        Mockito.mock(ScriptScheduleInstanceService.class);
-    var service =
-        newService(
-            workItemService,
-            Mockito.mock(AutomationAdmissionStateService.class),
-            Mockito.mock(ScriptPatchPinProjectionService.class),
-            scheduleService,
-            new ScriptRuntimeProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class));
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.getScriptPatchInstanceRolloutStatus(
-                    GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
-                        .setTenantId("1")
-                        .setLastObservedControlPlaneRequestId("request-1")
-                        .build()))
-        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.listScriptPatchInstanceRollouts(
-                    ListScriptPatchInstanceRolloutsRequest.newBuilder()
-                        .setTenantId("1")
-                        .setScriptPinEpoch(2L)
-                        .build()))
-        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.listScriptPatchInstanceRolloutEvents(
-                    ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
-                        .setTenantId("1")
-                        .setLastObservedControlPlaneRequestId("request-1")
-                        .build()))
-        .withMessage("script_pin_epoch and control-plane request ID must be supplied together");
-    Mockito.verifyNoInteractions(workItemService, scheduleService);
-  }
-
   private static GameDesignControlPlaneClient gameDesignClient() {
     GameDesignControlPlaneClient client = Mockito.mock(GameDesignControlPlaneClient.class);
     Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyString(), Mockito.anyString()))
@@ -540,148 +492,13 @@ class AutomationPatchControlPlaneServiceTest {
 
     assertThat(response.hasError()).isFalse();
     assertThat(response.getDeadLettersCount()).isEqualTo(1);
-    assertThat(response.getDeadLetters(0).hasScriptPinEpoch()).isTrue();
     assertThat(response.getDeadLetters(0).getScriptPinEpoch()).isEqualTo(3L);
-    assertThat(response.getDeadLetters(0).hasScriptPinControlPlaneRequestId()).isTrue();
     assertThat(response.getDeadLetters(0).getScriptPinControlPlaneRequestId())
         .isEqualTo("pin-request-3");
     assertThat(response.getDeadLetters(0).getWorldSlug()).isBlank();
     assertThat(response.getDeadLetters(0).getRealmSlug()).isBlank();
     assertThat(response.getDeadLetters(0).getPointerVersion()).isBlank();
     assertThat(response.getDeadLetters(0).getIsRoutingBundleStale()).isFalse();
-  }
-
-  @Test
-  void omitsScriptPinPresenceForPreInstanceDeadLetters() {
-    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    Mockito.when(workItemService.listDeadLetters("1", "", "patch-1", 25))
-        .thenReturn(
-            List.of(
-                new ScriptWorkItemService.DeadLetterSummary(
-                    "99",
-                    "1",
-                    "",
-                    "",
-                    0L,
-                    "",
-                    "SHARED",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    0L,
-                    0L,
-                    0L,
-                    "script-1",
-                    "",
-                    "",
-                    "onLoad",
-                    "patch-1",
-                    0L,
-                    "",
-                    "event-1",
-                    "DEAD_LETTERED",
-                    "ONLOAD_FAILED",
-                    100L,
-                    200L,
-                    new ScriptWorkItemService.ScriptPatchPublicationLink(
-                        "patch-1",
-                        18L,
-                        9L,
-                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
-                        140L,
-                        "",
-                        ""),
-                    null)));
-    var service =
-        newService(
-            workItemService,
-            Mockito.mock(AutomationAdmissionStateService.class),
-            Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptScheduleInstanceService.class),
-            new ScriptRuntimeProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class));
-
-    var response =
-        service.listScriptDeadLetters(
-            ListScriptDeadLettersRequest.newBuilder()
-                .setTenantId("1")
-                .setScriptPatchVersion("patch-1")
-                .setLimit(25)
-                .build());
-
-    assertThat(response.hasError()).isFalse();
-    assertThat(response.getDeadLettersCount()).isEqualTo(1);
-    assertThat(response.getDeadLetters(0).hasScriptPinEpoch()).isFalse();
-    assertThat(response.getDeadLetters(0).hasScriptPinControlPlaneRequestId()).isFalse();
-  }
-
-  @Test
-  void rejectsPartialInstanceScopedScriptPinTupleInDeadLetterRead() {
-    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    Mockito.when(workItemService.listDeadLetters("1", "game-1", "patch-1", 25))
-        .thenReturn(
-            List.of(
-                new ScriptWorkItemService.DeadLetterSummary(
-                    "99",
-                    "1",
-                    "game-1",
-                    "region-1",
-                    12L,
-                    "entity-1",
-                    "SHARED",
-                    "demo",
-                    "production",
-                    "17",
-                    "GAMEPLAY_EVENT",
-                    "WORK_ITEM_PERSISTED",
-                    0L,
-                    0L,
-                    0L,
-                    "script-1",
-                    "",
-                    "",
-                    "onCommand",
-                    "patch-1",
-                    3L,
-                    "",
-                    "event-1",
-                    "DEAD_LETTERED",
-                    "STALE_TIMELINE",
-                    100L,
-                    200L,
-                    new ScriptWorkItemService.ScriptPatchPublicationLink(
-                        "patch-1",
-                        18L,
-                        9L,
-                        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                            .VERSION_LIFECYCLE_STATE_PUBLISHED,
-                        140L,
-                        "",
-                        ""),
-                    null)));
-    var service =
-        newService(
-            workItemService,
-            Mockito.mock(AutomationAdmissionStateService.class),
-            Mockito.mock(ScriptPatchPinProjectionService.class),
-            Mockito.mock(ScriptScheduleInstanceService.class),
-            new ScriptRuntimeProperties(),
-            Mockito.mock(GameSessionControlPlaneClient.class));
-
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                service.listScriptDeadLetters(
-                    ListScriptDeadLettersRequest.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setScriptPatchVersion("patch-1")
-                        .setLimit(25)
-                        .build()))
-        .withMessage("dead-letter script pin tuple must be complete for instance-scoped work");
   }
 
   @Test

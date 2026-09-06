@@ -18,11 +18,6 @@ import org.junit.jupiter.api.Test;
 
 class ScriptEventBindingRepositoryTest {
   @Test
-  void newBindingDefaultsToAnEmptyBindingId() {
-    assertThat(new ScriptEventBinding().getBindingId()).isEmpty();
-  }
-
-  @Test
   void updatesDistinctBindingRowsWithoutDroppingStableIdentity() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     List<String> updates = new ArrayList<>();
