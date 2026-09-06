@@ -22,7 +22,7 @@ Review working notes and coverage tables are ephemeral unless the human explicit
 - product outcomes go to `design/product/`;
 - technical contracts go to `design/architecture/`;
 - implementation and proof status go to the owning implementation tracker;
-- consequential decisions use the established decision workflow; and
+- consequential decisions use the established decision workflow;
 - release or operational evidence goes to the existing operations evidence surface; and
 - reusable process, tooling, environment, or design lessons go to dated appended entries in the [AI observations](../ai-observations.md).
 
