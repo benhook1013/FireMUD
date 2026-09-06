@@ -12,7 +12,7 @@ Use these checklists when creating architecture reviews, completing capabilities
 
 ## Capability/Tracker Completion Guide
 
-- Verify the claimed capability outcome against every public contract it owns: HTTP/OpenAPI, gRPC/proto, event or outbox, and operator-facing contracts where applicable.
+- Verify the claimed capability outcome against every public contract it owns: HTTP/OpenAPI, gRPC/proto, event or outbox, and operator-facing contracts where applicable. Apply each check only to surfaces the capability owns; for an absent HTTP/OpenAPI or proto/gRPC surface, an explicit `N/A` with a brief reason is valid, but it does not permit omitting a required surface.
 - Verify the live implementation seam, including concrete services, controllers, handlers, and orchestration, rather than only adjacent architecture direction.
 - Confirm that the named canonical owner in the tracker is the owner in code and that no local fallback or competing authority is silently carrying the behavior.
 - Verify focused unit, integration, or cross-service tests for the exact seam. If the capability claims fail-closed or replay-safe behavior, verify the negative-path tests too.
@@ -21,10 +21,10 @@ Use these checklists when creating architecture reviews, completing capabilities
 - Update the relevant domain implementation tracker and canonical design when the closure proof changes the recorded behavior, ownership, or remaining work. Update the implementation-tracking index only when tracker scope changes.
 - For cross-service contract growth, update shared fakes/test fixtures in the same change as the canonical RPC.
 
-Before closing a capability, answer yes to all of these questions:
+Before closing a capability, answer yes to each applicable question and record `N/A` with a brief reason for an absent surface:
 
-1. Does the public API schema match the capability claim?
-2. Does the proto/gRPC contract match the capability claim?
+1. For each owned public API surface, does the schema match the capability claim?
+2. For each owned proto/gRPC surface, does the contract match the capability claim?
 3. Does the implementation route through the canonical owner rather than a local fallback?
 4. Do focused tests cover the exact seam, including required negative paths?
 5. Does the domain tracker describe only the current implementation and real remaining work?
