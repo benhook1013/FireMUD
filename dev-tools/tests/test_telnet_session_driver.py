@@ -553,6 +553,8 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 with self.subTest(failure_type=failure_type.__name__):
 
                     class StubSession:
+                        _failure_type = failure_type
+
                         def __init__(self, host, port, transcript_path, timeout, **_kwargs):
                             self.store = telnet_session.EvidenceStore(transcript_path)
                             self.closed = False
@@ -561,7 +563,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                             return None
 
                         def send_command(self, _line):
-                            raise failure_type("session closed")
+                            raise self._failure_type("session closed")
 
                         def close(self, reason):
                             self.closed = True
