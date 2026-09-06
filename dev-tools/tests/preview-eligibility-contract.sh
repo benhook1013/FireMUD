@@ -47,5 +47,8 @@ grep -q '^reason=eligible$' <<<"$paused_destroy"
 malformed_labels="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
 grep -q '^eligible=false$' <<<"$malformed_labels"
 grep -q '^reason=malformed-label-metadata$' <<<"$malformed_labels"
+malformed_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+grep -q '^eligible=true$' <<<"$malformed_destroy"
+grep -q '^reason=eligible$' <<<"$malformed_destroy"
 
 echo "preview eligibility contract checks passed"

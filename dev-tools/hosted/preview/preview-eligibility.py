@@ -44,10 +44,11 @@ def evaluate(
     labels_json: str,
 ) -> tuple[bool, str]:
     labels_valid, paused = parse_labels(labels_json)
-    if not labels_valid:
-        return False, "malformed-label-metadata"
-    if paused and operation in {"deploy", "retain"}:
-        return False, "preview-paused"
+    if operation in {"deploy", "retain"}:
+        if not labels_valid:
+            return False, "malformed-label-metadata"
+        if paused:
+            return False, "preview-paused"
     if author in DEPENDENCY_BOT_AUTHORS:
         return False, "dependency-bot"
     if base_ref not in SUPPORTED_BASE_REFS:
