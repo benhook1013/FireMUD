@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameInstances.GAME_INSTANCES;
 import static net.firedevops.firemud.gamesession.jooq.tables.ScriptPinOperation.SCRIPT_PIN_OPERATION;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;

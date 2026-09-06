@@ -465,24 +465,28 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommand command = automationCommand("cmd-staging-scope", "dispatch-staging-scope");
     repository.save(command);
 
-    assertThat(
+    boolean matchingScope =
+        Boolean.TRUE.equals(
             transactionTemplate.execute(
                 status ->
                     repository.lockAcceptedCommandForStaging(
-                        1L, 7L, "cmd-staging-scope", "say hello", false)))
-        .isTrue();
-    assertThat(
+                        1L, 7L, "cmd-staging-scope", "say hello", false)));
+    boolean foreignTenant =
+        Boolean.TRUE.equals(
             transactionTemplate.execute(
                 status ->
                     repository.lockAcceptedCommandForStaging(
-                        2L, 7L, "cmd-staging-scope", "say hello", false)))
-        .isFalse();
-    assertThat(
+                        2L, 7L, "cmd-staging-scope", "say hello", false)));
+    boolean foreignInstance =
+        Boolean.TRUE.equals(
             transactionTemplate.execute(
                 status ->
                     repository.lockAcceptedCommandForStaging(
-                        1L, 8L, "cmd-staging-scope", "say hello", false)))
-        .isFalse();
+                        1L, 8L, "cmd-staging-scope", "say hello", false)));
+
+    assertThat(matchingScope).isTrue();
+    assertThat(foreignTenant).isFalse();
+    assertThat(foreignInstance).isFalse();
   }
 
   @Test
