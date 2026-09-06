@@ -287,6 +287,7 @@ class MoveCommandHandlerTest {
     assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
     verify(lookCommandHandler, never())
         .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).resolveLook(any(SessionContext.class));
   }
 
   @Test

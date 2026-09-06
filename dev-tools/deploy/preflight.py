@@ -4213,6 +4213,21 @@ def validate_hosted_telnet_tls_values(
     return issues
 
 
+def label_bridge_validation_issues(
+    gateway_issues: list[str], telnet_tls_issues: list[str]
+) -> list[str]:
+    """Keep the shared bridge policy while identifying each failing transport."""
+    return [
+        *(f"Gateway bridge: {issue}" for issue in gateway_issues),
+        *(f"Hosted Telnet TLS: {issue}" for issue in telnet_tls_issues),
+    ]
+
+
+def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
+    """Describe either transport without making a Telnet-only failure look like Gateway-only."""
+    return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+
+
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
     if document.get("kind") not in {"Deployment", "StatefulSet", "DaemonSet"}:
         return []
@@ -6289,12 +6304,18 @@ def main() -> int:
                 check.policy_id, check.required, check.status, check.message,
             ) or has_required_failure
 
-    _, bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    _, gateway_bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
     telnet_tls_issues = validate_hosted_telnet_tls_values(documents)
-    bridge_issues = bridge_issues + telnet_tls_issues
+    bridge_issues = label_bridge_validation_issues(
+        gateway_bridge_issues, telnet_tls_issues
+    )
     if bridge_issues:
         has_required_failure = append_result(
-            check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "Gateway bridge validation failed: " + "; ".join(bridge_issues)
+            check_results,
+            "PREFLIGHT-BRIDGE-001",
+            True,
+            "fail",
+            bridge_validation_failure_message(bridge_issues),
         ) or has_required_failure
     else:
         has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure

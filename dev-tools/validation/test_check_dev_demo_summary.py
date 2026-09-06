@@ -118,6 +118,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
             self.validator.validate_workflow(root)
 
+    def test_noop_bootstrap_manifest_mutation_preserves_valid_fixture(self):
+        bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(lambda _pod: None)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_credentials_in_summary_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

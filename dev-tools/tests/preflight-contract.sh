@@ -2714,6 +2714,32 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+labeled_bridge_issues = module.label_bridge_validation_issues(
+    ["certificate-backed Gateway bridge is unavailable"],
+    ["dedicated Telnet TLS certificate is unavailable"],
+)
+if labeled_bridge_issues != [
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable",
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable",
+]:
+    raise SystemExit(f"bridge transport failures were not labeled separately: {labeled_bridge_issues}")
+bridge_failure_results = []
+module.append_result(
+    bridge_failure_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    "fail",
+    module.bridge_validation_failure_message(labeled_bridge_issues),
+)
+if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
+    "Bridge and Telnet transport validation failed: "
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable; "
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable"
+):
+    raise SystemExit(
+        "combined bridge failure was emitted with a misleading transport subject: "
+        f"{bridge_failure_results}"
+    )
 invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)

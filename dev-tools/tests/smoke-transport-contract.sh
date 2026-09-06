@@ -137,6 +137,18 @@ except TypeError as exc:
 else:
     raise AssertionError("Telnet socket helper accepted an omitted TLS mode")
 
+for invalid_tls_enabled in (None, "true", 0, 1, [], {}):
+    try:
+        open_telnet_socket(
+            "example.test", 2323, 1, tls_enabled=invalid_tls_enabled
+        )
+    except TypeError as exc:
+        assert "tls_enabled" in str(exc)
+    else:
+        raise AssertionError(
+            f"Telnet socket helper accepted non-boolean TLS mode: {invalid_tls_enabled!r}"
+        )
+
 for invalid_options in (
     {"tls_enabled": True},
     {"tls_enabled": False, "tls_server_hostname": "example.test"},

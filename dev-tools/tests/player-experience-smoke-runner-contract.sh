@@ -105,9 +105,28 @@ tls_config = runner_module.SmokeConfig.from_env(
     telnet_ca_file=runner_module.Path("ca.pem"),
 )
 runner_module.validate_telnet_transport_config(tls_config, {"telnet"}, simulate=False)
+assert runner_module.telnet_socket_options(tls_config) == {
+    "tls_enabled": True,
+    "tls_server_hostname": "preview.example.test",
+    "tls_ca_file": runner_module.Path("ca.pem"),
+}
 plaintext_config = runner_module.SmokeConfig.from_env(
     "contract-test", "telnet", None, telnet_transport="plaintext"
 )
+assert runner_module.telnet_socket_options(plaintext_config) == {
+    "tls_enabled": False,
+    "tls_server_hostname": None,
+    "tls_ca_file": None,
+}
+unset_telnet_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None
+)
+try:
+    runner_module.telnet_socket_options(unset_telnet_config)
+except ValueError as exc:
+    assert "explicitly set to tls or plaintext" in str(exc)
+else:
+    raise AssertionError("unset Telnet transport selected socket options")
 try:
     runner_module.validate_telnet_transport_config(
         plaintext_config, {"telnet"}, simulate=False
