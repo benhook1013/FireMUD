@@ -63,12 +63,18 @@ jobs:
       - name: Dispatch preview deploys for drifted PRs
         env:
           GH_TOKEN: ${{ github.token }}
+          PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
           preview_workflow_name="PR Preview Environment"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
-          gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [.number, .head.ref, .head.sha, .user.login, .base.ref, .state] | @tsv' |
-          while IFS=$'\t' read -r pr_number head_ref head_sha pr_author pr_base_ref pr_state; do
+          max_active="${PREVIEW_MAX_ACTIVE:-1}"
+          active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
+          available_slots=$((max_active - active_count))
+          dispatch_sent=false
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map(.name) | any(. == "preview:priority"))] | @tsv' \
+            | sort -t $'\t' -k1,1n -k2,2n |
+          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority; do
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \
@@ -86,10 +92,26 @@ jobs:
             namespace="pr-${pr_number}"
             desired_image_tag="${head_sha}"
             current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
+            namespace_exists=false
+            if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+              namespace_exists=true
+            fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
               echo "Preview ${namespace} already aligned to ${head_sha}"
               continue
+            fi
+
+            if [[ "$dispatch_sent" == "true" ]]; then
+              echo "Skipping PR #${pr_number}: another preview repair was already dispatched this cycle."
+              continue
+            fi
+
+            if [[ "$namespace_exists" != "true" ]]; then
+              if [[ "$is_priority" != "true" && "$available_slots" -le 0 ]]; then
+                echo "Skipping ordinary PR #${pr_number}: preview capacity is full."
+                continue
+              fi
             fi
 
             active_preview_run_id="$(
@@ -117,4 +139,5 @@ jobs:
               -f "inputs[image_tag]=${desired_image_tag}" \
               -f "inputs[head_sha]=${head_sha}" \
               -f 'inputs[preview_domain]=preview.firedevops.net'
+            dispatch_sent=true
           done

@@ -13,6 +13,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - labeled
       - closed
   workflow_dispatch:
     inputs:
@@ -50,16 +51,16 @@ permissions:
   issues: write
   pull-requests: write
 
-concurrency:
-  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
-  # Reconciler deploys must not cancel the PR check they are meant to repair.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.action == 'destroy' }}
-
 jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
+    # Only supersede the non-mutating plan. Deploy, proof, and cleanup retain
+    # their place in the shared non-cancelling lifecycle queue below.
+    concurrency:
+      group: preview-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
+      cancel-in-progress: true
     outputs:
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
@@ -218,129 +219,6 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
-      - name: Publish preview lifecycle state
-        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          PREVIEW_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
-          PREVIEW_ACTION: ${{ steps.derive.outputs.action }}
-          PREVIEW_HEAD_SHA: ${{ steps.derive.outputs.head_sha }}
-          PREVIEW_IMAGE_TAG: ${{ steps.derive.outputs.image_tag }}
-          PREVIEW_HOSTNAME: ${{ steps.derive.outputs.hostname }}
-        with:
-          script: |
-            const { execFileSync } = require("child_process");
-
-            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.info("No PR number available for preview lifecycle reporting.");
-              return;
-            }
-
-            const headSha = process.env.PREVIEW_HEAD_SHA || "";
-            const action = process.env.PREVIEW_ACTION || "deploy";
-            const isCleanup = action === "destroy";
-            const mode = isCleanup ? "cleanup" : "deploying";
-            const isStaleTarget = (pullRequest) =>
-              pullRequest.head?.sha !== headSha ||
-              (!isCleanup && pullRequest.state !== "open");
-            const getCurrentPullRequest = () => github.rest.pulls.get({
-              ...context.repo,
-              pull_number: prNumber,
-            });
-
-            const { data: currentPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(currentPullRequest)) {
-              core.info(
-                `Skipping stale preview lifecycle state for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${currentPullRequest.state}/${currentPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            const args = [
-              "./dev-tools/hosted/preview/write-preview-summary.sh",
-              mode,
-              String(prNumber),
-              headSha,
-              process.env.PREVIEW_IMAGE_TAG || "",
-              process.env.PREVIEW_HOSTNAME || "",
-              "unavailable",
-            ];
-            const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const body = `<!-- firemud-preview-summary -->\n### Preview Summary\n\n${summaryText.trimEnd()}\n`;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              {
-                ...context.repo,
-                issue_number: prNumber,
-                per_page: 100,
-              }
-            );
-
-            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const previewComments = [...generatedComments, ...legacyComments];
-
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
-            };
-            const existing = previewComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
-              }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
-            }, null);
-
-            const { data: latestPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(latestPullRequest)) {
-              core.info(
-                `Skipping superseded preview lifecycle state for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${latestPullRequest.state}/${latestPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            const deleteCommentIfPresent = async (comment) => {
-              try {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-              }
-            };
-
-            for (const comment of previewComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
-
   preview-deploy:
     name: Deploy Preview Release
     runs-on:
@@ -349,8 +227,38 @@ jobs:
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Publish preview lifecycle state
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "deploying",
+              markerPolicy: "preserve-reclaimed",
+              statePolicy: "expected-open",
+              telnetPort: "unavailable",
+              staleDescription: "preview lifecycle state",
+            });
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
@@ -427,12 +335,15 @@ jobs:
         id: preview-capacity
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
           echo "PREVIEW_STAGE=capacity" >> "$GITHUB_ENV"
-          bash ./dev-tools/hosted/preview/check-preview-capacity.sh \
+          bash ./dev-tools/hosted/preview/allocate-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-1}"
+            "${PREVIEW_MAX_ACTIVE:-1}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"
 
       - name: Reset preview namespace for clean deploy
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -555,7 +466,8 @@ jobs:
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
             "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}"
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
 
       - name: Summarize preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -689,12 +601,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag || needs.preview-plan.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
           PREVIEW_TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port || 'unavailable' }}
-          PREVIEW_DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
           PREVIEW_JOB_STATUS: ${{ job.status }}
           PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
           PREVIEW_CLUSTER_AVAILABLE: ${{ steps.preview-access.outputs.available }}
@@ -704,16 +614,10 @@ jobs:
           DEMO_SMOKE_PASSWORD: ${{ env.DEMO_SMOKE_PASSWORD }}
         with:
           script: |
-            const { execFileSync } = require("child_process");
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
 
-            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.info("No PR number available for preview comment publishing.");
-              return;
-            }
-
-            const headSha = process.env.PREVIEW_HEAD_SHA || "";
-            const action = process.env.PREVIEW_ACTION || "deploy";
             const clusterAvailable = process.env.PREVIEW_CLUSTER_AVAILABLE === "true";
             const capacityAvailable = process.env.PREVIEW_CAPACITY_OUTCOME !== "failure";
             const mode = !clusterAvailable || !capacityAvailable
@@ -721,117 +625,24 @@ jobs:
               : process.env.PREVIEW_JOB_STATUS === "success"
                 ? "success"
                 : "failure";
-            const getCurrentPullRequest = () => github.rest.pulls.get({
-              ...context.repo,
-              pull_number: prNumber,
-            });
-            const isStaleTarget = (pullRequest) =>
-              pullRequest.head?.sha !== headSha ||
-              (action !== "destroy" && pullRequest.state !== "open");
-            const { data: currentPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(currentPullRequest)) {
-              core.info(
-                `Skipping stale preview result for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${currentPullRequest.state}/${currentPullRequest.head?.sha}`
-              );
-              return;
-            }
             const failureStage =
               process.env.PREVIEW_FAILURE_STAGE && process.env.PREVIEW_FAILURE_STAGE.trim().length > 0
                 ? process.env.PREVIEW_FAILURE_STAGE.trim()
                 : "unknown";
 
-            const args = [
-              "./dev-tools/hosted/preview/write-preview-summary.sh",
+            await publishPreviewComment({
+              github,
+              context,
+              core,
               mode,
-              String(prNumber),
-              process.env.PREVIEW_HEAD_SHA || "",
-              process.env.PREVIEW_IMAGE_TAG || "",
-              process.env.PREVIEW_HOSTNAME || "",
-              process.env.PREVIEW_TELNET_PORT || "",
-            ];
-            if (mode === "failure" || mode === "unavailable") {
-              args.push(failureStage);
-            }
-
-            const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const bodyLines = ["<!-- firemud-preview-summary -->", "### Preview Summary", "", summaryText.trimEnd()];
-            if (mode === "success") {
-              bodyLines.push(`- Demo login username: ${process.env.DEMO_SMOKE_USERNAME}`);
-              bodyLines.push(`- Demo login email: ${process.env.DEMO_SMOKE_EMAIL}`);
-              bodyLines.push(`- Demo login password: ${process.env.DEMO_SMOKE_PASSWORD}`);
-            }
-            const body = `${bodyLines.join("\n")}\n`;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              {
-                ...context.repo,
-                issue_number: prNumber,
-                per_page: 100,
-              }
-            );
-
-            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const previewComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
-            };
-            const existing = previewComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
-              }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
-            }, null);
-
-            const { data: latestPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(latestPullRequest)) {
-              core.info(
-                `Skipping superseded preview result for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${latestPullRequest.state}/${latestPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            const deleteCommentIfPresent = async (comment) => {
-              try {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-              }
-            };
-
-            for (const comment of previewComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
+              markerPolicy: mode === "unavailable" && failureStage === "capacity"
+                ? "preserve-reclaimed"
+                : "replace",
+              statePolicy: "expected-open",
+              includeDemoCredentials: mode === "success",
+              failureStage,
+              staleDescription: "preview result",
+            });
 
       - name: Show preview failure diagnostics
         if: ${{ always() && !cancelled() && failure() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -862,8 +673,42 @@ jobs:
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Publish preview lifecycle state
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+
+            const statePolicy =
+              context.eventName === "pull_request" && context.payload.action === "closed"
+                ? "expected-closed"
+                : "manual-any";
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "cleanup",
+              markerPolicy: "replace",
+              statePolicy,
+              telnetPort: "unavailable",
+              staleDescription: "preview lifecycle state",
+            });
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
@@ -893,6 +738,39 @@ jobs:
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
+      - name: Revalidate preview cleanup target before deletion
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA || "";
+            const { data: currentPullRequest } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const requiresClosedState =
+              context.eventName === "pull_request" && context.payload.action === "closed";
+
+            if (
+              (requiresClosedState && currentPullRequest.state !== "closed") ||
+              currentPullRequest.head?.sha !== expectedHeadSha
+            ) {
+              core.setFailed(
+                `Aborting stale preview cleanup for PR #${prNumber}: ` +
+                `expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}, current ` +
+                `${currentPullRequest.state}/${currentPullRequest.head?.sha}`
+              );
+              return;
+            }
+
+            core.info(
+              `Preview cleanup target is still ${requiresClosedState ? "closed" : "current"} ` +
+              `at ${expectedHeadSha} for PR #${prNumber}.`
+            );
+
       - name: Delete preview namespace and release
         id: delete-preview
         run: |
@@ -905,118 +783,31 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}
           PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
           PREVIEW_CLEANUP_OUTCOME: ${{ steps.delete-preview.outcome }}
         with:
           script: |
-            const { execFileSync } = require("child_process");
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
 
-            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
-            if (!Number.isInteger(prNumber) || prNumber <= 0) {
-              core.info("No PR number available for preview cleanup reporting.");
-              return;
-            }
-
-            const headSha = process.env.PREVIEW_HEAD_SHA || "";
             const mode = process.env.PREVIEW_CLEANUP_OUTCOME === "success"
               ? "removed"
               : "failure";
-            const getCurrentPullRequest = () => github.rest.pulls.get({
-              ...context.repo,
-              pull_number: prNumber,
-            });
-            const isStaleTarget = (pullRequest) => pullRequest.head?.sha !== headSha;
-            const { data: currentPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(currentPullRequest)) {
-              core.info(
-                `Skipping stale preview cleanup result for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${currentPullRequest.state}/${currentPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            const args = [
-              "./dev-tools/hosted/preview/write-preview-summary.sh",
+            const statePolicy =
+              context.eventName === "pull_request" && context.payload.action === "closed"
+                ? "expected-closed"
+                : "manual-any";
+            await publishPreviewComment({
+              github,
+              context,
+              core,
               mode,
-              String(prNumber),
-              headSha,
-              process.env.PREVIEW_IMAGE_TAG || "",
-              process.env.PREVIEW_HOSTNAME || "",
-              "unavailable",
-            ];
-            if (mode === "failure") args.push("cleanup");
-            const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const body = `<!-- firemud-preview-summary -->\n### Preview Summary\n\n${summaryText.trimEnd()}\n`;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              {
-                ...context.repo,
-                issue_number: prNumber,
-                per_page: 100,
-              }
-            );
-
-            const isBotAuthored = (comment) => comment.user?.login === "github-actions[bot]";
-            const isWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.includes("<!-- firemud-preview-summary -->");
-            const isLegacyWorkflowComment = (comment) =>
-              isBotAuthored(comment) && comment.body.startsWith("### Preview Summary");
-            const generatedComments = comments.filter(isWorkflowComment);
-            const legacyComments = comments.filter(isLegacyWorkflowComment);
-            const previewComments = [...generatedComments, ...legacyComments];
-            const commentTimestamp = (comment) => {
-              const parsed = Date.parse(comment.updated_at || comment.created_at || "");
-              return Number.isNaN(parsed) ? 0 : parsed;
-            };
-            const existing = previewComments.reduce((latest, comment) => {
-              if (!latest) return comment;
-              const latestTimestamp = commentTimestamp(latest);
-              const candidateTimestamp = commentTimestamp(comment);
-              if (candidateTimestamp !== latestTimestamp) {
-                return candidateTimestamp > latestTimestamp ? comment : latest;
-              }
-              return Number(comment.id) > Number(latest.id) ? comment : latest;
-            }, null);
-
-            const { data: latestPullRequest } = await getCurrentPullRequest();
-            if (isStaleTarget(latestPullRequest)) {
-              core.info(
-                `Skipping superseded preview cleanup result for PR #${prNumber}: ` +
-                `expected ${headSha}, current ${latestPullRequest.state}/${latestPullRequest.head?.sha}`
-              );
-              return;
-            }
-
-            const deleteCommentIfPresent = async (comment) => {
-              try {
-                await github.rest.issues.deleteComment({
-                  ...context.repo,
-                  comment_id: comment.id,
-                });
-              } catch (error) {
-                if (error.status !== 404) throw error;
-              }
-            };
-
-            for (const comment of previewComments) {
-              if (comment.id === existing?.id) continue;
-              await deleteCommentIfPresent(comment);
-            }
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
+              markerPolicy: "replace",
+              statePolicy,
+              telnetPort: "unavailable",
+              failureStage: "cleanup",
+              staleDescription: "preview cleanup result",
+            });

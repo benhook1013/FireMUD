@@ -144,3 +144,12 @@ Entry format:
   - Context: hosted review found that automatic dead-letter age and row-cap cleanup could delete a parent and its handoff ledger while the live schema lacked recovery generations, claim state, expected-child evidence, and independent retention horizons.
   - Observation: terminal status plus age or capacity is not enough to prove that a recovery bundle may be deleted; a partial child-outcome check still cannot prove absent children, completed resumed dispatch, or expired evidence obligations.
   - Expected pattern: apply one recovery-aware whole-bundle predicate to every automatic and explicit cleanup selector, and fail closed without deleting dead-letter evidence until the schema can prove that predicate.
+- `2026-09-06`: Preview priority requires lifecycle serialization, not only capacity ordering
+  - Context: adding a small priority override to the automatic pull-request preview pool.
+  - Observation: selecting an ordinary victim under a capacity check is unsafe if deployment or hosted proof can still be using that namespace, and an unaware reconciler can immediately recreate a displaced environment.
+  - Expected pattern: follow the [deployment-environment preview contract](../architecture/infrastructure/deployment-environments.md): serialize allocation, deployment, proof, reclaim, and cleanup without cancelling the active lifecycle; re-read target and victim priority at the destructive boundary; and make reconciliation capacity-aware so ordinary requests wait instead of forming a reclaim loop.
+
+- `2026-09-06`: Pause and continuation scope must remain explicit
+  - Context: pausing a bounded review-request automation was incorrectly propagated to the wider implementation lane, while incidental coordination messages reinforced an obsolete orientation pause after later authorization had already started execution.
+  - Observation: stopping one automation does not pause its parent task, coordination input does not replace unfinished work, and an orientation-only pause expires when the human authorizes implementation. A progress report alone does not transfer execution ownership.
+  - Expected pattern: before ending while authorized work remains, identify the concrete blocker and the actual continuation owner or durable wakeup. Otherwise continue the lane autonomously within its existing scope; do not add recurring monitors or acknowledgement loops to compensate for an unclear stop boundary.
