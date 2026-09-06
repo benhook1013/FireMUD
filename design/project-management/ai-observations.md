@@ -144,11 +144,20 @@ Entry format:
   - Context: the gameplay implementation lane repeatedly kept substantial CI diagnosis and preview-allocation review in the main task until the human redirected it to Workers.
   - Observation: late delegation consumes the main integration context and makes model/tier routing invisible at checkpoints, even when the eventual Worker assignments are disjoint and useful.
   - Expected pattern: apply the [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) workflow before bulk operational work; give Workers bounded ownership, retain integration and targeted verification in the main task, and make model/tier routing visible in checkpoint summaries.
+- `2026-09-05`: Automation source type alone does not identify the local command path
+  - Context: reconciling local exact-pin admission and final execution with the existing remote Automation follow-up path.
+  - Observation: local and remote commands both use the `AUTOMATION` source type, so applying local tuple requirements by source type alone breaks the remote legacy path before its separate source/target tuple contract is implemented.
+  - Expected pattern: discriminate the local path with its remote-follow-up evidence as well as source type, preserve the remote path's current schema contract, and widen it only when the owning source/target design and proof land together.
 
 - `2026-09-05`: Preserve applied baseline checksums while converging pre-v1 schema
   - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
   - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
   - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.
+
+- `2026-09-05`: Preserve PostgreSQL migration semantics through jOOQ generation
+  - Context: splitting a PostgreSQL `CHECK` installation from its later validation exposed that jOOQ's DDL parser rejects both `NOT VALID` and `VALIDATE CONSTRAINT` even though Flyway and PostgreSQL require those forms for the production-safe migration.
+  - Observation: weakening the production migration to satisfy code generation would restore a blocking table scan; the repository already supports narrowly scoped jOOQ ignore markers for PostgreSQL-only syntax.
+  - Expected pattern: keep the PostgreSQL/Flyway statement authoritative, wrap only the unsupported syntax or statement in the established jOOQ ignore markers, and prove both the production SQL and generation path with focused migration tests plus `generateJooq`-dependent validation.
 
 - `2026-09-06`: Retained-row migration proof must exercise pre-change nullable identities
   - Context: Automation exact-pin V5 passed fresh-schema migration checks while retained instance ingress rows would have received a null epoch, and its duplicate normalization deleted durable audit evidence.
@@ -159,6 +168,17 @@ Entry format:
   - Context: hosted review found that automatic dead-letter age and row-cap cleanup could delete a parent and its handoff ledger while the live schema lacked recovery generations, claim state, expected-child evidence, and independent retention horizons.
   - Observation: terminal status plus age or capacity is not enough to prove that a recovery bundle may be deleted; a partial child-outcome check still cannot prove absent children, completed resumed dispatch, or expired evidence obligations.
   - Expected pattern: apply one recovery-aware whole-bundle predicate to every automatic and explicit cleanup selector, and fail closed without deleting dead-letter evidence until the schema can prove that predicate.
+
+- `2026-09-06`: Cross-store replay must commit durable replacement state before Redis reconciliation
+  - Context: exact-pin tick replay initially drained the original Redis selection before preserving Redis-only commands and treated post-commit Redis failures as generic staging failures.
+  - Observation: once a replacement batch is durably committed, its manifest and effective drain set are authoritative; Redis is only a projection and a reconciliation failure must not roll back or abandon that committed replacement through a generic failure path.
+  - Expected pattern: persist the replacement and any Redis-only retry state in one database transaction, reconcile Redis atomically and idempotently afterward, and carry an explicit committed-replacement fact through later failure handling and retries.
+
+- `2026-09-06`: Scope replay-preservation state to the replay phase
+  - Context: a tick could commit a durable replay replacement, then begin a fresh stage whose later failure still observed the earlier replay-preservation flag.
+  - Observation: a durable replay decision protects that replay batch and its immediate reconciliation, but it cannot suppress rollback or abandonment for independently staged work later in the same tick.
+  - Expected pattern: track whether fresh staging has begun and preserve the replay decision only before that phase; failures after fresh staging starts must run the normal fenced rollback and durable batch-abandonment path.
+
 - `2026-09-06`: Preview priority requires lifecycle serialization, not only capacity ordering
   - Context: adding a small priority override to the automatic pull-request preview pool.
   - Observation: selecting an ordinary victim under a capacity check is unsafe if deployment or hosted proof can still be using that namespace, and an unaware reconciler can immediately recreate a displaced environment.
@@ -173,3 +193,12 @@ Entry format:
   - Context: an earlier dev-demo correction preferred an in-cluster bootstrap pod for all account and session setup, but player credentials were thereby sent over an internal plaintext service path.
   - Observation: until internal HTTPS/mTLS exists, credential-bearing account bootstrap must use the already-declared `pods/portforward` capability over the Kubernetes API, bound to runner loopback; only non-credential session/world setup should remain in-cluster.
   - Expected pattern: fail closed with `kubectl auth can-i create pods/portforward`, use `--address 127.0.0.1`, keep readiness/PID/log/account-id cleanup bounded, and never emit credential material.
+
+- `2026-09-07`: Keep credential-free and credential-bearing bootstrap paths separate
+  - Context: the dev-demo workflow needs an in-cluster setup path for session/world state while account bootstrap still crosses an internal plaintext hop.
+  - Observation: only credential-free session/world setup belongs in the in-cluster pod; account bootstrap must use the existing loopback-bound Kubernetes port-forward path until an authenticated internal account transport exists.
+  - Expected pattern: preserve the append-only history of the earlier guidance, but apply the split explicitly: in-cluster setup may not receive account credentials, and credential-bearing bootstrap must fail closed on port-forward authorization/readiness errors without emitting secrets.
+- `2026-09-06`: Redis logical identity checks must retain exact stored bytes
+  - Context: tick queue scripts accepted raw and JDK-serialized payloads as the same logical command, but removal paths discarded the indexed byte representation before removing it from list projections.
+  - Observation: parsing two encodings to one logical identity does not make Redis byte comparisons interchangeable; `LREM` can leave the indexed representation behind and a later enqueue can duplicate that command after the index is deleted.
+  - Expected pattern: retain the exact indexed bytes through validation, remove both caller and indexed encodings when they differ, and prove retry and terminal-removal behavior against mixed encodings with real Redis execution.

@@ -32,6 +32,11 @@ SE = 240
 COMMAND_NAMES = {WILL: "WILL", WONT: "WONT", DO: "DO", DONT: "DONT"}
 
 
+def _iso88591_bytes(text: str) -> bytes:
+    """Encode command and redaction bytes exactly as the Telnet wire does."""
+    return text.encode("iso-8859-1", errors="replace")
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
@@ -136,8 +141,9 @@ def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:
     if not match or match.group(2) is None:
         return None
     safe = f"LOGIN {match.group(1)} [REDACTED]"
-    raw = command.encode("iso-8859-1", errors="replace")
-    replacement = safe.encode("iso-8859-1")
+    raw = _iso88591_bytes(command)
+    replacement = _iso88591_bytes(safe)
+    safe = replacement.decode("iso-8859-1")
     return safe, raw, replacement
 
 
@@ -272,20 +278,63 @@ class TelnetSession:
         self.receiver.start()
 
     def _redact_inbound(self, data: bytes, final: bool = False) -> bytes:
-        combined = self.redaction_tail + data
-        keep = 0
-        if not final:
-            for pattern, _ in self.redaction_patterns:
-                for size in range(min(len(pattern) - 1, len(combined)), 0, -1):
-                    if combined.endswith(pattern[:size]):
-                        keep = max(keep, size)
-                        break
-        safe, self.redaction_tail = combined[: len(combined) - keep], combined[len(combined) - keep :]
-        for pattern, replacement in self.redaction_patterns:
-            safe = safe.replace(pattern, replacement)
+        previous_tail = self.redaction_tail
+        combined = previous_tail + data
+        self.redaction_tail = b""
+        patterns = tuple(
+            (pattern, replacement)
+            for pattern, replacement in self.redaction_patterns
+            if pattern
+        )
+        if not patterns:
+            return combined
+
+        safe = bytearray()
+        cursor = 0
+        while cursor < len(combined):
+            candidates = [
+                (combined.find(pattern[:1], cursor), pattern, replacement)
+                for pattern, replacement in patterns
+                if combined.find(pattern[:1], cursor) >= 0
+            ]
+            if not candidates:
+                safe.extend(combined[cursor:])
+                break
+
+            start = min(candidate[0] for candidate in candidates)
+            matching_candidates = [candidate for candidate in candidates if candidate[0] == start]
+            matches = []
+            for _, pattern, replacement in matching_candidates:
+                matched = 0
+                available = min(len(pattern), len(combined) - start)
+                while matched < available and combined[start + matched] == pattern[matched]:
+                    matched += 1
+                matches.append((matched, pattern, replacement))
+            matched, pattern, replacement = max(matches, key=lambda item: item[0])
+
+            safe.extend(combined[cursor:start])
+            if matched == len(pattern):
+                safe.extend(replacement)
+                cursor = start + matched
+                continue
+
+            if start + matched == len(combined):
+                if not final:
+                    self.redaction_tail = combined[start:]
+                break
+
+            # A partial prefix inherited from an earlier receive must not be
+            # emitted when the next bytes disprove the command. Prefixes found
+            # entirely in this chunk are ordinary text once they mismatch.
+            if start < len(previous_tail):
+                cursor = start + matched
+            else:
+                safe.extend(combined[start : start + matched])
+                cursor = start + matched
+
         if final:
             self.redaction_tail = b""
-        return safe
+        return bytes(safe)
 
     def _receive_loop(self) -> None:
         assert self.socket is not None
@@ -365,7 +414,7 @@ class TelnetSession:
         self._append("outbound", "command", text=display)
         try:
             with self.send_lock:
-                self.socket.sendall(command.encode("iso-8859-1") + b"\r\n")
+                self.socket.sendall(_iso88591_bytes(command) + b"\r\n")
         except OSError as exc:
             self._append("outbound", "error", reason="send", detail=str(exc))
             self._record_disconnect("send_error")
@@ -462,7 +511,11 @@ def run_connect(args: argparse.Namespace) -> int:
                 session.close("local_quit")
                 break
             elif line:
-                session.send_command(line)
+                try:
+                    session.send_command(line)
+                except (OSError, RuntimeError) as exc:
+                    print(f"Unable to send command: {exc}", file=sys.stderr)
+                    break
     finally:
         if not session.closed:
             session.close("stdin_eof")

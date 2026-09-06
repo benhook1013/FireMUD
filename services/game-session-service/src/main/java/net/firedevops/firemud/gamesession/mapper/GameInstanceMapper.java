@@ -7,9 +7,13 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface GameInstanceMapper {
+  @Mapping(
+      target = "scriptPinControlPlaneRequestId",
+      source = "scriptPatchPinnedControlPlaneRequestId")
   GameInstanceDto toDto(GameInstance entity);
 
   @Mapping(target = "scriptPatchPinnedAt", ignore = true)
+  @Mapping(target = "scriptPinEpoch", ignore = true)
   @Mapping(target = "scriptPatchPinnedBy", ignore = true)
   @Mapping(target = "scriptPatchPinnedReason", ignore = true)
   @Mapping(target = "scriptPatchPinnedControlPlaneRequestId", ignore = true)

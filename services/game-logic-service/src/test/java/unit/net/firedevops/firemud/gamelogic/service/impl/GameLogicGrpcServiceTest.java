@@ -204,6 +204,8 @@ class GameLogicGrpcServiceTest {
 
     Mockito.verify(moveAggregationService).resolve(any());
     assertTrue(holder.get().getSuccess());
+    assertEquals("22", holder.get().getDestinationRoomInstance().getTenantId());
+    assertEquals("7", holder.get().getDestinationRoomInstance().getGameInstanceId());
     assertEquals("R-2045", holder.get().getDestinationRoomInstance().getRoomInstanceId());
   }
 

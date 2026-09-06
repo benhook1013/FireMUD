@@ -120,6 +120,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
             self.validator.validate_workflow(root)
 
+    def test_noop_bootstrap_manifest_mutation_preserves_valid_fixture(self):
+        bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(lambda _pod: None)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_credentials_in_summary_writer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -146,12 +153,23 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_rejects_bootstrap_credential_secret_creation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest + "\nkubectl -n \"${PREVIEW_NAMESPACE}\" create secret generic dev-demo-bootstrap-env"
+        invalid_manifest = bootstrap_manifest + "\nkubectl -n \"${PREVIEW_NAMESPACE}\" create secret generic unrelated-resource"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(AssertionError, "must not create or mount credential Secret"):
                 self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_image_pull_secret_reference(self):
+        bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].update(
+                imagePullSecrets=[{"name": "ghcr-preview-pull"}]
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_legacy_player_bootstrap_payload(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -185,6 +203,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_accepts_account_id_file_plumbing_for_session_handoff(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
+        account_id_markers = (
+            '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
+            "account_file.write(str(account_id))",
+        )
+        for marker in account_id_markers:
+            self.assertIn(marker, self.validator.BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS)
+            self.assertIn(marker, bootstrap_manifest)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, bootstrap_manifest)
@@ -192,7 +217,11 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_requires_text_account_id_handoff(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        conversion = "account_file.write(str(account_id))"
+        conversion = next(
+            marker
+            for marker in self.validator.BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS
+            if marker == "account_file.write(str(account_id))"
+        )
         self.assertIn(conversion, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
             conversion, "account_file.write(account_id)", 1
@@ -351,11 +380,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_bootstrap_manifest_with_credential_env_from(self):
-        bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest.replace(
-            "      volumeMounts:",
-            "      envFrom:\n        - secretRef:\n            name: dev-demo-bootstrap-env\n      volumeMounts:",
-            1,
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["containers"][0].update(
+                envFrom=[{"secretRef": {"name": "dev-demo-bootstrap-env"}}]
+            )
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

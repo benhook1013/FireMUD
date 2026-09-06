@@ -85,7 +85,9 @@ public class MoveAggregationService {
                     .build());
         return builder.setSuccess(true).setDestinationRoomInstance(destinationRoom).build();
       } catch (IllegalArgumentException ex) {
-        return errorResponse(builder, "INVALID_ARGUMENT", ex.getMessage());
+        LOG.warn("WorldManagementService returned an invalid MOVE destination", ex);
+        return errorResponse(
+            builder, "WORLD_UNAVAILABLE", "WorldManagementService: " + ex.getMessage());
       }
     }
   }

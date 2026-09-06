@@ -35,6 +35,7 @@ class FakeServer:
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(1)
         self.port = self.listener.getsockname()[1]
+        self.ready.set()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         self.ready.wait(1)
@@ -43,7 +44,6 @@ class FakeServer:
         try:
             connection, _ = self.listener.accept()
             with connection:
-                self.ready.set()
                 self.handler(connection)
         except Exception as exc:  # noqa: BLE001 - surfaced by close_and_check
             self.error = exc
@@ -481,6 +481,50 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
+    def test_login_redaction_drops_partial_prefix_on_unrelated_bytes(self):
+        _, raw, replacement = telnet_session._login_redaction(
+            "LOGIN demo@example.com secret-7"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.redaction_patterns.append((raw, replacement))
+
+            partial = session._redact_inbound(raw[:-2])
+            unrelated = session._redact_inbound(b" room text\r\n")
+
+            self.assertEqual(partial, b"")
+            self.assertEqual(unrelated, b" room text\r\n")
+            self.assertNotIn(raw[:-2], partial + unrelated)
+            self.assertNotIn(b"secret-7", partial + unrelated)
+            self.assertEqual(session.redaction_tail, b"")
+
+    def test_login_redaction_drops_partial_prefix_at_eof(self):
+        _, raw, replacement = telnet_session._login_redaction(
+            "LOGIN demo@example.com secret-7"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.redaction_patterns.append((raw, replacement))
+
+            partial = session._redact_inbound(raw[:-2])
+            trailing = session._redact_inbound(b"", final=True)
+
+            self.assertEqual(partial, b"")
+            self.assertEqual(trailing, b"")
+            self.assertEqual(session.redaction_tail, b"")
+
     def test_login_redaction_handles_leading_whitespace_and_extra_tail(self):
         command = "\t LOGIN demo@example.com secret extra-token"
         redaction = telnet_session._login_redaction(command)
@@ -492,6 +536,51 @@ class TelnetSessionDriverTest(unittest.TestCase):
         self.assertEqual(replacement, safe.encode("iso-8859-1"))
         self.assertNotIn(b"secret", replacement)
         self.assertIsNone(telnet_session._login_redaction("LOGIN demo@example.com"))
+
+    def test_login_redaction_uses_transmitted_iso88591_replacement_bytes(self):
+        command = "LOGIN snowman☃ secret☃"
+
+        safe, raw, replacement = telnet_session._login_redaction(command)
+
+        self.assertEqual(raw, command.encode("iso-8859-1", errors="replace"))
+        self.assertEqual(replacement, safe.encode("iso-8859-1", errors="replace"))
+        self.assertEqual(safe, "LOGIN snowman? [REDACTED]")
+
+    def test_interactive_send_failure_stops_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            for failure_type in (OSError, RuntimeError):
+                with self.subTest(failure_type=failure_type.__name__):
+
+                    class StubSession:
+                        _failure_type = failure_type
+
+                        def __init__(self, host, port, transcript_path, timeout, **_kwargs):
+                            self.store = telnet_session.EvidenceStore(transcript_path)
+                            self.closed = False
+
+                        def connect(self):
+                            return None
+
+                        def send_command(self, _line):
+                            raise self._failure_type("session closed")
+
+                        def close(self, reason):
+                            self.closed = True
+
+                    args = argparse.Namespace(
+                        host="localhost", port=32000, transcript=transcript, timeout=0.25
+                    )
+                    output = io.StringIO()
+                    with (
+                        patch.object(telnet_session, "TelnetSession", StubSession),
+                        patch("sys.stdin", io.StringIO("LOOK\n")),
+                        contextlib.redirect_stdout(output),
+                        contextlib.redirect_stderr(output),
+                    ):
+                        self.assertEqual(telnet_session.run_connect(args), 0)
+
+                    self.assertIn("Unable to send command: session closed", output.getvalue())
 
     def test_read_subcommand_returns_events_after_cursor(self):
         with tempfile.TemporaryDirectory() as directory:

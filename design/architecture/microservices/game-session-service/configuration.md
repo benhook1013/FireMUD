@@ -4,7 +4,7 @@
 
 ## Implementation Status
 
-Live pin/convergence reads exist, while complete `scriptPinEpoch` propagation, atomic pin/history commit, authoritative rollout-history reads, and final-effect fencing remain implementation/proof gaps. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
+Live pin/convergence reads now expose the authoritative `{scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId}` observation, and instance-bound Automation admission carries and validates the positive epoch. The current-pin/request-result ledger commits atomically with the owner tuple; complete append-only rollout history, bounded authoritative history readback, complete history fields and focused history proof, complete source/target command identity, and remote final-effect fencing remain implementation/proof gaps. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
 ## Environment Variables
 

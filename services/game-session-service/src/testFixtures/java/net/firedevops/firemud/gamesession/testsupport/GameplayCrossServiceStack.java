@@ -175,7 +175,6 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     resetScenarioState();
     clearRedis();
     JdbcTemplate jdbc = jdbc();
-    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     clearSyntheticAdmissionPointerState(jdbc);
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
     jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
@@ -279,7 +278,6 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public long insertRunningGameInstance(
       long tenantId, long accountId, long gameTemplateId, boolean clearExisting) {
     JdbcTemplate jdbc = jdbc();
-    GameInstanceTestFixtures.ensureGameInstancesTable(jdbc);
     if (clearExisting) {
       clearRedis();
       jdbc.update("DELETE FROM runtime_region_status");

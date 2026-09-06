@@ -42,42 +42,40 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+{{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
+            {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
+            {{- if ne $key "TCP_PROXY_TELNET_MODE" }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
           {{- else }}
           env:
             {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+{{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}
+            {{- if ne $key "TCP_PROXY_TELNET_MODE" }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- end }}
             {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
-            - name: TCP_PROXY_TLS_ENABLED
-              value: "true"
-            - name: TCP_PROXY_TLS_CERT
-              value: /telnet-tls/tls.crt
-            - name: TCP_PROXY_TLS_KEY
-              value: /telnet-tls/tls.key
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
+            {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
             {{- end }}
           {{- end }}
           {{- if $service.envFromShared }}

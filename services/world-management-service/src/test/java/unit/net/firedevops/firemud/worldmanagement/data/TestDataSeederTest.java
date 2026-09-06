@@ -1,7 +1,6 @@
 package net.firedevops.firemud.worldmanagement.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -297,10 +296,14 @@ class TestDataSeederTest {
     assertEquals(
         List.of("NORTH", "SOUTH"),
         exitCaptor.getAllValues().stream().map(RoomInstanceExit::getDirection).toList());
-    assertNotNull(exitCaptor.getAllValues().get(0).getFromRoomInstance());
-    assertNotNull(exitCaptor.getAllValues().get(0).getToRoomInstance());
-    assertNotNull(exitCaptor.getAllValues().get(1).getFromRoomInstance());
-    assertNotNull(exitCaptor.getAllValues().get(1).getToRoomInstance());
+    assertEquals(
+        1021L, exitCaptor.getAllValues().get(0).getFromRoomInstance().getRoomInstanceRowId());
+    assertEquals(
+        2045L, exitCaptor.getAllValues().get(0).getToRoomInstance().getRoomInstanceRowId());
+    assertEquals(
+        2045L, exitCaptor.getAllValues().get(1).getFromRoomInstance().getRoomInstanceRowId());
+    assertEquals(
+        1021L, exitCaptor.getAllValues().get(1).getToRoomInstance().getRoomInstanceRowId());
   }
 
   @Test

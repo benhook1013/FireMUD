@@ -44,7 +44,19 @@ import org.mockito.Mockito;
 class TelnetServerHandlerTest {
 
   private TelnetServerHandler newHandler(SimpleMeterRegistry registry, boolean advertiseMcp) {
-    return newHandler(registry, advertiseMcp, () -> true, TelnetServerHandler::createWebSocket);
+    return newHandler(
+        registry,
+        advertiseMcp,
+        () -> true,
+        (gatewayWsUrl,
+            clientIp,
+            proxyConnectionId,
+            gameInstanceId,
+            tenantId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            listener) -> new CompletableFuture<>());
   }
 
   private TelnetServerHandler newHandler(

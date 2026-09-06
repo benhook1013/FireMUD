@@ -46,3 +46,26 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.telnetTlsSecretName" -}}
 {{- default (printf "%s-telnet-tls" .Release.Name) .Values.previewStack.telnetTls.secretName -}}
 {{- end -}}
+
+{{- define "firemud.grpcTlsEnv" -}}
+- name: FIREMUD_GRPC_CERT_CHAIN_PATH
+  value: /tls/client.crt
+- name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+  value: /tls/client.key
+- name: FIREMUD_GRPC_CA_CERT_PATH
+  value: /tls/ca.crt
+{{- end -}}
+
+{{- define "firemud.telnetTlsEnv" -}}
+- name: TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: TCP_PROXY_TLS_CERT
+  value: /telnet-tls/tls.crt
+- name: TCP_PROXY_TLS_KEY
+  value: /telnet-tls/tls.key
+{{- end -}}
+
+{{- define "firemud.telnetTlsModeEnv" -}}
+- name: TCP_PROXY_TELNET_MODE
+  value: DIRECT_TLS
+{{- end -}}

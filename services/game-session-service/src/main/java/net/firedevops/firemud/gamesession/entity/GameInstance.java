@@ -9,6 +9,7 @@ public class GameInstance {
   private Long tenantId;
   private String runtimeVersion;
   private String scriptPatchVersion;
+  private Long scriptPinEpoch;
   private Long gameTemplateId;
   private String launchDescriptorId;
   private Long versionId;

@@ -13,6 +13,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -89,6 +90,13 @@ class TickQueueControlServiceTest {
               return command;
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(true);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -142,6 +150,51 @@ class TickQueueControlServiceTest {
   }
 
   @Test
+  void enqueueCommandDoesNotDuplicateExactQueueOrPendingPayload() {
+    when(listOps.range("gamesession:tick:queue:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-existing|look"));
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-existing|look"));
+
+    service.enqueueCommand(1L, 2L, "cmd-existing", "look", false);
+
+    verify(listOps, never()).rightPush(any(), any());
+    verify(gameplayCommandRepository).markAcceptedCommandStaged(eq("cmd-existing"), any());
+  }
+
+  @Test
+  void enqueueCommandFailsClosedWhenQueueAndPendingPayloadsConflict() {
+    when(listOps.range("gamesession:tick:queue:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-conflict|look"));
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-conflict|say hello"));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd-conflict", "look", false));
+
+    verify(listOps, never()).rightPush(any(), any());
+    verify(listOps, never()).remove(any(), anyLong(), any());
+    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
+  void enqueueCommandDoesNotTouchRedisWhenDurableEligibilityFenceLoses() {
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            eq(1L), eq(2L), eq("cmd-ineligible"), eq("look"), eq(false)))
+        .thenReturn(false);
+
+    assertThrows(
+        TickQueueControlService.QueueUnavailableException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd-ineligible", "look", false));
+
+    verify(listOps, never()).range(any(), anyLong(), anyLong());
+    verify(listOps, never()).rightPush(any(), any());
+    verify(listOps, never()).remove(any(), anyLong(), any());
+    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
   void queuePayloadRejectsMissingDurableCommandIdWithoutSentinel() {
     assertThrows(IllegalArgumentException.class, () -> service.queuePayload(false, null, "look"));
     assertThrows(
@@ -190,6 +243,9 @@ class TickQueueControlServiceTest {
 
   @Test
   void enqueueCommandRemovesPayloadWhenDurableTransitionIsRejected() {
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            eq(1L), eq(2L), eq("cmd-terminal"), eq("look"), eq(false)))
+        .thenReturn(true);
     when(gameplayCommandRepository.markAcceptedCommandStaged(eq("cmd-terminal"), any()))
         .thenReturn(false);
 
@@ -471,6 +527,83 @@ class TickQueueControlServiceTest {
   }
 
   @Test
+  void purgeStopsPostCommitCleanupWhenRedisCleanupLosesLease() throws Exception {
+    GameplayCommand first = gameplayCommand("cmd-lease-lost");
+    first.setTenantId(1L);
+    first.setGameInstanceId(2L);
+    first.setSourceType("AUTOMATION");
+    first.setScriptPatchVersion("patch-1");
+    first.setCommandText("say lease lost");
+    first.setExecutionOutcome("STAGED");
+    GameplayCommand second = gameplayCommand("cmd-after-lease-loss");
+    second.setTenantId(1L);
+    second.setGameInstanceId(2L);
+    second.setSourceType("AUTOMATION");
+    second.setScriptPatchVersion("patch-1");
+    second.setCommandText("say do not clean");
+    second.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository.findQueuedAutomationCommandsForScriptPatch(
+            1L, 2L, "region-1", "patch-1"))
+        .thenReturn(List.of(first, second));
+
+    RedisTemplate<String, Object> scriptTemplate = mock(RedisTemplate.class);
+    org.mockito.Mockito.doReturn(
+            new org.springframework.data.redis.serializer.StringRedisSerializer())
+        .when(scriptTemplate)
+        .getValueSerializer();
+    org.mockito.Mockito.doReturn(1L)
+        .when(scriptTemplate)
+        .execute(any(), any(), any(), any(), any());
+    org.mockito.Mockito.doReturn(-1L)
+        .when(scriptTemplate)
+        .execute(
+            any(org.springframework.data.redis.core.script.RedisScript.class),
+            any(org.springframework.data.redis.serializer.RedisSerializer.class),
+            any(org.springframework.data.redis.serializer.RedisSerializer.class),
+            org.mockito.ArgumentMatchers.<String>anyList(),
+            any(),
+            any());
+    setFencedScriptRedisTemplate(scriptTemplate);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertEquals(
+          2L,
+          service.purgeQueuedAutomationCommandsForScriptPatch(
+              1L, 2L, "region-1", "patch-1", "rollback", logger));
+      org.mockito.Mockito.clearInvocations(scriptTemplate);
+
+      assertDoesNotThrow(
+          () ->
+              TransactionSynchronizationManager.getSynchronizations()
+                  .forEach(TransactionSynchronization::afterCommit));
+
+      verify(scriptTemplate, times(1))
+          .execute(
+              any(org.springframework.data.redis.core.script.RedisScript.class),
+              any(org.springframework.data.redis.serializer.RedisSerializer.class),
+              any(org.springframework.data.redis.serializer.RedisSerializer.class),
+              org.mockito.ArgumentMatchers.<String>anyList(),
+              any(),
+              any());
+      verify(logger)
+          .warn(
+              eq(
+                  "Durable purge committed but Redis cleanup failed tenantId={} gameInstanceId={} commandId={}"),
+              eq(1L),
+              eq(2L),
+              eq("cmd-lease-lost"),
+              any(TickQueueControlService.QueueUnavailableException.class));
+    } finally {
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
   void purgeSkipsMalformedCommandIdDuringPostCommitCleanupAndContinues() {
     GameplayCommand malformed = gameplayCommand("-");
     malformed.setTenantId(1L);
@@ -517,6 +650,13 @@ class TickQueueControlServiceTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  private void setFencedScriptRedisTemplate(RedisTemplate<String, Object> scriptTemplate)
+      throws Exception {
+    var field = TickQueueControlService.class.getDeclaredField("fencedScriptRedisTemplate");
+    field.setAccessible(true);
+    field.set(service, scriptTemplate);
   }
 
   @Test
