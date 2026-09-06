@@ -125,8 +125,7 @@ class TelnetServerTest {
     SSLContext sslContext = SSLContext.getInstance("TLS");
     sslContext.init(null, trustManagers.getTrustManagers(), null);
 
-    try (SSLSocket socket =
-        (SSLSocket) sslContext.getSocketFactory().createSocket()) {
+    try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket()) {
       socket.setSoTimeout(TLS_READ_TIMEOUT_MILLIS);
       socket.connect(
           new InetSocketAddress("localhost", server.getPort()), TLS_CONNECT_TIMEOUT_MILLIS);
