@@ -14,8 +14,8 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL_PATH = ROOT / "dev-tools/gameplay/telnet-session.py"
@@ -265,10 +265,12 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 host="localhost", port=32000, transcript=transcript, timeout=0.25
             )
             output = io.StringIO()
-            with patch.object(telnet_session, "TelnetSession", StubSession):
-                with patch("sys.stdin", io.StringIO(":read nope\n:read 1\n:close done\n")):
-                    with contextlib.redirect_stdout(output):
-                        self.assertEqual(telnet_session.run_connect(args), 0)
+            with (
+                patch.object(telnet_session, "TelnetSession", StubSession),
+                patch("sys.stdin", io.StringIO(":read nope\n:read 1\n:close done\n")),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(telnet_session.run_connect(args), 0)
 
             self.assertIn("Invalid cursor: 'nope'", output.getvalue())
             self.assertIn("next_cursor=1", output.getvalue())
