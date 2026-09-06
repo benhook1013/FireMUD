@@ -148,6 +148,9 @@ class TickQueueControlServiceRedisIntegrationTest {
     assertThat(values(QUEUE_KEY)).isEmpty();
     assertThat(values(PENDING_KEY)).containsExactly(payload);
     assertThat(indexedPayload("cmd-replay-pending")).contains("cmd-replay-pending|look");
+    verify(gameplayCommandRepository)
+        .markAcceptedCommandStaged(
+            org.mockito.ArgumentMatchers.eq("cmd-replay-pending"), any(Instant.class));
   }
 
   @Test
