@@ -122,20 +122,32 @@ public class ServedEnvironmentProbe {
       throw new IllegalStateException("expected served leaf fingerprint is required");
     }
     SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault().createSocket();
-    socket.setSoTimeout(8000);
-    socket.connect(new InetSocketAddress(hostname, port), 5000);
-    SSLParameters parameters = socket.getSSLParameters();
-    parameters.setEndpointIdentificationAlgorithm("HTTPS");
-    parameters.setServerNames(List.of(new SNIHostName(hostname)));
-    socket.setSSLParameters(parameters);
-    socket.startHandshake();
-    X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
-    String actual = fingerprint(leaf);
-    if (!normalize(expectedFingerprint).equals(normalize(actual))) {
-      socket.close();
-      return null;
+    return openTlsSocket(hostname, port, expectedFingerprint, socket);
+  }
+
+  private static SSLSocket openTlsSocket(
+      String hostname, int port, String expectedFingerprint, SSLSocket socket) throws Exception {
+    boolean transferred = false;
+    try {
+      socket.setSoTimeout(8000);
+      socket.connect(new InetSocketAddress(hostname, port), 5000);
+      SSLParameters parameters = socket.getSSLParameters();
+      parameters.setEndpointIdentificationAlgorithm("HTTPS");
+      parameters.setServerNames(List.of(new SNIHostName(hostname)));
+      socket.setSSLParameters(parameters);
+      socket.startHandshake();
+      X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
+      String actual = fingerprint(leaf);
+      if (!normalize(expectedFingerprint).equals(normalize(actual))) {
+        return null;
+      }
+      transferred = true;
+      return socket;
+    } finally {
+      if (!transferred) {
+        socket.close();
+      }
     }
-    return socket;
   }
 
   private static String fingerprint(X509Certificate certificate) throws Exception {

@@ -75,11 +75,12 @@ public class GrpcTransportBundleGenerator {
         if (exception.getCode() != 409) {
           throw exception;
         }
-        return client
-            .secrets()
-            .inNamespace(plan.identityNamespace())
-            .withName(plan.grpcSecretName())
-            .get();
+        return requireConflictWinner(
+            client
+                .secrets()
+                .inNamespace(plan.identityNamespace())
+                .withName(plan.grpcSecretName())
+                .get());
       }
     }
     long currentGeneration = issuanceGeneration(existing);
@@ -100,11 +101,12 @@ public class GrpcTransportBundleGenerator {
       if (exception.getCode() != 409) {
         throw exception;
       }
-      return client
-          .secrets()
-          .inNamespace(plan.identityNamespace())
-          .withName(plan.grpcSecretName())
-          .get();
+      return requireConflictWinner(
+          client
+              .secrets()
+              .inNamespace(plan.identityNamespace())
+              .withName(plan.grpcSecretName())
+              .get());
     }
   }
 
@@ -250,6 +252,13 @@ public class GrpcTransportBundleGenerator {
         && !leafNotAfter(secret).isAfter(now.plus(renewBefore));
   }
 
+  static Secret requireConflictWinner(Secret reread) {
+    if (reread == null) {
+      throw new IllegalStateException("gRPC source conflict winner is absent after reread");
+    }
+    return reread;
+  }
+
   static void validateCa(Secret caSource, String expectedTrustAnchorSha256) {
     try {
       if (!TYPE.equals(caSource.getType())
@@ -310,19 +319,24 @@ public class GrpcTransportBundleGenerator {
     builder.addExtension(
         Extension.keyUsage,
         true,
-        new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
-    builder.addExtension(
-        Extension.extendedKeyUsage,
-        false,
-        new ExtendedKeyUsage(
-            new KeyPurposeId[] {KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth}));
-    builder.addExtension(
-        Extension.subjectAlternativeName,
-        false,
-        new GeneralNames(
-            dnsNames.stream()
-                .map(name -> new GeneralName(GeneralName.dNSName, name))
-                .toArray(GeneralName[]::new)));
+        new KeyUsage(
+            ca
+                ? KeyUsage.keyCertSign | KeyUsage.cRLSign
+                : KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+    if (!ca) {
+      builder.addExtension(
+          Extension.extendedKeyUsage,
+          false,
+          new ExtendedKeyUsage(
+              new KeyPurposeId[] {KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth}));
+      builder.addExtension(
+          Extension.subjectAlternativeName,
+          false,
+          new GeneralNames(
+              dnsNames.stream()
+                  .map(name -> new GeneralName(GeneralName.dNSName, name))
+                  .toArray(GeneralName[]::new)));
+    }
     ContentSigner signer =
         new JcaContentSignerBuilder("SHA256withRSA").build(issuerKey.getPrivate());
     X509CertificateHolder holder = builder.build(signer);

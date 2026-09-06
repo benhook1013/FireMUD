@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
+import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRule;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
@@ -14,7 +15,6 @@ import io.fabric8.kubernetes.api.model.rbac.SubjectBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
@@ -63,6 +63,8 @@ public class HostedIdentityScopeService {
       return false;
     }
     if (!plan.identityNamespace().equals(namespace.getMetadata().getName())
+        || (namespace.getMetadata().getGenerateName() != null
+            && !namespace.getMetadata().getGenerateName().isBlank())
         || !identityNamespaceLabels(plan).entrySet().stream()
             .allMatch(entry -> entry.getValue().equals(labels.get(entry.getKey())))
         || labels.entrySet().stream()
@@ -85,7 +87,7 @@ public class HostedIdentityScopeService {
     return Map.of(
         HostedIdentityContract.MANAGED_BY_LABEL,
         HostedIdentityContract.CONTROLLER_NAME,
-        HostedIdentityContract.IDENTITY_FOR_LABEL,
+        HostedIdentityContract.ENVIRONMENT_LABEL,
         plan.name(),
         HostedIdentityContract.RETENTION_LABEL,
         HostedIdentityContract.RETAINED,
@@ -228,7 +230,7 @@ public class HostedIdentityScopeService {
         "firemud",
         HostedIdentityContract.MANAGED_BY_LABEL,
         HostedIdentityContract.CONTROLLER_NAME,
-        HostedIdentityContract.IDENTITY_FOR_LABEL,
+        HostedIdentityContract.ENVIRONMENT_LABEL,
         plan.name(),
         "firemud.dev/environment-class",
         "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
@@ -240,8 +242,7 @@ public class HostedIdentityScopeService {
     Role current = operation.get();
     if (current == null) {
       client.rbac().roles().inNamespace(namespace).resource(desired).create();
-    } else if (!Objects.equals(current.getMetadata().getLabels(), desired.getMetadata().getLabels())
-        || !Objects.equals(current.getRules(), desired.getRules())) {
+    } else if (!roleEquivalent(current, desired)) {
       throw new IllegalStateException("hosted identity scope Role drifted");
     }
   }
@@ -278,11 +279,94 @@ public class HostedIdentityScopeService {
     RoleBinding current = operation.get();
     if (current == null) {
       client.rbac().roleBindings().inNamespace(namespace).resource(desired).create();
-    } else if (!Objects.equals(current.getMetadata().getLabels(), desired.getMetadata().getLabels())
-        || !Objects.equals(current.getRoleRef(), desired.getRoleRef())
-        || !Objects.equals(current.getSubjects(), desired.getSubjects())) {
+    } else if (!bindingEquivalent(current, desired)) {
       throw new IllegalStateException("hosted identity scope RoleBinding drifted");
     }
+  }
+
+  static boolean roleEquivalent(Role current, Role desired) {
+    if (current == null
+        || desired == null
+        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
+      return false;
+    }
+    List<PolicyRule> currentRules = emptyIfNull(current.getRules());
+    List<PolicyRule> desiredRules = emptyIfNull(desired.getRules());
+    if (currentRules.size() != desiredRules.size()) {
+      return false;
+    }
+    for (int index = 0; index < currentRules.size(); index++) {
+      if (!policyRuleEquivalent(currentRules.get(index), desiredRules.get(index))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static boolean bindingEquivalent(RoleBinding current, RoleBinding desired) {
+    if (current == null
+        || desired == null
+        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())
+        || current.getRoleRef() == null
+        || desired.getRoleRef() == null
+        || !java.util.Objects.equals(
+            current.getRoleRef().getApiGroup(), desired.getRoleRef().getApiGroup())
+        || !java.util.Objects.equals(current.getRoleRef().getKind(), desired.getRoleRef().getKind())
+        || !java.util.Objects.equals(
+            current.getRoleRef().getName(), desired.getRoleRef().getName())) {
+      return false;
+    }
+    var currentSubjects = emptyIfNull(current.getSubjects());
+    var desiredSubjects = emptyIfNull(desired.getSubjects());
+    if (currentSubjects.size() != desiredSubjects.size()) {
+      return false;
+    }
+    for (int index = 0; index < currentSubjects.size(); index++) {
+      var left = currentSubjects.get(index);
+      var right = desiredSubjects.get(index);
+      if (!normalized(left.getApiGroup()).equals(normalized(right.getApiGroup()))
+          || !java.util.Objects.equals(left.getKind(), right.getKind())
+          || !java.util.Objects.equals(left.getName(), right.getName())
+          || !java.util.Objects.equals(left.getNamespace(), right.getNamespace())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static boolean policyRuleEquivalent(PolicyRule current, PolicyRule desired) {
+    return current != null
+        && desired != null
+        && emptyIfNull(current.getApiGroups()).equals(emptyIfNull(desired.getApiGroups()))
+        && emptyIfNull(current.getResources()).equals(emptyIfNull(desired.getResources()))
+        && emptyIfNull(current.getResourceNames()).equals(emptyIfNull(desired.getResourceNames()))
+        && emptyIfNull(current.getVerbs()).equals(emptyIfNull(desired.getVerbs()))
+        && emptyIfNull(current.getNonResourceURLs())
+            .equals(emptyIfNull(desired.getNonResourceURLs()));
+  }
+
+  private static boolean managedMetadataEquivalent(ObjectMeta current, ObjectMeta desired) {
+    return current != null
+        && desired != null
+        && java.util.Objects.equals(current.getName(), desired.getName())
+        && java.util.Objects.equals(current.getNamespace(), desired.getNamespace())
+        && (current.getGenerateName() == null || current.getGenerateName().isBlank())
+        && java.util.Objects.equals(current.getLabels(), desired.getLabels())
+        && emptyMapIfNull(current.getAnnotations()).isEmpty()
+        && emptyIfNull(current.getOwnerReferences()).isEmpty()
+        && emptyIfNull(current.getFinalizers()).isEmpty();
+  }
+
+  private static <T> List<T> emptyIfNull(List<T> values) {
+    return values == null ? List.of() : values;
+  }
+
+  private static Map<String, String> emptyMapIfNull(Map<String, String> values) {
+    return values == null ? Map.of() : values;
+  }
+
+  private static String normalized(String value) {
+    return value == null ? "" : value;
   }
 
   private static Map<String, String> labelsWithoutClass(Map<String, String> labels) {

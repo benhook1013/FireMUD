@@ -69,6 +69,7 @@ NETWORKPOLICY="$MANIFEST_DIR/networkpolicy.yaml"
 BOOTSTRAP="$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"
 SCOPE="$CONTROLLER_DIR/ensure-hosted-identity-scope.sh"
 VALIDATE="$CONTROLLER_DIR/validate-hosted-identity-controller.sh"
+TRACKER="$ROOT_DIR/design/project-management/implementation-tracking/platform-operations-and-delivery.md"
 PROJECTION="$ROOT_DIR/services/hosted-environment-identity-controller/src/main/java/net/firedevops/firemud/hostedidentity/kubernetes/SecretProjectionService.java"
 GRPC_GENERATOR="$ROOT_DIR/services/hosted-environment-identity-controller/src/main/java/net/firedevops/firemud/hostedidentity/security/GrpcTransportBundleGenerator.java"
 
@@ -76,8 +77,21 @@ for resource in namespace serviceaccounts crd admission rbac deployment networkp
   require_literal "$KUSTOMIZATION" "- $resource.yaml"
 done
 require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
+for namespace_label in \
+  "pod-security.kubernetes.io/enforce: restricted" \
+  "pod-security.kubernetes.io/audit: restricted" \
+  "pod-security.kubernetes.io/warn: restricted"; do
+  require_literal "$MANIFEST_DIR/namespace.yaml" "$namespace_label"
+done
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-controller"
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-requester"
+for tracker_marker in \
+  "Contract owners are [ADR 0182]" \
+  "[Deployment Environments](../../architecture/infrastructure/deployment-environments.md)" \
+  "Current implementation/proof status:" \
+  "Static/live boundary:"; do
+  require_literal "$TRACKER" "$tracker_marker"
+done
 
 require_literal "$CRD" "name: hostedenvironmentidentities.platform.firemud.dev"
 require_literal "$CRD" "group: platform.firemud.dev"
@@ -143,6 +157,13 @@ for text_value in \
   firemud-hosted-runtime-scope \
   controller-scope \
   firemud-hosted-system-namespace-guard \
+  "request.operation in ['UPDATE', 'PATCH']" \
+  "request.operation in ['CREATE', 'DELETE']" \
+  "object.metadata.labels == oldObject.metadata.labels" \
+  "object.metadata.ownerReferences == oldObject.metadata.ownerReferences" \
+  "object.metadata.finalizers == oldObject.metadata.finalizers" \
+  "object.spec == oldObject.spec" \
+  "system:serviceaccount:kube-system:namespace-controller" \
   validationActions: \
   "- Deny"; do
   require_literal "$ADMISSION" "$text_value"
@@ -223,6 +244,7 @@ for text_value in \
   "/actuator/health/liveness" \
   "/actuator/health/readiness" \
   "replicas: 1" \
+  "type: Recreate" \
   FIREMUD_HOSTED_IDENTITY_CONTROL_NAMESPACE \
   FIREMUD_HOSTED_IDENTITY_PREVIEW_DOMAIN \
   FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE \
@@ -234,10 +256,13 @@ done
 for marker in ':latest' ':stable' ':main' ':develop'; do
   forbid_literal "$DEPLOYMENT" "$marker"
 done
+forbidden_strategy="type: RollingUpdate"
+forbid_literal "$DEPLOYMENT" "$forbidden_strategy"
 
 for text_value in \
   policyTypes: '- Egress' 'k8s-app: kube-dns' 'port: 53' 'port: 443' \
-  'endPort: 32016' 'cannot select the apiserver or a public hostname'; do
+  'endPort: 32016' 'cannot select the apiserver or a public hostname' \
+  'except:' '169.254.0.0/16' 'fe80::/10'; do
   require_literal "$NETWORKPOLICY" "$text_value"
 done
 

@@ -1,4 +1,6 @@
-{{- if and .Values.previewStack.enabled .Values.previewStack.telnetTls.enabled (ne (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller") }}
+{{- if and .Values.previewStack.enabled .Values.previewStack.telnetTls.enabled }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
+{{- if ne $hostedControllerMode "true" }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -15,4 +17,5 @@ spec:
   issuerRef:
     name: {{ .Values.previewStack.telnetTls.clusterIssuer | quote }}
     kind: ClusterIssuer
+{{- end }}
 {{- end }}

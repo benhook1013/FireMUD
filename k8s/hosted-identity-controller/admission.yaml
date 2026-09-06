@@ -21,6 +21,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - hostedenvironmentidentities
@@ -38,7 +39,7 @@ spec:
     - expression: "request.operation == 'DELETE' || object.spec.desiredState in ['Active', 'Retired']"
       message: spec contains only desiredState Active or Retired
       reason: Invalid
-    - expression: "request.operation != 'UPDATE' || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
+    - expression: "!(request.operation in ['UPDATE', 'PATCH']) || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
       message: desiredState is monotonic; Active may transition only to Retired
       reason: Invalid
     - expression: "request.operation != 'DELETE' || (oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
@@ -67,6 +68,7 @@ spec:
           - v1alpha1
         operations:
           - UPDATE
+          - PATCH
         resources:
           - hostedenvironmentidentities/status
           - hostedenvironmentidentities/finalizers
@@ -105,6 +107,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - secrets
@@ -113,7 +116,42 @@ spec:
     - name: hosted-identity-secret-boundary
       expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && (request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$'))) || ((request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && ((request.operation == 'DELETE' && (request.name == 'firemud-grpc-tls' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || request.name == 'firemud-grpc-tls-previous' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))) || (request.operation != 'DELETE' && (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls-previous' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$')))))"
   validations:
-    - expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && ((request.operation == 'DELETE' && (request.name == 'firemud-grpc-tls' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && (request.name == 'firemud-grpc-tls-previous' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))) || (request.operation != 'DELETE' && has(object.metadata.labels) && object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' && object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] && object.metadata.labels['firemud.dev/retention'] == 'retained' && (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && (object.metadata.name == 'firemud-grpc-tls-previous' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))))) || (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && request.operation in ['CREATE', 'UPDATE'] && request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'cert-manager.io/v1' && ref.kind == 'Certificate' && ref.name == object.metadata.name))"
+    # Namespace deletion also deletes the exact retained material.  Allow
+    # only the built-in kube-system namespace controller, DELETE, managed
+    # namespace, and canonical Secret name; no other namespace-controller
+    # operation or name is exempted.
+    - expression: >-
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.operation == 'DELETE' &&
+         (request.namespace in ['dev', 'dev-identity'] ||
+          request.namespace.matches('^pr-[1-9][0-9]*$') ||
+          request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+         request.name.matches('^(firemud-grpc-tls|firemud-grpc-tls-previous|(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)(-previous)?)$')) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         ((request.operation == 'DELETE' &&
+           (request.name == 'firemud-grpc-tls' ||
+            request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') ||
+            ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+             (request.name == 'firemud-grpc-tls-previous' ||
+              request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))) ||
+          (request.operation != 'DELETE' &&
+           has(object.metadata.labels) &&
+           object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] &&
+           object.metadata.labels['firemud.dev/retention'] == 'retained' &&
+           (object.metadata.name == 'firemud-grpc-tls' ||
+            object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') ||
+            ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+             (object.metadata.name == 'firemud-grpc-tls-previous' ||
+              object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))))) ||
+        (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
+         request.operation in ['CREATE', 'UPDATE', 'PATCH'] &&
+         request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
+         has(object.metadata.ownerReferences) &&
+         object.metadata.ownerReferences.exists(ref,
+           ref.apiVersion == 'cert-manager.io/v1' &&
+           ref.kind == 'Certificate' &&
+           ref.name == object.metadata.name))
       message: managed identity and runtime TLS Secrets are writable only by the controller or cert-manager for its owned identity Secret
       reason: Forbidden
     - expression: "request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' || (request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') && object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'cert-manager.io/v1' && ref.kind == 'Certificate' && ref.name == object.metadata.name))"
@@ -140,6 +178,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - certificates
@@ -149,7 +188,32 @@ spec:
     - name: hosted-identity-certificate-namespace
       expression: "request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')"
   validations:
-    - expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && request.subResource == '' && (request.operation == 'DELETE' || (has(object.metadata.labels) && object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' && object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] && (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls') && object.spec.secretName == object.metadata.name && object.spec.privateKey.rotationPolicy == 'Always' && has(object.spec.usages) && object.spec.usages.size() > 0 && object.spec.usages.all(usage, usage in ['digital signature', 'key encipherment', 'server auth', 'client auth']))))) || (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && request.subResource == 'status' && request.operation == 'UPDATE' && (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls') && object.spec == oldObject.spec)"
+    - expression: >-
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.subResource == '' &&
+         request.operation == 'DELETE' &&
+         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+         request.name.matches('^(firemud-grpc-tls|(dev|pr-[1-9][0-9]*)-(tls|telnet-tls))$')) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         request.subResource == '' &&
+         (request.operation == 'DELETE' ||
+          (has(object.metadata.labels) &&
+           object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] &&
+           (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') ||
+            object.metadata.name == 'firemud-grpc-tls') &&
+           object.spec.secretName == object.metadata.name &&
+           object.spec.privateKey.rotationPolicy == 'Always' &&
+           has(object.spec.usages) &&
+           object.spec.usages.size() > 0 &&
+           object.spec.usages.all(usage,
+             usage in ['digital signature', 'key encipherment', 'server auth', 'client auth'])))) ||
+        (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
+         request.subResource == 'status' &&
+         request.operation in ['UPDATE', 'PATCH'] &&
+         (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') ||
+          object.metadata.name == 'firemud-grpc-tls') &&
+         object.spec == oldObject.spec)
       message: only the controller may manage exact hosted Certificate specs; cert-manager may update status without changing spec
       reason: Forbidden
 ---
@@ -173,6 +237,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - roles
@@ -314,6 +379,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - rolebindings
@@ -391,6 +457,7 @@ spec:
         operations:
           - CREATE
           - UPDATE
+          - PATCH
           - DELETE
         resources:
           - namespaces
@@ -399,6 +466,7 @@ spec:
     - name: hosted-system-namespace-only
       expression: >-
         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        (request.operation in ['UPDATE', 'PATCH'] && request.name == 'firemud-system') ||
         (request.operation == 'DELETE' &&
          (request.name == 'firemud-system' || request.name == 'dev-identity' || request.name.matches('^pr-[1-9][0-9]*-identity$'))) ||
         (request.operation != 'DELETE' &&
@@ -406,8 +474,18 @@ spec:
   validations:
     - expression: >-
         (request.userInfo.groups.exists(group, group == 'system:masters') &&
+         request.operation in ['CREATE', 'DELETE'] &&
          ((request.operation == 'DELETE' && request.name == 'firemud-system') ||
-          (request.operation != 'DELETE' && object.metadata.name == 'firemud-system'))) ||
+          (request.operation == 'CREATE' && object.metadata.name == 'firemud-system'))) ||
+        (request.operation in ['UPDATE', 'PATCH'] &&
+         request.name == 'firemud-system' &&
+         object.metadata.name == 'firemud-system' &&
+         oldObject.metadata.name == 'firemud-system' &&
+         object.metadata.labels == oldObject.metadata.labels &&
+         object.metadata.annotations == oldObject.metadata.annotations &&
+         object.metadata.ownerReferences == oldObject.metadata.ownerReferences &&
+         object.metadata.finalizers == oldObject.metadata.finalizers &&
+         object.spec == oldObject.spec) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' && request.name.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
            (!has(oldObject.metadata.ownerReferences) || oldObject.metadata.ownerReferences.size() == 0) &&
@@ -434,7 +512,7 @@ spec:
            object.metadata.labels['firemud.dev/identity-name'] == (object.metadata.name == 'dev-identity' ? 'dev-demo' : object.metadata.name.substring(0, object.metadata.name.size() - 9)) &&
            object.metadata.labels['firemud.dev/environment-class'] == (object.metadata.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
            object.metadata.labels['firemud.dev/retention'] == 'retained')))
-      message: firemud-system requires system:masters; only the controller may manage exact retained identity Namespaces
+      message: firemud-system CREATE/DELETE requires system:masters; updates are no-op only and retained identity Namespaces are controller-managed
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

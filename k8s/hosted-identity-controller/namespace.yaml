@@ -6,3 +6,6 @@ metadata:
     app.kubernetes.io/part-of: firemud
     firemud.dev/managed-by: hosted-identity-controller-bootstrap
     firemud.dev/control-plane: "true"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

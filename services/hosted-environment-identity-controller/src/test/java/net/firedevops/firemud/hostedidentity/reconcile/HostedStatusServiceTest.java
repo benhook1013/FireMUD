@@ -61,4 +61,52 @@ class HostedStatusServiceTest {
     assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());
     assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, resource.getStatus().getPhase());
   }
+
+  @Test
+  void missingObservationPreservesRuntimeTupleButExplicitAbsenceClearsIt() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("pr-42")
+            .withNamespace("firemud-system")
+            .withGeneration(8L)
+            .build());
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    RuntimeProfile oldProfile = new RuntimeProfile();
+    oldProfile.setRuntimeNamespaceUid("uid-recorded");
+    oldProfile.setDeployedHeadSha("head-recorded");
+    oldProfile.setTelnetPort(32007);
+    oldStatus.setProfile(oldProfile);
+    resource.setStatus(oldStatus);
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        "Error",
+        "error",
+        false,
+        null,
+        null,
+        null,
+        null);
+    assertEquals("uid-recorded", resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
+    assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
+        "Absent",
+        "absent",
+        false,
+        RuntimeProfileService.RuntimeProfile.absent(),
+        null,
+        null,
+        null);
+    assertEquals(null, resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals(null, resource.getStatus().getProfile().getDeployedHeadSha());
+    assertEquals(null, resource.getStatus().getProfile().getTelnetPort());
+  }
 }

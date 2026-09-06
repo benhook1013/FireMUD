@@ -78,6 +78,12 @@ and named Secret, workload rollout, Service, Ingress, and Pod observation in the
 runtime namespace. Runtime ServiceAccounts receive none of these grants.
 ValidatingAdmissionPolicies add a second boundary around controller-managed TLS
 names, cert-manager ownership, and the exact Role/RoleBinding rules and subject.
+The fixed `firemud-system` Namespace is created or deleted only by
+`system:masters`; an idempotent non-master update/patch is accepted only when
+labels, annotations, ownership metadata, finalizers, and spec are unchanged.
+The namespace-controller teardown exception is limited to DELETE of canonical
+managed identity material by
+`system:serviceaccount:kube-system:namespace-controller`.
 
 Kubernetes RBAC cannot constrain `create`, `escalate`, or `bind` with
 `resourceNames`, nor can it inspect Role rules. The controller therefore has a
@@ -95,11 +101,12 @@ Namespaces. Kubernetes cluster-admin/system:masters can always bypass these
 policy-level constraints.
 
 The NetworkPolicy permits DNS and TCP/443 for the Kubernetes API plus fixed
-public HTTPS probes. It also permits the allocator's 32000-32016 Telnet range.
-Kubernetes NetworkPolicy cannot identify an API server or public hostname, so
-the controller must enforce the derived SNI/SAN/issuer allowlist itself; the
-443 rule is an explicit infrastructure limitation, not unrestricted identity
-trust.
+public HTTPS probes; its IPv4/IPv6 443 destinations exclude link-local
+`169.254.0.0/16` and `fe80::/10`. It also permits the allocator's 32000-32016
+Telnet range. Kubernetes NetworkPolicy cannot identify an API server or public
+hostname, so the controller must enforce the derived SNI/SAN/issuer allowlist
+itself; the 443 rule is an explicit infrastructure limitation, not
+unrestricted identity trust.
 
 The checked-in Deployment contains fail-closed image and activation markers.
 `bootstrap-hosted-identity-controller.sh` accepts only the approved image

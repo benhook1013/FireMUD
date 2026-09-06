@@ -35,8 +35,17 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.certificateIdentityMode" -}}
+{{- $mode := default "standalone" .Values.previewStack.certificateIdentity.mode -}}
+{{- if or (eq $mode "standalone") (eq $mode "hosted-controller") -}}
+{{- $mode -}}
+{{- else -}}
+{{- fail (printf "previewStack.certificateIdentity.mode must be standalone or hosted-controller (got %q)" $mode) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "firemud.hostedControllerMode" -}}
-{{- eq (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller" -}}
+{{- eq (include "firemud.certificateIdentityMode" . | trim) "hosted-controller" -}}
 {{- end -}}
 
 {{- define "firemud.ingressTlsSecretName" -}}

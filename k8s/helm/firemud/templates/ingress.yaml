@@ -1,11 +1,12 @@
 {{- if and .Values.previewStack.enabled .Values.previewStack.ingress.enabled }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: firemud-preview
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
-  {{- if ne (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller" }}
+  {{- if ne $hostedControllerMode "true" }}
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.previewStack.ingress.clusterIssuer | quote }}
   {{- end }}

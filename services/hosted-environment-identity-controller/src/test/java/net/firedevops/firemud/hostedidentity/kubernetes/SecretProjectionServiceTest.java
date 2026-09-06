@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
@@ -105,6 +106,87 @@ class SecretProjectionServiceTest {
         .put(HostedIdentityContract.RETENTION_LABEL, HostedIdentityContract.RETAINED);
     assertEquals(
         true, SecretProjectionService.owned(secret, "pr-42", HostedIdentityContract.INGRESS_ROLE));
+  }
+
+  @Test
+  void certificateComparisonAcceptsOnlyDefaultedFieldsAndRepresentationChanges() {
+    Map<String, Object> desired =
+        Map.of(
+            "secretName",
+            "pr-42-tls",
+            "revisionHistoryLimit",
+            1,
+            "privateKey",
+            Map.of("algorithm", "RSA"),
+            "dnsNames",
+            java.util.List.of("pr-42.example.test"));
+    Map<String, Object> defaulted =
+        Map.of(
+            "secretName",
+            "pr-42-tls",
+            "revisionHistoryLimit",
+            1L,
+            "privateKey",
+            Map.of("algorithm", "RSA", "size", 2048),
+            "dnsNames",
+            new java.util.ArrayList<>(java.util.List.of("pr-42.example.test")),
+            "duration",
+            "2160h");
+    assertEquals(true, CertificateMaterialService.desiredSubsetEquivalent(desired, defaulted));
+    Map<String, Object> changed = new java.util.LinkedHashMap<>(defaulted);
+    changed.put("secretName", "other");
+    assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
+    assertEquals(
+        true,
+        CertificateMaterialService.containsDesiredLabels(
+            Map.of("managed", "yes", "cert-manager-default", "present"), Map.of("managed", "yes")));
+  }
+
+  @Test
+  void rolloutEditPreservesEveryFieldExceptTheSelectedTemplateAnnotation() {
+    var deployment =
+        new DeploymentBuilder()
+            .withNewMetadata()
+            .withName("account-service")
+            .addToLabels("owner", "runtime")
+            .endMetadata()
+            .withNewSpec()
+            .withReplicas(3)
+            .withNewSelector()
+            .addToMatchLabels("app", "account-service")
+            .endSelector()
+            .withNewTemplate()
+            .withNewMetadata()
+            .addToLabels("app", "account-service")
+            .addToAnnotations("other", "keep")
+            .endMetadata()
+            .withNewSpec()
+            .addNewContainer()
+            .withName("app")
+            .withImage("image@sha256:test")
+            .endContainer()
+            .endSpec()
+            .endTemplate()
+            .endSpec()
+            .build();
+
+    DeploymentRolloutService.applyRevision(deployment, "firemud.dev/grpc-revision", "sha256:new");
+
+    assertEquals(3, deployment.getSpec().getReplicas());
+    assertEquals("runtime", deployment.getMetadata().getLabels().get("owner"));
+    assertEquals(
+        "image@sha256:test",
+        deployment.getSpec().getTemplate().getSpec().getContainers().get(0).getImage());
+    assertEquals(
+        "keep", deployment.getSpec().getTemplate().getMetadata().getAnnotations().get("other"));
+    assertEquals(
+        "sha256:new",
+        deployment
+            .getSpec()
+            .getTemplate()
+            .getMetadata()
+            .getAnnotations()
+            .get("firemud.dev/grpc-revision"));
   }
 
   private static String encoded(String value) {

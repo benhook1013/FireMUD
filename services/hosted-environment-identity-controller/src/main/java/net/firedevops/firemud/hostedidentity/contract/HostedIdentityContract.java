@@ -14,7 +14,6 @@ public final class HostedIdentityContract {
   public static final String MANAGED_BY_LABEL = "firemud.dev/managed-by";
   public static final String ENVIRONMENT_LABEL = "firemud.dev/identity-name";
   public static final String ROLE_LABEL = "firemud.dev/role";
-  public static final String IDENTITY_FOR_LABEL = "firemud.dev/identity-name";
   public static final String RUNTIME_FOR_LABEL = "firemud.dev/runtime-for";
   public static final String RETENTION_LABEL = "firemud.dev/retention";
   public static final String RETAINED = "retained";

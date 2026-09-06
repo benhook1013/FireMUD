@@ -51,18 +51,17 @@ public class DeploymentRolloutService {
       return false;
     }
     ObjectMeta templateMetadata = deployment.getSpec().getTemplate().getMetadata();
-    if (templateMetadata == null) {
-      templateMetadata = new ObjectMeta();
-      deployment.getSpec().getTemplate().setMetadata(templateMetadata);
-    }
     Map<String, String> annotations =
-        templateMetadata.getAnnotations() == null
+        templateMetadata == null || templateMetadata.getAnnotations() == null
             ? new LinkedHashMap<>()
             : new LinkedHashMap<>(templateMetadata.getAnnotations());
     if (!revision.equals(annotations.get(annotationKey))) {
-      annotations.put(annotationKey, revision);
-      templateMetadata.setAnnotations(annotations);
-      client.apps().deployments().inNamespace(namespace).resource(deployment).replace();
+      client
+          .apps()
+          .deployments()
+          .inNamespace(namespace)
+          .withName(deploymentName)
+          .edit(current -> applyRevision(current, annotationKey, revision));
       return false;
     }
     if (deployment.getStatus() == null || deployment.getSpec().getReplicas() == null) {
@@ -75,6 +74,26 @@ public class DeploymentRolloutService {
             >= deployment.getMetadata().getGeneration()
         && replicas == value(deployment.getStatus().getUpdatedReplicas())
         && replicas <= value(deployment.getStatus().getAvailableReplicas());
+  }
+
+  static Deployment applyRevision(Deployment deployment, String annotationKey, String revision) {
+    if (deployment == null
+        || deployment.getSpec() == null
+        || deployment.getSpec().getTemplate() == null) {
+      throw new IllegalStateException("Deployment has no pod template");
+    }
+    ObjectMeta metadata = deployment.getSpec().getTemplate().getMetadata();
+    if (metadata == null) {
+      metadata = new ObjectMeta();
+      deployment.getSpec().getTemplate().setMetadata(metadata);
+    }
+    Map<String, String> annotations =
+        metadata.getAnnotations() == null
+            ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(metadata.getAnnotations());
+    annotations.put(annotationKey, revision);
+    metadata.setAnnotations(annotations);
+    return deployment;
   }
 
   private static int value(Integer value) {

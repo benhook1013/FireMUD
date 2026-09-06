@@ -3,6 +3,8 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -141,8 +143,8 @@ public class CertificateMaterialService {
       if (!"cert-manager.io/v1".equals(existing.getApiVersion())
           || !"Certificate".equals(existing.getKind())
           || existing.getMetadata() == null
-          || !Objects.equals(
-              desired.getMetadata().getLabels(), existing.getMetadata().getLabels())) {
+          || !containsDesiredLabels(
+              existing.getMetadata().getLabels(), desired.getMetadata().getLabels())) {
         throw new IllegalStateException("owned Certificate identity metadata drifted");
       }
       Object desiredSpec = desired.getAdditionalProperties().get("spec");
@@ -150,10 +152,51 @@ public class CertificateMaterialService {
           existing.getAdditionalProperties() == null
               ? null
               : existing.getAdditionalProperties().get("spec");
-      if (!Objects.equals(desiredSpec, existingSpec)) {
+      if (!desiredSubsetEquivalent(desiredSpec, existingSpec)) {
         throw new IllegalStateException("owned Certificate spec drifted; refusing replacement");
       }
     }
+  }
+
+  static boolean containsDesiredLabels(Map<String, String> existing, Map<String, String> desired) {
+    return existing != null
+        && desired != null
+        && desired.entrySet().stream()
+            .allMatch(entry -> Objects.equals(entry.getValue(), existing.get(entry.getKey())));
+  }
+
+  static boolean desiredSubsetEquivalent(Object desired, Object existing) {
+    if (desired instanceof Map<?, ?> desiredMap) {
+      if (!(existing instanceof Map<?, ?> existingMap)) {
+        return false;
+      }
+      return desiredMap.entrySet().stream()
+          .allMatch(
+              entry ->
+                  existingMap.containsKey(entry.getKey())
+                      && desiredSubsetEquivalent(
+                          entry.getValue(), existingMap.get(entry.getKey())));
+    }
+    if (desired instanceof Collection<?> desiredCollection) {
+      if (!(existing instanceof Collection<?> existingCollection)
+          || desiredCollection.size() != existingCollection.size()) {
+        return false;
+      }
+      var left = desiredCollection.iterator();
+      var right = existingCollection.iterator();
+      while (left.hasNext()) {
+        if (!desiredSubsetEquivalent(left.next(), right.next())) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (desired instanceof Number desiredNumber && existing instanceof Number existingNumber) {
+      return new BigDecimal(desiredNumber.toString())
+              .compareTo(new BigDecimal(existingNumber.toString()))
+          == 0;
+    }
+    return Objects.equals(desired, existing);
   }
 
   static CertificateRevision readyRevision(GenericKubernetesResource resource) {

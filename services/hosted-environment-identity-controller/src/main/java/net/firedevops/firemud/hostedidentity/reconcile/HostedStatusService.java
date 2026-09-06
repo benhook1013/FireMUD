@@ -33,7 +33,8 @@ public class HostedStatusService {
       RoleStatus grpc) {
     HostedEnvironmentIdentityStatus status =
         resource.getStatus() == null ? new HostedEnvironmentIdentityStatus() : resource.getStatus();
-    boolean profileChanged = !profileMatches(status.getProfile(), runtimeProfile);
+    RuntimeProfile previousProfile = status.getProfile();
+    boolean profileChanged = !profileMatches(previousProfile, runtimeProfile);
     boolean effectiveReady = ready && !profileChanged;
     if (profileChanged && ready) {
       reason = "RuntimeIdentityChanged";
@@ -58,6 +59,10 @@ public class HostedStatusService {
       profile.setTelnetPort(runtimeProfile.telnetPort());
       profile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
       profile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
+    } else if (runtimeProfile == null && previousProfile != null) {
+      profile.setTelnetPort(previousProfile.getTelnetPort());
+      profile.setRuntimeNamespaceUid(previousProfile.getRuntimeNamespaceUid());
+      profile.setDeployedHeadSha(previousProfile.getDeployedHeadSha());
     }
     status.setProfile(profile);
     HostedCondition condition =
@@ -87,7 +92,10 @@ public class HostedStatusService {
 
   static boolean profileMatches(
       RuntimeProfile previous, RuntimeProfileService.RuntimeProfile current) {
-    if (previous == null || current == null || !current.present()) {
+    if (current == null) {
+      return true;
+    }
+    if (previous == null || !current.present()) {
       return previous == null && !currentPresent(current);
     }
     return current.runtimeNamespaceUid().equals(previous.getRuntimeNamespaceUid())

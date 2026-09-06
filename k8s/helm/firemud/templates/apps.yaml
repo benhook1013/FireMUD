@@ -1,5 +1,6 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 ---
 apiVersion: apps/v1
@@ -177,7 +178,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if and $port.nodePort (ne (default "standalone" $.Values.previewStack.certificateIdentity.mode) "hosted-controller") }}
+      {{- if and $port.nodePort (ne $hostedControllerMode "true") }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

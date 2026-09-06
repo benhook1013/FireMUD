@@ -1,18 +1,30 @@
 package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
+import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import org.junit.jupiter.api.Test;
 
 class SecretMaterialValidatorTest {
@@ -70,6 +82,51 @@ class SecretMaterialValidatorTest {
         false,
         GrpcTransportBundleGenerator.renewalRequired(
             source, 0, Duration.ofDays(31), Instant.now()));
+  }
+
+  @Test
+  void conflictRereadMustFindTheWinningSecret() {
+    Secret winner = new SecretBuilder().withType("Opaque").build();
+    assertEquals(winner, GrpcTransportBundleGenerator.requireConflictWinner(winner));
+    assertThrows(
+        IllegalStateException.class,
+        () -> GrpcTransportBundleGenerator.requireConflictWinner(null));
+  }
+
+  @Test
+  void generatedCaCanSignAndHasCaOnlyKeyUsages() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    X509Certificate ca = certificate(source.getData().get("ca.crt"));
+    X509Certificate leaf = certificate(source.getData().get("tls.crt"));
+
+    leaf.verify(ca.getPublicKey());
+    assertTrue(ca.getKeyUsage()[5]);
+    assertTrue(ca.getKeyUsage()[6]);
+    assertFalse(ca.getKeyUsage()[0]);
+    assertFalse(ca.getKeyUsage()[2]);
+    assertTrue(leaf.getKeyUsage()[0]);
+    assertTrue(leaf.getKeyUsage()[2]);
+    assertFalse(leaf.getKeyUsage()[5]);
+    assertFalse(leaf.getKeyUsage()[6]);
+  }
+
+  @Test
+  void servedProbeClosesSocketWhenSetupFailsBeforeOwnershipTransfer() throws Exception {
+    SSLSocket socket = mock(SSLSocket.class);
+    doThrow(new IOException("connect failed"))
+        .when(socket)
+        .connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
+    var method =
+        ServedEnvironmentProbe.class.getDeclaredMethod(
+            "openTlsSocket", String.class, int.class, String.class, SSLSocket.class);
+    method.setAccessible(true);
+
+    assertThrows(
+        InvocationTargetException.class,
+        () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
+    verify(socket).close();
   }
 
   @Test
@@ -145,5 +202,11 @@ class SecretMaterialValidatorTest {
 
   private static String encode(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private static X509Certificate certificate(String encoded) throws Exception {
+    return (X509Certificate)
+        CertificateFactory.getInstance("X.509")
+            .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(encoded)));
   }
 }

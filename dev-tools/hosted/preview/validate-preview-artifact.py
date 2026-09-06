@@ -97,6 +97,48 @@ def fail(message: str) -> typing.NoReturn:
     raise ValueError(message)
 
 
+def _is_expected_secret_reference(value: object) -> bool:
+    return isinstance(value, str) and value in EXPECTED_SECRET_REFS
+
+
+def _is_sanitized_secret_reference(value: object) -> bool:
+    return isinstance(value, str) and (
+        _is_expected_secret_reference(value)
+        or value.endswith(SANITIZER_SECRET_REFERENCE_SUFFIXES)
+    )
+
+
+def _is_manifest_secret_reference(value: object, expected_namespace: str) -> bool:
+    return isinstance(value, str) and (
+        _is_expected_secret_reference(value)
+        or value in {
+            f"{expected_namespace}-tls",
+            f"{expected_namespace}-telnet-tls",
+        }
+    )
+
+
+def _validate_image_reference(
+    location: str,
+    value: str,
+    expected_image_tag: str,
+) -> None:
+    if value in INFRASTRUCTURE_IMAGES:
+        return
+
+    repository, separator, tag = value.rpartition(":")
+    if not separator or not repository or not tag:
+        fail(f"{location} uses an untagged image")
+    service = repository.rsplit("/", 1)[-1]
+    if service in SERVICE_IMAGES:
+        if repository != f"ghcr.io/benhook1013/{service}":
+            fail(f"{location} uses an unapproved service image repository")
+        if tag != expected_image_tag:
+            fail(f"{location} uses image tag {tag!r}, expected {expected_image_tag!r}")
+    elif value not in INFRASTRUCTURE_IMAGES:
+        fail(f"{location} uses an unapproved image")
+
+
 def _clean_config_map(document: dict) -> dict | None:
     metadata = document.get("metadata") or {}
     if metadata.get("name") == "jwt-jwks":
@@ -116,17 +158,11 @@ def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None
     if isinstance(value, dict):
         for key, child in value.items():
             if key == "secretName":
-                if not isinstance(child, str) or not (
-                    child in EXPECTED_SECRET_REFS
-                    or child.endswith(SANITIZER_SECRET_REFERENCE_SUFFIXES)
-                ):
+                if not _is_sanitized_secret_reference(child):
                     fail(f"{path}.{key} contains an unapproved Secret reference")
-            if key == "secretRef" and isinstance(child, dict):
+            if key in {"secretRef", "secretKeyRef"} and isinstance(child, dict):
                 name = child.get("name")
-                if name not in EXPECTED_SECRET_REFS and not (
-                    isinstance(name, str)
-                    and name.endswith(SANITIZER_SECRET_REFERENCE_SUFFIXES)
-                ):
+                if not _is_sanitized_secret_reference(name):
                     fail(f"{path}.{key}.name contains an unapproved Secret reference")
             _validate_sanitized_secret_refs(child, f"{path}.{key}")
     elif isinstance(value, list):
@@ -308,28 +344,14 @@ def validate_manifest(
             if location.endswith(".nodePort"):
                 fail(f"{location} retains a PR-selected nodePort")
             if location.endswith(".secretName"):
-                if not isinstance(value, str) or not (
-                    value in EXPECTED_SECRET_REFS
-                    or value == f"{expected_namespace}-tls"
-                    or value == f"{expected_namespace}-telnet-tls"
-                ):
+                if not _is_manifest_secret_reference(value, expected_namespace):
                     fail(f"{location} contains an unapproved Secret reference")
-            if location.endswith(".secretRef.name"):
-                if value not in EXPECTED_SECRET_REFS:
+            if location.endswith((".secretRef.name", ".secretKeyRef.name")):
+                if not _is_expected_secret_reference(value):
                     fail(f"{location} contains an unapproved Secret reference")
         for location, value in walk(document):
             if location.endswith(".image") and isinstance(value, str):
-                repository, separator, tag = value.rpartition(":")
-                if not separator:
-                    continue
-                service = repository.rsplit("/", 1)[-1]
-                if service in SERVICE_IMAGES:
-                    if repository != f"ghcr.io/benhook1013/{service}":
-                        fail(f"{location} uses an unapproved service image repository")
-                    if tag != expected_image_tag:
-                        fail(f"{location} uses image tag {tag!r}, expected {expected_image_tag!r}")
-                elif value not in INFRASTRUCTURE_IMAGES:
-                    fail(f"{location} uses an unapproved image")
+                _validate_image_reference(location, value, expected_image_tag)
         if document["kind"] == "Service":
             spec = document.get("spec") or {}
             expected_type = "NodePort" if name == "tcp-proxy-service" else "ClusterIP"

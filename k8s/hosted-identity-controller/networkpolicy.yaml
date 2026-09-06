@@ -37,8 +37,12 @@ spec:
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
         - ipBlock:
             cidr: ::/0
+            except:
+              - fe80::/10
       ports:
         - protocol: TCP
           port: 443
