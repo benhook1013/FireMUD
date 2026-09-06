@@ -49,14 +49,14 @@ class TelnetServerHandlerTest {
         advertiseMcp,
         () -> true,
         (gatewayWsUrl,
-                clientIp,
-                proxyConnectionId,
-                gameInstanceId,
-                tenantId,
-                worldSlug,
-                realmSlug,
-                pointerVersion,
-                listener) -> new CompletableFuture<>());
+            clientIp,
+            proxyConnectionId,
+            gameInstanceId,
+            tenantId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            listener) -> new CompletableFuture<>());
   }
 
   private TelnetServerHandler newHandler(
