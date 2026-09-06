@@ -130,6 +130,20 @@ Entry format:
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
 
+- `2026-09-05`: Preserve applied baseline checksums while converging pre-v1 schema
+  - Context: exact-pin review found a binding-identity column added directly to the applied Automation V1 baseline.
+  - Observation: pre-v1 direct convergence does not make an already-applied migration checksum mutable; target schema changes still need a forward migration unless the human explicitly authorizes a baseline reset.
+  - Expected pattern: compare applied baseline files with their published authority before release, restore any changed baseline byte-for-byte, and carry the intended schema delta in the next forward migration without beginning an unrelated baseline squash.
+
+- `2026-09-06`: Retained-row migration proof must exercise pre-change nullable identities
+  - Context: Automation exact-pin V5 passed fresh-schema migration checks while retained instance ingress rows would have received a null epoch, and its duplicate normalization deleted durable audit evidence.
+  - Observation: fresh-database proof does not exercise legacy nullable uniqueness behavior or retained-row constraint compatibility; deterministic row selection is not safe reconciliation for durable identity evidence.
+  - Expected pattern: for identity migrations, migrate an isolated database only through the prior version, seed every retained nullable identity branch, then prove the forward migration either preserves valid rows or fails closed on duplicates without deletion, following [Database Migrations](../architecture/system-architecture-database-migrations.md#cicd-execution).
+
+- `2026-09-06`: Retention limits cannot substitute for recoverability evidence
+  - Context: hosted review found that automatic dead-letter age and row-cap cleanup could delete a parent and its handoff ledger while the live schema lacked recovery generations, claim state, expected-child evidence, and independent retention horizons.
+  - Observation: terminal status plus age or capacity is not enough to prove that a recovery bundle may be deleted; a partial child-outcome check still cannot prove absent children, completed resumed dispatch, or expired evidence obligations.
+  - Expected pattern: apply one recovery-aware whole-bundle predicate to every automatic and explicit cleanup selector, and fail closed without deleting dead-letter evidence until the schema can prove that predicate.
 - `2026-09-06`: Preview priority requires lifecycle serialization, not only capacity ordering
   - Context: adding a small priority override to the automatic pull-request preview pool.
   - Observation: selecting an ordinary victim under a capacity check is unsafe if deployment or hosted proof can still be using that namespace, and an unaware reconciler can immediately recreate a displaced environment.

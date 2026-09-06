@@ -4,8 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
@@ -18,7 +21,21 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected repositories and mapper are internal Spring collaborators.")
 public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService {
-  private static final int DIGEST_SCHEMA_VERSION = 2;
+  private static final int DIGEST_SCHEMA_VERSION = 4;
+  private static final Comparator<String> NULLS_FIRST_STRING =
+      Comparator.nullsFirst(String::compareTo);
+  private static final Comparator<ScriptEventBinding> BINDING_DIGEST_ORDER =
+      Comparator.comparing(ScriptEventBinding::getScriptPatchVersion, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getEventType, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getEventSchemaVersion, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getScriptId, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getTargetScopeType, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::getTargetScopeId, NULLS_FIRST_STRING)
+          .thenComparingInt(ScriptEventBinding::getPriority)
+          .thenComparing(ScriptEventBinding::getPriorityTag, NULLS_FIRST_STRING)
+          .thenComparing(ScriptEventBinding::isRequiresExclusiveEvent)
+          .thenComparing(ScriptEventBinding::isEnabled)
+          .thenComparing(ScriptEventBinding::getBindingId, NULLS_FIRST_STRING);
 
   private final ScriptDefinitionRepository repository;
   private final ScriptEventBindingRepository bindingRepository;
@@ -40,26 +57,29 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
         repository.findByTenantIdOrderByNameAscScriptVersionAsc(tenantKey).stream()
             .map(
                 script ->
-                    Map.<String, Object>of(
-                        "name", script.getName(),
-                        "version", script.getScriptVersion(),
-                        "definition", script.getDefinition()))
+                    canonicalMap(
+                        Map.of(
+                            "name", normalize(script.getName()),
+                            "version", normalize(script.getScriptVersion()),
+                            "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
             .findByTenantIdOrderByScriptPatchVersionAscEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
                 tenantKey)
             .stream()
+            .sorted(BINDING_DIGEST_ORDER)
             .map(this::bindingDigest)
             .toList();
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of(
-                  "tenantId", tenantId,
-                  "versionId", versionId,
-                  "scripts", scripts,
-                  "eventBindings", bindings));
+              canonicalMap(
+                  Map.of(
+                      "tenantId", tenantId,
+                      "versionId", versionId,
+                      "scripts", scripts,
+                      "eventBindings", bindings)));
       return new ScriptDraftDesignDigest(
           tenantId,
           versionId,
@@ -81,16 +101,18 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
             .stream()
             .map(
                 script ->
-                    Map.<String, Object>of(
-                        "name", script.getName(),
-                        "version", script.getScriptVersion(),
-                        "definition", script.getDefinition()))
+                    canonicalMap(
+                        Map.of(
+                            "name", normalize(script.getName()),
+                            "version", normalize(script.getScriptVersion()),
+                            "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
                 tenantKey, scriptPatchVersion)
             .stream()
+            .sorted(BINDING_DIGEST_ORDER)
             .map(this::bindingDigest)
             .toList();
     if (scripts.isEmpty()) {
@@ -99,11 +121,12 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     try {
       String canonicalJson =
           objectMapper.writeValueAsString(
-              Map.of(
-                  "tenantId", tenantId,
-                  "scriptPatchVersion", scriptPatchVersion,
-                  "scripts", scripts,
-                  "eventBindings", bindings));
+              canonicalMap(
+                  Map.of(
+                      "tenantId", tenantId,
+                      "scriptPatchVersion", scriptPatchVersion,
+                      "scripts", scripts,
+                      "eventBindings", bindings)));
       return new ScriptDraftDesignDigest(
           tenantId,
           scriptPatchVersion,
@@ -115,19 +138,29 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     }
   }
 
-  private Map<String, Object> bindingDigest(
-      net.firedevops.firemud.automationscripting.entity.ScriptEventBinding binding) {
-    return Map.of(
-        "scriptPatchVersion", binding.getScriptPatchVersion(),
-        "eventType", binding.getEventType(),
-        "eventSchemaVersion", binding.getEventSchemaVersion(),
-        "scriptId", binding.getScriptId(),
-        "targetScopeType", binding.getTargetScopeType(),
-        "targetScopeId", binding.getTargetScopeId(),
-        "priority", binding.getPriority(),
-        "priorityTag", binding.getPriorityTag(),
-        "requiresExclusiveEvent", binding.isRequiresExclusiveEvent(),
-        "enabled", binding.isEnabled());
+  private Map<String, Object> bindingDigest(ScriptEventBinding binding) {
+    return canonicalMap(
+        Map.ofEntries(
+            Map.entry("scriptPatchVersion", normalize(binding.getScriptPatchVersion())),
+            Map.entry("eventType", normalize(binding.getEventType())),
+            Map.entry("eventSchemaVersion", normalize(binding.getEventSchemaVersion())),
+            Map.entry("scriptId", normalize(binding.getScriptId())),
+            Map.entry("bindingId", normalize(binding.getBindingId())),
+            Map.entry("targetScopeType", normalize(binding.getTargetScopeType())),
+            Map.entry("targetScopeId", normalize(binding.getTargetScopeId())),
+            Map.entry("priority", binding.getPriority()),
+            Map.entry("priorityTag", normalize(binding.getPriorityTag())),
+            Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
+            Map.entry("enabled", binding.isEnabled())));
+  }
+
+  private static String normalize(String value) {
+    return value == null ? "" : value;
+  }
+
+  // canonicalMap sorts top-level keys; nested determinism relies on already-canonical structures.
+  private static Map<String, Object> canonicalMap(Map<String, Object> values) {
+    return new TreeMap<>(values);
   }
 
   private String sha256(String value) {

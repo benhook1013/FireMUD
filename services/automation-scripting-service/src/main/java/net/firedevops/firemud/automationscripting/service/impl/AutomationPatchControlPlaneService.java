@@ -190,6 +190,7 @@ final class AutomationPatchControlPlaneService {
           .setTenantId(summary.tenantId())
           .setGameInstanceId(summary.gameInstanceId())
           .setObservedPinnedScriptPatchVersion(summary.observedPinnedScriptPatchVersion())
+          .setObservedScriptPinEpoch(summary.scriptPinEpoch())
           .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
           .setObservedAtMs(summary.observedAtMs())
           .setProjectionAsOfMs(summary.projectionAsOfMs())
@@ -217,29 +218,39 @@ final class AutomationPatchControlPlaneService {
 
   GetScriptPatchInstanceRolloutStatusResponse getScriptPatchInstanceRolloutStatus(
       GetScriptPatchInstanceRolloutStatusRequest request) {
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     GetScriptPatchInstanceRolloutStatusResponse.Builder response =
         GetScriptPatchInstanceRolloutStatusResponse.newBuilder();
-    workItemService
-        .getPatchInstanceRolloutStatus(
-            request.getTenantId(), request.getGameInstanceId(), request.getScriptPatchVersion())
-        .ifPresentOrElse(
-            summary ->
-                response
-                    .setTenantId(summary.tenantId())
-                    .setGameInstanceId(summary.gameInstanceId())
-                    .setScriptPatchVersion(summary.scriptPatchVersion())
-                    .setRolloutStatus(summary.rolloutStatus())
-                    .setStatusReason(summary.statusReason())
-                    .setLastChangedAtMs(summary.lastChangedAtMs())
-                    .setProjectionAsOfMs(summary.projectionAsOfMs())
-                    .setProjectionLagMs(summary.projectionLagMs())
-                    .setIsProjectionStale(summary.projectionStale())
-                    .setPublication(toProto(summary.publication())),
-            () ->
-                response.setError(
-                    AutomationControlPlaneSupport.notFound(
-                        "GetScriptPatchInstanceRolloutStatus",
-                        "script_patch_instance_rollout_not_found")));
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
+    var rollout =
+        workItemService.getPatchInstanceRolloutStatus(
+            request.getTenantId(),
+            request.getGameInstanceId(),
+            request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId);
+    rollout.ifPresentOrElse(
+        summary ->
+            response
+                .setTenantId(summary.tenantId())
+                .setGameInstanceId(summary.gameInstanceId())
+                .setScriptPatchVersion(summary.scriptPatchVersion())
+                .setScriptPinEpoch(summary.scriptPinEpoch())
+                .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
+                .setRolloutStatus(summary.rolloutStatus())
+                .setStatusReason(summary.statusReason())
+                .setLastChangedAtMs(summary.lastChangedAtMs())
+                .setProjectionAsOfMs(summary.projectionAsOfMs())
+                .setProjectionLagMs(summary.projectionLagMs())
+                .setIsProjectionStale(summary.projectionStale())
+                .setPublication(toProto(summary.publication())),
+        () ->
+            response.setError(
+                AutomationControlPlaneSupport.notFound(
+                    "GetScriptPatchInstanceRolloutStatus",
+                    "script_patch_instance_rollout_not_found")));
     return response.build();
   }
 
@@ -267,11 +278,18 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptTimerAuditEventsResponse listScriptTimerAuditEvents(
       ListScriptTimerAuditEventsRequest request) {
+    requireNonNegativeScriptPinEpoch(request.getScriptPinEpoch());
+    String requestId =
+        request.getScriptPinControlPlaneRequestId().isBlank()
+            ? null
+            : request.getScriptPinControlPlaneRequestId();
     List<ScriptScheduleInstanceService.TimerAuditEventSummary> summaries =
         scriptScheduleInstanceService.listTimerAuditEvents(
             request.getTenantId(),
             request.getGameInstanceId(),
             request.getScriptPatchVersion(),
+            request.getScriptPinEpoch(),
+            requestId,
             request.getScriptId(),
             request.getEventType(),
             request.getFinalReason(),
@@ -294,17 +312,23 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptPatchInstanceRolloutsResponse listScriptPatchInstanceRollouts(
       ListScriptPatchInstanceRolloutsRequest request) {
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutsResponse.Builder response =
         ListScriptPatchInstanceRolloutsResponse.newBuilder();
-    workItemService
-        .listPatchInstanceRollouts(
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
+    var rollouts =
+        workItemService.listPatchInstanceRollouts(
             request.getTenantId(),
             request.getGameInstanceId(),
             request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId,
             request.getRolloutStatus(),
             request.getChangedAfterMs(),
-            request.getChangedBeforeMs())
-        .stream()
+            request.getChangedBeforeMs());
+    rollouts.stream()
         .map(AutomationPatchControlPlaneService::toProto)
         .forEach(response::addRollouts);
     return response.build();
@@ -312,18 +336,24 @@ final class AutomationPatchControlPlaneService {
 
   ListScriptPatchInstanceRolloutEventsResponse listScriptPatchInstanceRolloutEvents(
       ListScriptPatchInstanceRolloutEventsRequest request) {
+    requireCoherentScriptPinFilter(
+        request.getScriptPinEpoch(), request.getLastObservedControlPlaneRequestId());
     ListScriptPatchInstanceRolloutEventsResponse.Builder response =
         ListScriptPatchInstanceRolloutEventsResponse.newBuilder();
-    workItemService
-        .listPatchInstanceRolloutEvents(
+    long scriptPinEpoch = request.getScriptPinEpoch();
+    String requestId = scriptPinEpoch > 0 ? request.getLastObservedControlPlaneRequestId() : null;
+    var rolloutEvents =
+        workItemService.listPatchInstanceRolloutEvents(
             request.getTenantId(),
             request.getGameInstanceId(),
             request.getScriptPatchVersion(),
+            scriptPinEpoch,
+            requestId,
             request.getRolloutStatus(),
             request.getChangedAfterMs(),
             request.getChangedBeforeMs(),
-            request.getLimit())
-        .stream()
+            request.getLimit());
+    rolloutEvents.stream()
         .map(AutomationPatchControlPlaneService::toProto)
         .forEach(response::addEvents);
     return response.build();
@@ -566,6 +596,8 @@ final class AutomationPatchControlPlaneService {
             .setPluginVersionId(summary.pluginVersionId())
             .setEventType(summary.eventType())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptEventId(summary.scriptEventId())
             .setStatus(summary.status())
             .setReason(summary.reason())
@@ -604,6 +636,8 @@ final class AutomationPatchControlPlaneService {
         .setTenantId(summary.tenantId())
         .setGameInstanceId(summary.gameInstanceId())
         .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptPinEpoch(summary.scriptPinEpoch())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
         .setRolloutStatus(summary.rolloutStatus())
         .setStatusReason(summary.statusReason())
         .setLastChangedAtMs(summary.lastChangedAtMs())
@@ -621,6 +655,8 @@ final class AutomationPatchControlPlaneService {
         .setTenantId(summary.tenantId())
         .setGameInstanceId(summary.gameInstanceId())
         .setScriptPatchVersion(summary.scriptPatchVersion())
+        .setScriptPinEpoch(summary.scriptPinEpoch())
+        .setLastObservedControlPlaneRequestId(summary.lastObservedControlPlaneRequestId())
         .setRolloutStatus(summary.rolloutStatus())
         .setStatusReason(summary.statusReason())
         .setObservedAtMs(summary.observedAtMs())
@@ -640,6 +676,7 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
             .setScriptId(summary.scriptId())
             .setPlayableStateScope(
                 AutomationControlPlaneSupport.toPlayableStateScope(summary.playableStateScope()))
@@ -648,6 +685,7 @@ final class AutomationPatchControlPlaneService {
             .setPointerVersion(routingBundle.pointerVersion())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())
+            .setBindingId(summary.bindingId())
             .setEventType(summary.eventType())
             .setScheduleDefinitionId(summary.scheduleDefinitionId())
             .setScheduleKind(summary.scheduleKind())
@@ -722,8 +760,11 @@ final class AutomationPatchControlPlaneService {
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())
+            .setBindingId(summary.bindingId())
             .setEventType(summary.eventType())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptEventId(summary.scriptEventId())
             .setTriggerMode(AutomationControlPlaneSupport.toTriggerMode(summary.triggerMode()))
             .setSourceState(summary.sourceState())
@@ -778,6 +819,8 @@ final class AutomationPatchControlPlaneService {
             .setTenantId(summary.tenantId())
             .setGameInstanceId(summary.gameInstanceId())
             .setScriptPatchVersion(summary.scriptPatchVersion())
+            .setScriptPinEpoch(summary.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(summary.scriptPinControlPlaneRequestId())
             .setScriptId(summary.scriptId())
             .setPluginId(summary.pluginId())
             .setPluginVersionId(summary.pluginVersionId())
@@ -1029,6 +1072,21 @@ final class AutomationPatchControlPlaneService {
       return true;
     }
     return !persistedRoutingBundle.pointerVersion().equals(currentScope.pointerVersion());
+  }
+
+  private static void requireCoherentScriptPinFilter(long scriptPinEpoch, String requestId) {
+    requireNonNegativeScriptPinEpoch(scriptPinEpoch);
+    boolean hasRequestId = requestId != null && !requestId.isBlank();
+    if ((scriptPinEpoch > 0) != hasRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_epoch and control-plane request ID must be supplied together");
+    }
+  }
+
+  private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
   }
 
   private record CurrentTargetRuntimeScope(

@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 
@@ -36,6 +38,22 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
                 .and(
                     SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION.eq(
                         scriptPatchVersion)))
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<ScriptPatchInstanceRolloutProjection>
+      findByTenantIdAndGameInstanceIdAndScriptPatchVersionAndScriptPinEpoch(
+          String tenantId, String gameInstanceId, String scriptPatchVersion, long scriptPinEpoch) {
+    return dsl.selectFrom(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS)
+        .where(
+            SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.GAME_INSTANCE_ID.eq(gameInstanceId))
+                .and(
+                    SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION.eq(
+                        scriptPatchVersion))
+                .and(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch)))
         .fetchOptional(this::toEntity);
   }
 
@@ -96,6 +114,12 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION,
                 entity.getScriptPatchVersion())
             .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH,
+                entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
+                blankToEmpty(entity.getLastObservedControlPlaneRequestId()))
+            .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -142,6 +166,9 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setLastObservedControlPlaneRequestId(
+        blankToEmpty(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
@@ -157,6 +184,12 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setLastObservedControlPlaneRequestId(
+        blankToNull(
+            record.get(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID)));
     entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON));
     entity.setLastChangedAt(

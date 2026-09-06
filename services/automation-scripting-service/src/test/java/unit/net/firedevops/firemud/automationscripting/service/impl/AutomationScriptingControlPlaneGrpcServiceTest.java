@@ -487,6 +487,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    9L,
                     "npc-guard",
                     "SHARED",
                     "demo",
@@ -494,6 +495,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "17",
                     "",
                     "",
+                    "binding-guard",
                     "onTimerExpire",
                     "guard.alert.expire.v1",
                     "TIMER",
@@ -573,11 +575,13 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo("guard.alert.expire.v1");
     assertThat(ref.get().getSchedules(0).getTargetScopeType()).isEqualTo("ENTITY");
     assertThat(ref.get().getSchedules(0).getTargetScopeId()).isEqualTo("guard-1");
+    assertThat(ref.get().getSchedules(0).getBindingId()).isEqualTo("binding-guard");
     assertThat(ref.get().getSchedules(0).getMaterializationStatus()).isEqualTo("READY");
     assertThat(ref.get().getSchedules(0).getNextDueAtMs()).isEqualTo(5555L);
     assertThat(ref.get().getSchedules(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getSchedules(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getSchedules(0).getPointerVersion()).isEqualTo("17");
+    assertThat(ref.get().getSchedules(0).getScriptPinEpoch()).isEqualTo(9L);
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isFalse();
     assertThat(ref.get().getSchedules(0).getCurrentRuntimeGameInstanceId()).isEqualTo("game-1");
@@ -609,6 +613,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    9L,
                     "npc-guard",
                     "SHARED",
                     "demo",
@@ -616,6 +621,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "17",
                     "",
                     "",
+                    "binding-guard-stale",
                     "onTimerExpire",
                     "guard.alert.expire.v1",
                     "TIMER",
@@ -672,6 +678,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getSchedulesList()).hasSize(1);
+    assertThat(ref.get().getSchedules(0).getBindingId()).isEqualTo("binding-guard-stale");
     assertThat(ref.get().getSchedules(0).getIsPinStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getIsRuntimeProgressStale()).isTrue();
     assertThat(ref.get().getSchedules(0).getPublication().getVersionId()).isEqualTo(18L);
@@ -687,6 +694,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "patch-1",
+                0L,
+                null,
                 "npc-guard",
                 "onInterval",
                 "catch_up_truncated",
@@ -708,8 +717,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "npc-guard",
                     "plugin-1",
                     "plugin-v1",
+                    "binding-npc-guard-timer",
                     "onInterval",
                     "patch-1",
+                    2L,
+                    "pin-request-1",
                     "timer-1",
                     "TRIGGER_MODE_CATCH_UP",
                     "SCHEDULE_DROPPED",
@@ -783,6 +795,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsCount()).isEqualTo(1);
     assertThat(ref.get().getEvents(0).getPluginId()).isEqualTo("plugin-1");
     assertThat(ref.get().getEvents(0).getPluginVersionId()).isEqualTo("plugin-v1");
+    assertThat(ref.get().getEvents(0).getBindingId()).isEqualTo("binding-npc-guard-timer");
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(ref.get().getEvents(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(ref.get().getEvents(0).getTriggerMode())
         .isEqualTo(TriggerMode.TRIGGER_MODE_CATCH_UP);
     assertThat(ref.get().getEvents(0).getFinalReason()).isEqualTo("catch_up_truncated");
@@ -800,6 +816,148 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getCurrentRuntimePointerVersion()).isEqualTo("99");
     assertThat(ref.get().getEvents(0).getIsRoutingBundleStale()).isTrue();
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void listsScriptTimerAuditEventsWithEpochOnlyFilter() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(
+            scheduleInstanceService.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .thenReturn(List.of());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(2L)
+            .setScriptId("npc-guard")
+            .setEventType("onInterval")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    Mockito.verify(scheduleInstanceService)
+        .listTimerAuditEvents(
+            "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25);
+  }
+
+  @Test
+  void listsScriptTimerAuditEventsWithEpochAndOwnerRequestIdFilter() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(
+            scheduleInstanceService.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .thenReturn(List.of());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(2L)
+            .setScriptPinControlPlaneRequestId("req-1")
+            .setScriptId("npc-guard")
+            .setEventType("onInterval")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    Mockito.verify(scheduleInstanceService)
+        .listTimerAuditEvents(
+            "1", "game-1", "patch-1", 2L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25);
+  }
+
+  @Test
+  void listsScriptTimerAuditEventsWithRequestIdOnlyFilter() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    Mockito.when(
+            scheduleInstanceService.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .thenReturn(List.of());
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinControlPlaneRequestId("req-1")
+            .setScriptId("npc-guard")
+            .setEventType("onInterval")
+            .setLimit(25)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    Mockito.verify(scheduleInstanceService)
+        .listTimerAuditEvents(
+            "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25);
+  }
+
+  @Test
+  void rejectsNegativeScriptPinEpochWhenListingScriptTimerAuditEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptScheduleInstanceService scheduleInstanceService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            new ScriptRuntimeProperties(),
+            scheduleInstanceService);
+    AtomicReference<ListScriptTimerAuditEventsResponse> ref = new AtomicReference<>();
+
+    service.listScriptTimerAuditEvents(
+        ListScriptTimerAuditEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPinEpoch(-1L)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch must be non-negative");
+    Mockito.verifyNoInteractions(scheduleInstanceService);
   }
 
   @Test
@@ -859,6 +1017,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                         "1",
                         "game-1",
                         "patch-2",
+                        22L,
                         "req-22",
                         222L,
                         230L,
@@ -888,6 +1047,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getObservedPinnedScriptPatchVersion()).isEqualTo("patch-2");
+    assertThat(ref.get().getObservedScriptPinEpoch()).isEqualTo(22L);
     assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("req-22");
     assertThat(ref.get().getObservedAtMs()).isEqualTo(222L);
     assertThat(ref.get().getProjectionAsOfMs()).isEqualTo(230L);
@@ -905,13 +1065,17 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   void getsScriptPatchInstanceRolloutStatusFromReadModel() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    Mockito.when(workItemService.getPatchInstanceRolloutStatus("1", "game-1", "patch-1"))
+    Mockito.when(
+            workItemService.getPatchInstanceRolloutStatus(
+                "1", "game-1", "patch-1", 4L, "pin-request-4"))
         .thenReturn(
             Optional.of(
                 new ScriptWorkItemService.PatchInstanceRolloutSummary(
                     "1",
                     "game-1",
                     "patch-1",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED,
                     "runtime_pin_matches_patch",
                     123L,
@@ -940,6 +1104,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .build(),
         observer(ref));
 
@@ -947,7 +1113,52 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED);
     assertThat(ref.get().getProjectionLagMs()).isZero();
+    assertThat(ref.get().getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getLastObservedControlPlaneRequestId()).isEqualTo("pin-request-4");
     assertThat(ref.get().getPublication().getVersionId()).isEqualTo(17L);
+  }
+
+  @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRolloutStatus() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<GetScriptPatchInstanceRolloutStatusResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<GetScriptPatchInstanceRolloutStatusResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.getScriptPatchInstanceRolloutStatus(
+        GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.getScriptPatchInstanceRolloutStatus(
+        GetScriptPatchInstanceRolloutStatusRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
   }
 
   @Test
@@ -958,7 +1169,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             workItemService.listPatchInstanceRollouts(
                 "1",
                 "game-1",
-                "",
+                "patch-1",
+                4L,
+                "pin-request-4",
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED,
                 10L,
                 20L))
@@ -968,6 +1181,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus
                         .SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK,
                     "runtime_pin_differs_from_patch",
@@ -996,6 +1211,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         ListScriptPatchInstanceRolloutsRequest.newBuilder()
             .setTenantId("1")
             .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .setChangedAfterMs(10L)
             .setChangedBeforeMs(20L)
             .build(),
@@ -1006,7 +1224,53 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRollouts(0).getRolloutStatus())
         .isEqualTo(
             ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK);
+    assertThat(ref.get().getRollouts(0).getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getRollouts(0).getLastObservedControlPlaneRequestId())
+        .isEqualTo("pin-request-4");
     assertThat(ref.get().getRollouts(0).getPublication().getVersionId()).isEqualTo(18L);
+  }
+
+  @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRollouts() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutsResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<ListScriptPatchInstanceRolloutsResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.listScriptPatchInstanceRollouts(
+        ListScriptPatchInstanceRolloutsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.listScriptPatchInstanceRollouts(
+        ListScriptPatchInstanceRolloutsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
   }
 
   @Test
@@ -1018,6 +1282,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                 "1",
                 "game-1",
                 "patch-1",
+                4L,
+                "pin-request-4",
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                 10L,
                 20L,
@@ -1029,6 +1295,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    4L,
+                    "pin-request-4",
                     ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED,
                     "runtime_pin_restored_after_rollback",
                     15L,
@@ -1055,6 +1323,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .setLastObservedControlPlaneRequestId("pin-request-4")
             .setRolloutStatus(
                 ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED)
             .setChangedAfterMs(10L)
@@ -1068,7 +1338,53 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEvents(0).getEventId()).isEqualTo("event-1");
     assertThat(ref.get().getEvents(0).getRolloutStatus())
         .isEqualTo(ScriptPatchInstanceRolloutStatus.SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED);
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(4L);
+    assertThat(ref.get().getEvents(0).getLastObservedControlPlaneRequestId())
+        .isEqualTo("pin-request-4");
     assertThat(ref.get().getEvents(0).getPublication().getVersionId()).isEqualTo(19L);
+  }
+
+  @Test
+  void rejectsIncompletePinTupleForScriptPatchInstanceRolloutEvents() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> positiveEpochRef =
+        new AtomicReference<>();
+    AtomicReference<ListScriptPatchInstanceRolloutEventsResponse> requestOnlyRef =
+        new AtomicReference<>();
+
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(4L)
+            .build(),
+        observer(positiveEpochRef));
+    service.listScriptPatchInstanceRolloutEvents(
+        ListScriptPatchInstanceRolloutEventsRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setScriptPatchVersion("patch-1")
+            .setLastObservedControlPlaneRequestId("pin-request-4")
+            .build(),
+        observer(requestOnlyRef));
+
+    assertThat(positiveEpochRef.get().hasError()).isTrue();
+    assertThat(positiveEpochRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(positiveEpochRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    assertThat(requestOnlyRef.get().hasError()).isTrue();
+    assertThat(requestOnlyRef.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(requestOnlyRef.get().getError().getMessage())
+        .isEqualTo("script_pin_epoch and control-plane request ID must be supplied together");
+    Mockito.verifyNoInteractions(workItemService);
   }
 
   @Test
@@ -1108,6 +1424,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    2L,
+                    "pin-request-1",
                     "script-1",
                     "plugin-1",
                     "plugin-v1",
@@ -1225,6 +1543,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getEventsList()).hasSize(1);
     assertThat(ref.get().getEvents(0).getAutomationDispatchId()).isEqualTo("workItem:99#0");
     assertThat(ref.get().getEvents(0).getGameSessionCommandId()).isEqualTo("command-1");
+    assertThat(ref.get().getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(ref.get().getEvents(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(ref.get().getEvents(0).getTargetGameInstanceId()).isEqualTo("game-2");
     assertThat(ref.get().getEvents(0).getTargetRegionId()).isEqualTo("region-2");
     assertThat(ref.get().getEvents(0).getTargetRegionEpoch()).isEqualTo(17L);
@@ -1278,6 +1599,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    2L,
+                    "pin-request-1",
                     "script-1",
                     "",
                     "",
@@ -1389,6 +1712,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "plugin-v1",
                     "onCommand",
                     "patch-1",
+                    0L,
+                    "",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
@@ -1449,6 +1774,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().hasError()).isFalse();
     assertThat(ref.get().getDeadLettersList()).hasSize(1);
     assertThat(ref.get().getDeadLetters(0).getWorkItemId()).isEqualTo("99");
+    assertThat(ref.get().getDeadLetters(0).getScriptPinEpoch()).isZero();
+    assertThat(ref.get().getDeadLetters(0).getScriptPinControlPlaneRequestId()).isEmpty();
     assertThat(ref.get().getDeadLetters(0).getWorldSlug()).isEqualTo("demo");
     assertThat(ref.get().getDeadLetters(0).getRealmSlug()).isEqualTo("production");
     assertThat(ref.get().getDeadLetters(0).getPointerVersion()).isEqualTo("17");
@@ -1500,6 +1827,8 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
+                    0L,
+                    "",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",

@@ -45,10 +45,10 @@ The formation REST family is currently exposed under the service's HTTP auth con
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 
-- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
+- the live runtime binds live per-script quota, priority-tagged live tenant-budget, dry-run quota/capacity, output-budget, pin-projection freshness, ingress-claim recovery, signer/component-policy reconciliation cadence, outbox retention, queue rebuild, and dead-letter size/age knobs listed below;
 - the current runtime does not implement artifact-estimate ordered-prefix reservation;
-- live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention and `DEAD_LETTERED` rows by max age plus a row-count cap; stage-aware recovery and a coherent retained-evidence bundle remain unimplemented;
-- live instance-bound admission reads Game Session state and compares `scriptPatchVersion`, but the current projection/wire omits `scriptPinEpoch` and therefore does not prove exact-epoch admission;
+- live cleanup expires `HANDED_OFF` and `CANCELED` rows by status-specific retention. The configured `DEAD_LETTERED` max-age and row-count limits identify the intended bounded policy, but both automatic deletion paths currently fail closed and delete nothing because stage-aware recovery and the coherent retained-evidence eligibility proof remain unimplemented. Before deleting an eligible non-dead-letter terminal parent, cleanup detaches the nullable `script_event_audit.work_item_id` link and disposes handoff children; audit rows remain for their independent audit-retention policy;
+- live instance-bound admission reads Game Session state and compares the exact observed owner tuple `(scriptPatchVersion, scriptPinEpoch, scriptPinControlPlaneRequestId)`; any absent or mismatched component fails closed. Complete final-effect fencing and source/target remote proof remain gaps;
 - current live properties enforce only a positive minimum for `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS`; target upper-bound validation and focused proof remain an implementation gap.
 
 ## Service-Specific Variables
@@ -76,6 +76,7 @@ Current live bindings in the service are narrower than the full target-state scr
 | `SCRIPT_OUTPUT_MAX_COMMANDS_PER_ENTITY_PER_TRIGGER` | Maximum commands a single trigger may emit for one entity before output-budget failure | `8` | Stable operator knob |
 | `SCRIPT_OUTPUT_MAX_SERIALIZED_WORK_ITEM_BYTES` | Maximum serialized work-item payload size before persistence or handoff rejection | `32768` | Stable operator knob |
 | `SCRIPT_PIN_PROJECTION_STALE_THRESHOLD_MS` | Maximum acceptable Automation pin/rollout projection lag before convergence reads report stale state; target validation range `1..30_000 ms`, with `30_000 ms` tied to the canonical P99 projection freshness SLO | `5000` | Stable operator knob |
+| `SCRIPT_INGRESS_CLAIM_STALE_THRESHOLD_MS` | Age after which an incomplete script-ingress identity claim may be reclaimed under its row-version fence | `30000` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_INTERVAL_SECONDS` | Scheduled cadence for rechecking enabled plugin versions against current Game Design signer/component-policy publication metadata | `60` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_RECONCILE_BATCH_SIZE` | Maximum enabled plugin runtime states inspected per plugin-policy reconciliation sweep | `100` | Stable operator knob |
 | `SCRIPT_PLUGIN_POLICY_STALE_THRESHOLD_SECONDS` | Maximum age of the last successful enabled-plugin signer/component-policy check before plugin triggers fail closed | `300` | Stable operator knob |

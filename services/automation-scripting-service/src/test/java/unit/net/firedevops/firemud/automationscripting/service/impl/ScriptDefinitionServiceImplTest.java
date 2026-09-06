@@ -22,6 +22,9 @@ import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 
@@ -78,12 +81,46 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false)));
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    "binding-communication")));
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertNotNull(result);
     verify(bindingRepository).saveAll(any());
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" ", "  ", "\t"})
+  void updateScriptRejectsBlankBindingId(String bindingId) {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    bindingId)));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("binding id is required");
   }
 
   @Test
@@ -97,7 +134,7 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onUnknown", "v1", "GLOBAL", "", 0, "normal", false)));
+                    "onUnknown", "v1", "GLOBAL", "", 0, "normal", false, "binding-unknown")));
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(IllegalArgumentException.class)
@@ -115,10 +152,37 @@ class ScriptDefinitionServiceImplTest {
             "{}",
             List.of(
                 new ScriptDefinitionDto.EventBindingDto(
-                    "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false)));
+                    "onSpawn", "v1", "COMMAND_ALIAS", "look", 0, "normal", false, "binding-look")));
 
     assertThatThrownBy(() -> service.updateScript(dto))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("unsupported binding scope COMMAND_ALIAS for onSpawn@v1");
+  }
+
+  @Test
+  void updateScriptRejectsDuplicateNormalizedBindingIdsAcrossScopes() {
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    "binding-command"),
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand", "v1", "GLOBAL", "", 0, "normal", false, " binding-command ")));
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("duplicate binding id: binding-command");
   }
 }

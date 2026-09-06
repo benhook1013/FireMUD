@@ -16,11 +16,20 @@ public class ScriptEventAudit {
   private String realmSlug = "";
   private String pointerVersion = "";
   private String scriptId;
+  private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
+  private String targetScopeType = "";
+  private String targetScopeId = "";
   private String eventType;
   private String eventSchemaVersion;
   private String scriptPatchVersion;
+
+  /** Null for tenant-readiness onLoad audits, positive for instance-scoped execution. */
+  private Long scriptPinEpoch;
+
+  private String scriptPinControlPlaneRequestId;
+
   private String scriptEventId;
   private boolean dryRun;
   private String sourceService;

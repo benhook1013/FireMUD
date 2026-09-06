@@ -17,6 +17,9 @@ public class ScriptRuntimeProperties {
   private long scheduleRuntimeProgressStaleThresholdMs = 5000;
 
   @Min(1)
+  private long ingressClaimStaleThresholdMs = 30000;
+
+  @Min(1)
   private long pluginPolicyReconcileIntervalSeconds = 60;
 
   @Min(1)
@@ -48,6 +51,14 @@ public class ScriptRuntimeProperties {
   public void setScheduleRuntimeProgressStaleThresholdMs(
       long scheduleRuntimeProgressStaleThresholdMs) {
     this.scheduleRuntimeProgressStaleThresholdMs = scheduleRuntimeProgressStaleThresholdMs;
+  }
+
+  public long getIngressClaimStaleThresholdMs() {
+    return ingressClaimStaleThresholdMs;
+  }
+
+  public void setIngressClaimStaleThresholdMs(long ingressClaimStaleThresholdMs) {
+    this.ingressClaimStaleThresholdMs = ingressClaimStaleThresholdMs;
   }
 
   public long getPluginPolicyReconcileIntervalSeconds() {

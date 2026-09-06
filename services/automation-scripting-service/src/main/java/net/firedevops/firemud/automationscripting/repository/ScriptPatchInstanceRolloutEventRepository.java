@@ -1,6 +1,8 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
@@ -32,10 +34,13 @@ public class ScriptPatchInstanceRolloutEventRepository {
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      Long scriptPinEpoch,
+      String lastObservedControlPlaneRequestId,
       String rolloutStatus,
       Instant changedAfter,
       Instant changedBefore,
       Pageable pageable) {
+    requireCoherentPinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     Condition condition = SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID.eq(tenantId);
     if (!gameInstanceId.isBlank()) {
       condition =
@@ -45,6 +50,16 @@ public class ScriptPatchInstanceRolloutEventRepository {
       condition =
           condition.and(
               SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion));
+    }
+    if (scriptPinEpoch != null) {
+      condition =
+          condition.and(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH.eq(scriptPinEpoch));
+    }
+    if (lastObservedControlPlaneRequestId != null && !lastObservedControlPlaneRequestId.isBlank()) {
+      condition =
+          condition.and(
+              SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID.eq(
+                  lastObservedControlPlaneRequestId));
     }
     if (!rolloutStatus.isBlank()) {
       condition =
@@ -70,7 +85,28 @@ public class ScriptPatchInstanceRolloutEventRepository {
         .fetch(this::toEntity);
   }
 
+  public List<ScriptPatchInstanceRolloutEvent> findEvents(
+      String tenantId,
+      String gameInstanceId,
+      String scriptPatchVersion,
+      String rolloutStatus,
+      Instant changedAfter,
+      Instant changedBefore,
+      Pageable pageable) {
+    return findEvents(
+        tenantId,
+        gameInstanceId,
+        scriptPatchVersion,
+        null,
+        null,
+        rolloutStatus,
+        changedAfter,
+        changedBefore,
+        pageable);
+  }
+
   public ScriptPatchInstanceRolloutEvent save(ScriptPatchInstanceRolloutEvent entity) {
+    requireCoherentPinTuple(entity);
     if (entity.getId() == null) {
       ScriptPatchInstanceRolloutEventsRecord record =
           dsl.newRecord(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS);
@@ -79,6 +115,17 @@ public class ScriptPatchInstanceRolloutEventRepository {
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
+    String normalizedRequestId = blankToEmpty(entity.getLastObservedControlPlaneRequestId());
+    Condition ownerTupleMatches =
+        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS
+            .SCRIPT_PATCH_VERSION
+            .eq(entity.getScriptPatchVersion())
+            .and(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH.eq(
+                    entity.getScriptPinEpoch()))
+            .and(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID.eq(
+                    normalizedRequestId));
     int updated =
         dsl.update(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS)
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.EVENT_ID, entity.getEventId())
@@ -87,6 +134,10 @@ public class ScriptPatchInstanceRolloutEventRepository {
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION,
                 entity.getScriptPatchVersion())
+            .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
+                normalizedRequestId)
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON, entity.getStatusReason())
             .set(
@@ -101,10 +152,14 @@ public class ScriptPatchInstanceRolloutEventRepository {
                     .ID
                     .eq(entity.getId())
                     .and(
-                        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION.eq(
-                            entity.getRowVersion())))
+                        SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(ownerTupleMatches))
             .execute();
     if (updated != 1) {
+      java.util.Optional<ScriptPatchInstanceRolloutEvent> persisted = findById(entity.getId());
+      if (persisted.isPresent() && !ownerTupleMatches(persisted.orElseThrow(), entity)) {
+        throw new IllegalStateException("Rollout event owner tuple conflict");
+      }
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
           "script_patch_instance_rollout_events", entity.getId());
     }
@@ -124,6 +179,9 @@ public class ScriptPatchInstanceRolloutEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setLastObservedControlPlaneRequestId(
+        blankToEmpty(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
@@ -139,6 +197,12 @@ public class ScriptPatchInstanceRolloutEventRepository {
     entity.setGameInstanceId(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.GAME_INSTANCE_ID));
     entity.setScriptPatchVersion(
         record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PATCH_VERSION));
+    Long scriptPinEpoch = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.SCRIPT_PIN_EPOCH);
+    entity.setScriptPinEpoch(scriptPinEpoch == null ? 0L : scriptPinEpoch);
+    entity.setLastObservedControlPlaneRequestId(
+        blankToNull(
+            record.get(
+                SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID)));
     entity.setRolloutStatus(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROLLOUT_STATUS));
     entity.setStatusReason(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.STATUS_REASON));
     entity.setObservedAt(toInstant(record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.OBSERVED_AT)));
@@ -147,5 +211,31 @@ public class ScriptPatchInstanceRolloutEventRepository {
     Integer rowVersion = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
+  }
+
+  private static void requireCoherentPinTuple(ScriptPatchInstanceRolloutEvent entity) {
+    requireCoherentPinTuple(
+        entity.getScriptPinEpoch(), entity.getLastObservedControlPlaneRequestId());
+  }
+
+  private static void requireCoherentPinTuple(Long scriptPinEpoch, String requestId) {
+    if (scriptPinEpoch != null && scriptPinEpoch < 0L) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
+    boolean hasRequestId = blankToNull(requestId) != null;
+    if ((scriptPinEpoch != null && scriptPinEpoch > 0L) != hasRequestId) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
+    }
+  }
+
+  private static boolean ownerTupleMatches(
+      ScriptPatchInstanceRolloutEvent persisted, ScriptPatchInstanceRolloutEvent incoming) {
+    return java.util.Objects.equals(
+            persisted.getScriptPatchVersion(), incoming.getScriptPatchVersion())
+        && persisted.getScriptPinEpoch() == incoming.getScriptPinEpoch()
+        && java.util.Objects.equals(
+            blankToNull(persisted.getLastObservedControlPlaneRequestId()),
+            blankToNull(incoming.getLastObservedControlPlaneRequestId()));
   }
 }

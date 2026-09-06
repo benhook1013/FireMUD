@@ -55,6 +55,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.ObjectMapper;
 
 class ScriptScheduleInstanceServiceImplTest {
   private ScriptScheduleDefinitionRepository scheduleDefinitionRepository;
@@ -134,6 +135,8 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -154,7 +157,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             new ScriptSchedulerProperties(),
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
   }
 
   @Test
@@ -234,6 +238,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v2")
             .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
@@ -259,6 +264,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getMaterializationStatus()).isEqualTo("READY");
               assertThat(instance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(6_000L));
               assertThat(instance.getObservedRuntimeVersionId()).isEqualTo("runtime-v2");
+              assertThat(instance.getScriptPinEpoch()).isEqualTo(1L);
               assertThat(instance.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
               assertThat(instance.getPlayableStateScope()).isEqualTo("SHARED");
               assertThat(instance.getWorldSlug()).isEqualTo("demo");
@@ -304,6 +310,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .setWorldSlug("demo")
             .build());
@@ -330,6 +337,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId(runtimeTenantId)
             .setGameInstanceId(runtimeGameInstanceId)
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -450,6 +458,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -460,6 +470,41 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(tick.getNextDueTickId()).isEqualTo(130L);
     assertThat(timer.getMaterializationStatus()).isEqualTo("READY");
     assertThat(timer.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(5_000L));
+  }
+
+  @Test
+  void completeReconciliationRestoresPreMigrationFencedSchedule() {
+    ScriptScheduleInstance legacy = wallClockTimerInstance();
+    legacy.setId(62L);
+    legacy.setScriptPinEpoch(0L);
+    legacy.setLastObservedControlPlaneRequestId("");
+    legacy.setMaterializationStatus("FENCED");
+    legacy.setNextDueAt(null);
+    legacy.setRuntimeRegionId("");
+    legacy.setRuntimeRegionEpoch(null);
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(legacy));
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(millisecondsDefinition()));
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false)));
+
+    service.reconcileObservedRuntimeState(
+        "1", "game-1", runtimeStateResponse("patch-1").getRuntimeState());
+
+    assertThat(legacy.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(legacy.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(legacy.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+    assertThat(legacy.getNextDueAt()).isAfter(Instant.now());
+    verify(scheduleInstanceRepository).saveAll(List.of(legacy));
   }
 
   @Test
@@ -480,6 +525,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -571,6 +618,7 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-2")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -649,6 +697,7 @@ class ScriptScheduleInstanceServiceImplTest {
     projection.setPointerVersion("17");
     projection.setRuntimeRegionId("region-1");
     projection.setRuntimeRegionEpoch(7L);
+    projection.setScriptPinEpoch(1L);
     projection.setPlayableStateScope("SHARED");
     when(pinProjectionRepository.findByTenantIdAndObservedPinnedScriptPatchVersion("1", "patch-1"))
         .thenReturn(List.of(projection));
@@ -714,6 +763,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -757,6 +807,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-2")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -801,6 +852,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setScriptPatchPinnedAtMs(99_000L)
@@ -854,6 +906,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
@@ -933,6 +987,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRuntimeVersionId("runtime-v1")
             .setScriptPatchPinnedControlPlaneRequestId("pin-1")
             .setRegionId("region-1")
@@ -986,7 +1041,8 @@ class ScriptScheduleInstanceServiceImplTest {
         .thenReturn(
             List.of(
                 binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false),
-                binding("plugin-town-crier", "onInterval", "GLOBAL", "", 5, false)));
+                pluginBinding("plugin-town-crier", "binding-pulse-a"),
+                pluginBinding("plugin-town-crier", "binding-pulse-b")));
 
     service.reconcileObservedRuntimeState(
         "1",
@@ -995,6 +1051,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-1")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1008,8 +1066,10 @@ class ScriptScheduleInstanceServiceImplTest {
     ArgumentCaptor<List<ScriptScheduleInstance>> captor = ArgumentCaptor.forClass(List.class);
     verify(scheduleInstanceRepository).saveAll(captor.capture());
     assertThat(captor.getValue())
-        .extracting(ScriptScheduleInstance::getScheduleDefinitionId)
-        .containsExactlyInAnyOrder("guard.alert.expire.v1", "town-crier.market.pulse.v1");
+        .filteredOn(
+            instance -> instance.getScheduleDefinitionId().equals("town-crier.market.pulse.v1"))
+        .extracting(ScriptScheduleInstance::getBindingId)
+        .containsExactlyInAnyOrder("binding-pulse-a", "binding-pulse-b");
   }
 
   @Test
@@ -1038,6 +1098,7 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1083,6 +1144,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-live")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1137,6 +1200,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setRegionId("region-1")
             .setRegionEpoch(7L)
             .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -1160,6 +1225,8 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
+    tickInstance.setLastObservedControlPlaneRequestId("req-1");
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -1201,6 +1268,60 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueTickId()).isEqualTo(130L);
               assertThat(instance.getNextDueAt()).isNull();
             });
+  }
+
+  @Test
+  void observeRuntimeTickProgressDoesNotResaveFencedRowsWithIncompletePinTuples() {
+    ScriptScheduleInstance fencedTick =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    fencedTick.setScriptPinEpoch(0L);
+    fencedTick.setLastObservedControlPlaneRequestId(null);
+    fencedTick.setMaterializationStatus("FENCED");
+    ScriptScheduleInstance fencedTimer = wallClockTimerInstance();
+    fencedTimer.setScriptPinEpoch(0L);
+    fencedTimer.setLastObservedControlPlaneRequestId(null);
+    fencedTimer.setMaterializationStatus("FENCED");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(fencedTick));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(fencedTimer));
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result)
+        .isEqualTo(new ScriptScheduleInstanceService.RuntimeTickProgressResult(0, 0, 0));
+    verify(scheduleInstanceRepository, never()).saveAll(any());
+    verifyNoInteractions(workItemRepository, eventAuditRepository, automationQueueService);
+  }
+
+  @Test
+  void observeRuntimeTickProgressFinalFencesReadyRowsWithIncompletePinTuples() {
+    ScriptScheduleInstance readyTick =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    readyTick.setScriptPinEpoch(1L);
+    readyTick.setLastObservedControlPlaneRequestId("");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(readyTick));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result)
+        .isEqualTo(new ScriptScheduleInstanceService.RuntimeTickProgressResult(1, 0, 0));
+    assertThat(readyTick.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(readyTick.getNextDueTickId()).isNull();
+    assertThat(readyTick.getRuntimeRegionId()).isEmpty();
+    verify(scheduleInstanceRepository).saveAll(any());
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+    verify(automationQueueService, never()).enqueueWorkItem(any());
   }
 
   @Test
@@ -1513,6 +1634,8 @@ class ScriptScheduleInstanceServiceImplTest {
             .setTenantId("1")
             .setGameInstanceId("game-1")
             .setPinnedScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPatchPinnedControlPlaneRequestId("req-1")
             .setScriptPatchPinnedAtMs(1_000L)
             .setRegionId("region-1")
             .setRegionEpoch(12L)
@@ -1547,12 +1670,49 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void sameVersionAndEpochWithDifferentControlPlaneRequestIsFenced() {
+    ScriptScheduleInstance timer = wallClockTimerInstance();
+    timer.setId(901L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of());
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(timer));
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            runtimeStateResponse("patch-1").toBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setScriptPatchPinnedControlPlaneRequestId("req-2")
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(90L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timer.getMaterializationStatus()).isEqualTo("FENCED");
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason())
+        .isEqualTo("script_pin_control_plane_request_id_mismatch");
+    assertThat(auditCaptor.getValue().getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
+  }
+
+  @Test
   void observeRuntimeTickProgressEmitsDueTimerWorkItemAndAdvancesPastObservedTick() {
     ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
+    tickInstance.setLastObservedControlPlaneRequestId("req-1");
     tickInstance.setScriptId("npc-guard");
+    tickInstance.setBindingId("binding-patrol");
+    tickInstance.setPluginId("plugin-1");
+    tickInstance.setPluginVersionId("plugin-v1");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
     tickInstance.setScheduleKind("INTERVAL");
@@ -1578,6 +1738,9 @@ class ScriptScheduleInstanceServiceImplTest {
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "MILLISECONDS"))
         .thenReturn(List.of());
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+            "1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(enabledPluginRuntimeState("plugin-1", "plugin-v1")));
 
     ScriptScheduleInstanceService.RuntimeTickProgressResult result =
         service.observeRuntimeTickProgress(
@@ -1600,19 +1763,35 @@ class ScriptScheduleInstanceServiceImplTest {
     assertThat(workItem.getRealmSlug()).isEqualTo("production");
     assertThat(workItem.getPointerVersion()).isEqualTo("17");
     assertThat(workItem.getEventSchemaVersion()).isEqualTo("v1");
+    assertThat(workItem.getBindingId()).isEqualTo("binding-patrol");
+    assertThat(workItem.getTargetScopeType()).isEqualTo("ENTITY");
+    assertThat(workItem.getTargetScopeId()).isEqualTo("guard-1");
     assertThat(workItem.getTriggerMode()).isEqualTo("TRIGGER_MODE_CATCH_UP");
     // Golden identity: SHA-256 (first 60 hex chars) of length-prefixed UTF-8 values in
-    // TimerFiringCandidate.identity(): tenant, instance, playable scope, region/epoch, target
-    // scope/entity, script/plugin identity, event/schema, patch, schedule, dueTickId, dry-run,
-    // and trigger mode. Changing any value, order, or framing changes persisted scriptEventId
+    // TimerFiringCandidate.eventIdentity(): tenant, instance, playable scope, region/epoch, target
+    // scope/entity, script/plugin/binding identity, event/schema, patch/pin epoch, schedule,
+    // dueTickId,
+    // dry-run, and trigger mode. Owner request evidence is durable but excluded from this
+    // logical event identity. Changing any value, order, or framing changes persisted scriptEventId
     // dedupe keys, so a migration must backfill existing scheduler work/audit identities together.
     assertThat(workItem.getScriptEventId())
-        .isEqualTo("timer-5275f68bb3d1eb74ff051bcd5b13164834f407ba6530955160ae0c1e8576");
+        .isEqualTo("timer-ee9d7297281a06d82c2263077be551603f1d95c60afb8f25b729234d4a5f");
+    assertThat(workItem.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(workItem.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(workItem.getQuotaClass()).isEqualTo(ScriptQuotaClasses.STANDARD_RUNTIME);
     assertThat(workItem.getPriorityTag()).isEqualTo("high");
     assertThat(workItem.getPayloadJson()).contains("\"dueTickId\":130");
+    assertThat(workItem.getPayloadJson()).contains("\"bindingId\":\"binding-patrol\"");
+    assertThat(new ObjectMapper().readTree(workItem.getPayloadJson()).get("dueTickId").asLong())
+        .isEqualTo(130L);
     verify(automationQueueService).enqueueWorkItem(workItem);
-    verify(eventAuditRepository).save(org.mockito.Mockito.any());
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).save(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getScriptPinEpoch())
+        .isEqualTo(workItem.getScriptPinEpoch())
+        .isPositive();
+    assertThat(auditCaptor.getValue().getScriptPinControlPlaneRequestId())
+        .isEqualTo(workItem.getScriptPinControlPlaneRequestId());
     @SuppressWarnings("unchecked")
     ArgumentCaptor<List<ScriptScheduleInstance>> scheduleCaptor =
         ArgumentCaptor.forClass(List.class);
@@ -1624,6 +1803,139 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(instance.getNextDueTickId()).isEqualTo(160L);
               assertThat(instance.getLastObservedTickId()).isEqualTo(131L);
             });
+  }
+
+  @Test
+  void timerEventIdentityExcludesOwnerRequestEvidenceButDurableEvidencePropagates() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setLastObservedControlPlaneRequestId("req-2");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first), List.of(second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of());
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            runtimeStateResponse("patch-1", "req-1"), runtimeStateResponse("patch-1", "req-2"));
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
+    assertThat(workItems)
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .hasSize(2)
+        .containsOnly(workItems.get(0).getScriptEventId());
+    assertThat(workItems)
+        .extracting(ScriptWorkItem::getScriptPinControlPlaneRequestId)
+        .containsExactly("req-1", "req-2");
+
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository, org.mockito.Mockito.times(2)).save(auditCaptor.capture());
+    assertThat(auditCaptor.getAllValues())
+        .extracting(ScriptEventAudit::getScriptPinControlPlaneRequestId)
+        .containsExactly("req-1", "req-2");
+    assertThat(auditCaptor.getAllValues())
+        .extracting(ScriptEventAudit::getScriptEventId)
+        .containsExactly(workItems.get(0).getScriptEventId(), workItems.get(0).getScriptEventId());
+  }
+
+  @Test
+  void selectedAndTruncatedTimerIdentityExcludesOwnerRequestEvidence() {
+    ScriptSchedulerProperties properties = new ScriptSchedulerProperties();
+    properties.setMaxCatchUpFiringsPerObservation(1);
+    service =
+        new ScriptScheduleInstanceServiceImpl(
+            scheduleDefinitionRepository,
+            scheduleInstanceRepository,
+            pinProjectionRepository,
+            pluginRuntimeStateRepository,
+            bindingRepository,
+            workItemRepository,
+            eventAuditRepository,
+            automationQueueService,
+            automationAdmissionStateService,
+            gameDesignControlPlaneClient,
+            gameSessionControlPlaneClient,
+            properties,
+            meterRegistry,
+            new ObjectMapper());
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setLastObservedControlPlaneRequestId("req-2");
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first, second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isEqualTo(1);
+    assertThat(result.truncatedFiringCount()).isEqualTo(1);
+    verify(workItemRepository).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository).save(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
+  void timerReadSnapshotTokenIncludesPatchAndPositivePinEpoch() {
+    ScriptScheduleInstance patchOne =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance patchTwo =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    patchTwo.setScriptPatchVersion("patch-2");
+    ScriptScheduleInstance epochTwo =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    epochTwo.setScriptPinEpoch(2L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(patchOne), List.of(patchTwo), List.of(epochTwo));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of(), List.of());
+    GetGameInstanceRuntimeStateResponse epochTwoRuntime =
+        runtimeStateResponse("patch-1", "req-1").toBuilder()
+            .setRuntimeState(
+                runtimeStateResponse("patch-1", "req-1").getRuntimeState().toBuilder()
+                    .setScriptPinEpoch(2L)
+                    .build())
+            .build();
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            runtimeStateResponse("patch-1", "req-1"),
+            runtimeStateResponse("patch-2", "req-1"),
+            epochTwoRuntime);
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(3))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    List<ScriptWorkItem> workItems = workItemCaptor.getAllValues();
+    assertThat(workItems)
+        .extracting(ScriptWorkItem::getScriptPatchVersion)
+        .containsExactly("patch-1", "patch-2", "patch-1");
+    assertThat(workItems).extracting(ScriptWorkItem::getScriptPinEpoch).containsExactly(1L, 1L, 2L);
+    assertThat(workItems.get(0).getReadSnapshotToken()).contains("7:patch-1");
+    assertThat(workItems.get(0).getReadSnapshotToken()).doesNotContain("req-1");
+    assertThat(workItems.get(0).getReadSnapshotToken())
+        .isNotEqualTo(workItems.get(1).getReadSnapshotToken());
+    assertThat(workItems.get(0).getReadSnapshotToken())
+        .isNotEqualTo(workItems.get(2).getReadSnapshotToken());
   }
 
   @Test
@@ -1686,11 +1998,165 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void timerEventIdentityUsesZeroSentinelForNullableRegionEpoch()
+      throws ReflectiveOperationException {
+    ScriptScheduleInstance instance =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object nullableCandidate =
+        constructor.newInstance(instance, "region-1", null, 1L, "req-1", 130L, null, false);
+    Object zeroCandidate =
+        constructor.newInstance(instance, "region-1", 0L, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    String nullableIdentity = (String) identityMethod.invoke(nullableCandidate);
+    String zeroIdentity = (String) identityMethod.invoke(zeroCandidate);
+
+    assertThat(nullableIdentity).isEqualTo(zeroIdentity).contains("1:0").doesNotContain("null");
+  }
+
+  @Test
+  void timerEventIdentityUsesEmptySentinelsForNullableLegacyFields()
+      throws ReflectiveOperationException {
+    ScriptScheduleInstance instance = new ScriptScheduleInstance();
+    instance.setScriptPinEpoch(1L);
+    instance.setLastObservedControlPlaneRequestId("req-1");
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object candidate =
+        constructor.newInstance(instance, null, null, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    String identity = (String) identityMethod.invoke(candidate);
+
+    assertThat(identity).doesNotContain("null");
+  }
+
+  @Test
+  void timerEventIdentityCoalescesCoreBindingsPerAdr0172() throws ReflectiveOperationException {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    first.setBindingId("core-binding-a");
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setBindingId("core-binding-b");
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object firstCandidate =
+        constructor.newInstance(first, "region-1", 12L, 1L, "req-1", 130L, null, false);
+    Object secondCandidate =
+        constructor.newInstance(second, "region-1", 12L, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    assertThat(identityMethod.invoke(firstCandidate))
+        .isEqualTo(identityMethod.invoke(secondCandidate));
+  }
+
+  @Test
+  void observeRuntimeTickProgressSeparatesSameVersionTimerIdentityByPinEpoch() {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setScriptPinEpoch(2L);
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "TICKS"))
+        .thenReturn(List.of(first), List.of(second));
+    when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
+            "1", "game-1", "MILLISECONDS"))
+        .thenReturn(List.of(), List.of());
+    GetGameInstanceRuntimeStateResponse runtimeEpochTwo =
+        GetGameInstanceRuntimeStateResponse.newBuilder()
+            .setRuntimeState(
+                GameInstanceRuntimeState.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("game-1")
+                    .setPinnedScriptPatchVersion("patch-1")
+                    .setScriptPinEpoch(2L)
+                    .setScriptPatchPinnedControlPlaneRequestId("req-1")
+                    .setRegionId("region-1")
+                    .setRegionEpoch(12L)
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
+                    .build())
+            .build();
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
+                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
+                        .setRegionId("region-1")
+                        .setRegionEpoch(12L)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                        .addCurrentAdmissionPointers(currentPointer("demo", "production", 17L))
+                        .build())
+                .build(),
+            runtimeEpochTwo);
+
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+    service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository, org.mockito.Mockito.times(2))
+        .insertIfAbsentByTriggerIdentity(workItemCaptor.capture());
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptEventId)
+        .doesNotHaveDuplicates();
+    assertThat(workItemCaptor.getAllValues())
+        .extracting(ScriptWorkItem::getScriptPinEpoch)
+        .containsExactly(1L, 2L);
+  }
+
+  @Test
   void observeRuntimeTickProgressCollapsesPartialScheduleRoutingBundleBeforePersistingWorkItem() {
     ScriptScheduleInstance tickInstance = new ScriptScheduleInstance();
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
+    tickInstance.setLastObservedControlPlaneRequestId("req-1");
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -1779,6 +2245,8 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
+    timerInstance.setLastObservedControlPlaneRequestId("req-1");
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -1832,7 +2300,7 @@ class ScriptScheduleInstanceServiceImplTest {
       assertThat(workItem.getPayloadJson())
           .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
           .contains("\"dueAt\":5000");
-      assertThat(workItem.getReadSnapshotToken()).startsWith("automation:onTimerExpire:");
+      assertThat(workItem.getReadSnapshotToken()).startsWith("automation:13:onTimerExpire");
       verify(eventAuditRepository).save(any());
       verify(automationQueueService, never()).enqueueWorkItem(any());
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
@@ -2031,6 +2499,29 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void matchingPatchWithDifferentEpochPersistsDistinctSkipReason() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setScriptPinEpoch(2L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("FENCED");
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason()).isEqualTo("script_pin_epoch_mismatch");
+  }
+
+  @Test
   void permanentDisplacementFencesTickAndWallWithoutReseedingUntilReconciliation() {
     ScriptScheduleInstance tick =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
@@ -2141,6 +2632,7 @@ class ScriptScheduleInstanceServiceImplTest {
                         .setTenantId("1")
                         .setGameInstanceId("game-1")
                         .setPinnedScriptPatchVersion("patch-1")
+                        .setScriptPinEpoch(1L)
                         .setRegionId("region-1")
                         .setRegionEpoch(12L)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
@@ -2274,6 +2766,8 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
+    timerInstance.setLastObservedControlPlaneRequestId("req-1");
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -2407,7 +2901,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             schedulerProperties,
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");
@@ -2572,6 +3067,111 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void forwardsPinnedTimerAuditRequestIdToAuditRepository() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  void forwardsEpochOnlyTimerAuditFilterToAuditRepository() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq((String) null),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 2L, null, "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq(2L),
+            eq((String) null),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  void forwardsRequestIdOnlyTimerAuditFilterToAuditRepository() {
+    when(eventAuditRepository.findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq((Long) null),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any()))
+        .thenReturn(List.of());
+
+    assertThat(
+            service.listTimerAuditEvents(
+                "1", "game-1", "patch-1", 0L, "req-1", "npc-guard", "onInterval", "", 0L, 0L, 25))
+        .isEmpty();
+    verify(eventAuditRepository)
+        .findTimerAuditEvents(
+            eq("1"),
+            eq("game-1"),
+            eq("patch-1"),
+            eq((Long) null),
+            eq("req-1"),
+            eq("npc-guard"),
+            eq("onInterval"),
+            eq(""),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
   void listTimerAuditEventsReturnsBoundedSummariesFromAuditRows() {
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setTenantId("1");
@@ -2586,6 +3186,7 @@ class ScriptScheduleInstanceServiceImplTest {
     audit.setScriptId("npc-guard");
     audit.setPluginId("plugin-1");
     audit.setPluginVersionId("plugin-v1");
+    audit.setBindingId("binding-timer");
     audit.setEventType("onInterval");
     audit.setScriptPatchVersion("patch-1");
     audit.setScriptEventId("timer-1");
@@ -2616,6 +3217,8 @@ class ScriptScheduleInstanceServiceImplTest {
             "1",
             "game-1",
             "patch-1",
+            0L,
+            null,
             "npc-guard",
             "onInterval",
             "catch_up_truncated",
@@ -2629,6 +3232,7 @@ class ScriptScheduleInstanceServiceImplTest {
             summary -> {
               assertThat(summary.pluginId()).isEqualTo("plugin-1");
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.finalReason()).isEqualTo("catch_up_truncated");
               assertThat(summary.sourceDueTickId()).isEqualTo(130L);
               assertThat(summary.publication().versionId()).isEqualTo(17L);
@@ -2641,6 +3245,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptId("npc-guard");
     instance.setPlayableStateScope("SHARED");
     instance.setWorldSlug("demo");
@@ -2648,6 +3253,7 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setPointerVersion("17");
     instance.setPluginId("plugin-1");
     instance.setPluginVersionId("plugin-v1");
+    instance.setBindingId("binding-timer");
     instance.setEventType("onTimerExpire");
     instance.setScheduleDefinitionId("guard.alert.expire.v1");
     instance.setScheduleKind("TIMER");
@@ -2684,6 +3290,7 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.scheduleDefinitionId()).isEqualTo("guard.alert.expire.v1");
               assertThat(summary.pluginId()).isEqualTo("plugin-1");
               assertThat(summary.pluginVersionId()).isEqualTo("plugin-v1");
+              assertThat(summary.bindingId()).isEqualTo("binding-timer");
               assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
   }
@@ -2723,6 +3330,8 @@ class ScriptScheduleInstanceServiceImplTest {
     tickInstance.setTenantId("1");
     tickInstance.setGameInstanceId("game-1");
     tickInstance.setScriptPatchVersion("patch-1");
+    tickInstance.setScriptPinEpoch(1L);
+    tickInstance.setLastObservedControlPlaneRequestId("req-1");
     tickInstance.setScriptId("npc-guard");
     tickInstance.setEventType("onInterval");
     tickInstance.setScheduleDefinitionId("guard.patrol.v1");
@@ -2748,6 +3357,8 @@ class ScriptScheduleInstanceServiceImplTest {
     timerInstance.setTenantId("1");
     timerInstance.setGameInstanceId("game-1");
     timerInstance.setScriptPatchVersion("patch-1");
+    timerInstance.setScriptPinEpoch(1L);
+    timerInstance.setLastObservedControlPlaneRequestId("req-1");
     timerInstance.setScriptId("npc-guard");
     timerInstance.setEventType("onTimerExpire");
     timerInstance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -2854,7 +3465,8 @@ class ScriptScheduleInstanceServiceImplTest {
             gameDesignControlPlaneClient,
             gameSessionControlPlaneClient,
             properties,
-            meterRegistry);
+            meterRegistry,
+            new ObjectMapper());
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 20L, 120L);
     first.setPluginId("plugin-1");
@@ -2887,12 +3499,19 @@ class ScriptScheduleInstanceServiceImplTest {
 
   private static GetGameInstanceRuntimeStateResponse runtimeStateResponse(
       String scriptPatchVersion) {
+    return runtimeStateResponse(scriptPatchVersion, "req-1");
+  }
+
+  private static GetGameInstanceRuntimeStateResponse runtimeStateResponse(
+      String scriptPatchVersion, String scriptPinControlPlaneRequestId) {
     return GetGameInstanceRuntimeStateResponse.newBuilder()
         .setRuntimeState(
             GameInstanceRuntimeState.newBuilder()
                 .setTenantId("1")
                 .setGameInstanceId("game-1")
                 .setPinnedScriptPatchVersion(scriptPatchVersion)
+                .setScriptPinEpoch(1L)
+                .setScriptPatchPinnedControlPlaneRequestId(scriptPinControlPlaneRequestId)
                 .setRegionId("region-1")
                 .setRegionEpoch(12L)
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -2906,6 +3525,8 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setLastObservedControlPlaneRequestId("req-1");
     instance.setScriptId("npc-guard");
     instance.setEventType("onTimerExpire");
     instance.setScheduleDefinitionId("guard.alert.expire.v1");
@@ -3002,6 +3623,12 @@ class ScriptScheduleInstanceServiceImplTest {
     return binding;
   }
 
+  private static ScriptEventBinding pluginBinding(String scriptId, String bindingId) {
+    ScriptEventBinding binding = binding(scriptId, "onInterval", "GLOBAL", "", 5, false);
+    binding.setBindingId(bindingId);
+    return binding;
+  }
+
   private static ScriptScheduleInstance tickSchedule(
       String targetScopeId,
       String scriptId,
@@ -3012,6 +3639,8 @@ class ScriptScheduleInstanceServiceImplTest {
     instance.setTenantId("1");
     instance.setGameInstanceId("game-1");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setLastObservedControlPlaneRequestId("req-1");
     instance.setScriptId(scriptId);
     instance.setEventType("onInterval");
     instance.setScheduleDefinitionId(scheduleDefinitionId);
