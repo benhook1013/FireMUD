@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -23,8 +24,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -114,8 +117,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     assertThat(values(QUEUE_KEY)).containsExactly("N|cmd-fresh|look");
     assertThat(values(PENDING_KEY)).isEmpty();
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-fresh").toString())
-        .contains("cmd-fresh|look");
+    assertThat(indexedPayload("cmd-fresh")).contains("cmd-fresh|look");
     verify(gameplayCommandRepository)
         .markAcceptedCommandStaged(
             org.mockito.ArgumentMatchers.eq("cmd-fresh"), any(Instant.class));
@@ -130,8 +132,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     assertThat(values(QUEUE_KEY)).containsExactly(payload);
     assertThat(values(PENDING_KEY)).isEmpty();
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-replay").toString())
-        .contains("cmd-replay|look");
+    assertThat(indexedPayload("cmd-replay")).contains("cmd-replay|look");
     verify(gameplayCommandRepository)
         .markAcceptedCommandStaged(
             org.mockito.ArgumentMatchers.eq("cmd-replay"), any(Instant.class));
@@ -146,8 +147,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     assertThat(values(QUEUE_KEY)).isEmpty();
     assertThat(values(PENDING_KEY)).containsExactly(payload);
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-replay-pending").toString())
-        .contains("cmd-replay-pending|look");
+    assertThat(indexedPayload("cmd-replay-pending")).contains("cmd-replay-pending|look");
   }
 
   @Test
@@ -164,7 +164,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     assertThat(values(QUEUE_KEY)).containsExactly(existingPayload);
     assertThat(values(PENDING_KEY)).containsExactly(conflictingPayload);
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-conflict")).isNull();
+    assertThat(indexedPayload("cmd-conflict")).isNull();
     verify(gameplayCommandRepository, never())
         .markAcceptedCommandStaged(any(String.class), any(Instant.class));
   }
@@ -182,7 +182,7 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     assertThat(values(QUEUE_KEY)).containsExactly(payload);
     assertThat(values(PENDING_KEY)).containsExactly(payload);
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-duplicate")).isNull();
+    assertThat(indexedPayload("cmd-duplicate")).isNull();
   }
 
   @Test
@@ -192,12 +192,34 @@ class TickQueueControlServiceRedisIntegrationTest {
 
     service.enqueueCommand(TENANT_ID, GAME_INSTANCE_ID, "cmd-new", "say hello", false);
 
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-legacy-queue").toString())
-        .contains("cmd-legacy-queue|look");
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-legacy-pending").toString())
-        .contains("cmd-legacy-pending|wave");
-    assertThat(redisTemplate.opsForHash().get(COMMAND_INDEX_KEY, "cmd-new").toString())
-        .contains("cmd-new|say hello");
+    assertThat(indexedPayload("cmd-legacy-queue")).contains("cmd-legacy-queue|look");
+    assertThat(indexedPayload("cmd-legacy-pending")).contains("cmd-legacy-pending|wave");
+    assertThat(indexedPayload("cmd-new")).contains("cmd-new|say hello");
+  }
+
+  @SuppressWarnings("unchecked")
+  private String indexedPayload(String commandId) {
+    RedisSerializer<Object> keySerializer =
+        (RedisSerializer<Object>) redisTemplate.getKeySerializer();
+    RedisSerializer<Object> valueSerializer =
+        (RedisSerializer<Object>) redisTemplate.getValueSerializer();
+    if (keySerializer == null || valueSerializer == null) {
+      throw new IllegalStateException("Redis serializers are not configured");
+    }
+    byte[] indexKey = keySerializer.serialize(COMMAND_INDEX_KEY);
+    if (indexKey == null) {
+      throw new IllegalStateException("Redis key serializer returned null");
+    }
+    byte[] raw =
+        redisTemplate.execute(
+            (RedisCallback<byte[]>)
+                connection ->
+                    connection.hGet(indexKey, commandId.getBytes(StandardCharsets.UTF_8)));
+    if (raw == null) {
+      return null;
+    }
+    Object value = valueSerializer.deserialize(raw);
+    return value == null ? null : value.toString();
   }
 
   private List<String> values(String key) {

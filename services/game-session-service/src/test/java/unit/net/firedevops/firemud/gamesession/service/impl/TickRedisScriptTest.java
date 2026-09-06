@@ -142,10 +142,6 @@ class TickRedisScriptTest {
     return TickBatchExecutionService.restoreQueuePayloadArgument(value);
   }
 
-  private void pushJdk(String key, String value) {
-    redisTemplate.opsForList().rightPush(key, value);
-  }
-
   private void pushRaw(String key, byte[] value) {
     redisTemplate.execute(
         (RedisCallback<Long>) connection -> connection.rPush(serializedKey(key), value));
