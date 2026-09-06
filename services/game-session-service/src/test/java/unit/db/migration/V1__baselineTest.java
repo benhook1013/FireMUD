@@ -86,7 +86,8 @@ class V1__baselineTest {
             "script_pin_epoch IS NULL",
             "script_pin_epoch IS NOT NULL",
             "script_pin_epoch > 0",
-            "script_patch_pinned_control_plane_request_id",
+            "NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '')",
+            "NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '')",
             "script_patch_pinned_at IS NULL",
             "script_patch_pinned_by IS NULL",
             "script_patch_pinned_reason IS NULL");

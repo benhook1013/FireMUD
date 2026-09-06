@@ -69,6 +69,26 @@ class GameInstanceScriptPinMigrationIntegrationTest {
             () ->
                 dsl.execute(
                     "INSERT INTO game_instances (id, tenant_id, runtime_version, "
+                        + "script_patch_version, script_pin_epoch, "
+                        + "script_patch_pinned_control_plane_request_id, owner_account_id, status) "
+                        + "VALUES (107, 42, '1.0.0', '   ', 1, 'request-whitespace-patch', "
+                        + "107, 'STOPPED')"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("game_instances_script_pin_tuple_coherent");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO game_instances (id, tenant_id, runtime_version, "
+                        + "script_patch_version, script_pin_epoch, "
+                        + "script_patch_pinned_control_plane_request_id, owner_account_id, status) "
+                        + "VALUES (108, 42, '1.0.0', 'patch-whitespace-request', 1, '  ', "
+                        + "108, 'STOPPED')"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("game_instances_script_pin_tuple_coherent");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO game_instances (id, tenant_id, runtime_version, "
                         + "script_patch_pinned_at, script_patch_pinned_by, script_patch_pinned_reason, "
                         + "owner_account_id, status) VALUES "
                         + "(106, 42, '1.0.0', TIMESTAMP '2026-01-02 03:04:05', "
