@@ -55,6 +55,17 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "DELETE FROM script_event_ingress_audit",
             "ROW_NUMBER() OVER");
 
+    int requestDigestConstraintStart =
+        normalized.indexOf("ADD CONSTRAINT ck_script_event_ingress_audit_request_digest");
+    int claimStartedAtColumn =
+        normalized.indexOf(
+            "ALTER TABLE script_event_ingress_audit ADD COLUMN claim_started_at",
+            requestDigestConstraintStart);
+    assertThat(requestDigestConstraintStart).isGreaterThanOrEqualTo(0);
+    assertThat(claimStartedAtColumn).isGreaterThan(requestDigestConstraintStart);
+    assertThat(normalized.substring(requestDigestConstraintStart, claimStartedAtColumn))
+        .contains("request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'", "NOT VALID");
+
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned");
     int unpinnedEnd = migration.indexOf(") WHERE", unpinnedStart);

@@ -473,6 +473,41 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void completeReconciliationRestoresPreMigrationFencedSchedule() {
+    ScriptScheduleInstance legacy = wallClockTimerInstance();
+    legacy.setId(62L);
+    legacy.setScriptPinEpoch(0L);
+    legacy.setLastObservedControlPlaneRequestId("");
+    legacy.setMaterializationStatus("FENCED");
+    legacy.setNextDueAt(null);
+    legacy.setRuntimeRegionId("");
+    legacy.setRuntimeRegionEpoch(null);
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(legacy));
+    when(scheduleDefinitionRepository
+            .findByTenantIdAndScriptPatchVersionOrderByScriptIdAscEventTypeAscScheduleDefinitionIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(millisecondsDefinition()));
+    when(pluginRuntimeStateRepository.findByTenantIdAndGameInstanceId("1", "game-1"))
+        .thenReturn(List.of());
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(binding("npc-guard", "onTimerExpire", "ENTITY", "guard-1", 10, false)));
+
+    service.reconcileObservedRuntimeState(
+        "1", "game-1", runtimeStateResponse("patch-1").getRuntimeState());
+
+    assertThat(legacy.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(legacy.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(legacy.getLastObservedControlPlaneRequestId()).isEqualTo("req-1");
+    assertThat(legacy.getNextDueAt()).isAfter(Instant.now());
+    verify(scheduleInstanceRepository).saveAll(List.of(legacy));
+  }
+
+  @Test
   void incompleteRoutingPreservesRetainedDueEvidenceUntilCompleteReconciliation() {
     ScriptScheduleInstance tick =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
@@ -1895,7 +1930,8 @@ class ScriptScheduleInstanceServiceImplTest {
         .extracting(ScriptWorkItem::getScriptPatchVersion)
         .containsExactly("patch-1", "patch-2", "patch-1");
     assertThat(workItems).extracting(ScriptWorkItem::getScriptPinEpoch).containsExactly(1L, 1L, 2L);
-    assertThat(workItems.get(0).getReadSnapshotToken()).contains(":patch-1:1:req-1:");
+    assertThat(workItems.get(0).getReadSnapshotToken()).contains("7:patch-1");
+    assertThat(workItems.get(0).getReadSnapshotToken()).doesNotContain(":patch-1:1:req-1:");
     assertThat(workItems.get(0).getReadSnapshotToken())
         .isNotEqualTo(workItems.get(1).getReadSnapshotToken());
     assertThat(workItems.get(0).getReadSnapshotToken())
@@ -1990,6 +2026,67 @@ class ScriptScheduleInstanceServiceImplTest {
     String zeroIdentity = (String) identityMethod.invoke(zeroCandidate);
 
     assertThat(nullableIdentity).isEqualTo(zeroIdentity).contains("1:0").doesNotContain("null");
+  }
+
+  @Test
+  void timerEventIdentityUsesEmptySentinelsForNullableLegacyFields()
+      throws ReflectiveOperationException {
+    ScriptScheduleInstance instance = new ScriptScheduleInstance();
+    instance.setScriptPinEpoch(1L);
+    instance.setLastObservedControlPlaneRequestId("req-1");
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object candidate =
+        constructor.newInstance(instance, null, null, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    String identity = (String) identityMethod.invoke(candidate);
+
+    assertThat(identity).doesNotContain("null");
+  }
+
+  @Test
+  void timerEventIdentityCoalescesCoreBindingsPerAdr0172() throws ReflectiveOperationException {
+    ScriptScheduleInstance first =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    first.setBindingId("core-binding-a");
+    ScriptScheduleInstance second =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    second.setBindingId("core-binding-b");
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object firstCandidate =
+        constructor.newInstance(first, "region-1", 12L, 1L, "req-1", 130L, null, false);
+    Object secondCandidate =
+        constructor.newInstance(second, "region-1", 12L, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    assertThat(identityMethod.invoke(firstCandidate))
+        .isEqualTo(identityMethod.invoke(secondCandidate));
   }
 
   @Test
@@ -2203,7 +2300,7 @@ class ScriptScheduleInstanceServiceImplTest {
       assertThat(workItem.getPayloadJson())
           .contains("\"scheduleId\":\"guard.alert.expire.v1\"")
           .contains("\"dueAt\":5000");
-      assertThat(workItem.getReadSnapshotToken()).startsWith("automation:onTimerExpire:");
+      assertThat(workItem.getReadSnapshotToken()).startsWith("automation:13:onTimerExpire");
       verify(eventAuditRepository).save(any());
       verify(automationQueueService, never()).enqueueWorkItem(any());
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);

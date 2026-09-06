@@ -17,7 +17,7 @@ ALTER TABLE script_event_ingress_audit
 ALTER TABLE script_event_ingress_audit
     ADD CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK (
         request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'
-    );
+    ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
 -- A bounded claim lease lets a later retry recover a crashed claimant while optimistic row
 -- versioning fences the abandoned owner. Keep created_at as the retention anchor.

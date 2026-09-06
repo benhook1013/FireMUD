@@ -1961,23 +1961,16 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {
     ScriptScheduleInstance instance = candidate.instance();
     return "automation:"
-        + instance.getEventType()
-        + ":"
-        + instance.getGameInstanceId()
-        + ":"
-        + candidate.regionEpoch()
-        + ":"
-        + instance.getScriptPatchVersion()
-        + ":"
-        + candidate.scriptPinEpoch()
-        + ":"
-        + candidate.scriptPinControlPlaneRequestId()
-        + ":"
-        + candidate.duePointToken()
-        + ":"
-        + shortHash(applicableBindingId(instance))
-        + ":"
-        + shortHash(instance.getScheduleDefinitionId());
+        + lengthPrefixedIdentity(
+            instance.getEventType(),
+            instance.getGameInstanceId(),
+            Long.toString(zeroIfNull(candidate.regionEpoch())),
+            instance.getScriptPatchVersion(),
+            Long.toString(candidate.scriptPinEpoch()),
+            candidate.scriptPinControlPlaneRequestId(),
+            candidate.duePointToken(),
+            shortHash(applicableBindingId(instance)),
+            shortHash(blankToEmpty(instance.getScheduleDefinitionId())));
   }
 
   private String timerPayload(TimerFiringCandidate candidate) {
@@ -2245,33 +2238,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String identity() {
-      List<String> values =
-          new ArrayList<>(
-              List.of(
-                  instance.getTenantId(),
-                  instance.getGameInstanceId(),
-                  instance.getPlayableStateScope(),
-                  regionId,
-                  Long.toString(zeroIfNull(regionEpoch)),
-                  blankToEmpty(instance.getTargetScopeType()),
-                  blankToEmpty(instance.getTargetScopeId()),
-                  targetEntityId(instance),
-                  instance.getScriptId(),
-                  blankToEmpty(instance.getPluginId()),
-                  blankToEmpty(instance.getPluginVersionId()),
-                  instance.getEventType(),
-                  DEFAULT_SCHEMA_VERSION,
-                  instance.getScriptPatchVersion(),
-                  String.valueOf(scriptPinEpoch)));
+      List<String> values = new ArrayList<>();
+      values.add(blankToEmpty(instance.getTenantId()));
+      values.add(blankToEmpty(instance.getGameInstanceId()));
+      values.add(blankToEmpty(instance.getPlayableStateScope()));
+      values.add(blankToEmpty(regionId));
+      values.add(Long.toString(zeroIfNull(regionEpoch)));
+      values.add(blankToEmpty(instance.getTargetScopeType()));
+      values.add(blankToEmpty(instance.getTargetScopeId()));
+      values.add(targetEntityId(instance));
+      values.add(blankToEmpty(instance.getScriptId()));
+      values.add(blankToEmpty(instance.getPluginId()));
+      values.add(blankToEmpty(instance.getPluginVersionId()));
+      values.add(blankToEmpty(instance.getEventType()));
+      values.add(DEFAULT_SCHEMA_VERSION);
+      values.add(blankToEmpty(instance.getScriptPatchVersion()));
+      values.add(Long.toString(scriptPinEpoch));
       if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
         values.add(applicableBindingId(instance));
       }
-      values.addAll(
-          List.of(
-              instance.getScheduleDefinitionId(),
-              wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
-              Boolean.toString(SCHEDULER_IS_DRY_RUN),
-              SCHEDULER_TRIGGER_MODE));
+      values.add(blankToEmpty(instance.getScheduleDefinitionId()));
+      values.add(wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);
+      values.add(Boolean.toString(SCHEDULER_IS_DRY_RUN));
+      values.add(SCHEDULER_TRIGGER_MODE);
       return lengthPrefixedIdentity(values.toArray(String[]::new));
     }
 
