@@ -95,6 +95,33 @@ class GameInstanceRepositoryTest {
   }
 
   @Test
+  void scriptPinFailureRejectsBlankErrorCodeBeforeDatabaseAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameInstanceRepository repository = new GameInstanceRepository(dsl);
+
+    for (String errorCode : new String[] {null, " "}) {
+      IllegalArgumentException error =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  repository.recordScriptPinFailure(
+                      1L,
+                      7L,
+                      "SET",
+                      "patch-new",
+                      "request-1",
+                      "operator",
+                      "authority unavailable",
+                      "EXPECT_EPOCH",
+                      1L,
+                      errorCode));
+      assertEquals("errorCode is required", error.getMessage());
+    }
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
   void saveRejectsIncoherentScriptPinTupleBeforeInsertOrUpdate() {
     DSLContext dsl = mock(DSLContext.class);
     GameInstanceRepository repository = new GameInstanceRepository(dsl);

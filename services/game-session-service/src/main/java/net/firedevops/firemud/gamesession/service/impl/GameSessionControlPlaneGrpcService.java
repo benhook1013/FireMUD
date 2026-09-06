@@ -758,6 +758,19 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (GameSessionRuntimeControlPlaneReadService.RuntimeStateException ex) {
+      GetGameInstanceRuntimeStateResponse response =
+          GetGameInstanceRuntimeStateResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetGameInstanceRuntimeState",
+                      ex.code(),
+                      ex.detailMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()

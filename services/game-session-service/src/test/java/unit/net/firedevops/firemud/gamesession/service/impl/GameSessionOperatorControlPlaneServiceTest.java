@@ -216,6 +216,40 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void pinFailureMessagesCoverAllTargetValidationCodes() throws ReflectiveOperationException {
+    GameSessionOperatorControlPlaneService service =
+        service(mock(GameInstanceRepository.class), mock(TickService.class));
+    var messageMethod =
+        GameSessionOperatorControlPlaneService.class.getDeclaredMethod(
+            "pinFailureMessage", String.class);
+    messageMethod.setAccessible(true);
+
+    var expectedMessages =
+        java.util.Map.of(
+            "SCRIPT_PIN_EXPECTATION_FAILED",
+            "expected current script pin does not match authoritative current tuple",
+            "SCRIPT_PIN_EPOCH_EXHAUSTED",
+            "script pin epoch exhausted",
+            "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT",
+            "rollback target is already the current script patch",
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE",
+            "script patch authority is unavailable",
+            "SCRIPT_PATCH_NOT_PUBLISHED",
+            "script patch is not published",
+            "SCRIPT_PATCH_NOT_READY",
+            "script patch is not ready",
+            "SCRIPT_PATCH_TENANT_MISMATCH",
+            "script patch tenant does not match the game instance tenant",
+            "SCRIPT_PATCH_BASE_VERSION_MISMATCH",
+            "script patch base version does not match the game instance runtime version");
+
+    expectedMessages.forEach(
+        (errorCode, expectedMessage) ->
+            assertThat(invokePinFailureMessage(messageMethod, service, errorCode))
+                .isEqualTo(expectedMessage));
+  }
+
+  @Test
   void unreadyPatchIsLedgeredAndDoesNotMutatePin() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
@@ -985,6 +1019,17 @@ class GameSessionOperatorControlPlaneServiceTest {
       AutomationScriptingControlPlaneClient automation) {
     return new GameSessionOperatorControlPlaneService(
         repository, tickService, gameDesign, automation, mock(GameSessionProperties.class));
+  }
+
+  private static String invokePinFailureMessage(
+      java.lang.reflect.Method messageMethod,
+      GameSessionOperatorControlPlaneService service,
+      String errorCode) {
+    try {
+      return (String) messageMethod.invoke(service, errorCode);
+    } catch (ReflectiveOperationException ex) {
+      throw new AssertionError("Failed to invoke pin failure message mapping", ex);
+    }
   }
 
   private static GameInstance validUnpinnedInstance() {

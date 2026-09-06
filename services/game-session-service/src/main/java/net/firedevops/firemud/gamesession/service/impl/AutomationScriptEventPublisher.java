@@ -388,7 +388,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     if (!StringUtils.hasText(scriptPatchVersion)
         || scriptPinEpoch <= 0L
         || !StringUtils.hasText(scriptPinControlPlaneRequestId)) {
-      LOG.debug(
+      LOG.warn(
           "Skipping script event publish because the complete script pin tuple is unavailable tenantId={} gameInstanceId={} characterId={}",
           tenantId,
           gameInstanceId,

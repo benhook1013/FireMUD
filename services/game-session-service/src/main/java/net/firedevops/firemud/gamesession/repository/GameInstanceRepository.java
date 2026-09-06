@@ -196,48 +196,26 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch) {
-    validateOperationKind(operationKind);
-    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
-      throw new IllegalArgumentException("control_plane_request_id is required");
-    }
-    if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
-      throw new IllegalArgumentException("target_script_patch_version is required");
-    }
-    if (expectedPinKind == null || expectedPinKind.isBlank()) {
-      throw new IllegalArgumentException("expected_pin_kind is required");
-    }
-    validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
-    String requestedMutationDigest =
-        mutationDigest(
+    ScriptPinLedgerContext ledger =
+        prepareScriptPinLedger(
             tenantId,
             gameInstanceId,
             operationKind,
             targetScriptPatchVersion,
+            controlPlaneRequestId,
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch);
-    String repinMutationDigest =
-        mutationDigest(
-            tenantId,
-            gameInstanceId,
-            "REPIN",
-            targetScriptPatchVersion,
-            actorPrincipal,
-            reason,
-            expectedPinKind,
-            expectedScriptPinEpoch);
-    boolean repinEligible = canDeriveRepin(operationKind);
+            expectedScriptPinEpoch,
+            null,
+            false);
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
-          Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (existing != null) {
-            if (!matchesMutationDigest(
-                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
-              return idempotencyConflict(controlPlaneRequestId);
-            }
-            return operationResult(existing, controlPlaneRequestId);
+          Optional<ScriptPinMutationResult> replay =
+              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (replay.isPresent()) {
+            return replay.get();
           }
 
           Record current =
@@ -256,13 +234,10 @@ public class GameInstanceRepository {
           // Different request IDs serialize on the instance row. Recheck the operation after
           // taking that lock so an identical concurrent request replays the winner's result
           // instead of racing its primary-key insert.
-          existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (existing != null) {
-            if (!matchesMutationDigest(
-                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
-              return idempotencyConflict(controlPlaneRequestId);
-            }
-            return operationResult(existing, controlPlaneRequestId);
+          replay =
+              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (replay.isPresent()) {
+            return replay.get();
           }
           String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
           Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
@@ -401,51 +376,26 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
-    validateOperationKind(operationKind);
-    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
-      throw new IllegalArgumentException("control_plane_request_id is required");
-    }
-    if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
-      throw new IllegalArgumentException("target_script_patch_version is required");
-    }
-    if (expectedPinKind == null || expectedPinKind.isBlank()) {
-      throw new IllegalArgumentException("expected_pin_kind is required");
-    }
-    if (errorCode == null || errorCode.isBlank()) {
-      throw new IllegalArgumentException("errorCode is required");
-    }
-    validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
-    String requestedMutationDigest =
-        mutationDigest(
+    ScriptPinLedgerContext ledger =
+        prepareScriptPinLedger(
             tenantId,
             gameInstanceId,
             operationKind,
             targetScriptPatchVersion,
+            controlPlaneRequestId,
             actorPrincipal,
             reason,
             expectedPinKind,
-            expectedScriptPinEpoch);
-    String repinMutationDigest =
-        mutationDigest(
-            tenantId,
-            gameInstanceId,
-            "REPIN",
-            targetScriptPatchVersion,
-            actorPrincipal,
-            reason,
-            expectedPinKind,
-            expectedScriptPinEpoch);
-    boolean repinEligible = canDeriveRepin(operationKind);
+            expectedScriptPinEpoch,
+            errorCode,
+            true);
     return dsl.transactionResult(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
-          Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (existing != null) {
-            if (!matchesMutationDigest(
-                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
-              return idempotencyConflict(controlPlaneRequestId);
-            }
-            return operationResult(existing, controlPlaneRequestId);
+          Optional<ScriptPinMutationResult> replay =
+              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (replay.isPresent()) {
+            return replay.get();
           }
           Record current =
               tx.select(SELECT_FIELDS)
@@ -460,13 +410,10 @@ public class GameInstanceRepository {
           if (current == null) {
             throw new IllegalArgumentException("Game instance not found");
           }
-          existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
-          if (existing != null) {
-            if (!matchesMutationDigest(
-                existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
-              return idempotencyConflict(controlPlaneRequestId);
-            }
-            return operationResult(existing, controlPlaneRequestId);
+          replay =
+              ledger.replayExistingOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+          if (replay.isPresent()) {
+            return replay.get();
           }
           String previousPatch = normalizePatch(current.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
           Long previousEpoch = current.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH);
@@ -519,6 +466,80 @@ public class GameInstanceRepository {
 
   private SelectJoinStep<Record> selectGameInstances() {
     return dsl.select(SELECT_FIELDS).from(GAME_INSTANCES);
+  }
+
+  private ScriptPinLedgerContext prepareScriptPinLedger(
+      Long tenantId,
+      Long gameInstanceId,
+      String operationKind,
+      String targetScriptPatchVersion,
+      String controlPlaneRequestId,
+      String actorPrincipal,
+      String reason,
+      String expectedPinKind,
+      Long expectedScriptPinEpoch,
+      String errorCode,
+      boolean requireErrorCode) {
+    validateOperationKind(operationKind);
+    if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
+      throw new IllegalArgumentException("control_plane_request_id is required");
+    }
+    if (targetScriptPatchVersion == null || targetScriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException("target_script_patch_version is required");
+    }
+    if (expectedPinKind == null || expectedPinKind.isBlank()) {
+      throw new IllegalArgumentException("expected_pin_kind is required");
+    }
+    if (requireErrorCode && (errorCode == null || errorCode.isBlank())) {
+      throw new IllegalArgumentException("errorCode is required");
+    }
+    validateExpectedPin(expectedPinKind, expectedScriptPinEpoch);
+    return new ScriptPinLedgerContext(
+        mutationDigest(
+            tenantId,
+            gameInstanceId,
+            operationKind,
+            targetScriptPatchVersion,
+            actorPrincipal,
+            reason,
+            expectedPinKind,
+            expectedScriptPinEpoch),
+        mutationDigest(
+            tenantId,
+            gameInstanceId,
+            "REPIN",
+            targetScriptPatchVersion,
+            actorPrincipal,
+            reason,
+            expectedPinKind,
+            expectedScriptPinEpoch),
+        canDeriveRepin(operationKind));
+  }
+
+  private final class ScriptPinLedgerContext {
+    private final String requestedMutationDigest;
+    private final String repinMutationDigest;
+    private final boolean repinEligible;
+
+    private ScriptPinLedgerContext(
+        String requestedMutationDigest, String repinMutationDigest, boolean repinEligible) {
+      this.requestedMutationDigest = requestedMutationDigest;
+      this.repinMutationDigest = repinMutationDigest;
+      this.repinEligible = repinEligible;
+    }
+
+    private Optional<ScriptPinMutationResult> replayExistingOperation(
+        DSLContext tx, Long tenantId, Long gameInstanceId, String controlPlaneRequestId) {
+      Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
+      if (existing == null) {
+        return Optional.empty();
+      }
+      if (!matchesMutationDigest(
+          existing, requestedMutationDigest, repinEligible ? repinMutationDigest : null)) {
+        return Optional.of(idempotencyConflict(controlPlaneRequestId));
+      }
+      return Optional.of(operationResult(existing, controlPlaneRequestId));
+    }
   }
 
   private void insertOperation(

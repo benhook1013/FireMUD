@@ -126,7 +126,7 @@ class AutomationScriptEventPublisherTest {
   }
 
   @Test
-  void skipsCommandEventWhenPositiveEpochHasNoPinOwnerRequestId() {
+  void skipsCommandEventWhenPositiveEpochHasNoPinOwnerRequestId(CapturedOutput output) {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
@@ -151,6 +151,11 @@ class AutomationScriptEventPublisherTest {
     publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(output.getOut() + output.getErr())
+        .contains(
+            "Skipping script event publish because the complete script pin tuple is unavailable")
+        .contains("tenantId=9")
+        .contains("gameInstanceId=99");
   }
 
   @Test

@@ -252,9 +252,9 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
     GameSessionRuntimeControlPlaneReadService service = service(world, "STARTING");
 
-    IllegalArgumentException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalArgumentException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
     assertEquals(
@@ -267,14 +267,48 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
     WorldManagementClient world = mock(WorldManagementClient.class);
     GameSessionRuntimeControlPlaneReadService service = service(world, "RUNNING", "patch-1", null);
 
-    IllegalArgumentException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalArgumentException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
     assertEquals(
         "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
         error.getMessage());
+    verify(world, never()).getWorldInstanceLifecycle(1L, 7L);
+  }
+
+  @Test
+  void runtimeReadRejectsCrossTenantInstanceBeforeWorldAuthorityCall() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(2L);
+    RuntimeRegionStatus runtimeStatus = new RuntimeRegionStatus();
+    runtimeStatus.setTenantId(1L);
+    runtimeStatus.setGameInstanceId(7L);
+    runtimeStatus.setRegionId("region-7");
+
+    GameInstanceRepository instances = mock(GameInstanceRepository.class);
+    when(instances.findById(7L)).thenReturn(Optional.of(instance));
+    RuntimeRegionStatusRepository runtime = mock(RuntimeRegionStatusRepository.class);
+    when(runtime.findByTenantIdAndRegionId(1L, "region-7")).thenReturn(Optional.of(runtimeStatus));
+    GameSessionRuntimeControlPlaneReadService service =
+        new GameSessionRuntimeControlPlaneReadService(
+            instances,
+            mock(GameplayCommandRepository.class),
+            mock(RemoteFollowupRepository.class),
+            runtime,
+            mock(GameplayAdmissionPointerAuthorityService.class),
+            null,
+            world);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals("tenant_id does not own game_instance_id", error.getMessage());
     verify(world, never()).getWorldInstanceLifecycle(1L, 7L);
   }
 

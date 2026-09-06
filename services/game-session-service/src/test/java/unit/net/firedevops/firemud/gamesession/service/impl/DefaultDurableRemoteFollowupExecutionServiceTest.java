@@ -29,13 +29,17 @@ import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class DefaultDurableRemoteFollowupExecutionServiceTest {
   private RemoteFollowupRepository remoteFollowupRepository;
   private RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository;
@@ -836,7 +840,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   }
 
   @Test
-  void executeRejectsTriggerScriptEventWithoutDurablePinTuples() {
+  void executeRejectsTriggerScriptEventWithoutDurablePinTuples(CapturedOutput output) {
     TickEffect effect = triggerScriptEventEffect();
     RemoteFollowup followup = triggerScriptEventFollowup("{\"kind\":\"trigger_script_event\"}");
     RemoteCommandCoordinator coordinator = triggerScriptEventCoordinator();
@@ -848,6 +852,11 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
 
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
+    org.assertj.core.api.Assertions.assertThat(output.getOut() + output.getErr())
+        .contains(
+            "Abandoning remote trigger-script followup because exact script pin tuples are unavailable")
+        .contains("followupId=followup-1")
+        .contains("failureCode=REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE");
     verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
     verify(remoteFollowupRepository, never()).save(followup);
   }

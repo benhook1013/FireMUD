@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,8 @@ import org.springframework.stereotype.Service;
     justification = "Injected repository and service collaborators are retained internally")
 public final class DefaultDurableRemoteFollowupExecutionService
     implements DurableRemoteFollowupExecutionService {
+  private static final Logger logger =
+      LoggingUtil.getLogger(DefaultDurableRemoteFollowupExecutionService.class);
   private static final String CLAIMED_STATUS = RemoteFollowupDrainServiceImpl.FOLLOWUP_CLAIMED;
   private static final String TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND = "trigger_script_event";
 
@@ -576,6 +580,14 @@ public final class DefaultDurableRemoteFollowupExecutionService
     }
     // The split intentionally removed durable remote source/target pin tuples. Do not derive a
     // target Trigger ingress tuple from the mutable target instance or generic patch metadata.
+    logger.warn(
+        "Abandoning remote trigger-script followup because exact script pin tuples are unavailable "
+            + "tenantId={} followupId={} originGameInstanceId={} targetGameInstanceId={} "
+            + "failureCode=REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE",
+        followup.getTenantId(),
+        followup.getFollowupId(),
+        followup.getOriginGameInstanceId(),
+        followup.getTargetGameInstanceId());
     return failure(
         "REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE",
         "Legacy remote trigger delivery is disabled until durable source and target script pin tuples are available");

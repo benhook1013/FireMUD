@@ -245,6 +245,9 @@ class GameplayCommandRepositoryIntegrationTest {
             commandWithPinTuple("automation-missing-epoch", "patch-1", null, "request-1"),
             commandWithPinTuple("automation-missing-owner", "patch-1", 7L, null),
             commandWithPinTuple("automation-blank-owner", "patch-1", 7L, " "),
+            commandWithPinTuple("automation-blank-patch", " ", 7L, "request-1"),
+            commandWithPinTuple("automation-epoch-only", null, 7L, null),
+            commandWithPinTuple("automation-owner-only", null, null, "request-1"),
             commandWithPinTuple("automation-zero-epoch", "patch-1", 0L, "request-1"),
             commandWithPinTuple("automation-negative-epoch", "patch-1", -1L, "request-1"));
 

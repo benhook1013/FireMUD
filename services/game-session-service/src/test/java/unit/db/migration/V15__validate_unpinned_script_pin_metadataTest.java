@@ -18,8 +18,8 @@ class V15__validate_unpinned_script_pin_metadataTest {
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
-    assertThat(migration)
-        .contains("VALIDATE CONSTRAINT game_instances_unpinned_script_pin_metadata_coherent")
-        .doesNotContain("NOT VALID");
+    assertThat(migration.replaceAll("\\s+", " ").trim())
+        .isEqualTo(
+            "-- [jooq ignore start] ALTER TABLE game_instances VALIDATE CONSTRAINT game_instances_unpinned_script_pin_metadata_coherent; -- [jooq ignore stop]");
   }
 }

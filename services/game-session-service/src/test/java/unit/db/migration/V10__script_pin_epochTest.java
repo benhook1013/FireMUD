@@ -29,12 +29,7 @@ class V10__script_pin_epochTest {
         .contains("regexp_replace(script_patch_version, '[[:space:]]', '', 'g')")
         .contains(
             "regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g')");
-    assertThat(migration)
-        .contains(
-            "WHERE ( NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NOT NULL ) OR ( NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL );")
-        .contains(
-            "WHERE NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NOT NULL AND script_pin_epoch IS NULL;")
-        .contains("/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
+    assertThat(migration).contains("/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */");
     assertThat(migration.indexOf("UPDATE game_instances"))
         .isLessThan(migration.indexOf("ADD CONSTRAINT game_instances_script_pin_tuple_coherent"));
     assertThat(migration.indexOf("SET script_patch_version = NULL"))

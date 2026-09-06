@@ -77,15 +77,21 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
     if (!"RUNNING".equals(instance.getStatus())) {
-      throw new IllegalArgumentException(
-          "GAME_INSTANCE_STATUS_INVALID: runtime state requires a RUNNING game instance");
+      throw new RuntimeStateException(
+          "GAME_INSTANCE_STATUS_INVALID", "runtime state requires a RUNNING game instance");
     }
     String pinnedScriptPatchVersion = instance.getScriptPatchVersion();
     long scriptPinEpoch = instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch();
-    ScriptPinTupleCoherence.requireCoherent(
-        pinnedScriptPatchVersion,
-        instance.getScriptPinEpoch(),
-        instance.getScriptPatchPinnedControlPlaneRequestId());
+    try {
+      ScriptPinTupleCoherence.requireCoherent(
+          pinnedScriptPatchVersion,
+          instance.getScriptPinEpoch(),
+          instance.getScriptPatchPinnedControlPlaneRequestId());
+    } catch (IllegalArgumentException ex) {
+      throw new RuntimeStateException(
+          "SCRIPT_PIN_STATE_INVALID",
+          "patch, positive epoch, and request id must be present together");
+    }
     validateWorldLifecycle(instance);
     CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);
     return GameInstanceRuntimeState.newBuilder()
@@ -129,6 +135,26 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setPublication(
             scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
         .build();
+  }
+
+  /** Persisted runtime state that cannot satisfy the control-plane read contract. */
+  static final class RuntimeStateException extends IllegalStateException {
+    private final String code;
+    private final String detailMessage;
+
+    RuntimeStateException(String code, String detailMessage) {
+      super(code + ": " + detailMessage);
+      this.code = code;
+      this.detailMessage = detailMessage;
+    }
+
+    String code() {
+      return code;
+    }
+
+    String detailMessage() {
+      return detailMessage;
+    }
   }
 
   private void validateWorldLifecycle(GameInstance instance) {

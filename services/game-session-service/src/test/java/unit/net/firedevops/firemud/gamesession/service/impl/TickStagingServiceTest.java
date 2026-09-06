@@ -561,11 +561,41 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(new TickQueuedCommandEnvelope(true, "cmd-solo-replay", "generate")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
     org.junit.jupiter.api.Assertions.assertTrue(replayBatch.isRequiresSoloTick());
     assertTrue(replayBatch.getSelectedWorkManifestJson().contains("\"requiresSoloTick\":true"));
+  }
+
+  @Test
+  void pendingReplayTerminalizesIncompleteAutomationWhenNoStagedBatchExists() {
+    GameplayCommand command = gameplayCommand("cmd-legacy-automation");
+    command.setSourceType("AUTOMATION");
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.empty());
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-automation")))
+        .thenReturn(List.of(command));
+
+    TickStagingService.ReplayResolution resolution =
+        service.resolveReplayBatchForTick(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-legacy-automation", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
+
+    assertTrue(resolution.recoveryOnly());
+    assertEquals(List.of(), resolution.drainEntries());
+    assertEquals("FAILED", command.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", command.getGameplayResult());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", command.getFailureCode());
+    verify(gameplayCommandRepository).saveAll(any());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
   }
 
   @Test

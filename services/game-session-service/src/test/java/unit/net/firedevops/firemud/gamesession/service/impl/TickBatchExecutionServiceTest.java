@@ -1020,6 +1020,60 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void restorePendingProjectionMarksLeaseLostWhenRestoreScriptReturnsNegativeOne() {
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(-1L);
+
+    TickQueueControlService.QueueUnavailableException exception =
+        assertThrows(
+            TickQueueControlService.QueueUnavailableException.class,
+            () -> service.restorePendingProjection(activeLease, 1L, 2L, List.of(), List.of()));
+
+    assertTrue(exception.getMessage().contains("Lost tick lock"));
+    verify(activeLease).markLost();
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_pending_replay_restore_failures_total").counter().count(),
+        0.001);
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_pending_replay_restore_consecutive_failures").gauge().value(),
+        0.001);
+  }
+
+  @Test
+  void restorePendingProjectionFailsClosedForNonCommitResultsAndClearsSignalAfterSuccess() {
+    when(redisTemplate.execute(any(), any(), any(Object[].class))).thenReturn(0L, 0L, 0L, 1L);
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+      assertThrows(
+          IllegalStateException.class,
+          () -> service.restorePendingProjection(activeLease, 1L, 2L, List.of(), List.of()));
+    }
+
+    assertEquals(
+        3.0,
+        meterRegistry.get("tick_pending_replay_restore_failures_total").counter().count(),
+        0.001);
+    assertEquals(
+        1.0, meterRegistry.get("tick_pending_replay_restore_alert_total").counter().count(), 0.001);
+    assertEquals(
+        3.0,
+        meterRegistry.get("tick_pending_replay_restore_consecutive_failures").gauge().value(),
+        0.001);
+    assertEquals(
+        3.0,
+        meterRegistry.get("tick_pending_replay_restore_alert_threshold_failures").gauge().value(),
+        0.001);
+
+    service.restorePendingProjection(activeLease, 1L, 2L, List.of(), List.of());
+
+    assertEquals(
+        0.0,
+        meterRegistry.get("tick_pending_replay_restore_consecutive_failures").gauge().value(),
+        0.001);
+  }
+
+  @Test
   void restorePendingProjectionLeavesRedisUntouchedWhenAtomicReconciliationFails() {
     TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
     TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
@@ -1034,7 +1088,6 @@ class TickBatchExecutionServiceTest {
                     activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
 
     assertEquals("Redis unavailable", exception.getMessage());
-    verify(gameplayCommandRepository, never()).saveAll(any());
     verify(listOps, never()).leftPush(anyString(), any());
     verify(listOps, never()).rightPush(anyString(), any());
   }

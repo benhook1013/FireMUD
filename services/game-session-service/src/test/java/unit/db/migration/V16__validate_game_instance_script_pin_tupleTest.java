@@ -18,8 +18,8 @@ class V16__validate_game_instance_script_pin_tupleTest {
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
-    assertThat(migration)
-        .contains("VALIDATE CONSTRAINT game_instances_script_pin_tuple_coherent")
-        .doesNotContain("NOT VALID");
+    assertThat(migration.replaceAll("\\s+", " ").trim())
+        .isEqualTo(
+            "-- [jooq ignore start] ALTER TABLE game_instances VALIDATE CONSTRAINT game_instances_script_pin_tuple_coherent; -- [jooq ignore stop]");
   }
 }

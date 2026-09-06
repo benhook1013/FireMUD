@@ -338,10 +338,6 @@ final class TickStagingService {
       ReplayRedisReconciliation reconciliation = resolution.redisReconciliation();
       // The durable replay decision is authoritative. Redis is only reconciled after the SQL
       // transaction commits, so a Redis failure cannot roll back or hold the GameInstance lock.
-      if (lease == null) {
-        throw new IllegalStateException(
-            "Active tick lease is required for pending replay projection reconciliation");
-      }
       try {
         tickBatchExecutionService.restorePendingProjection(
             lease,
@@ -410,14 +406,38 @@ final class TickStagingService {
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
     if (existing.isEmpty()) {
-      boolean replaySolo = uniformMode(replayEntries, "pending replay");
-      requireReplayLocalAutomationPinTuple(replayLocalAutomation, replayLockedInstance);
-      return new ReplayResolution(
+      Instant completedAt = Instant.now();
+      List<CommandSelection> acceptedSelections =
+          classifyFreshStageSelections(replaySelections, replayLockedInstance, completedAt);
+      List<TickQueuedCommandEnvelope> acceptedEntries =
+          acceptedSelections.stream().map(CommandSelection::entry).toList();
+      java.util.Set<String> acceptedCommandIds =
+          acceptedSelections.stream()
+              .map(selection -> selection.entry().commandId())
+              .collect(java.util.stream.Collectors.toSet());
+      List<TickQueuedCommandEnvelope> terminalizedEntries =
+          replayEntries.stream()
+              .filter(entry -> !acceptedCommandIds.contains(entry.commandId()))
+              .toList();
+      if (acceptedEntries.isEmpty()) {
+        return new ReplayResolution(
+            null,
+            List.of(),
+            new ReplayRedisReconciliation(
+                tenantId, gameInstanceId, replayEntries, List.of(), terminalizedEntries),
+            true,
+            true);
+      }
+      boolean replaySolo = uniformMode(acceptedEntries, "pending replay");
+      TickBatch replayBatch =
           createBatch(
-              "PENDING_REPLAY", tenantId, gameInstanceId, replaySolo, ownership, replayEntries),
-          List.copyOf(replayEntries),
-          null,
-          false,
+              "PENDING_REPLAY", tenantId, gameInstanceId, replaySolo, ownership, acceptedEntries);
+      return new ReplayResolution(
+          replayBatch,
+          List.copyOf(acceptedEntries),
+          new ReplayRedisReconciliation(
+              tenantId, gameInstanceId, replayEntries, acceptedEntries, terminalizedEntries),
+          true,
           false);
     }
     TickBatch batch = existing.orElseThrow();

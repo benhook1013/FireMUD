@@ -703,6 +703,7 @@ class GameInstanceServiceImplTest {
     assertEquals("RUNNING", store.get(7L).getStatus());
     assertNull(store.get(7L).getScriptPatchVersion());
     assertNull(store.get(7L).getScriptPinEpoch());
+    assertNull(store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
     verify(stateService, never()).deleteState(2L, 7L);
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(2)).saveState(states.capture());

@@ -42,6 +42,11 @@ final class GameSessionOperatorControlPlaneService {
       "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE";
   private static final String SCRIPT_PATCH_NOT_PUBLISHED = "SCRIPT_PATCH_NOT_PUBLISHED";
   private static final String SCRIPT_PATCH_NOT_READY = "SCRIPT_PATCH_NOT_READY";
+  private static final String SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT =
+      "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT";
+  private static final String SCRIPT_PATCH_TENANT_MISMATCH = "SCRIPT_PATCH_TENANT_MISMATCH";
+  private static final String SCRIPT_PATCH_BASE_VERSION_MISMATCH =
+      "SCRIPT_PATCH_BASE_VERSION_MISMATCH";
 
   private final GameInstanceRepository gameInstanceRepository;
   private final TickService tickService;
@@ -373,13 +378,24 @@ final class GameSessionOperatorControlPlaneService {
   }
 
   private String pinFailureMessage(String errorCode) {
-    if ("SCRIPT_PIN_EXPECTATION_FAILED".equals(errorCode)) {
-      return "expected current script pin does not match authoritative current tuple";
+    if (errorCode == null) {
+      return null;
     }
-    if ("SCRIPT_PIN_EPOCH_EXHAUSTED".equals(errorCode)) {
-      return "script pin epoch exhausted";
-    }
-    return errorCode;
+    return switch (errorCode) {
+      case "SCRIPT_PIN_EXPECTATION_FAILED" ->
+          "expected current script pin does not match authoritative current tuple";
+      case "SCRIPT_PIN_EPOCH_EXHAUSTED" -> "script pin epoch exhausted";
+      case SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT ->
+          "rollback target is already the current script patch";
+      case SCRIPT_PATCH_AUTHORITY_UNAVAILABLE -> "script patch authority is unavailable";
+      case SCRIPT_PATCH_NOT_PUBLISHED -> "script patch is not published";
+      case SCRIPT_PATCH_NOT_READY -> "script patch is not ready";
+      case SCRIPT_PATCH_TENANT_MISMATCH ->
+          "script patch tenant does not match the game instance tenant";
+      case SCRIPT_PATCH_BASE_VERSION_MISMATCH ->
+          "script patch base version does not match the game instance runtime version";
+      default -> errorCode;
+    };
   }
 
   private ScriptPinMutationResult recordPinFailure(
@@ -416,7 +432,7 @@ final class GameSessionOperatorControlPlaneService {
       long tenantId, GameInstance instance, String targetScriptPatchVersion, boolean rollback) {
     if (rollback
         && targetScriptPatchVersion.equals(normalizePatch(instance.getScriptPatchVersion()))) {
-      return "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT";
+      return SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT;
     }
     if (automationScriptingControlPlaneClient == null) {
       return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
@@ -447,7 +463,7 @@ final class GameSessionOperatorControlPlaneService {
     }
     PublishedScriptPatchVersion published = publicationResponse.getScriptPatch();
     if (!Long.toString(tenantId).equals(published.getTenantId())) {
-      return "SCRIPT_PATCH_TENANT_MISMATCH";
+      return SCRIPT_PATCH_TENANT_MISMATCH;
     }
     if (!targetScriptPatchVersion.equals(published.getScriptPatchVersion())
         || published.getVersionId() <= 0L
@@ -488,7 +504,7 @@ final class GameSessionOperatorControlPlaneService {
 
     Long runtimeVersionId = runtimeVersionId(instance);
     if (runtimeVersionId == null || !runtimeVersionId.equals(published.getBaseVersionId())) {
-      return "SCRIPT_PATCH_BASE_VERSION_MISMATCH";
+      return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
     }
     return null;
   }

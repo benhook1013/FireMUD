@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -8,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -21,11 +24,13 @@ import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecution
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
@@ -34,6 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 final class TickBatchExecutionService {
   private static final Logger logger = LoggingUtil.getLogger(TickBatchExecutionService.class);
+  private static final int PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES = 3;
   private static final String REMOTE_FOLLOWUP_BATCH_SOURCE = "REMOTE_FOLLOWUP_DRAIN";
   private static final DefaultRedisScript<Long> RESTORE_PENDING_PROJECTION_SCRIPT =
       buildRestorePendingProjectionScript();
@@ -50,6 +56,11 @@ final class TickBatchExecutionService {
   private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private final TransactionOperations transactionOperations;
   private final RedisTemplate<String, Object> fencedScriptRedisTemplate;
+  private final Counter pendingReplayRestoreFailuresCounter;
+  private final Counter pendingReplayRestoreAlertCounter;
+  // This is intentionally service-process-wide and unlabelled; exact scope remains durable
+  // tick-batch/runtime-health evidence rather than a high-cardinality metric dimension.
+  private final AtomicInteger consecutivePendingReplayRestoreFailures = new AtomicInteger();
 
   @Autowired
   TickBatchExecutionService(
@@ -102,6 +113,20 @@ final class TickBatchExecutionService {
     this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
     this.transactionOperations = transactionOperations;
     this.fencedScriptRedisTemplate = FencedRedisScriptSupport.createTemplate(redisTemplate);
+    this.pendingReplayRestoreFailuresCounter =
+        meterRegistry.counter("tick_pending_replay_restore_failures_total");
+    this.pendingReplayRestoreAlertCounter =
+        meterRegistry.counter("tick_pending_replay_restore_alert_total");
+    Gauge.builder(
+            "tick_pending_replay_restore_consecutive_failures",
+            consecutivePendingReplayRestoreFailures,
+            AtomicInteger::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "tick_pending_replay_restore_alert_threshold_failures",
+            this,
+            ignored -> PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES)
+        .register(meterRegistry);
   }
 
   void restorePendingProjection(
@@ -145,21 +170,52 @@ final class TickBatchExecutionService {
     scriptArguments.add(String.valueOf(terminalizedEntries.size()));
     terminalizedEntries.forEach(
         entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
-    Long restored =
-        executeRestorePendingProjectionScript(
-            List.of(pendingKey, queueKey, lease.key()), scriptArguments.toArray());
+    Long restored;
+    try {
+      restored =
+          executeRestorePendingProjectionScript(
+              List.of(pendingKey, queueKey, lease.key()), scriptArguments.toArray());
+    } catch (RuntimeException ex) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "exception");
+      throw ex;
+    }
     if (Long.valueOf(-1L).equals(restored)) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "lease_lost");
       lease.markLost();
       throw new TickQueueControlService.QueueUnavailableException(
           "Lost tick lock " + lease.key() + " during Redis pending projection reconciliation");
     }
     if (!Long.valueOf(1L).equals(restored)) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "not_committed");
       throw new IllegalStateException(
           "Redis pending projection reconciliation did not commit for gameInstanceId="
               + gameInstanceId);
     }
-    if (!redisOnlyEntries.isEmpty()) {
-      recordRequeuedActions(redisOnlyEntries);
+    try {
+      if (!redisOnlyEntries.isEmpty()) {
+        recordRequeuedActions(redisOnlyEntries);
+      }
+    } catch (RuntimeException ex) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "durable_requeue");
+      throw ex;
+    }
+    consecutivePendingReplayRestoreFailures.set(0);
+  }
+
+  private void recordPendingReplayRestoreFailure(
+      Long tenantId, Long gameInstanceId, String failureKind) {
+    pendingReplayRestoreFailuresCounter.increment();
+    int consecutiveFailures = consecutivePendingReplayRestoreFailures.incrementAndGet();
+    if (consecutiveFailures == PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES) {
+      pendingReplayRestoreAlertCounter.increment();
+      logger.warn(
+          "Pending replay restore failure threshold reached tenantId={} gameInstanceId={} "
+              + "failureKind={} consecutiveFailures={} threshold={}",
+          tenantId,
+          gameInstanceId,
+          failureKind,
+          consecutiveFailures,
+          PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES);
     }
   }
 
@@ -294,91 +350,8 @@ final class TickBatchExecutionService {
   private static DefaultRedisScript<Long> buildRestorePendingProjectionScript() {
     DefaultRedisScript<Long> script = new DefaultRedisScript<>();
     script.setResultType(Long.class);
-    script.setScriptText(
-        """
-        local pending = KEYS[1]
-        local queue = KEYS[2]
-        local lease = KEYS[3]
-        local argumentCount = #ARGV
-        if redis.call('GET', lease) ~= ARGV[1] then
-          return -1
-        end
-
-        local pendingCount = tonumber(ARGV[2])
-        if not pendingCount
-            or pendingCount < 0
-            or pendingCount ~= math.floor(pendingCount) then
-          return 0
-        end
-
-        local pendingPayloadStartIndex = 3
-        local sealedCountIndex = pendingPayloadStartIndex + pendingCount
-        if sealedCountIndex > argumentCount then
-          return 0
-        end
-        local sealedCount = tonumber(ARGV[sealedCountIndex])
-        if not sealedCount
-            or sealedCount < 0
-            or sealedCount ~= math.floor(sealedCount) then
-          return 0
-        end
-
-        local sealedPayloadStartIndex = sealedCountIndex + 1
-        local redisOnlyCountIndex = sealedPayloadStartIndex + sealedCount
-        if redisOnlyCountIndex > argumentCount then
-          return 0
-        end
-        local redisOnlyCount = tonumber(ARGV[redisOnlyCountIndex])
-        if not redisOnlyCount
-            or redisOnlyCount < 0
-            or redisOnlyCount ~= math.floor(redisOnlyCount) then
-          return 0
-        end
-
-        local redisOnlyPayloadStartIndex = redisOnlyCountIndex + 1
-        local terminalizedCountIndex = redisOnlyPayloadStartIndex + redisOnlyCount
-        if terminalizedCountIndex > argumentCount then
-          return 0
-        end
-        local terminalizedCount = tonumber(ARGV[terminalizedCountIndex])
-        if not terminalizedCount
-            or terminalizedCount < 0
-            or terminalizedCount ~= math.floor(terminalizedCount) then
-          return 0
-        end
-
-        local terminalizedPayloadStartIndex = terminalizedCountIndex + 1
-        local expectedArgumentCount = terminalizedPayloadStartIndex + terminalizedCount - 1
-        if expectedArgumentCount ~= argumentCount then
-          return 0
-        end
-
-        local pendingPayloadIndex = pendingPayloadStartIndex
-        for index = 1, pendingCount do
-          redis.call('LREM', pending, 0, ARGV[pendingPayloadIndex])
-          pendingPayloadIndex = pendingPayloadIndex + 1
-        end
-
-        local sealedPayloadIndex = sealedPayloadStartIndex
-        for index = 1, sealedCount do
-          redis.call('RPUSH', pending, ARGV[sealedPayloadIndex])
-          sealedPayloadIndex = sealedPayloadIndex + 1
-        end
-
-        for index = redisOnlyCount, 1, -1 do
-          local payload = ARGV[redisOnlyPayloadStartIndex + index - 1]
-          redis.call('LREM', queue, 0, payload)
-          redis.call('LPUSH', queue, payload)
-        end
-        local terminalizedPayloadIndex = terminalizedPayloadStartIndex
-        for index = 1, terminalizedCount do
-          local payload = ARGV[terminalizedPayloadIndex]
-          redis.call('LREM', pending, 0, payload)
-          redis.call('LREM', queue, 0, payload)
-          terminalizedPayloadIndex = terminalizedPayloadIndex + 1
-        end
-        return 1
-        """);
+    script.setScriptSource(
+        new ResourceScriptSource(new ClassPathResource("redis/restore_pending_projection.lua")));
     return script;
   }
 
