@@ -2,10 +2,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
@@ -1129,7 +1127,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void startSessionRuntimeFailureReturnsInternalTransportStatus() {
+  void startSessionRuntimeFailureReturnsInBandInternalError() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -1155,7 +1153,7 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<Throwable> error = new AtomicReference<>();
+    AtomicReference<StartSessionResponse> responseRef = new AtomicReference<>();
     service.startSession(
         StartSessionRequest.newBuilder()
             .setTenantId("1")
@@ -1166,21 +1164,20 @@ class GameSessionGrpcServiceTest {
         new StreamObserver<StartSessionResponse>() {
           @Override
           public void onNext(StartSessionResponse value) {
-            fail("runtime failure must not produce a response");
+            responseRef.set(value);
           }
 
           @Override
           public void onError(Throwable t) {
-            error.set(t);
+            fail(t);
           }
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(error.get());
-    assertEquals(Status.Code.INTERNAL, Status.fromThrowable(error.get()).getCode());
-    assertEquals("Internal error", Status.fromThrowable(error.get()).getDescription());
+    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals("Internal error", responseRef.get().getError().getMessage());
   }
 
   @Test
@@ -1391,7 +1388,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void stopSessionRuntimeFailureReturnsInternalTransportStatus() {
+  void stopSessionRuntimeFailureReturnsInBandInternalError() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -1422,27 +1419,27 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<Throwable> error = new AtomicReference<>();
+    AtomicReference<StopSessionResponse> responseRef = new AtomicReference<>();
     service.stopSession(
         StopSessionRequest.newBuilder().setSessionId("7").build(),
         new StreamObserver<StopSessionResponse>() {
           @Override
           public void onNext(StopSessionResponse value) {
-            fail("runtime failure must not produce a response");
+            responseRef.set(value);
           }
 
           @Override
           public void onError(Throwable t) {
-            error.set(t);
+            fail(t);
           }
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(error.get());
-    assertEquals(Status.Code.INTERNAL, Status.fromThrowable(error.get()).getCode());
-    assertEquals("Internal error", Status.fromThrowable(error.get()).getDescription());
+    assertFalse(responseRef.get().getSuccess());
+    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals("Internal error", responseRef.get().getError().getMessage());
   }
 
   @Test
@@ -1593,7 +1590,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void restartSessionRuntimeFailureReturnsInternalTransportStatus() {
+  void restartSessionRuntimeFailureReturnsInBandInternalError() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -1623,27 +1620,27 @@ class GameSessionGrpcServiceTest {
             meterRegistry,
             ipLimiter);
 
-    AtomicReference<Throwable> error = new AtomicReference<>();
+    AtomicReference<RestartSessionResponse> responseRef = new AtomicReference<>();
     service.restartSession(
         RestartSessionRequest.newBuilder().setSessionId("7").build(),
         new StreamObserver<RestartSessionResponse>() {
           @Override
           public void onNext(RestartSessionResponse value) {
-            fail("runtime failure must not produce a response");
+            responseRef.set(value);
           }
 
           @Override
           public void onError(Throwable t) {
-            error.set(t);
+            fail(t);
           }
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(error.get());
-    assertEquals(Status.Code.INTERNAL, Status.fromThrowable(error.get()).getCode());
-    assertEquals("Internal error", Status.fromThrowable(error.get()).getDescription());
+    assertFalse(responseRef.get().getSuccess());
+    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals("Internal error", responseRef.get().getError().getMessage());
   }
 
   @Test

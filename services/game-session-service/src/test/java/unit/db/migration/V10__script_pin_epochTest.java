@@ -20,7 +20,9 @@ class V10__script_pin_epochTest {
     assertThat(migration)
         .contains("ADD COLUMN script_pin_epoch bigint")
         .contains("UPDATE game_instances")
-        .contains("SET script_patch_version = NULL, script_pin_epoch = NULL")
+        .contains(
+            "SET script_patch_version = NULL, script_pin_epoch = NULL, "
+                + "script_patch_pinned_control_plane_request_id = NULL")
         .contains("SET script_pin_epoch = 1")
         .contains("script_pin_epoch IS NULL")
         .contains("script_patch_version")

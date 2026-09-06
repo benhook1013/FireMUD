@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -223,7 +222,9 @@ public final class GameSessionGrpcService
               .build());
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      onInternalFailure(responseObserver, "startSession", ex);
+      responseObserver.onNext(
+          StartSessionResponse.newBuilder().setError(internalFailure("startSession", ex)).build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -281,7 +282,12 @@ public final class GameSessionGrpcService
               .build());
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      onInternalFailure(responseObserver, "stopSession", ex);
+      responseObserver.onNext(
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internalFailure("stopSession", ex))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -321,7 +327,12 @@ public final class GameSessionGrpcService
               .build());
       responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
-      onInternalFailure(responseObserver, "restartSession", ex);
+      responseObserver.onNext(
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internalFailure("restartSession", ex))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -329,11 +340,8 @@ public final class GameSessionGrpcService
     return GrpcAppErrors.error(meterRegistry, LOG, operation, cause.code(), cause.detailMessage());
   }
 
-  private void onInternalFailure(
-      StreamObserver<?> responseObserver, String operation, IllegalStateException cause) {
-    ErrorDetail detail = GrpcAppErrors.internal(meterRegistry, LOG, operation, cause);
-    responseObserver.onError(
-        Status.INTERNAL.withDescription(detail.getMessage()).asRuntimeException());
+  private ErrorDetail internalFailure(String operation, IllegalStateException cause) {
+    return GrpcAppErrors.internal(meterRegistry, LOG, operation, cause);
   }
 
   @Override

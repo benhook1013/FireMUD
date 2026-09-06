@@ -36,11 +36,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
     assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID: instance is not ACTIVE", error.getMessage());
   }
 
@@ -114,11 +115,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
         .thenReturn(GetWorldInstanceLifecycleResponse.getDefaultInstance());
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
     assertEquals(
         "WORLD_INSTANCE_LIFECYCLE_INVALID: World response omitted lifecycle snapshot",
         error.getMessage());
@@ -133,11 +135,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 1L, 7L, 0L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
     assertEquals(
         "WORLD_INSTANCE_LIFECYCLE_INVALID: lifecycle epoch must be positive", error.getMessage());
   }
@@ -151,11 +154,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 2L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_SCOPE_MISMATCH", error.code());
     assertEquals(
         "WORLD_INSTANCE_SCOPE_MISMATCH: lifecycle response does not match the requested instance",
         error.getMessage());
@@ -214,11 +218,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
     assertEquals(
         "WORLD_INSTANCE_LIFECYCLE_INVALID: lifecycle response has invalid identity",
         error.getMessage());
@@ -233,11 +238,12 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 "1", "0", 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
     assertEquals(
         "WORLD_INSTANCE_LIFECYCLE_INVALID: lifecycle response has invalid identity",
         error.getMessage());

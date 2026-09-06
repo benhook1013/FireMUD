@@ -62,10 +62,13 @@ class V14__clear_unpinned_script_pin_metadataTest {
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
-    String where =
-        migration.substring(
-            migration.indexOf("WHERE"), migration.indexOf(";", migration.indexOf("WHERE")));
-    assertThat(where)
+    int update = migration.indexOf("UPDATE game_instances");
+    int where = migration.indexOf("WHERE", update);
+    int statementEnd = migration.indexOf(";", where);
+    assertThat(update).isGreaterThanOrEqualTo(0);
+    assertThat(where).isGreaterThan(update);
+    String whereClause = migration.substring(where, statementEnd);
+    assertThat(whereClause)
         .contains("NULLIF(regexp_replace(script_patch_version")
         .contains("AND script_pin_epoch IS NULL")
         .contains("script_pin_epoch IS NULL")

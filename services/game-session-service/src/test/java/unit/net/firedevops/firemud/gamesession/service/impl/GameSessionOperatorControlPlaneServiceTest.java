@@ -200,6 +200,8 @@ class GameSessionOperatorControlPlaneServiceTest {
 
     org.assertj.core.api.Assertions.assertThat(response.getError().getCode())
         .isEqualTo("SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT");
+    org.assertj.core.api.Assertions.assertThat(response.getError().getMessage())
+        .isEqualTo("rollback target is already the current script patch");
     org.mockito.Mockito.verify(repository)
         .recordScriptPinFailure(
             1L,

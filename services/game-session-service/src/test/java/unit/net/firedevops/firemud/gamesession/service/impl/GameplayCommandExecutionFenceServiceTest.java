@@ -179,8 +179,11 @@ class GameplayCommandExecutionFenceServiceTest {
     GameplayCommand command = command();
     command.setSourceType("REMOTE_FOLLOWUP");
     command.setRemoteFollowupId("followup-1");
-    command.setScriptPatchVersion(null);
-    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));
+    command.setScriptPatchVersion("patch-current");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("request-old");
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-current", 9L, "request-current")));
 
     assertTrue(service.validate(batch(), command).isEmpty());
     verifyNoInteractions(automationScriptingControlPlaneClient);
@@ -191,8 +194,11 @@ class GameplayCommandExecutionFenceServiceTest {
     GameplayCommand command = command();
     command.setSourceType("AUTOMATION");
     command.setRemoteFollowupId("followup-1");
-    command.setScriptPatchVersion(null);
-    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));
+    command.setScriptPatchVersion("patch-current");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("request-old");
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-current", 9L, "request-current")));
 
     assertTrue(service.validate(batch(), command).isEmpty());
     verifyNoInteractions(automationScriptingControlPlaneClient);

@@ -385,14 +385,23 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
             : instance.getScriptPinEpoch();
     String scriptPinControlPlaneRequestId =
         instance == null ? "" : instance.getScriptPatchPinnedControlPlaneRequestId();
-    if (!StringUtils.hasText(scriptPatchVersion)
-        || scriptPinEpoch <= 0L
-        || !StringUtils.hasText(scriptPinControlPlaneRequestId)) {
-      LOG.warn(
-          "Skipping script event publish because the complete script pin tuple is unavailable tenantId={} gameInstanceId={} characterId={}",
-          tenantId,
-          gameInstanceId,
-          entityId);
+    boolean hasPatch = StringUtils.hasText(scriptPatchVersion);
+    boolean hasEpoch = scriptPinEpoch > 0L;
+    boolean hasOwnerRequest = StringUtils.hasText(scriptPinControlPlaneRequestId);
+    if (!(hasPatch && hasEpoch && hasOwnerRequest)) {
+      if (hasPatch || hasEpoch || hasOwnerRequest) {
+        LOG.warn(
+            "Skipping script event publish because the script pin tuple is partial tenantId={} gameInstanceId={} characterId={}",
+            tenantId,
+            gameInstanceId,
+            entityId);
+      } else {
+        LOG.debug(
+            "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
+            tenantId,
+            gameInstanceId,
+            entityId);
+      }
       return null;
     }
     PublishedRegionScope scopeRegion =

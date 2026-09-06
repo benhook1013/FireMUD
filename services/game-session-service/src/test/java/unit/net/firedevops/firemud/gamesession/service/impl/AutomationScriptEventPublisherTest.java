@@ -152,8 +152,7 @@ class AutomationScriptEventPublisherTest {
 
     verify(client, never()).triggerScriptEvent(Mockito.any());
     assertThat(output.getOut() + output.getErr())
-        .contains(
-            "Skipping script event publish because the complete script pin tuple is unavailable")
+        .contains("Skipping script event publish because the script pin tuple is partial")
         .contains("tenantId=9")
         .contains("gameInstanceId=99");
   }

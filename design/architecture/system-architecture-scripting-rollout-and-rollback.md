@@ -18,6 +18,8 @@ The current exact-owner boundary is narrower than the target workflow: Game Sess
 
 Any deployment or runtime transition that crosses the exact-pin boundary must establish a clean handoff from legacy local Automation staging before accepting new work. Operators must quiesce and drain affected scopes using the authoritative admission and readback contracts above, preserve pending commands, and verify the complete owner-evidence tuple `(scriptPatchVersion, scriptPinEpoch, scriptPinControlPlaneRequestId)` before work crosses the boundary. Legacy local Automation commands without exact evidence must be drained or explicitly reconciled; the transition must not silently lose them. Under the exact-pin runtime, an unrecoverable command lacking exact evidence terminalizes as `FAILED`/`NOT_APPLIED` with `INCOMPATIBLE_SEALED_REPLAY` rather than guessing a pin or silently dropping the command. This is a fail-closed loss-prevention outcome, not compatibility scaffolding.
 
+Deployments that change the selected-work manifest digest must drain affected ticks before rollout. Otherwise, an in-flight version-1 `STAGED` batch is abandoned after version 2 becomes authoritative and its preserved commands are restaged through a `PENDING_REPLAY` batch, producing an expected one-time digest-mismatch signal without losing work.
+
 Select and report the required deployment and runtime proof, including exact-evidence handoff, drain/readback, and executed-versus-skipped results, under the [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md). This canonical rollout contract does not duplicate an environment-specific deployment checklist.
 
 ## Patch Promotion (Operator-Driven)

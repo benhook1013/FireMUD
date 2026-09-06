@@ -75,15 +75,29 @@ class GameInstanceScriptPinMigrationIntegrationTest {
     dsl.execute(
         "INSERT INTO game_instances (id, tenant_id, runtime_version, script_patch_version, "
             + "script_pin_epoch, script_patch_pinned_control_plane_request_id, owner_account_id, status) "
-            + "VALUES (104, 42, '1.0.0', 'patch-new', 2, 'request-new', 100, 'RUNNING')");
+            + "VALUES (104, 42, '1.0.0', 'patch-new', 2, 'request-new', 104, 'RUNNING')");
     assertThatThrownBy(
             () ->
                 dsl.execute(
                     "INSERT INTO game_instances (id, tenant_id, runtime_version, "
                         + "script_patch_version, owner_account_id, status) "
-                        + "VALUES (105, 42, '1.0.0', 'patch-invalid', 100, 'RUNNING')"))
+                        + "VALUES (105, 42, '1.0.0', 'patch-invalid', 105, 'RUNNING')"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("game_instances_script_pin_tuple_coherent");
+    assertThat(dsl.fetch("SELECT * FROM game_instances WHERE id = 105")).isEmpty();
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .target("16")
+        .load()
+        .migrate();
+
+    dsl.execute(
+        "INSERT INTO game_instances (id, tenant_id, runtime_version, script_patch_version, "
+            + "script_pin_epoch, script_patch_pinned_control_plane_request_id, owner_account_id, status) "
+            + "VALUES (106, 42, '1.0.0', 'patch-after-validation', 106, 'request-after-validation', 106, 'RUNNING')");
+    assertThat(dsl.fetch("SELECT * FROM game_instances WHERE id = 106")).hasSize(1);
   }
 
   private static DriverManagerDataSource dataSource() {

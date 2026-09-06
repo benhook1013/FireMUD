@@ -179,8 +179,8 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalStateException(errorCode + ": " + response.getError().getMessage());
     }
     if (!response.hasWorldInstance()) {
-      throw new IllegalStateException(
-          "WORLD_INSTANCE_LIFECYCLE_INVALID: World response omitted lifecycle snapshot");
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "World response omitted lifecycle snapshot");
     }
     WorldInstanceLifecycleSnapshot snapshot = response.getWorldInstance();
     final long tenantId;
@@ -189,20 +189,21 @@ final class GameSessionRuntimeControlPlaneReadService {
       tenantId = parseExternalId(snapshot.getTenantId(), "tenantId");
       gameInstanceId = parseExternalId(snapshot.getGameInstanceId(), "gameInstanceId");
     } catch (IllegalArgumentException ex) {
-      throw new IllegalStateException(
-          "WORLD_INSTANCE_LIFECYCLE_INVALID: lifecycle response has invalid identity", ex);
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "lifecycle response has invalid identity");
     }
     if (tenantId != instance.getTenantId() || gameInstanceId != instance.getId()) {
-      throw new IllegalStateException(
-          "WORLD_INSTANCE_SCOPE_MISMATCH: lifecycle response does not match the requested instance");
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_SCOPE_MISMATCH",
+          "lifecycle response does not match the requested instance");
     }
     if (snapshot.getLifecycleEpoch() <= 0L) {
-      throw new IllegalStateException(
-          "WORLD_INSTANCE_LIFECYCLE_INVALID: lifecycle epoch must be positive");
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "lifecycle epoch must be positive");
     }
     if (snapshot.getStatus()
         != WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
-      throw new IllegalStateException("WORLD_INSTANCE_LIFECYCLE_INVALID: instance is not ACTIVE");
+      throw new RuntimeStateException("WORLD_INSTANCE_LIFECYCLE_INVALID", "instance is not ACTIVE");
     }
   }
 

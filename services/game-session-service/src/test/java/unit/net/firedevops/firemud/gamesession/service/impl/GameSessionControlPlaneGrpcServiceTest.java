@@ -534,7 +534,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertNotNull(responseRef.get());
-    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals("WORLD_INSTANCE_SCOPE_MISMATCH", responseRef.get().getError().getCode());
     assertFalse(responseRef.get().hasRuntimeState());
   }
 
@@ -570,7 +570,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertNotNull(responseRef.get());
-    assertEquals("INTERNAL", responseRef.get().getError().getCode());
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", responseRef.get().getError().getCode());
     assertFalse(responseRef.get().hasRuntimeState());
   }
 

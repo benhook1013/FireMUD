@@ -16,6 +16,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -24,6 +25,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.client.GameDesignClient;
+import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -34,6 +38,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
+import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecutionService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -42,7 +47,7 @@ import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionRequest;
 import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.AdmissionResult;
-import net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupport.DurableAdmission;
+import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -216,22 +221,43 @@ class AutomationGameplayCommandAdmissionSupportTest {
         .when(tickService)
         .processTick(anyLong(), anyLong());
 
-    AdmissionRequest request = automationRequest();
-    DurableAdmission durableAdmission =
-        transactionOperations.execute(
-            status ->
-                AutomationGameplayCommandAdmissionSupport.admitIfAbsentDurably(
-                    request,
-                    gameInstanceRepository,
-                    gameplayCommandRepository,
-                    runtimeRegionStatusRepository,
-                    null));
-    AdmissionResult result =
-        AutomationGameplayCommandAdmissionSupport.materializeAcceptedCommand(
-            durableAdmission, request, gameplayCommandRepository, tickService);
+    GameSessionCommandControlPlaneService controlPlaneService =
+        new GameSessionCommandControlPlaneService(
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            mock(RemoteFollowupRepository.class),
+            mock(RemoteCommandCoordinatorRepository.class),
+            mock(RemoteFollowupResultRepository.class),
+            null,
+            mock(GameDesignClient.class),
+            mock(BuiltInTextCommandAliasResolver.class),
+            tickService,
+            new SimpleMeterRegistry(),
+            transactionOperations);
+    EnqueueAutomationCommandIfAbsentRequest request =
+        EnqueueAutomationCommandIfAbsentRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("2")
+            .setRegionId("region-alpha")
+            .setRegionEpoch(7L)
+            .setAutomationDispatchId("dispatch-1")
+            .setAutomationWorkItemId("work-item-1")
+            .setScriptId("script-1")
+            .setScriptPatchVersion("patch-1")
+            .setScriptPinEpoch(1L)
+            .setScriptPinControlPlaneRequestId("request-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setPointerVersion("17")
+            .setTargetEntityId("npc-alpha")
+            .setCommand("say hello")
+            .build();
+    var result = controlPlaneService.enqueueAutomationCommandIfAbsent(request);
 
-    assertTrue(result.accepted());
-    assertEquals("ENQUEUED", result.admissionOutcome());
+    assertTrue(result.getAccepted());
+    assertEquals("ENQUEUED", result.getAdmissionOutcome());
     assertEquals(
         List.of("transaction-begin", "transaction-commit", "redis-enqueue", "immediate-tick"),
         events);
@@ -1729,7 +1755,16 @@ class AutomationGameplayCommandAdmissionSupportTest {
   private static GameInstanceRepository mockGameInstanceRepository() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
-        .thenAnswer(invocation -> repository.findById(invocation.getArgument(1, Long.class)));
+        .thenAnswer(
+            invocation ->
+                repository
+                    .findById(invocation.getArgument(1, Long.class))
+                    .filter(
+                        instance ->
+                            instance.getTenantId() != null
+                                && instance
+                                    .getTenantId()
+                                    .equals(invocation.getArgument(0, Long.class))));
     return repository;
   }
 

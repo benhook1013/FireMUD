@@ -882,12 +882,20 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               + ": "
               + terminateResponse.getError().getMessage());
     }
-    requireWorldSnapshot(
-        terminateResponse.hasWorldInstance(),
-        terminateResponse.getWorldInstance(),
-        runningState.tenantId(),
-        runningState.id(),
-        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED);
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            terminateResponse.hasWorldInstance(),
+            terminateResponse.getWorldInstance(),
+            runningState.tenantId(),
+            runningState.id(),
+            null);
+    if (snapshot.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
+      throw new LifecycleOutcomeException(
+          "WORLD_TERMINATION_IN_PROGRESS", "session termination is already in progress");
+    }
+    requireLifecycleStatus(
+        snapshot, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED);
   }
 
   private WorldInstanceLifecycleSnapshot requireWorldSnapshot(

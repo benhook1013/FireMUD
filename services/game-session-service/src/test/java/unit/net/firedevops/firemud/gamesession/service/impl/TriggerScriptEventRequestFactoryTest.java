@@ -117,7 +117,9 @@ class TriggerScriptEventRequestFactoryTest {
 
     assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
+        .hasMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                + " together");
   }
 
   @Test
@@ -144,7 +146,9 @@ class TriggerScriptEventRequestFactoryTest {
 
       assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
           .isInstanceOf(IllegalArgumentException.class)
-          .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
+          .hasMessage(
+              "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                  + " together");
     }
   }
 }

@@ -647,6 +647,32 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionMapsTerminationInProgressResponseToLifecycleOutcome() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    WorldInstanceLifecycleSnapshot.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("10")
+                        .setLifecycleEpoch(3L)
+                        .setStatus(
+                            WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING)
+                        .build())
+                .build());
+
+    LifecycleOutcomeException error =
+        assertThrows(LifecycleOutcomeException.class, () -> service.stopSession(10L));
+
+    assertEquals("WORLD_TERMINATION_IN_PROGRESS", error.code());
+    assertEquals("session termination is already in progress", error.detailMessage());
+    assertEquals("STOPPING", store.get(10L).getStatus());
+  }
+
+  @Test
   void stopSessionKeepsSessionStoppedWhenFinalizationFailsAfterWorldTermination() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     AtomicInteger mapperCalls = new AtomicInteger();
