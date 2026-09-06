@@ -56,6 +56,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -1967,7 +1968,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             Long.toString(zeroIfNull(candidate.regionEpoch())),
             instance.getScriptPatchVersion(),
             Long.toString(candidate.scriptPinEpoch()),
-            candidate.scriptPinControlPlaneRequestId(),
             candidate.duePointToken(),
             shortHash(applicableBindingId(instance)),
             shortHash(blankToEmpty(instance.getScheduleDefinitionId())));
@@ -1991,7 +1991,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     payload.put("targetScopeId", blankToEmpty(instance.getTargetScopeId()));
     try {
       return objectMapper.writeValueAsString(payload);
-    } catch (Exception ex) {
+    } catch (JacksonException ex) {
       throw new IllegalStateException("timer_payload_json_invalid", ex);
     }
   }

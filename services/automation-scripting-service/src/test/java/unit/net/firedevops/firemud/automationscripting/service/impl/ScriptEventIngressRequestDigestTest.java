@@ -54,6 +54,25 @@ class ScriptEventIngressRequestDigestTest {
   }
 
   @Test
+  void bindsEventSchemaVersionSoChangingOnlySchemaCannotReplayTheClaim() {
+    TriggerScriptEventRequest original = request("{\"a\":1}");
+
+    assertThat(ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"))
+        .isNotEqualTo(
+            ScriptEventIngressRequestDigest.compute(original, "v2", "game-session-service"));
+  }
+
+  @Test
+  void bindsSourceServiceSoChangingOnlyProducerCannotReplayTheClaim() {
+    TriggerScriptEventRequest original = request("{\"a\":1}");
+
+    assertThat(ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"))
+        .isNotEqualTo(
+            ScriptEventIngressRequestDigest.compute(
+                original, "v1", "automation-scripting-service"));
+  }
+
+  @Test
   void rejectsDuplicateJsonObjectKeys() {
     TriggerScriptEventRequest duplicateKeys = request("{\"a\":1,\"a\":2}");
 

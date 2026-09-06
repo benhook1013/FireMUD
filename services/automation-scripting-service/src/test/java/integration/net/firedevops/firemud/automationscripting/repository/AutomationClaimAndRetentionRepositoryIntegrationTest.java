@@ -171,6 +171,35 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void concurrentPreInstanceOnLoadClaimsWithNullableScopeHaveOnePostgresWinnerAndOneLoser()
+      throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<Future<ScriptEventIngressAuditRepository.IdempotentInsertResult>> futures =
+        new ArrayList<>();
+    for (int i = 0; i < 2; i++) {
+      futures.add(
+          executor.submit(
+              () -> {
+                ready.countDown();
+                await(start);
+                return new ScriptEventIngressAuditRepository(dsl)
+                    .insertIfAbsentByIdentity(preInstanceIngressClaim());
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    var first = get(futures.get(0));
+    var second = get(futures.get(1));
+
+    assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
+    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
+    assertThat(first.audit().getScriptId()).isEqualTo("script-1");
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
   void concurrentPinnedWorkClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);

@@ -27,6 +27,7 @@ import org.jooq.Record;
 import org.jooq.SelectFieldOrAsterisk;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -331,8 +332,10 @@ public class ScriptWorkItemRepository {
 
   /**
    * Deletes eligible rows while retaining the eligibility decision through child and parent
-   * deletion. The caller must invoke this inside a transaction so the row locks remain held.
+   * deletion. The transaction keeps the row locks held until all child and parent rows are
+   * disposed.
    */
+  @Transactional
   public long deleteByStatusAndUpdatedAtBefore(String status, Instant updatedAt) {
     if ("DEAD_LETTERED".equals(status)) {
       // The live schema has no recovery aggregate, generation/claim state, expected-child ledger,
@@ -354,9 +357,10 @@ public class ScriptWorkItemRepository {
 
   /**
    * Deletes the oldest rows for a status while retaining the status eligibility decision through
-   * child and parent deletion. The caller must invoke this inside a transaction; row locks are
-   * deliberately held until the child evidence and parent rows are disposed.
+   * child and parent deletion. The transaction deliberately holds row locks until the child
+   * evidence and parent rows are disposed.
    */
+  @Transactional
   public long deleteOldestByStatus(String status, int limit) {
     if (limit <= 0 || "DEAD_LETTERED".equals(status)) {
       // Row-cap cleanup uses the same fail-closed gate as age cleanup.

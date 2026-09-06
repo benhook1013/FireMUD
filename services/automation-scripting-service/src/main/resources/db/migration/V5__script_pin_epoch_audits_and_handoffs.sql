@@ -75,7 +75,6 @@ BEGIN
         SELECT 1
         FROM script_event_ingress_audit
         WHERE game_instance_id IS NULL
-          AND script_id IS NOT NULL
           AND script_pin_epoch IS NULL
         GROUP BY tenant_id,
                  script_id,
@@ -145,6 +144,7 @@ ALTER TABLE script_event_ingress_audit
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
 
+/* [jooq ignore start] */
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
     tenant_id,
     script_id,
@@ -154,7 +154,8 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_even
     script_event_id,
     dry_run,
     source_service
-) WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;
+) NULLS NOT DISTINCT WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;
+/* [jooq ignore stop] */
 
 ALTER TABLE script_event_audit
     ADD COLUMN script_pin_epoch BIGINT;
@@ -236,6 +237,32 @@ ALTER TABLE script_handoff_events
 
 ALTER TABLE script_handoff_events
     ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';
+
+-- Script-only handoffs use the empty-string sentinel for plugin identity. Normalize retained
+-- nullable legacy rows before enforcing the same canonical representation for new handoffs, so a
+-- replay cannot treat NULL and the empty sentinel as different immutable identities.
+UPDATE script_handoff_events
+SET plugin_id = CASE
+        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        ELSE plugin_id
+    END,
+    plugin_version_id = CASE
+        WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+        ELSE plugin_version_id
+    END
+WHERE plugin_id IS NULL OR plugin_version_id IS NULL;
+
+ALTER TABLE script_handoff_events
+    ALTER COLUMN plugin_id SET DEFAULT '';
+
+ALTER TABLE script_handoff_events
+    ALTER COLUMN plugin_version_id SET DEFAULT '';
+
+ALTER TABLE script_handoff_events
+    ALTER COLUMN plugin_id SET NOT NULL;
+
+ALTER TABLE script_handoff_events
+    ALTER COLUMN plugin_version_id SET NOT NULL;
 
 ALTER TABLE script_handoff_events
     ADD CONSTRAINT ck_script_handoff_events_pin_tuple CHECK (
