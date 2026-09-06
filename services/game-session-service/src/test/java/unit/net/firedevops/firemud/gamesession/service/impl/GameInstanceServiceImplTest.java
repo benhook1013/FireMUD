@@ -45,6 +45,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
@@ -344,12 +346,14 @@ class GameInstanceServiceImplTest {
     when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenThrow(new IllegalStateException("fail-prepared response timed out"));
 
-    Method failPreparedMethod =
-        Arrays.stream(GameInstanceServiceImpl.class.getDeclaredMethods())
-            .filter(method -> method.getName().equals("failPreparedWorldInstance"))
+    Class<?> preparedWorldInstanceType =
+        Arrays.stream(GameInstanceServiceImpl.class.getDeclaredClasses())
+            .filter(type -> type.getSimpleName().equals("PreparedWorldInstance"))
             .findFirst()
             .orElseThrow();
-    Class<?> preparedWorldInstanceType = failPreparedMethod.getParameterTypes()[0];
+    Method failPreparedMethod =
+        GameInstanceServiceImpl.class.getDeclaredMethod(
+            "failPreparedWorldInstance", preparedWorldInstanceType, String.class);
     Constructor<?> constructor =
         preparedWorldInstanceType.getDeclaredConstructor(long.class, long.class, long.class);
     constructor.setAccessible(true);
@@ -512,6 +516,32 @@ class GameInstanceServiceImplTest {
     verify(worldManagementClient, never())
         .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
     verify(stateService, never()).saveState(any());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = WorldInstanceLifecycleStatus.class,
+      names = {
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING",
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION"
+      })
+  void startSessionWithReplacementRejectsKnownNonActiveWorldLifecycle(
+      WorldInstanceLifecycleStatus status) {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-known-non-active-" + status.name(), 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(worldLifecycleSnapshot("2", "7", 3L, status));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE", error.getMessage());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
 
   @Test
@@ -944,6 +974,27 @@ class GameInstanceServiceImplTest {
     assertEquals("STOPPING", store.get(10L).getStatus());
     verify(stateService).deleteState(1L, 10L);
     verify(stateService, never()).saveState(any(GameInstanceDto.class));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = WorldInstanceLifecycleStatus.class,
+      names = {
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING",
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION"
+      })
+  void stopSessionRejectsKnownNonActiveWorldLifecycle(WorldInstanceLifecycleStatus status) {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(worldLifecycleSnapshot("1", "10", 3L, status));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE", error.getMessage());
+    assertEquals("RUNNING", store.get(10L).getStatus());
     verify(worldManagementClient, never())
         .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
@@ -30,6 +31,7 @@ class AutomationScriptingControlPlaneClientTest {
     GetPluginStatusResponse response = client.getPluginStatus(1L, 2L, "plugin-1");
 
     assertThat(response.getError().getCode()).isEqualTo("AUTOMATION_SCRIPTING_UNAVAILABLE");
+    verify(stub).withDeadlineAfter(250L, TimeUnit.MILLISECONDS);
   }
 
   @Test
@@ -56,6 +58,7 @@ class AutomationScriptingControlPlaneClientTest {
     GetScriptPatchStatusResponse response = client.getScriptPatchStatus(1L, "patch-1");
 
     assertThat(response.getError().getCode()).isEqualTo("AUTOMATION_SCRIPTING_UNAVAILABLE");
+    verify(stub).withDeadlineAfter(2_000L, TimeUnit.MILLISECONDS);
   }
 
   @Test

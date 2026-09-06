@@ -37,6 +37,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 final class TickStagingService {
   private static final Logger logger = LoggingUtil.getLogger(TickStagingService.class);
+  private static final int SEALED_MANIFEST_VERSION = 2;
+  private static final int LEGACY_SEALED_MANIFEST_VERSION = 1;
+  private static final String INCOMPLETE_SCRIPT_PIN_FENCE = "INCOMPLETE_SCRIPT_PIN_FENCE";
+  private static final String INCOMPLETE_SCRIPT_PIN_FENCE_MESSAGE =
+      "Automation gameplay command must include its complete script pin tuple";
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final GameInstanceRepository gameInstanceRepository;
@@ -177,6 +182,17 @@ final class TickStagingService {
     for (TickQueuedCommandEnvelope entry : entries) {
       GameplayCommand command = commandsById.get(entry.commandId());
       if (command != null
+          && matchesRuntimeScope(command, tenantId, queueTargetId, ownership)
+          && isTerminalizedQueueOutcome(command.getExecutionOutcome(), command)) {
+        logger.info(
+            "Skipping durably terminalized tick payload tenantId={} gameInstanceId={} commandId={} failureCode={}",
+            tenantId,
+            queueTargetId,
+            entry.commandId(),
+            command.getFailureCode());
+        continue;
+      }
+      if (command != null
           && isExecutableQueueOutcome(command.getExecutionOutcome())
           && matchesRuntimeScope(command, tenantId, queueTargetId, ownership)) {
         executable.add(entry);
@@ -266,6 +282,12 @@ final class TickStagingService {
     return "STAGED".equals(executionOutcome) || "RETRY_QUEUED".equals(executionOutcome);
   }
 
+  private boolean isTerminalizedQueueOutcome(String executionOutcome, GameplayCommand command) {
+    return "FAILED".equals(executionOutcome)
+        && (INCOMPLETE_SCRIPT_PIN_FENCE.equals(command.getFailureCode())
+            || "INCOMPATIBLE_SEALED_REPLAY".equals(command.getFailureCode()));
+  }
+
   TickBatch resolveReplayBatch(
       Long tenantId,
       Long gameInstanceId,
@@ -293,7 +315,8 @@ final class TickStagingService {
             reconciliation.tenantId(),
             reconciliation.gameInstanceId(),
             reconciliation.pendingEntries(),
-            reconciliation.sealedEntries());
+            reconciliation.sealedEntries(),
+            reconciliation.terminalizedEntries());
       } catch (RuntimeException ex) {
         throw new ReplayReconciliationFailure(resolution, ex);
       }
@@ -311,17 +334,33 @@ final class TickStagingService {
         replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
     // The lock and tuple check must remain in the replay transaction through the durable replay
     // decision. Remote follow-ups are intentionally outside this local tuple boundary.
-    requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
+    List<GameplayCommand> replayLocalAutomation = localAutomationCommands(replaySelections);
+    GameInstance replayLockedInstance = null;
+    if (!replayLocalAutomation.isEmpty()) {
+      replayLockedInstance =
+          requireAuthoritativeLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
+      if (replayLocalAutomation.stream()
+          .allMatch(
+              command ->
+                  hasCompleteScriptPinTuple(
+                      command.getScriptPatchVersion(),
+                      command.getScriptPinEpoch(),
+                      command.getScriptPinControlPlaneRequestId()))) {
+        requireReplayLocalAutomationPinTuple(replayLocalAutomation, replayLockedInstance);
+      }
+    }
     Optional<TickBatch> existing =
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
     if (existing.isEmpty()) {
       boolean replaySolo = uniformMode(replayEntries, "pending replay");
+      requireReplayLocalAutomationPinTuple(replayLocalAutomation, replayLockedInstance);
       return new ReplayResolution(
           createBatch(
               "PENDING_REPLAY", tenantId, gameInstanceId, replaySolo, ownership, replayEntries),
           List.copyOf(replayEntries),
           null,
+          false,
           false);
     }
     TickBatch batch = existing.orElseThrow();
@@ -332,21 +371,15 @@ final class TickStagingService {
     String replayManifest = selectedWorkManifest(ownership.regionId(), replaySelections);
     String replayDigest = shortHash(replayManifest);
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
+      requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
       if (batch.isRequiresSoloTick() != replaySolo) {
         throw new IllegalStateException(
             "Pending replay mode does not match durable tick batch mode for tickBatchId="
                 + batch.getTickBatchId());
       }
       tickBatchExecutionService.requireCompleteEffectSet(batch);
-      return new ReplayResolution(batch, List.copyOf(replayEntries), null, false);
+      return new ReplayResolution(batch, List.copyOf(replayEntries), null, false, false);
     }
-    logger.warn(
-        "Replay manifest mismatch for staged batch tickBatchId={} tenantId={} gameInstanceId={} expectedDigest={} actualDigest={}",
-        batch.getTickBatchId(),
-        tenantId,
-        gameInstanceId,
-        batch.getSelectedWorkManifestDigest(),
-        replayDigest);
     SealedReplayManifest sealedManifest = loadSealedReplayEntries(batch);
     List<TickQueuedCommandEnvelope> sealedEntries = sealedManifest.entries();
     boolean sealedSolo = uniformMode(sealedEntries, "sealed replay");
@@ -359,9 +392,26 @@ final class TickStagingService {
     requireExactCommandSetAndScope(
         sealedEntries, sealedSelections, tenantId, gameInstanceId, ownership);
     requireDurableModeAgreement(sealedSelections);
+    if (!sealedManifest.legacyLocalAutomationMissingPinEvidenceCommandIds().isEmpty()) {
+      return terminalizeLegacyAutomationReplay(
+          batch,
+          replayEntries,
+          sealedEntries,
+          sealedSelections,
+          sealedManifest.legacyLocalAutomationMissingPinEvidenceCommandIds(),
+          tenantId,
+          gameInstanceId);
+    }
     GameInstance lockedInstance =
         requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, sealedSelections);
     requireSealedReplayEvidence(sealedManifest.commands(), sealedSelections, lockedInstance);
+    logger.warn(
+        "Replay manifest mismatch for staged batch tickBatchId={} tenantId={} gameInstanceId={} expectedDigest={} actualDigest={}",
+        batch.getTickBatchId(),
+        tenantId,
+        gameInstanceId,
+        batch.getSelectedWorkManifestDigest(),
+        replayDigest);
     if ("PENDING_REPLAY".equals(batch.getBatchSource())) {
       // A replacement batch already committed its sealed manifest. Retry Redis reconciliation
       // against that same durable decision instead of creating another abandoned replacement.
@@ -370,8 +420,10 @@ final class TickStagingService {
       return new ReplayResolution(
           batch,
           List.copyOf(sealedEntries),
-          new ReplayRedisReconciliation(tenantId, gameInstanceId, replayEntries, sealedEntries),
-          true);
+          new ReplayRedisReconciliation(
+              tenantId, gameInstanceId, replayEntries, sealedEntries, List.of()),
+          true,
+          false);
     }
     tickBatchExecutionService.markBatchManifestMismatch(batch, sealedEntries, replayDigest);
     tickBatchExecutionService.preparePendingProjectionReconciliation(
@@ -382,11 +434,72 @@ final class TickStagingService {
     return new ReplayResolution(
         replacementBatch,
         List.copyOf(sealedEntries),
-        new ReplayRedisReconciliation(tenantId, gameInstanceId, replayEntries, sealedEntries),
+        new ReplayRedisReconciliation(
+            tenantId, gameInstanceId, replayEntries, sealedEntries, List.of()),
+        true,
+        false);
+  }
+
+  private ReplayResolution terminalizeLegacyAutomationReplay(
+      TickBatch batch,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<CommandSelection> sealedSelections,
+      List<String> missingEvidenceCommandIds,
+      Long tenantId,
+      Long gameInstanceId) {
+    String message =
+        "Legacy sealed Automation replay lacks exact script pin evidence and cannot be executed";
+    tickBatchExecutionService.markBatchIncompatibleReplay(batch, sealedEntries, message);
+    Instant now = Instant.now();
+    java.util.Set<String> missingEvidenceIds = java.util.Set.copyOf(missingEvidenceCommandIds);
+    List<GameplayCommand> localAutomation =
+        localAutomationCommands(sealedSelections).stream()
+            .filter(command -> missingEvidenceIds.contains(command.getCommandId()))
+            .toList();
+    for (GameplayCommand command : localAutomation) {
+      command.setExecutionOutcome("FAILED");
+      command.setGameplayResult("NOT_APPLIED");
+      command.setCompletedAt(now);
+      command.setLastAttemptAt(now);
+      command.setFailureCode("INCOMPATIBLE_SEALED_REPLAY");
+      command.setFailureMessage(message);
+    }
+    if (!localAutomation.isEmpty()) {
+      gameplayCommandRepository.saveAll(localAutomation);
+    }
+    tickBatchExecutionService.preparePendingProjectionReconciliation(
+        tenantId, gameInstanceId, replayEntries, sealedEntries);
+    List<TickQueuedCommandEnvelope> eligibleEntries =
+        sealedEntries.stream()
+            .filter(entry -> !missingEvidenceIds.contains(entry.commandId()))
+            .toList();
+    List<TickQueuedCommandEnvelope> terminalizedEntries =
+        sealedEntries.stream()
+            .filter(entry -> missingEvidenceIds.contains(entry.commandId()))
+            .toList();
+    return new ReplayResolution(
+        batch,
+        List.of(),
+        new ReplayRedisReconciliation(
+            tenantId, gameInstanceId, replayEntries, eligibleEntries, terminalizedEntries),
+        true,
         true);
   }
 
   TickBatch createBatch(
+      String batchSource,
+      Long tenantId,
+      Long gameInstanceId,
+      boolean requiresSoloTick,
+      TickQueueControlService.OwnershipSnapshot ownership,
+      List<TickQueuedCommandEnvelope> entries) {
+    return createBatchForTick(
+            batchSource, tenantId, gameInstanceId, requiresSoloTick, ownership, entries)
+        .batch();
+  }
+
+  BatchCreationResult createBatchForTick(
       String batchSource,
       Long tenantId,
       Long gameInstanceId,
@@ -411,39 +524,63 @@ final class TickStagingService {
     batch.setBatchSource(batchSource);
     batch.setStatus("STAGED");
     batch.setRequiresSoloTick(requiresSoloTick);
-    batch.setCommandCount(entries.size());
-    batch.setExpectedEffectCount(entries.size());
-    String selectedWorkManifest = selectedWorkManifest(ownership.regionId(), selections);
-    batch.setSelectedWorkManifestJson(selectedWorkManifest);
-    batch.setSelectedWorkManifestDigest(shortHash(selectedWorkManifest));
     batch.setStagedAt(now);
-    TickBatch savedBatch =
+    BatchCreationResult result =
         transactionOperations.execute(
             status -> {
               List<CommandSelection> transactionSelections = commandSelections(entries);
               requireExactCommandSetAndScope(
                   entries, transactionSelections, tenantId, gameInstanceId, ownership);
               requireDurableModeAgreement(transactionSelections);
-              requireCurrentLocalAutomationPinTuple(
-                  tenantId, gameInstanceId, transactionSelections);
+              GameInstance lockedInstance =
+                  requireAuthoritativeLocalAutomationPinTuple(
+                      tenantId, gameInstanceId, transactionSelections);
               requireCurrentStagingOwnership(tenantId, gameInstanceId, batch);
+              List<CommandSelection> acceptedSelections =
+                  classifyFreshStageSelections(transactionSelections, lockedInstance, now);
+              List<TickQueuedCommandEnvelope> acceptedEntries =
+                  acceptedSelections.stream().map(CommandSelection::entry).toList();
+              java.util.Set<String> acceptedCommandIds =
+                  acceptedSelections.stream()
+                      .map(selection -> selection.entry().commandId())
+                      .collect(java.util.stream.Collectors.toSet());
+              List<TickQueuedCommandEnvelope> terminalizedEntries =
+                  transactionSelections.stream()
+                      .map(CommandSelection::entry)
+                      .filter(entry -> !acceptedCommandIds.contains(entry.commandId()))
+                      .toList();
+              if (acceptedSelections.isEmpty()) {
+                logger.info(
+                    "Terminalized all incomplete local Automation commands in tick staging "
+                        + "tenantId={} gameInstanceId={}",
+                    tenantId,
+                    gameInstanceId);
+                return new BatchCreationResult(null, List.of(), terminalizedEntries);
+              }
+              batch.setCommandCount(acceptedEntries.size());
+              batch.setExpectedEffectCount(acceptedEntries.size());
               String transactionManifest =
-                  selectedWorkManifest(ownership.regionId(), transactionSelections);
+                  selectedWorkManifest(ownership.regionId(), acceptedSelections);
               batch.setSelectedWorkManifestJson(transactionManifest);
               batch.setSelectedWorkManifestDigest(shortHash(transactionManifest));
               TickBatch persistedBatch = tickBatchRepository.save(batch);
-              persistEffects(persistedBatch, gameInstanceId, now, transactionSelections);
-              bumpGameplayCommandAttempts(commandsForSelections(transactionSelections), now);
-              return persistedBatch;
+              persistEffects(persistedBatch, gameInstanceId, now, acceptedSelections);
+              bumpGameplayCommandAttempts(commandsForSelections(acceptedSelections), now);
+              return new BatchCreationResult(
+                  persistedBatch, List.copyOf(acceptedEntries), terminalizedEntries);
             });
+    TickBatch savedBatch = result.batch();
+    if (savedBatch == null) {
+      return result;
+    }
     logger.info(
         "Staged durable tick batch tickBatchId={} tenantId={} gameInstanceId={} source={} commandCount={}",
         savedBatch.getTickBatchId(),
         tenantId,
         gameInstanceId,
         batchSource,
-        entries.size());
-    return savedBatch;
+        result.drainEntries().size());
+    return result;
   }
 
   private TickQueuedCommandEnvelope parseQueuedCommand(String payload) {
@@ -485,10 +622,12 @@ final class TickStagingService {
                 + batch.getTickBatchId());
       }
       JsonNode root = objectMapper.readTree(sealedManifestJson);
+      long manifestVersion = root == null ? 0L : root.path("version").asLong(0L);
       if (root == null
           || !root.isObject()
           || !root.path("version").isIntegralNumber()
-          || root.path("version").asInt(0) != 1
+          || (manifestVersion != LEGACY_SEALED_MANIFEST_VERSION
+              && manifestVersion != SEALED_MANIFEST_VERSION)
           || !root.path("source").isTextual()
           || !"GAMEPLAY_COMMAND_QUEUE".equals(root.path("source").asText())) {
         throw new IllegalStateException(
@@ -547,6 +686,7 @@ final class TickStagingService {
               .collect(
                   java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
       List<TickQueuedCommandEnvelope> entries = new ArrayList<>(sealedCommands.size());
+      List<String> legacyLocalAutomationMissingPinEvidenceCommandIds = new ArrayList<>();
       for (SealedReplayCommand sealedCommand : sealedCommands) {
         String commandId = sealedCommand.commandId();
         GameplayCommand command = commandsById.get(commandId);
@@ -557,7 +697,10 @@ final class TickStagingService {
                   + " for tickBatchId="
                   + batch.getTickBatchId());
         }
-        requireSealedReplayCommandEvidence(sealedCommand, command, batch.getTickBatchId());
+        if (requireSealedReplayCommandEvidence(
+            sealedCommand, command, batch.getTickBatchId(), manifestVersion)) {
+          legacyLocalAutomationMissingPinEvidenceCommandIds.add(sealedCommand.commandId());
+        }
         entries.add(
             new TickQueuedCommandEnvelope(
                 sealedCommand.requiresSoloTick(),
@@ -565,7 +708,10 @@ final class TickStagingService {
                 command.getCommandText(),
                 sealedCommand.sealedQueueSource()));
       }
-      return new SealedReplayManifest(List.copyOf(entries), List.copyOf(sealedCommands));
+      return new SealedReplayManifest(
+          List.copyOf(entries),
+          List.copyOf(sealedCommands),
+          List.copyOf(legacyLocalAutomationMissingPinEvidenceCommandIds));
     } catch (java.io.IOException ex) {
       throw new IllegalStateException(
           "Failed to restore sealed replay manifest for tickBatchId=" + batch.getTickBatchId(), ex);
@@ -808,12 +954,38 @@ final class TickStagingService {
 
   private GameInstance requireCurrentLocalAutomationPinTuple(
       Long tenantId, Long gameInstanceId, List<CommandSelection> selections) {
-    List<GameplayCommand> localAutomationCommands =
-        selections.stream()
-            .map(CommandSelection::command)
-            .filter(GameplayCommandSourceCoherence::isLocalAutomation)
-            .toList();
-    if (localAutomationCommands.isEmpty()) {
+    GameInstance instance =
+        requireAuthoritativeLocalAutomationPinTuple(tenantId, gameInstanceId, selections);
+    if (instance == null) {
+      return null;
+    }
+    for (GameplayCommand command : localAutomationCommands(selections)) {
+      requireCompleteScriptPinTuple(
+          command.getScriptPatchVersion(),
+          command.getScriptPinEpoch(),
+          command.getScriptPinControlPlaneRequestId(),
+          "local Automation command " + command.getCommandId());
+      requireMatchingScriptPinTuple(command, instance);
+    }
+    return instance;
+  }
+
+  private void requireReplayLocalAutomationPinTuple(
+      List<GameplayCommand> commands, GameInstance lockedInstance) {
+    for (GameplayCommand command : commands) {
+      requireCompleteScriptPinTuple(
+          command.getScriptPatchVersion(),
+          command.getScriptPinEpoch(),
+          command.getScriptPinControlPlaneRequestId(),
+          "local Automation command " + command.getCommandId());
+      requireMatchingScriptPinTuple(command, lockedInstance);
+    }
+  }
+
+  private GameInstance requireAuthoritativeLocalAutomationPinTuple(
+      Long tenantId, Long gameInstanceId, List<CommandSelection> selections) {
+    List<GameplayCommand> localCommands = localAutomationCommands(selections);
+    if (localCommands.isEmpty()) {
       return null;
     }
     GameInstance instance =
@@ -832,27 +1004,83 @@ final class TickStagingService {
         instance.getScriptPinEpoch(),
         instance.getScriptPatchPinnedControlPlaneRequestId(),
         "authoritative game instance");
-    for (GameplayCommand command : localAutomationCommands) {
-      requireCompleteScriptPinTuple(
+    return instance;
+  }
+
+  private List<GameplayCommand> localAutomationCommands(List<CommandSelection> selections) {
+    return selections.stream()
+        .map(CommandSelection::command)
+        .filter(GameplayCommandSourceCoherence::isLocalAutomation)
+        .toList();
+  }
+
+  private List<CommandSelection> classifyFreshStageSelections(
+      List<CommandSelection> selections, GameInstance lockedInstance, Instant completedAt) {
+    if (lockedInstance == null) {
+      return selections;
+    }
+    List<CommandSelection> accepted = new ArrayList<>(selections.size());
+    List<GameplayCommand> rejected = new ArrayList<>();
+    for (CommandSelection selection : selections) {
+      GameplayCommand command = selection.command();
+      if (!GameplayCommandSourceCoherence.isLocalAutomation(command)) {
+        accepted.add(selection);
+        continue;
+      }
+      if (!hasCompleteScriptPinTuple(
           command.getScriptPatchVersion(),
           command.getScriptPinEpoch(),
-          command.getScriptPinControlPlaneRequestId(),
-          "local Automation command " + command.getCommandId());
-      if (!GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion())
-              .equals(
-                  GameplayCommandSourceCoherence.normalizeText(instance.getScriptPatchVersion()))
-          || !Objects.equals(command.getScriptPinEpoch(), instance.getScriptPinEpoch())
-          || !GameplayCommandSourceCoherence.normalizeText(
-                  command.getScriptPinControlPlaneRequestId())
-              .equals(
-                  GameplayCommandSourceCoherence.normalizeText(
-                      instance.getScriptPatchPinnedControlPlaneRequestId()))) {
-        throw new IllegalStateException(
-            "Local Automation command script pin tuple does not match the authoritative game instance commandId="
-                + command.getCommandId());
+          command.getScriptPinControlPlaneRequestId())) {
+        terminalizeIncompleteScriptPinCommand(command, completedAt);
+        rejected.add(command);
+        continue;
       }
+      requireMatchingScriptPinTuple(command, lockedInstance);
+      accepted.add(selection);
     }
-    return instance;
+    if (!rejected.isEmpty()) {
+      gameplayCommandRepository.saveAll(rejected);
+    }
+    return List.copyOf(accepted);
+  }
+
+  private void terminalizeIncompleteScriptPinCommand(GameplayCommand command, Instant completedAt) {
+    command.setExecutionOutcome("FAILED");
+    command.setGameplayResult("NOT_APPLIED");
+    command.setCompletedAt(completedAt);
+    command.setLastAttemptAt(completedAt);
+    command.setFailureCode(INCOMPLETE_SCRIPT_PIN_FENCE);
+    command.setFailureMessage(INCOMPLETE_SCRIPT_PIN_FENCE_MESSAGE);
+  }
+
+  private boolean hasCompleteScriptPinTuple(
+      String patchVersion, Long pinEpoch, String controlPlaneRequestId) {
+    try {
+      ScriptPinTupleCoherence.requireCoherent(patchVersion, pinEpoch, controlPlaneRequestId);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+    return patchVersion != null
+        && !patchVersion.isBlank()
+        && pinEpoch != null
+        && pinEpoch > 0L
+        && controlPlaneRequestId != null
+        && !controlPlaneRequestId.isBlank();
+  }
+
+  private void requireMatchingScriptPinTuple(GameplayCommand command, GameInstance instance) {
+    if (!GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion())
+            .equals(GameplayCommandSourceCoherence.normalizeText(instance.getScriptPatchVersion()))
+        || !Objects.equals(command.getScriptPinEpoch(), instance.getScriptPinEpoch())
+        || !GameplayCommandSourceCoherence.normalizeText(
+                command.getScriptPinControlPlaneRequestId())
+            .equals(
+                GameplayCommandSourceCoherence.normalizeText(
+                    instance.getScriptPatchPinnedControlPlaneRequestId()))) {
+      throw new IllegalStateException(
+          "Local Automation command script pin tuple does not match the authoritative game instance commandId="
+              + command.getCommandId());
+    }
   }
 
   private void requireSealedReplayEvidence(
@@ -898,8 +1126,11 @@ final class TickStagingService {
     }
   }
 
-  private void requireSealedReplayCommandEvidence(
-      SealedReplayCommand sealedCommand, GameplayCommand command, String tickBatchId) {
+  private boolean requireSealedReplayCommandEvidence(
+      SealedReplayCommand sealedCommand,
+      GameplayCommand command,
+      String tickBatchId,
+      long manifestVersion) {
     boolean localAutomation = GameplayCommandSourceCoherence.isLocalAutomation(command);
     if (sealedCommand.scriptPatchVersionPresent()
         && !Objects.equals(
@@ -920,11 +1151,14 @@ final class TickStagingService {
                 + " tickBatchId="
                 + tickBatchId);
       }
-      return;
+      return false;
     }
     if (!sealedCommand.scriptPatchVersionPresent()
         || !sealedCommand.scriptPinEpochPresent()
         || !sealedCommand.scriptPinControlPlaneRequestIdPresent()) {
+      if (manifestVersion == LEGACY_SEALED_MANIFEST_VERSION) {
+        return true;
+      }
       throw new IllegalStateException(
           "Sealed local Automation replay is missing script pin evidence commandId="
               + sealedCommand.commandId()
@@ -950,6 +1184,7 @@ final class TickStagingService {
               + " tickBatchId="
               + tickBatchId);
     }
+    return false;
   }
 
   private void requireCompleteScriptPinTuple(
@@ -1063,7 +1298,9 @@ final class TickStagingService {
   private String selectedWorkManifest(String regionId, List<CommandSelection> selections) {
     StringBuilder builder = new StringBuilder();
     builder
-        .append("{\"version\":1,\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"")
+        .append("{\"version\":")
+        .append(SEALED_MANIFEST_VERSION)
+        .append(",\"source\":\"GAMEPLAY_COMMAND_QUEUE\",\"regionId\":\"")
         .append(jsonEscape(regionId))
         .append("\",\"items\":[");
     for (int index = 0; index < selections.size(); index++) {
@@ -1158,7 +1395,9 @@ final class TickStagingService {
       String regionId, List<net.firedevops.firemud.gamesession.entity.RemoteFollowup> followups) {
     StringBuilder builder = new StringBuilder();
     builder
-        .append("{\"version\":1,\"source\":\"REMOTE_FOLLOWUP_QUEUE\",\"regionId\":\"")
+        .append("{\"version\":")
+        .append(LEGACY_SEALED_MANIFEST_VERSION)
+        .append(",\"source\":\"REMOTE_FOLLOWUP_QUEUE\",\"regionId\":\"")
         .append(jsonEscape(regionId))
         .append("\",\"items\":[");
     for (int index = 0; index < followups.size(); index++) {
@@ -1444,11 +1683,22 @@ final class TickStagingService {
       String effectKey,
       String commandDigest) {}
 
+  record BatchCreationResult(
+      TickBatch batch,
+      List<TickQueuedCommandEnvelope> drainEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {
+    BatchCreationResult {
+      drainEntries = List.copyOf(drainEntries);
+      terminalizedEntries = List.copyOf(terminalizedEntries);
+    }
+  }
+
   record ReplayResolution(
       TickBatch batch,
       List<TickQueuedCommandEnvelope> drainEntries,
       ReplayRedisReconciliation redisReconciliation,
-      boolean replacementCommitted) {}
+      boolean replacementCommitted,
+      boolean recoveryOnly) {}
 
   static final class ReplayReconciliationFailure extends IllegalStateException {
     private final ReplayResolution resolution;
@@ -1467,10 +1717,13 @@ final class TickStagingService {
       Long tenantId,
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
-      List<TickQueuedCommandEnvelope> sealedEntries) {}
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {}
 
   private record SealedReplayManifest(
-      List<TickQueuedCommandEnvelope> entries, List<SealedReplayCommand> commands) {}
+      List<TickQueuedCommandEnvelope> entries,
+      List<SealedReplayCommand> commands,
+      List<String> legacyLocalAutomationMissingPinEvidenceCommandIds) {}
 
   private record SealedReplayCommand(
       String commandId,

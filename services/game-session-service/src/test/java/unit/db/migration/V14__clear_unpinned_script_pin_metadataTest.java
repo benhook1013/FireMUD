@@ -70,6 +70,6 @@ class V14__clear_unpinned_script_pin_metadataTest {
         .contains("AND script_pin_epoch IS NULL")
         .contains("script_pin_epoch IS NULL")
         .contains("NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id")
-        .doesNotContain("OR");
+        .doesNotContainPattern("\\bOR\\b");
   }
 }

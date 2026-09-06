@@ -15,7 +15,8 @@ class V11__script_pin_epoch_runtime_consumersTest {
             .getClassLoader()
             .getResourceAsStream("db/migration/V11__script_pin_epoch_runtime_consumers.sql")) {
       assertThat(stream).isNotNull();
-      migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+      migration =
+          new String(stream.readAllBytes(), StandardCharsets.UTF_8).replaceAll("\\s+", " ").trim();
     }
 
     assertThat(migration)

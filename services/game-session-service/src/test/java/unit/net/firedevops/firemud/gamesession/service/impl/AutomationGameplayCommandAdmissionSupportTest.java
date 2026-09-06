@@ -431,6 +431,9 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertFalse(result.accepted());
     assertEquals("REJECTED", result.admissionOutcome());
     assertEquals("STALE_TIMELINE", result.errorCode());
+    verify(gameplayCommandRepository, never())
+        .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
+            1L, 2L, "region-alpha", 7L, "dispatch-1");
     verify(gameplayCommandRepository, never()).insertIfAbsentByIdempotencyIdentity(any());
     verifyNoTickEnqueue(tickService);
   }

@@ -325,7 +325,8 @@ final class GameSessionOperatorControlPlaneService {
                 result.resultingScriptPatchVersion() == null
                     ? ""
                     : result.resultingScriptPatchVersion())
-            .setControlPlaneRequestId(result.controlPlaneRequestId());
+            .setControlPlaneRequestId(
+                result.controlPlaneRequestId() == null ? "" : result.controlPlaneRequestId());
     if (result.previousScriptPinEpoch() != null) {
       response.setPreviousScriptPinEpoch(result.previousScriptPinEpoch());
     }
@@ -353,7 +354,8 @@ final class GameSessionOperatorControlPlaneService {
                 result.resultingScriptPatchVersion() == null
                     ? ""
                     : result.resultingScriptPatchVersion())
-            .setControlPlaneRequestId(result.controlPlaneRequestId());
+            .setControlPlaneRequestId(
+                result.controlPlaneRequestId() == null ? "" : result.controlPlaneRequestId());
     if (result.previousScriptPinEpoch() != null) {
       response.setPreviousScriptPinEpoch(result.previousScriptPinEpoch());
     }

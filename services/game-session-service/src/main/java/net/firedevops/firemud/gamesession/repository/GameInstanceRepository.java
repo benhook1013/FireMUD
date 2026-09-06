@@ -18,6 +18,8 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SelectJoinStep;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -62,6 +64,7 @@ public class GameInstanceRepository {
    * <p>Callers must invoke this method inside their admission/staging transaction. The tenant is
    * part of the predicate so an instance from another tenant cannot be used as lock evidence.
    */
+  @Transactional(propagation = Propagation.MANDATORY)
   public Optional<GameInstance> findByTenantIdAndGameInstanceIdForUpdate(
       Long tenantId, Long gameInstanceId) {
     return selectGameInstances()

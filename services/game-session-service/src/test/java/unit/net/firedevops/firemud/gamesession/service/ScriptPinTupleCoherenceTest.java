@@ -1,8 +1,7 @@
-package net.firedevops.firemud.gamesession.service.impl;
+package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
-import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.junit.jupiter.api.Test;
 
 class ScriptPinTupleCoherenceTest {

@@ -1030,7 +1030,6 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-2");
-    instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
     instance.setScriptPinEpoch(2L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-77");

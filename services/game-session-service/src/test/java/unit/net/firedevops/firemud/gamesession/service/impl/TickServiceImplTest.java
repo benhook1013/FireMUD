@@ -37,6 +37,7 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.RedisSerializer;
@@ -613,7 +614,7 @@ class TickServiceImplTest {
             "gamesession:tick:lock:1:2"),
         rollbackKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
-        new Object[] {leaseTokens.get(0)}, rollbackArguments.get(0));
+        new Object[] {leaseTokens.get(0), 0}, rollbackArguments.get(0));
     org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
     verify(listOps, never()).leftPush(any(), any());
   }
@@ -2368,6 +2369,11 @@ class TickStageScriptTest {
   private static final String LEASE_TOKEN = "lease-token";
   private static final RedisScript<Long> TICK_STAGE_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_stage.lua"), Long.class);
+  private static final RedisScript<Long> TICK_ROLLBACK_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_rollback.lua"), Long.class);
+  private static final RedisScript<Long> RESTORE_PENDING_PROJECTION_SCRIPT =
+      new DefaultRedisScript<>(
+          TickBatchExecutionService.restorePendingProjectionScriptText(), Long.class);
 
   @Container
   static GenericContainer<?> redis =
@@ -2541,12 +2547,82 @@ class TickStageScriptTest {
   }
 
   @Test
+  void rollbackExcludesTerminalizedCommandAndRequeuesEligibleWork() {
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|terminalized-id|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|eligible-id|wave");
+
+    assertThat(executeRollback(LEASE_TOKEN, "1", "terminalized-id")).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).isEmpty();
+    assertThat(values(QUEUE_KEY)).containsExactly("N|eligible-id|wave");
+  }
+
+  @Test
+  void rollbackWithZeroTerminalizedCommandsRequeuesAllPendingWork() {
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|eligible-id|wave");
+
+    assertThat(executeRollback(LEASE_TOKEN, "0")).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).isEmpty();
+    assertThat(values(QUEUE_KEY)).containsExactly("N|eligible-id|wave");
+  }
+
+  @Test
+  void restoreRemovesTerminalizedPayloadAndPreservesEligiblePendingPayload() {
+    String terminalized = "N|terminalized-id|look";
+    String eligible = "N|eligible-id|wave";
+    redisTemplate.opsForList().rightPush(PENDING_KEY, terminalized);
+    redisTemplate.opsForList().rightPush(PENDING_KEY, eligible);
+
+    Long result =
+        scriptRedisTemplate.execute(
+            RESTORE_PENDING_PROJECTION_SCRIPT,
+            new StringRedisSerializer(),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY),
+            "2",
+            terminalized,
+            eligible,
+            "1",
+            eligible,
+            "0",
+            "1",
+            terminalized);
+
+    assertThat(result).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).containsExactly(eligible);
+    assertThat(values(QUEUE_KEY)).isEmpty();
+  }
+
+  @Test
   void returnsZeroForEmptyQueueWithoutMutatingPendingEntries() {
     redisTemplate.opsForList().rightPush(PENDING_KEY, "already-pending");
 
     assertThat(execute(LEASE_TOKEN, "50", "N")).isEqualTo(0L);
     assertThat(values(QUEUE_KEY)).isEmpty();
     assertThat(values(PENDING_KEY)).containsExactly("already-pending");
+  }
+
+  @Test
+  void restoreRejectsMismatchedArgumentCountWithoutMutatingPendingOrQueue() {
+    enqueue("N|queued|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|pending|wave");
+    List<String> queueBefore = values(QUEUE_KEY);
+    List<String> pendingBefore = values(PENDING_KEY);
+
+    Long result =
+        scriptRedisTemplate.execute(
+            RESTORE_PENDING_PROJECTION_SCRIPT,
+            new StringRedisSerializer(),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY),
+            "1",
+            "N|pending|wave",
+            "0",
+            "0",
+            "unexpected-extra-argument");
+
+    assertThat(result).isEqualTo(0L);
+    assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+    assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
   }
 
   private void assertRejectedWithoutMutation(String entry) {
@@ -2638,6 +2714,21 @@ class TickStageScriptTest {
             leaseToken,
             max,
             mode);
+    return result == null ? Long.MIN_VALUE : result;
+  }
+
+  private long executeRollback(String leaseToken, String terminalizedCount, String... commandIds) {
+    List<Object> arguments = new ArrayList<>();
+    arguments.add(leaseToken);
+    arguments.add(terminalizedCount);
+    arguments.addAll(List.of(commandIds));
+    Long result =
+        scriptRedisTemplate.execute(
+            TICK_ROLLBACK_SCRIPT,
+            new StringRedisSerializer(),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY, LEASE_KEY),
+            arguments.toArray());
     return result == null ? Long.MIN_VALUE : result;
   }
 

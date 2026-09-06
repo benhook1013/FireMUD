@@ -207,6 +207,27 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void readPendingEntriesForReplaySkipsFreshTerminalizedPinFence() {
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-terminalized|look", "N|cmd-staged|wave"));
+    GameplayCommand terminalized = gameplayCommand("cmd-terminalized");
+    terminalized.setExecutionOutcome("FAILED");
+    terminalized.setFailureCode("INCOMPLETE_SCRIPT_PIN_FENCE");
+    GameplayCommand staged = gameplayCommand("cmd-staged");
+    staged.setExecutionOutcome("STAGED");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-terminalized", "cmd-staged")))
+        .thenReturn(List.of(terminalized, staged));
+
+    TickStagingService.PendingEntriesReadResult result =
+        service.readPendingEntriesForReplay(1L, 2L);
+
+    assertEquals(TickStagingService.PendingEntriesReadStatus.EXECUTABLE, result.status());
+    assertEquals(
+        List.of("cmd-staged"),
+        result.entries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
+  }
+
+  @Test
   void readPendingEntriesForReplayDropsCrossTenantResidue() {
     when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
         .thenReturn(List.of("N|cmd-cross-tenant|look"));
@@ -309,6 +330,68 @@ class TickStagingServiceTest {
                 new TickQueueControlService.OwnershipSnapshot(
                     "region-a", 1L, "fence-stale", false, 0L),
                 List.of(new TickQueuedCommandEnvelope(false, "cmd-stale-fence", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsLocalAutomationWhenLockedGameInstanceIsAbsentBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-missing-instance");
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("request-1");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-missing-instance")))
+        .thenReturn(List.of(command));
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-missing-instance", "look"))));
+
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void createBatchRejectsIncompleteAuthoritativePinTupleBeforeAnyDurableWrite() {
+    GameplayCommand command = gameplayCommand("cmd-incomplete-owner");
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("request-1");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-incomplete-owner")))
+        .thenReturn(List.of(command));
+    GameInstance incompleteInstance = new GameInstance();
+    incompleteInstance.setId(2L);
+    incompleteInstance.setTenantId(1L);
+    incompleteInstance.setScriptPatchVersion("patch-1");
+    incompleteInstance.setScriptPinEpoch(null);
+    incompleteInstance.setScriptPatchPinnedControlPlaneRequestId(null);
+    when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
+        .thenReturn(Optional.of(incompleteInstance));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createBatch(
+                "FRESH_STAGE",
+                1L,
+                2L,
+                false,
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                List.of(new TickQueuedCommandEnvelope(false, "cmd-incomplete-owner", "look"))));
 
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
@@ -696,6 +779,80 @@ class TickStagingServiceTest {
         batch
             .getSelectedWorkManifestJson()
             .contains("\"scriptPinControlPlaneRequestId\":\"request-1\""));
+    assertTrue(batch.getSelectedWorkManifestJson().contains("\"version\":2"));
+  }
+
+  @Test
+  void createBatchTerminalizesIncompleteAutomationLocallyAndStagesRemainingCommands() {
+    GameplayCommand invalid = gameplayCommand("cmd-incomplete");
+    invalid.setSourceType("AUTOMATION");
+    GameplayCommand player = gameplayCommand("cmd-player-valid");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-incomplete", "cmd-player-valid")))
+        .thenReturn(List.of(invalid, player));
+
+    TickStagingService.BatchCreationResult result =
+        service.createBatchForTick(
+            "FRESH_STAGE",
+            1L,
+            2L,
+            false,
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            List.of(
+                new TickQueuedCommandEnvelope(false, "cmd-incomplete", "look"),
+                new TickQueuedCommandEnvelope(false, "cmd-player-valid", "wave")));
+
+    assertTrue(result.batch() != null);
+    assertEquals(
+        List.of("cmd-player-valid"),
+        result.drainEntries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
+    assertEquals("FAILED", invalid.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", invalid.getGameplayResult());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", invalid.getFailureCode());
+    assertEquals(
+        List.of("cmd-incomplete"),
+        result.terminalizedEntries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
+    assertTrue(invalid.getCompletedAt() != null);
+    assertEquals(1, result.batch().getCommandCount());
+    assertEquals(1, result.batch().getExpectedEffectCount());
+    assertEquals(1, savedEffects.size());
+    assertEquals("cmd-player-valid", savedEffects.getFirst().getCommandId());
+  }
+
+  @Test
+  void createBatchTerminalizesAllIncompleteAutomationWithoutCreatingBatchOrEffects() {
+    GameplayCommand first = gameplayCommand("cmd-incomplete-one");
+    first.setSourceType("AUTOMATION");
+    GameplayCommand second = gameplayCommand("cmd-incomplete-two");
+    second.setSourceType("AUTOMATION");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-incomplete-one", "cmd-incomplete-two")))
+        .thenReturn(List.of(first, second));
+
+    TickStagingService.BatchCreationResult result =
+        service.createBatchForTick(
+            "FRESH_STAGE",
+            1L,
+            2L,
+            false,
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            List.of(
+                new TickQueuedCommandEnvelope(false, "cmd-incomplete-one", "look"),
+                new TickQueuedCommandEnvelope(false, "cmd-incomplete-two", "wave")));
+
+    assertTrue(result.batch() == null);
+    assertTrue(result.drainEntries().isEmpty());
+    assertEquals("FAILED", first.getExecutionOutcome());
+    assertEquals("FAILED", second.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", first.getGameplayResult());
+    assertEquals("NOT_APPLIED", second.getGameplayResult());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", first.getFailureCode());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", second.getFailureCode());
+    assertEquals(
+        List.of("cmd-incomplete-one", "cmd-incomplete-two"),
+        result.terminalizedEntries().stream().map(TickQueuedCommandEnvelope::commandId).toList());
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository).saveAll(any());
   }
 
   @Test
@@ -968,6 +1125,128 @@ class TickStagingServiceTest {
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).leftPush(anyString(), any());
     verify(listOps, never()).rightPush(anyString(), any());
+  }
+
+  @Test
+  void sealedReplayRejectsUnknownManifestVersionBeforeAnyMutation() {
+    GameplayCommand pendingCommand = gameplayCommand("cmd-unknown-version");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-unknown-version")))
+        .thenReturn(List.of(pendingCommand));
+    String unknownVersionManifest =
+        replayManifestJson(service, List.of("N|cmd-unknown-version|look"))
+            .replace("\"version\":2", "\"version\":99");
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-unknown-manifest-version");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(unknownVersionManifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, unknownVersionManifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.resolveReplayBatch(
+                    1L,
+                    2L,
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-unknown-version", "look")),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L)));
+
+    assertTrue(failure.getMessage().contains("invalid metadata"));
+    verify(tickBatchRepository, never()).save(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameplayCommandRepository, never()).saveAll(any());
+    verify(redisTemplate, never()).delete(anyString());
+    verify(listOps, never()).leftPush(anyString(), any());
+    verify(listOps, never()).rightPush(anyString(), any());
+  }
+
+  @Test
+  void sealedReplayTerminalizesLegacyAutomationManifestWithoutCompletePinEvidence() {
+    GameplayCommand command = gameplayCommand("cmd-legacy-automation");
+    command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("request-1");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-automation")))
+        .thenReturn(List.of(command));
+    String v1Manifest =
+        replayManifestJson(service, List.of("N|cmd-legacy-automation|look"))
+            .replace("\"version\":2", "\"version\":1")
+            .replace(",\"scriptPinEpoch\":1,\"scriptPinControlPlaneRequestId\":\"request-1\"", "");
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-legacy-automation");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(v1Manifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, v1Manifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-legacy-automation", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    assertEquals("ABANDONED", replayBatch.getStatus());
+    assertEquals("INCOMPATIBLE_SEALED_REPLAY", replayBatch.getFailureCode());
+    assertEquals("FAILED", command.getExecutionOutcome());
+    assertEquals("INCOMPATIBLE_SEALED_REPLAY", command.getFailureCode());
+    verify(tickBatchRepository).save(existingBatch);
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+    verify(tickEffectRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void sealedReplayAcceptsLegacyPlayerManifestWithoutPinEvidence() {
+    GameplayCommand command = gameplayCommand("cmd-legacy-player");
+    command.setSourceType("PLAYER");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-legacy-player")))
+        .thenReturn(List.of(command));
+    String v1Manifest =
+        replayManifestJson(service, List.of("N|cmd-legacy-player|look"))
+            .replace("\"version\":2", "\"version\":1");
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-legacy-player");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(v1Manifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, v1Manifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickBatch replayBatch =
+        service.resolveReplayBatch(
+            1L,
+            2L,
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-legacy-player", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+
+    assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
+    assertEquals(1, replayBatch.getCommandCount());
+    assertEquals(1, replayBatch.getExpectedEffectCount());
+    verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(any());
+    verify(tickEffectRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
   }
 
   @Test

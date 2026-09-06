@@ -304,11 +304,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
           root, requestedCommand, requiresSoloTick, coordinator, followup);
     }
     if (TRIGGER_SCRIPT_EVENT_PAYLOAD_KIND.equals(payloadKind)) {
-      try {
-        return executeTriggerScriptEvent(root, coordinator, followup);
-      } catch (IllegalArgumentException ex) {
-        return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
-      }
+      return executeTriggerScriptEvent(root, coordinator, followup);
     }
     return failure(
         "REMOTE_FOLLOWUP_KIND_UNSUPPORTED",

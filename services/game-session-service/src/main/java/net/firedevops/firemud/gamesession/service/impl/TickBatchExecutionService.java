@@ -104,10 +104,20 @@ final class TickBatchExecutionService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries) {
+    restorePendingProjection(tenantId, gameInstanceId, pendingEntries, sealedEntries, List.of());
+  }
+
+  void restorePendingProjection(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {
     requireRestorableCommandIdentifiers(pendingEntries);
     requireRestorableCommandIdentifiers(sealedEntries);
+    requireRestorableCommandIdentifiers(terminalizedEntries);
     List<TickQueuedCommandEnvelope> redisOnlyEntries =
-        redisOnlyEntries(pendingEntries, sealedEntries);
+        redisOnlyEntries(pendingEntries, sealedEntries, terminalizedEntries);
     String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
     String queueKey = tickQueueControlService.queueKey(tenantId, gameInstanceId);
     List<Object> scriptArguments = new ArrayList<>();
@@ -117,6 +127,8 @@ final class TickBatchExecutionService {
     sealedEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
     scriptArguments.add(redisOnlyEntries.size());
     redisOnlyEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
+    scriptArguments.add(terminalizedEntries.size());
+    terminalizedEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
     Long restored =
         redisTemplate.execute(
             RESTORE_PENDING_PROJECTION_SCRIPT,
@@ -162,8 +174,19 @@ final class TickBatchExecutionService {
   private List<TickQueuedCommandEnvelope> redisOnlyEntries(
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries) {
+    return redisOnlyEntries(pendingEntries, sealedEntries, List.of());
+  }
+
+  private List<TickQueuedCommandEnvelope> redisOnlyEntries(
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {
     Set<String> sealedCommandIds =
         sealedEntries.stream()
+            .map(TickQueuedCommandEnvelope::commandId)
+            .collect(java.util.stream.Collectors.toSet());
+    Set<String> terminalizedCommandIds =
+        terminalizedEntries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
             .collect(java.util.stream.Collectors.toSet());
     return pendingEntries.stream()
@@ -171,7 +194,8 @@ final class TickBatchExecutionService {
             entry ->
                 entry.commandId() != null
                     && !entry.commandId().isBlank()
-                    && !sealedCommandIds.contains(entry.commandId()))
+                    && !sealedCommandIds.contains(entry.commandId())
+                    && !terminalizedCommandIds.contains(entry.commandId()))
         .toList();
   }
 
@@ -220,7 +244,19 @@ final class TickBatchExecutionService {
         end
 
         local redisOnlyPayloadStartIndex = redisOnlyCountIndex + 1
-        local expectedArgumentCount = redisOnlyPayloadStartIndex + redisOnlyCount - 1
+        local terminalizedCountIndex = redisOnlyPayloadStartIndex + redisOnlyCount
+        if terminalizedCountIndex > argumentCount then
+          return 0
+        end
+        local terminalizedCount = tonumber(ARGV[terminalizedCountIndex])
+        if not terminalizedCount
+            or terminalizedCount < 0
+            or terminalizedCount ~= math.floor(terminalizedCount) then
+          return 0
+        end
+
+        local terminalizedPayloadStartIndex = terminalizedCountIndex + 1
+        local expectedArgumentCount = terminalizedPayloadStartIndex + terminalizedCount - 1
         if expectedArgumentCount ~= argumentCount then
           return 0
         end
@@ -242,6 +278,13 @@ final class TickBatchExecutionService {
           local payload = ARGV[redisOnlyPayloadIndex + index - 1]
           redis.call('LREM', queue, 0, payload)
           redis.call('LPUSH', queue, payload)
+        end
+        local terminalizedPayloadIndex = terminalizedPayloadStartIndex
+        for index = 1, terminalizedCount do
+          local payload = ARGV[terminalizedPayloadIndex]
+          redis.call('LREM', pending, 0, payload)
+          redis.call('LREM', queue, 0, payload)
+          terminalizedPayloadIndex = terminalizedPayloadIndex + 1
         end
         return 1
         """);
@@ -281,6 +324,32 @@ final class TickBatchExecutionService {
         false);
     recordRequeuedActions(entries);
     meterRegistry.counter("tick_manifest_mismatch_total").increment();
+  }
+
+  void markBatchIncompatibleReplay(
+      TickBatch batch, List<TickQueuedCommandEnvelope> entries, String failureMessage) {
+    Instant now = Instant.now();
+    String message = truncate(failureMessage, 500);
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(now);
+    batch.setFailureCode("INCOMPATIBLE_SEALED_REPLAY");
+    batch.setFailureMessage(message);
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(
+        batch.getTickBatchId(), "ABANDONED", now, "INCOMPATIBLE_SEALED_REPLAY", message);
+    updateGameplayCommands(
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        batch.getRegionId(),
+        batch.getRegionEpoch(),
+        entries,
+        "RETRY_QUEUED",
+        "PENDING",
+        now,
+        "INCOMPATIBLE_SEALED_REPLAY",
+        message,
+        false);
+    recordRequeuedActions(entries);
   }
 
   void markBatchDrained(TickBatch batch, List<TickQueuedCommandEnvelope> entries) {

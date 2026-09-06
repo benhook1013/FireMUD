@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -470,6 +472,104 @@ class GameSessionOperatorControlPlaneServiceTest {
             "EXPECT_EPOCH",
             Long.MAX_VALUE);
     verifyNoInteractions(tickService);
+  }
+
+  @Test
+  void setPinExpectationFailureWithMissingRequestIdUsesEmptyStructuredResponseId() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.applyScriptPin(
+            1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, null, "SCRIPT_PIN_EXPECTATION_FAILED"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    assertThat(response.getControlPlaneRequestId()).isEmpty();
+    assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PIN_EXPECTATION_FAILED");
+    verify(repository)
+        .applyScriptPin(
+            1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null);
+  }
+
+  @Test
+  void rollbackExpectationFailureWithMissingRequestIdUsesEmptyStructuredResponseId() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setScriptPatchVersion("patch-old");
+    instance.setScriptPinEpoch(3L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-0");
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.applyScriptPin(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-new",
+            "request-1",
+            "operator",
+            "rollback",
+            "EXPECT_EPOCH",
+            3L))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                "patch-old", 3L, "patch-old", 3L, null, "SCRIPT_PIN_EXPECTATION_FAILED"));
+    RollbackScriptPatchVersionRequest request =
+        RollbackScriptPatchVersionRequest.newBuilder()
+            .setTargetScriptPatchVersion("patch-new")
+            .setControlPlaneRequestId("request-1")
+            .setActorPrincipal("operator")
+            .setReason("rollback")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
+                    .setScriptPinEpoch(3L)
+                    .build())
+            .build();
+
+    var response =
+        newService(repository, tickService, gameDesign, automation)
+            .rollbackScriptPatchVersion(1L, 7L, request);
+
+    assertThat(response.getControlPlaneRequestId()).isEmpty();
+    assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PIN_EXPECTATION_FAILED");
+    verify(repository)
+        .applyScriptPin(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-new",
+            "request-1",
+            "operator",
+            "rollback",
+            "EXPECT_EPOCH",
+            3L);
   }
 
   @Test

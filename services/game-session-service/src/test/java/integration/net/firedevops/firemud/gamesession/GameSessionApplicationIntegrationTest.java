@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 
@@ -214,6 +215,22 @@ class GameSessionApplicationIntegrationTest {
             privilegedHeaders());
     ApiResponse<GameInstanceDto> body =
         OBJECT_MAPPER.readValue(responseBody, new TypeReference<ApiResponse<GameInstanceDto>>() {});
+
+    org.mockito.Mockito.verify(worldManagementClient)
+        .prepareWorldInstance(
+            eq(42L),
+            anyLong(),
+            eq(7L),
+            eq("cp-1"),
+            eq("ld-1"),
+            eq(11L),
+            nullable(String.class),
+            eq("{}"),
+            eq("genrev-11"),
+            eq(77L),
+            eq("prb:42:11:77"),
+            eq(77L),
+            any());
 
     assertThat(body).isNotNull();
     assertThat(body.status()).isEqualTo(ResultStatus.SUCCESS);

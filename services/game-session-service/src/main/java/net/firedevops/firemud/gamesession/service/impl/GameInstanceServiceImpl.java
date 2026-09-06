@@ -56,6 +56,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       "world preparation authority unavailable";
   private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
       "world termination authority unavailable";
+  private static final String WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE =
+      "WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE";
   private static final String WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL =
       "WORLD_AUTHORITY_MALFORMED: response was null";
 
@@ -837,10 +839,19 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private void requireLifecycleStatus(
       WorldInstanceLifecycleSnapshot lifecycle, WorldInstanceLifecycleStatus expectedStatus) {
-    if (lifecycle.getStatus() != expectedStatus) {
-      throw new IllegalStateException(
-          "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");
+    WorldInstanceLifecycleStatus actualStatus = lifecycle.getStatus();
+    if (actualStatus == expectedStatus) {
+      return;
     }
+    if (expectedStatus == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE
+        && (actualStatus == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING
+            || actualStatus
+                == WorldInstanceLifecycleStatus
+                    .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)) {
+      throw new IllegalStateException(WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE);
+    }
+    throw new IllegalStateException(
+        "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");
   }
 
   private void terminateWorldInstance(

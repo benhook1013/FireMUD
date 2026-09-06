@@ -90,20 +90,31 @@ class GameInstanceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     GameInstanceRepository repository = new GameInstanceRepository(dsl);
 
-    for (Long id : new Long[] {null, 7L}) {
+    Object[][] invalidTuples = {
+      {
+        "patch-1",
+        null,
+        "request-1",
+        "patch, positive epoch, and request id must be present together"
+      },
+      {null, 1L, "request-1", "patch, positive epoch, and request id must be present together"},
+      {"patch-1", 1L, null, "patch, positive epoch, and request id must be present together"},
+      {"patch-1", 0L, "request-1", "script pin epoch must be positive when present"},
+      {"patch-1", -1L, "request-1", "script pin epoch must be positive when present"}
+    };
+
+    for (Object[] tuple : invalidTuples) {
       net.firedevops.firemud.gamesession.entity.GameInstance instance =
           new net.firedevops.firemud.gamesession.entity.GameInstance();
-      instance.setId(id);
-      instance.setScriptPatchVersion("patch-1");
-      instance.setScriptPinEpoch(null);
-      instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
+      instance.setId(7L);
+      instance.setScriptPatchVersion((String) tuple[0]);
+      instance.setScriptPinEpoch((Long) tuple[1]);
+      instance.setScriptPatchPinnedControlPlaneRequestId((String) tuple[2]);
 
       IllegalArgumentException error =
           assertThrows(IllegalArgumentException.class, () -> repository.save(instance));
 
-      assertEquals(
-          "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
-          error.getMessage());
+      assertEquals("SCRIPT_PIN_STATE_INVALID: " + tuple[3], error.getMessage());
     }
 
     verifyNoInteractions(dsl);

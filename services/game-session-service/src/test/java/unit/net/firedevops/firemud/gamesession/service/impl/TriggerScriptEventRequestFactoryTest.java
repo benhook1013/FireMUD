@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -91,5 +92,31 @@ class TriggerScriptEventRequestFactoryTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> TriggerScriptEventRequestFactory.builder(fields, null));
+  }
+
+  @Test
+  void rejectsIncompleteScriptPinTupleBeforeBuildingRequest() {
+    TriggerScriptEventRequestFactory.CommonFields fields =
+        new TriggerScriptEventRequestFactory.CommonFields(
+            "tenant",
+            "instance",
+            "region",
+            1L,
+            "entity",
+            "onCommand",
+            "v1",
+            "patch-1",
+            0L,
+            "",
+            "event-1",
+            false,
+            TriggerMode.TRIGGER_MODE_NORMAL,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "snapshot",
+            "{}");
+
+    assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
   }
 }
