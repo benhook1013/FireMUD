@@ -72,13 +72,8 @@ class TickQueueControlServiceRedisIntegrationTest {
     lockRedisTemplate = new StringRedisTemplate(connectionFactory);
     lockRedisTemplate.afterPropertiesSet();
     redisTemplate.delete(
-        List.of(
-            QUEUE_KEY,
-            PENDING_KEY,
-            COMMAND_INDEX_KEY,
-            COMMAND_INDEX_MARKER_KEY,
-            MUTATION_LOCK_KEY,
-            TICK_LOCK_KEY));
+        List.of(QUEUE_KEY, PENDING_KEY, COMMAND_INDEX_KEY, COMMAND_INDEX_MARKER_KEY));
+    lockRedisTemplate.delete(List.of(MUTATION_LOCK_KEY, TICK_LOCK_KEY));
 
     gameplayCommandRepository = mock(GameplayCommandRepository.class);
     when(gameplayCommandRepository.lockAcceptedCommandForStaging(

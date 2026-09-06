@@ -2391,6 +2391,7 @@ class TickServiceImplTest {
 class TickStageScriptTest {
   private static final String QUEUE_KEY = "gamesession:tick:queue:42:9001";
   private static final String PENDING_KEY = "gamesession:tick:pending:42:9001";
+  private static final String COMMAND_INDEX_KEY = "gamesession:tick:command-index:42:9001";
   private static final String LEASE_KEY = "gamesession:tick:lock:42:9001";
   private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
   private static final String LEASE_TOKEN = "lease-token";
@@ -2428,7 +2429,7 @@ class TickStageScriptTest {
         new ProductionScriptKeySerializer(redisTemplate.getKeySerializer()));
     scriptRedisTemplate.setValueSerializer(redisTemplate.getValueSerializer());
     scriptRedisTemplate.afterPropertiesSet();
-    redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, LEASE_KEY));
+    redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, COMMAND_INDEX_KEY, LEASE_KEY));
     lockRedisTemplate.delete(LEASE_KEY);
     lockRedisTemplate.opsForValue().set(LEASE_KEY, LEASE_TOKEN);
   }
@@ -2759,7 +2760,7 @@ class TickStageScriptTest {
             TICK_ROLLBACK_SCRIPT,
             new StringRedisSerializer(),
             new GenericToStringSerializer<>(Long.class),
-            List.of(PENDING_KEY, QUEUE_KEY, LEASE_KEY),
+            List.of(PENDING_KEY, QUEUE_KEY, COMMAND_INDEX_KEY, LEASE_KEY),
             arguments.toArray());
     return result == null ? Long.MIN_VALUE : result;
   }
@@ -2771,7 +2772,7 @@ class TickStageScriptTest {
             TickBatchExecutionService.restorePendingProjectionScriptArgumentSerializer(
                 redisTemplate.getValueSerializer()),
             new GenericToStringSerializer<>(Long.class),
-            List.of(PENDING_KEY, QUEUE_KEY, LEASE_KEY),
+            List.of(PENDING_KEY, QUEUE_KEY, COMMAND_INDEX_KEY, LEASE_KEY),
             arguments);
     return result == null ? Long.MIN_VALUE : result;
   }
