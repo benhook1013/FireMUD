@@ -2573,10 +2573,8 @@ class TickStageScriptTest {
     redisTemplate.opsForList().rightPush(PENDING_KEY, eligible);
 
     Long result =
-        scriptRedisTemplate.execute(
+        redisTemplate.execute(
             RESTORE_PENDING_PROJECTION_SCRIPT,
-            new StringRedisSerializer(),
-            new GenericToStringSerializer<>(Long.class),
             List.of(PENDING_KEY, QUEUE_KEY),
             "2",
             terminalized,
@@ -2609,10 +2607,8 @@ class TickStageScriptTest {
     List<String> pendingBefore = values(PENDING_KEY);
 
     Long result =
-        scriptRedisTemplate.execute(
+        redisTemplate.execute(
             RESTORE_PENDING_PROJECTION_SCRIPT,
-            new StringRedisSerializer(),
-            new GenericToStringSerializer<>(Long.class),
             List.of(PENDING_KEY, QUEUE_KEY),
             "1",
             "N|pending|wave",
