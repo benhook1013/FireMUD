@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Map;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +71,32 @@ class ScriptEventIngressRequestDigestTest {
         .isNotEqualTo(
             ScriptEventIngressRequestDigest.compute(
                 original, "v1", "automation-scripting-service"));
+  }
+
+  @Test
+  void bindsEachImmutableEventIdentityField() {
+    TriggerScriptEventRequest original = request("{\"a\":1}");
+    String originalDigest =
+        ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service");
+
+    Map<String, TriggerScriptEventRequest> changedFields =
+        Map.of(
+            "scriptEventId", original.toBuilder().setScriptEventId("event-2").build(),
+            "tenantId", original.toBuilder().setTenantId("2").build(),
+            "gameInstanceId", original.toBuilder().setGameInstanceId("game-2").build(),
+            "regionId", original.toBuilder().setRegionId("region-2").build(),
+            "regionEpoch", original.toBuilder().setRegionEpoch(8L).build(),
+            "entityId", original.toBuilder().setEntityId("entity-2").build(),
+            "scriptPatchVersion", original.toBuilder().setScriptPatchVersion("patch-2").build());
+
+    assertThat(changedFields)
+        .allSatisfy(
+            (field, changed) ->
+                assertThat(
+                        ScriptEventIngressRequestDigest.compute(
+                            changed, "v1", "game-session-service"))
+                    .as("changing %s", field)
+                    .isNotEqualTo(originalDigest));
   }
 
   @Test

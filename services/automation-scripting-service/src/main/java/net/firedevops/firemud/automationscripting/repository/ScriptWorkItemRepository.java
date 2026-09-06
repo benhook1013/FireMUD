@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
@@ -179,8 +180,8 @@ public class ScriptWorkItemRepository {
         SCRIPT_WORK_ITEMS
             .TENANT_ID
             .eq(tenantId)
-            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(normalizePluginIdentity(pluginId)))
-            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(normalizePluginIdentity(pluginVersionId)))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(blankToEmpty(pluginId)))
+            .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(blankToEmpty(pluginVersionId)))
             .and(SCRIPT_WORK_ITEMS.STATUS.in(statuses)),
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -403,11 +404,9 @@ public class ScriptWorkItemRepository {
             .set(SCRIPT_WORK_ITEMS.REALM_SLUG, entity.getRealmSlug())
             .set(SCRIPT_WORK_ITEMS.POINTER_VERSION, entity.getPointerVersion())
             .set(SCRIPT_WORK_ITEMS.SCRIPT_ID, entity.getScriptId())
-            .set(SCRIPT_WORK_ITEMS.BINDING_ID, normalizePluginIdentity(entity.getBindingId()))
-            .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, normalizePluginIdentity(entity.getPluginId()))
-            .set(
-                SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID,
-                normalizePluginIdentity(entity.getPluginVersionId()))
+            .set(SCRIPT_WORK_ITEMS.BINDING_ID, blankToEmpty(entity.getBindingId()))
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_ID, blankToEmpty(entity.getPluginId()))
+            .set(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID, blankToEmpty(entity.getPluginVersionId()))
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_WORK_ITEMS.EVENT_TYPE, entity.getEventType())
@@ -638,9 +637,9 @@ public class ScriptWorkItemRepository {
         .and(SCRIPT_WORK_ITEMS.REALM_SLUG.eq(realmSlug))
         .and(SCRIPT_WORK_ITEMS.POINTER_VERSION.eq(pointerVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_ID.eq(scriptId))
-        .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(normalizePluginIdentity(pluginId)))
-        .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(normalizePluginIdentity(pluginVersionId)))
-        .and(SCRIPT_WORK_ITEMS.BINDING_ID.eq(normalizePluginIdentity(bindingId)))
+        .and(SCRIPT_WORK_ITEMS.PLUGIN_ID.eq(blankToEmpty(pluginId)))
+        .and(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID.eq(blankToEmpty(pluginVersionId)))
+        .and(SCRIPT_WORK_ITEMS.BINDING_ID.eq(blankToEmpty(bindingId)))
         .and(SCRIPT_WORK_ITEMS.EVENT_TYPE.eq(eventType))
         .and(SCRIPT_WORK_ITEMS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
         .and(SCRIPT_WORK_ITEMS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
@@ -735,9 +734,9 @@ public class ScriptWorkItemRepository {
     record.setRealmSlug(entity.getRealmSlug());
     record.setPointerVersion(entity.getPointerVersion());
     record.setScriptId(entity.getScriptId());
-    record.setBindingId(normalizePluginIdentity(entity.getBindingId()));
-    record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
-    record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
+    record.setBindingId(blankToEmpty(entity.getBindingId()));
+    record.setPluginId(blankToEmpty(entity.getPluginId()));
+    record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setEventType(entity.getEventType());
@@ -807,10 +806,9 @@ public class ScriptWorkItemRepository {
     entity.setRealmSlug(record.get(SCRIPT_WORK_ITEMS.REALM_SLUG));
     entity.setPointerVersion(record.get(SCRIPT_WORK_ITEMS.POINTER_VERSION));
     entity.setScriptId(record.get(SCRIPT_WORK_ITEMS.SCRIPT_ID));
-    entity.setBindingId(normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.BINDING_ID)));
-    entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
-    entity.setPluginVersionId(
-        normalizePluginIdentity(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
+    entity.setBindingId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.BINDING_ID)));
+    entity.setPluginId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_ID)));
+    entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_WORK_ITEMS.PLUGIN_VERSION_ID)));
     entity.setTargetScopeType(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_WORK_ITEMS.TARGET_SCOPE_ID));
     entity.setEventType(record.get(SCRIPT_WORK_ITEMS.EVENT_TYPE));
@@ -855,9 +853,5 @@ public class ScriptWorkItemRepository {
     public String getScriptPatchVersion() {
       return scriptPatchVersion;
     }
-  }
-
-  private static String normalizePluginIdentity(String value) {
-    return value == null ? "" : value;
   }
 }

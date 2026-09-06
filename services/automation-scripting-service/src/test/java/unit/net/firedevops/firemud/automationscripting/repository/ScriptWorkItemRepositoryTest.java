@@ -274,10 +274,10 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
-  void scriptOnlyPluginLookupNormalizesNullIdentityToCanonicalEmptyValues() {
+  void scriptOnlyPluginLookupNormalizesBlankIdentityToCanonicalEmptyValues() {
     ScriptWorkItemsRecord row = workItemRecord(11L, 0, 0L);
-    row.setPluginId("");
-    row.setPluginVersionId("");
+    row.setPluginId(" ");
+    row.setPluginVersionId("\t");
     row.setStatus("PENDING_EVALUATION");
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<Object[]> bindings = new AtomicReference<>();
