@@ -84,6 +84,7 @@ class V1__baselineTest {
     assertThat(indexStatement(normalized, "uq_script_event_ingress_audit_runtime_identity"))
         .endsWith(
             ") NULLS NOT DISTINCT WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL");
+    assertJooqIgnored(normalized, "uq_script_event_ingress_audit_runtime_identity");
     assertIndexColumns(
         normalized,
         "uq_script_event_ingress_audit_onload_identity",
@@ -98,6 +99,7 @@ class V1__baselineTest {
     assertThat(indexStatement(normalized, "uq_script_event_ingress_audit_onload_identity"))
         .endsWith(
             ") NULLS NOT DISTINCT WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL");
+    assertJooqIgnored(normalized, "uq_script_event_ingress_audit_onload_identity");
 
     String bindings = tableBlock(normalized, "script_event_bindings");
     assertThat(bindings)
@@ -189,8 +191,10 @@ class V1__baselineTest {
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity"))
         .doesNotContain("script_pin_control_plane_request_id")
         .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch > 0");
+    assertJooqIgnored(normalized, "uq_script_event_audit_handler_identity");
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity_unpinned"))
         .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch IS NULL");
+    assertJooqIgnored(normalized, "uq_script_event_audit_handler_identity_unpinned");
 
     String pinProjection = tableBlock(normalized, "script_patch_pin_projections");
     assertThat(pinProjection)
@@ -262,5 +266,11 @@ class V1__baselineTest {
     assertThat(start).isGreaterThanOrEqualTo(0);
     assertThat(end).isGreaterThan(index);
     return normalized.substring(start, end);
+  }
+
+  private static void assertJooqIgnored(String normalized, String indexName) {
+    String statement = indexStatement(normalized, indexName);
+    assertThat(normalized)
+        .contains("/* [jooq ignore start] */ " + statement + "; /* [jooq ignore stop] */");
   }
 }

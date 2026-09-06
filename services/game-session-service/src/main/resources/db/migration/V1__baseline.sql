@@ -747,8 +747,6 @@ CREATE INDEX idx_game_instances_tenant_id ON game_instances USING btree (tenant_
 
 CREATE INDEX idx_gameplay_admission_pointer_event_world_realm ON gameplay_admission_pointer_event USING btree (world_slug, realm_slug, occurred_at DESC);
 
-CREATE INDEX idx_gameplay_admission_pointer_tenant_instance ON gameplay_admission_pointer USING btree (tenant_id, game_instance_id);
-
 CREATE UNIQUE INDEX idx_gameplay_command_automation_dispatch ON gameplay_command USING btree (tenant_id, game_instance_id, region_id, region_epoch, automation_dispatch_id);
 
 CREATE INDEX idx_gameplay_command_automation_plugin_version ON gameplay_command USING btree (tenant_id, game_instance_id, source_type, region_id, plugin_id, plugin_version_id);
