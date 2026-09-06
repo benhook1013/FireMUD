@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import re
-import shlex
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -59,66 +58,41 @@ PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
     r"(?P=quote)\s*\)",
     re.DOTALL,
 )
-BOOTSTRAP_SECRET_COMMAND_PREFIX = (
-    "kubectl",
-    "-n",
-    "${PREVIEW_NAMESPACE}",
-    "create",
-    "secret",
-    "generic",
-    "dev-demo-bootstrap-env",
-)
-BOOTSTRAP_SECRET_FILE_MAPPINGS = {
-    "DEMO_SMOKE_EMAIL": "${BOOTSTRAP_SECRET_DIR}/email",
-    "DEMO_SMOKE_PASSWORD": "${BOOTSTRAP_SECRET_DIR}/password",
-    "DEMO_SMOKE_USERNAME": "${BOOTSTRAP_SECRET_DIR}/username",
-}
 BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
-    "cleanup_bootstrap_temp_dir() {",
-    'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
-    'echo "::error::Failed to remove dev-demo bootstrap credential files"',
-    "if ! cleanup_bootstrap_temp_dir; then",
+    "cleanup_bootstrap_secret() {",
+    'kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found',
     "cleanup_bootstrap_resources() {",
     "trap cleanup_bootstrap_resources EXIT",
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
 )
-BOOTSTRAP_IN_CLUSTER_REQUIRED_MARKERS = (
-    'if bootstrap_mode != "all":',
+BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
+    "cleanup_bootstrap_port_forward() {",
+    "BOOTSTRAP_PORT_FORWARD_PID=$!",
+    'kubectl -n "${PREVIEW_NAMESPACE}" port-forward',
+    "--address 127.0.0.1",
+    "service/spring-cloud-gateway",
+    '"${BOOTSTRAP_GATEWAY_PORT}:80"',
+    "BOOTSTRAP_MODE=account",
+    'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
     'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
     'return f"{gateway_base_url}/api/account{path}"',
-    'status, bootstrap_body = issue_player_bootstrap()',
-    'account_id = ((bootstrap_payload.get("data") or {}).get("accountId"))',
-    'status, session_body = bootstrap_session(str(account_id))',
-    "value: all",
-    "value: http://spring-cloud-gateway",
-)
-BOOTSTRAP_LEGACY_TRANSPORT_MARKERS = (
-    "port-forward",
-    "BOOTSTRAP_PORT_FORWARD",
-    "BOOTSTRAP_GATEWAY_PORT",
-    "BOOTSTRAP_ACCOUNT_ID_FILE",
-    "BOOTSTRAP_MODE=account",
-    "value: session",
-    "127.0.0.1",
-    "account-id",
+    'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
+    '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
+    'value: session',
+    'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null',
+    'if bootstrap_mode == "account":',
+    'email = os.environ["DEMO_SMOKE_EMAIL"]',
+    'password = os.environ["DEMO_SMOKE_PASSWORD"]',
+    'username = os.environ["DEMO_SMOKE_USERNAME"]',
+    "account_file.write(str(account_id))",
 )
 BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
   if [[ -z "${!credential:-}" ]]; then
-    echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+    echo "::error::${credential} is empty; refusing account bootstrap" >&2
     exit 1
   fi
-done
-BOOTSTRAP_SECRET_DIR="$(mktemp -d)"""
-BOOTSTRAP_SECRET_CLEANUP_AND_CREATE = """if ! cleanup_bootstrap_secret; then
-  exit 1
-fi
-kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env"""
-BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS = """if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
-    BOOTSTRAP_SECRET_DIR=
-    return 0"""
-BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE = """echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
-  return 1"""
+done"""
 BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
   kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
   kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
@@ -209,20 +183,6 @@ def _assert_supported_shell_if(line: str) -> None:
             f"{line}"
         )
 
-
-def closing_fi_index(lines: list[str], if_index: int) -> int | None:
-    _assert_supported_shell_if(lines[if_index])
-    nested_if_depth = 0
-    for index in range(if_index + 1, len(lines)):
-        line = lines[index]
-        if re.match(r"^if(?:\s|$)", line):
-            _assert_supported_shell_if(line)
-            nested_if_depth += 1
-        elif line == "fi":
-            if nested_if_depth == 0:
-                return index
-            nested_if_depth -= 1
-    return None
 
 
 def _grouped_command_start(
@@ -477,18 +437,6 @@ def _find_step(deploy_job: dict, name: str) -> dict:
     return step
 
 
-def _cleanup_function_end_index(lines: list[str], function_start: int) -> int | None:
-    brace_depth = 0
-    for index in range(function_start, len(lines)):
-        line = lines[index]
-        if line.endswith("() {") or line == "{":
-            brace_depth += 1
-        elif line == "}":
-            brace_depth -= 1
-            if brace_depth == 0:
-                return index + 1
-    return None
-
 
 def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
     if bootstrap_manifest.count(BOOTSTRAP_MANIFEST_HEREDOC_OPENER) != 1:
@@ -519,135 +467,6 @@ def _extract_bootstrap_pod(bootstrap_manifest: str) -> dict:
     return pod
 
 
-def _validate_bootstrap_secret_command(command_lines: list[str]) -> None:
-    command = " ".join(
-        line.removesuffix("\\").rstrip() for line in command_lines
-    )
-    try:
-        tokens = shlex.split(command)
-    except ValueError as exc:
-        raise AssertionError(
-            "dev-demo bootstrap credential secret must use direct create without "
-            "apply annotations; command has invalid shell quoting"
-        ) from exc
-
-    prefix_length = len(BOOTSTRAP_SECRET_COMMAND_PREFIX)
-    if tokens[:prefix_length] != list(BOOTSTRAP_SECRET_COMMAND_PREFIX):
-        raise AssertionError(
-            "dev-demo bootstrap credential secret must use direct create without "
-            "apply annotations; expected kubectl create for "
-            'dev-demo-bootstrap-env in "${PREVIEW_NAMESPACE}"'
-        )
-
-    file_mappings: dict[str, str] = {}
-    duplicate_keys: list[str] = []
-    malformed_arguments = False
-    for argument in tokens[prefix_length:]:
-        if not argument.startswith("--from-file="):
-            malformed_arguments = True
-            continue
-        key, separator, path = argument.removeprefix(
-            "--from-file="
-        ).partition("=")
-        if not separator or not key or not path:
-            malformed_arguments = True
-            continue
-        if key in file_mappings:
-            duplicate_keys.append(key)
-        file_mappings[key] = path
-
-    issues: list[str] = []
-    if malformed_arguments:
-        issues.append("only --from-file arguments are allowed after the secret name")
-    if duplicate_keys:
-        issues.append(
-            f"duplicate file keys: {', '.join(sorted(set(duplicate_keys)))}"
-        )
-    missing_keys = sorted(set(BOOTSTRAP_SECRET_FILE_MAPPINGS) - file_mappings.keys())
-    if missing_keys:
-        issues.append(f"missing file keys: {', '.join(missing_keys)}")
-    unexpected_keys = sorted(
-        file_mappings.keys() - set(BOOTSTRAP_SECRET_FILE_MAPPINGS)
-    )
-    if unexpected_keys:
-        issues.append(f"unexpected file keys: {', '.join(unexpected_keys)}")
-    mismatched_paths = sorted(
-        key
-        for key, expected_path in BOOTSTRAP_SECRET_FILE_MAPPINGS.items()
-        if key in file_mappings and file_mappings[key] != expected_path
-    )
-    if mismatched_paths:
-        issues.append(
-            "file keys have unexpected source paths: "
-            f"{', '.join(mismatched_paths)}"
-        )
-    if issues:
-        raise AssertionError(
-            "dev-demo bootstrap credential secret must use direct create without "
-            "apply annotations and only the expected file-backed credentials; "
-            + "; ".join(issues)
-        )
-
-
-def _validate_bootstrap_temp_directory_cleanup(bootstrap_lines: list[str]) -> None:
-    cleanup_starts = [
-        index
-        for index, line in enumerate(bootstrap_lines)
-        if line == "cleanup_bootstrap_temp_dir() {"
-    ]
-    if len(cleanup_starts) != 1:
-        raise AssertionError(
-            "dev-demo bootstrap must contain exactly one cleanup_bootstrap_temp_dir function"
-        )
-    cleanup_end = _cleanup_function_end_index(bootstrap_lines, cleanup_starts[0])
-    if cleanup_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap cleanup function has no same-nesting closing brace"
-        )
-    cleanup_lines = bootstrap_lines[cleanup_starts[0] : cleanup_end]
-    success_start = next(
-        (
-            index
-            for index, line in enumerate(cleanup_lines)
-            if 'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then' in line
-        ),
-        None,
-    )
-    if success_start is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch is missing"
-        )
-    success_end = closing_fi_index(cleanup_lines, success_start)
-    if success_end is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch has no closing fi"
-        )
-    success_return = next(
-        (
-            index
-            for index in range(success_start + 1, success_end)
-            if "return 0" in cleanup_lines[index]
-        ),
-        None,
-    )
-    if success_return is None:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory cleanup success branch must return 0"
-        )
-    clear_directory_lines = [
-        index
-        for index, line in enumerate(cleanup_lines)
-        if line == "BOOTSTRAP_SECRET_DIR="
-    ]
-    if (
-        len(clear_directory_lines) != 1
-        or not success_start < clear_directory_lines[0] < success_return < success_end
-    ):
-        raise AssertionError(
-            "dev-demo bootstrap temp directory must clear its variable only in the "
-            "successful rm branch before return 0"
-        )
-
 
 def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
     bootstrap_pod = _extract_bootstrap_pod(bootstrap_manifest)
@@ -668,24 +487,18 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap pod must execute the single in-cluster bootstrap script"
         )
-    if container.get("envFrom", []) != [
-        {"secretRef": {"name": "dev-demo-bootstrap-env"}}
-    ]:
+    if container.get("envFrom"):
         raise AssertionError(
-            "dev-demo bootstrap pod must import dev-demo-bootstrap-env"
+            "dev-demo bootstrap pod must not import credential Secret env"
         )
     environment = {
         item.get("name"): item.get("value")
         for item in container.get("env", [])
         if isinstance(item, dict)
     }
-    if environment.get("BOOTSTRAP_MODE") != "all":
+    if environment.get("BOOTSTRAP_MODE") != "session":
         raise AssertionError(
-            "dev-demo bootstrap pod must run account and session bootstrap together"
-        )
-    if environment.get("BOOTSTRAP_GATEWAY_BASE_URL") != "http://spring-cloud-gateway":
-        raise AssertionError(
-            "dev-demo bootstrap pod must use the in-cluster Gateway service"
+            "dev-demo bootstrap pod must run the noncredential session bootstrap"
         )
 
 
@@ -781,73 +594,20 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             raise AssertionError(
                 f"dev-demo bootstrap step contract missing: {expected}"
             )
-    legacy_markers = [
-        marker
-        for marker in BOOTSTRAP_LEGACY_TRANSPORT_MARKERS
-        if normalize_script(marker) in normalized
-    ]
-    if legacy_markers:
-        raise AssertionError(
-            "dev-demo bootstrap must use the in-cluster transport without legacy "
-            "port-forward or account-id file plumbing; offending markers: "
-            + ", ".join(legacy_markers)
-        )
-    for expected in BOOTSTRAP_IN_CLUSTER_REQUIRED_MARKERS:
+    for expected in BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
             raise AssertionError(
-                "dev-demo bootstrap must run account and session setup in one "
-                f"in-cluster pod; missing: {expected}"
+                "dev-demo player bootstrap must use the authenticated Kubernetes "
+                f"port-forward transport; missing: {expected}"
             )
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
     credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
     if credential_validation not in normalized_lines:
         raise AssertionError(
-            "dev-demo bootstrap must reject empty credentials before creating temporary files"
+            "dev-demo account bootstrap must reject empty credentials"
         )
-    if 'chmod 700 "${BOOTSTRAP_SECRET_DIR}"' in bootstrap_manifest:
-        raise AssertionError(
-            "dev-demo bootstrap must rely on mktemp directory permissions"
-        )
-    secret_cleanup_and_create = normalize_nonempty_lines(
-        BOOTSTRAP_SECRET_CLEANUP_AND_CREATE
-    )
-    if secret_cleanup_and_create not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap must delete stale credentials before direct secret creation"
-        )
-
-    source_lines = bootstrap_manifest.splitlines()
-    try:
-        secret_start = next(
-            index
-            for index, line in enumerate(source_lines)
-            if "create secret generic dev-demo-bootstrap-env" in line
-        )
-    except StopIteration as exc:
-        raise AssertionError(
-            "dev-demo bootstrap must create its credential secret directly"
-        ) from exc
-    secret_command_lines: list[str] = []
-    secret_index = secret_start
-    while True:
-        line = source_lines[secret_index].strip()
-        secret_command_lines.append(line)
-        if not line.endswith("\\"):
-            break
-        secret_index += 1
-        if secret_index >= len(source_lines):
-            raise AssertionError("dev-demo bootstrap secret command is unterminated")
-    _validate_bootstrap_secret_command(secret_command_lines)
-    cleanup_success = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS)
-    if cleanup_success not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory must clear its variable only after rm succeeds"
-        )
-    cleanup_failure = normalize_nonempty_lines(BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE)
-    if cleanup_failure not in normalized_lines:
-        raise AssertionError(
-            "dev-demo bootstrap temp directory removal failure must return failure"
-        )
+    if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or "create secret generic dev-demo-bootstrap-env" in bootstrap_manifest:
+        raise AssertionError("dev-demo session pod must not create or mount credential Secret material")
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(
@@ -871,18 +631,6 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
             "to /auth/player-bootstrap"
         )
 
-    session_index = normalized.find(
-        normalize_script('status, session_body = bootstrap_session(str(account_id))')
-    )
-    if session_index < normalized.find(
-        normalize_script('status, bootstrap_body = issue_player_bootstrap()')
-    ):
-        raise AssertionError(
-            "dev-demo bootstrap must obtain the account id before session bootstrap"
-        )
-
-    bootstrap_lines = [line.strip() for line in bootstrap_manifest.splitlines()]
-    _validate_bootstrap_temp_directory_cleanup(bootstrap_lines)
     _validate_bootstrap_pod_spec(bootstrap_manifest)
 
 

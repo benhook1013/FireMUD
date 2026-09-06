@@ -71,6 +71,14 @@ spec:
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            - name: TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: TCP_PROXY_TLS_CERT
+              value: /telnet-tls/tls.crt
+            - name: TCP_PROXY_TLS_KEY
+              value: /telnet-tls/tls.key
+            {{- end }}
           {{- end }}
           {{- if $service.envFromShared }}
           envFrom:
@@ -79,7 +87,7 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls (and $.Values.previewStack.telnetTls.enabled $service.mountTelnetTls) (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
@@ -95,6 +103,11 @@ spec:
               mountPath: /var/run/secrets/firemud/jwks
               readOnly: true
             {{- end }}
+            {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            - name: telnet-tls
+              mountPath: /telnet-tls
+              readOnly: true
             {{- end }}
           {{- end }}
           ports:
@@ -126,7 +139,7 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls (and $.Values.previewStack.telnetTls.enabled $service.mountTelnetTls) (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
@@ -142,6 +155,11 @@ spec:
           configMap:
             name: jwt-jwks
         {{- end }}
+        {{- end }}
+        {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+        - name: telnet-tls
+          secret:
+            secretName: {{ $.Values.previewStack.telnetTls.secretName }}
         {{- end }}
       {{- end }}
 ---

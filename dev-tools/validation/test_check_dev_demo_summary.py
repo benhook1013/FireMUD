@@ -121,46 +121,22 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_accepts_reformatted_bootstrap_secret_command(self):
+    def test_validate_workflow_accepts_credential_free_session_pod(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        canonical_command = (
-            'kubectl -n "${PREVIEW_NAMESPACE}" create secret generic '
-            "dev-demo-bootstrap-env \\\n"
-            '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\\n'
-            '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \\\n'
-            '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
-        )
-        reformatted_command = (
-            'kubectl  -n "${PREVIEW_NAMESPACE}" create secret generic '
-            "dev-demo-bootstrap-env \\\n"
-            '  --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username" \\\n'
-            '  --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \\\n'
-            '  --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password"'
-        )
-        self.assertIn(canonical_command, bootstrap_manifest)
-        reformatted_manifest = bootstrap_manifest.replace(
-            canonical_command, reformatted_command, 1
-        )
+        self.assertNotIn("envFrom:", bootstrap_manifest)
+        self.assertNotIn("BOOTSTRAP_SECRET_DIR", bootstrap_manifest)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self._write_workflow_fixture(root, reformatted_manifest)
+            self._write_workflow_fixture(root, bootstrap_manifest)
             self.validator.validate_workflow(root)
 
-    def test_validate_workflow_reports_extra_bootstrap_secret_command_options(self):
+    def test_validate_workflow_rejects_bootstrap_credential_secret_creation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        command_end = (
-            '--from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"'
-        )
-        self.assertIn(command_end, bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            command_end, f"{command_end} \\\n--dry-run=client", 1
-        )
+        invalid_manifest = bootstrap_manifest + "\nkubectl -n \"${PREVIEW_NAMESPACE}\" create secret generic dev-demo-bootstrap-env"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "only --from-file arguments are allowed"
-            ):
+            with self.assertRaisesRegex(AssertionError, "must not create or mount credential Secret"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_legacy_player_bootstrap_payload(self):
@@ -193,16 +169,24 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_account_id_file_plumbing(self):
+    def test_validate_workflow_accepts_account_id_file_plumbing_for_session_handoff(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest + "\n--from-file=account-id=/tmp/account-id"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_requires_text_account_id_handoff(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        conversion = "account_file.write(str(account_id))"
+        self.assertIn(conversion, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            conversion, "account_file.write(account_id)", 1
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError,
-                "legacy .*account-id file plumbing",
-            ):
+            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_multiple_player_bootstrap_requests(self):
@@ -271,74 +255,98 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_legacy_port_forward_transport(self):
+    def test_validate_workflow_rejects_unprotected_port_forward_transport(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest + "\nkubectl port-forward service/spring-cloud-gateway :80"
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "legacy .*account-id file plumbing"
-            ):
-                self.validator.validate_workflow(root)
-
-    def test_validate_workflow_rejects_non_gateway_endpoint(self):
-        bootstrap_manifest = self._bootstrap_manifest_fixture()
-        dynamic_assignment = "value: http://spring-cloud-gateway"
-        dynamic_forward = dynamic_assignment
-        self.assertIn(dynamic_assignment, bootstrap_manifest)
-        self.assertIn(dynamic_forward, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            dynamic_assignment, "value: http://account-service:8080", 1
+            "--address 127.0.0.1", "--address 0.0.0.0", 1
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "one in-cluster pod; missing"
+                AssertionError, "authenticated Kubernetes.*missing"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_unscoped_port_forward_authorization(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = 'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null'
+        self.assertIn(scoped_check, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            scoped_check, "kubectl auth can-i create pods/portforward >/dev/null", 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_wrong_port_forward_namespace_scope(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = 'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null'
+        self.assertIn(scoped_check, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            scoped_check, 'kubectl auth can-i create pods/portforward -n default >/dev/null', 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_non_gateway_endpoint(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        dynamic_assignment = 'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"'
+        self.assertIn(dynamic_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            dynamic_assignment,
+            'BOOTSTRAP_GATEWAY_BASE_URL="http://account-service:8080"',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "authenticated Kubernetes.*missing"
             ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_missing_gateway_endpoint(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        gateway_endpoint = "value: http://spring-cloud-gateway"
+        gateway_endpoint = 'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"'
         self.assertIn(gateway_endpoint, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(gateway_endpoint, "", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "one in-cluster pod; missing"
+                AssertionError, "authenticated Kubernetes.*missing"
             ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_split_bootstrap_mode(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        self.assertIn("value: all", bootstrap_manifest)
-        invalid_manifest = bootstrap_manifest.replace(
-            "value: all", "value: session", 1
-        )
+        self.assertIn("value: session", bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace("value: session", "value: account", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "legacy .*account-id file plumbing"
+                AssertionError, "authenticated Kubernetes.*missing"
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_bootstrap_manifest_without_env_from(self):
+    def test_validate_workflow_rejects_bootstrap_manifest_with_credential_env_from(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        self.assertIn("envFrom:", bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            "envFrom:", "missingEnvFrom:", 1
+            "      volumeMounts:",
+            "      envFrom:\n        - secretRef:\n            name: dev-demo-bootstrap-env\n      volumeMounts:",
+            1,
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError,
-                "dev-demo bootstrap pod must import dev-demo-bootstrap-env",
-            ):
+            with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):
@@ -683,45 +691,6 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.subTest(fixture=fixture):
                 self.assertEqual(self.validator.shell_group_tokens(fixture), expected)
 
-    def test_cleanup_parsers_handle_nested_groups_and_reject_unsupported_if_forms(self):
-        validator = self.validator
-        nested_if = [
-            'if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then',
-            'if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then',
-            "true",
-            "fi",
-            "return 0",
-            "fi",
-        ]
-        self.assertEqual(validator.closing_fi_index(nested_if, 0), 5)
-        nested_group = [
-            "cleanup_bootstrap_temp_dir() {",
-            "{",
-            'if [[ -n "${BOOTSTRAP_SECRET_DIR}" ]]; then',
-            "true",
-            "fi",
-            "}",
-            "}",
-        ]
-        self.assertEqual(
-            validator._cleanup_function_end_index(nested_group, 0), len(nested_group)
-        )
-        for fixture in (["if true", "then", "fi"], ["if true; then echo inline; fi"]):
-            with (
-                self.subTest(fixture=fixture),
-                self.assertRaisesRegex(AssertionError, "unsupported shell if form"),
-            ):
-                validator.closing_fi_index(fixture, 0)
-        self.assertIsNone(
-            validator.closing_fi_index(
-                ['if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then', "true"], 0
-            )
-        )
-        self.assertIsNone(
-            validator._cleanup_function_end_index(
-                ["cleanup_bootstrap_temp_dir() {", "true"], 0
-            )
-        )
 
     def test_summary_helper_paths_allow_only_workspace_root_variables(self):
         validator = self.validator

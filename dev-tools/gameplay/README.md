@@ -1,22 +1,30 @@
 # Gameplay tools
 
 `telnet-session.py` is a small standard-library client for a maintained
-FireMUD TCP/Telnet player connection. It keeps the socket open while a
-background receiver records incoming data, including unsolicited and late
+FireMUD TCP/Telnet player connection. It uses authenticated TLS by default and
+keeps the socket open while a background receiver records incoming data,
+including unsolicited and late
 messages. The JSONL transcript is append-only and uses an integer `cursor`
 (also exposed as `seq`) so a later reader can resume without assuming that a
 command has one response.
 
 ## Connect and play
 
-Use the intended TCP Proxy/Telnet endpoint for the environment. The tool does
-not create a listener or alter transport security:
+Use the intended TLS-enabled TCP Proxy/Telnet endpoint for the environment. The
+tool verifies the server certificate using the system trust store and verifies
+the hostname (the `--host` value is also used for TLS SNI by default):
 
 ```bash
 python3 dev-tools/gameplay/telnet-session.py connect \
   --host dev.preview.firedevops.net --port 32016 \
   --transcript /tmp/firemud-session.jsonl
 ```
+
+Use `--ca-file /path/to/ca.pem` when the environment requires an additional CA
+bundle, or `--server-hostname name` to override the TLS SNI and hostname-check
+name. For local/private/test-only plaintext proof, pass
+`--allow-insecure`; this flag is intentionally explicit and must never be used
+for a public or hosted endpoint.
 
 Type ordinary player commands at the prompt. The usual compatible flow is
 `WORLDS`, `LOGIN <email> <password>`, `PLAY demo`, and `LOOK`; the current

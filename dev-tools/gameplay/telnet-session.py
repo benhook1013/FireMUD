@@ -9,10 +9,12 @@ lost when a command has no immediately corresponding response.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import socket
+import ssl
 import sys
 import threading
 from collections.abc import Callable, Iterable
@@ -59,26 +61,37 @@ class EvidenceStore:
 
     def append(self, direction: str, event: str, **fields) -> dict:
         with self._lock:
-            seq = self._next_seq
-            self._next_seq += 1
-            record = {
-                "timestamp": utc_now(),
-                "seq": seq,
-                "cursor": seq,
-                "direction": direction,
-                "event": event,
-                **fields,
-            }
-            line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
-            # O_APPEND makes each complete JSONL write append at the filesystem
-            # boundary; flush/fsync makes live evidence durable before display.
+            # The process-local lock protects threads; flock protects writers
+            # sharing this transcript across processes.
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "a", encoding="utf-8") as stream:
-                stream.write(line)
-                stream.flush()
-                os.fsync(stream.fileno())
-            return record
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    self._next_seq = self._find_next_seq()
+                    seq = self._next_seq
+                    self._next_seq += 1
+                    record = {
+                        "timestamp": utc_now(),
+                        "seq": seq,
+                        "cursor": seq,
+                        "direction": direction,
+                        "event": event,
+                        **fields,
+                    }
+                    line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    # O_APPEND makes each complete JSONL write append at the
+                    # filesystem boundary; flush/fsync makes live evidence
+                    # durable before display.
+                    with os.fdopen(os.dup(fd), "a", encoding="utf-8") as stream:
+                        stream.write(line)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    return record
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     def read(self, after: int | None = None) -> list[dict]:
         if not self.path.exists():
@@ -107,6 +120,11 @@ def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:
     raw = command.encode("iso-8859-1", errors="replace")
     replacement = safe.encode("iso-8859-1")
     return safe, raw, replacement
+
+
+def _display_text(text: str) -> str:
+    """Make received control characters visible without changing evidence."""
+    return "".join(char if char in "\r\n" or char.isprintable() else f"\\x{ord(char):02x}" for char in text)
 
 
 class TelnetParser:
@@ -166,12 +184,18 @@ class TelnetSession:
         transcript: os.PathLike[str] | str,
         read_timeout: float = 0.25,
         output: Callable[[str], None] | None = None,
+        tls_enabled: bool = True,
+        ca_file: os.PathLike[str] | str | None = None,
+        server_hostname: str | None = None,
     ):
         self.host = host
         self.port = port
         self.store = EvidenceStore(transcript)
         self.read_timeout = read_timeout
         self.output = output or print
+        self.tls_enabled = tls_enabled
+        self.ca_file = Path(ca_file) if ca_file is not None else None
+        self.server_hostname = server_hostname
         self.socket: socket.socket | None = None
         self.receiver: threading.Thread | None = None
         self.send_lock = threading.Lock()
@@ -186,7 +210,7 @@ class TelnetSession:
     def _show(self, record: dict) -> None:
         if record["event"] == "received":
             text = record.get("text", "")
-            self.output(f"[{record['seq']}] IN: {text}")
+            self.output(f"[{record['seq']}] IN: {_display_text(text)}")
         elif record["event"] == "command":
             self.output(f"[{record['seq']}] OUT: {record.get('text', '')}")
         elif record["event"] in {"connect", "timeout", "disconnect", "error", "close"}:
@@ -205,7 +229,21 @@ class TelnetSession:
 
     def connect(self) -> None:
         try:
-            self.socket = socket.create_connection((self.host, self.port))
+            raw_socket = socket.create_connection((self.host, self.port))
+            if self.tls_enabled:
+                try:
+                    context = ssl.create_default_context()
+                    if self.ca_file is not None:
+                        context.load_verify_locations(cafile=str(self.ca_file))
+                    self.socket = context.wrap_socket(
+                        raw_socket,
+                        server_hostname=self.server_hostname or self.host,
+                    )
+                except Exception:
+                    raw_socket.close()
+                    raise
+            else:
+                self.socket = raw_socket
             self.socket.settimeout(self.read_timeout)
         except OSError as exc:
             self._append("system", "error", reason="connect", detail=str(exc))
@@ -241,11 +279,14 @@ class TelnetSession:
                     self.idle_timeout_recorded = True
                 continue
             except OSError as exc:
-                if not self.closed:
-                    self._append("inbound", "error", reason="receive", detail=str(exc))
-                self._record_disconnect("receive_error")
+                self._record_disconnect(
+                    "receive_error",
+                    error=("inbound", "error", {"reason": "receive", "detail": str(exc)}),
+                )
                 return
             if not chunk:
+                if not self._claim_disconnect():
+                    return
                 trailing = self._redact_inbound(b"", final=True)
                 if trailing:
                     self._append(
@@ -253,7 +294,7 @@ class TelnetSession:
                         "received",
                         text=trailing.decode("iso-8859-1", errors="replace"),
                     )
-                self._record_disconnect("remote_eof")
+                self._append("system", "disconnect", reason="remote_eof")
                 return
             self.idle_timeout_recorded = False
             payload, negotiations = self.parser.feed(chunk)
@@ -264,8 +305,14 @@ class TelnetSession:
                         try:
                             self.socket.sendall(response)
                         except OSError as exc:
-                            self._append("outbound", "error", reason="telnet_refusal", detail=str(exc))
-                            self._record_disconnect("send_error")
+                            self._record_disconnect(
+                                "send_error",
+                                error=(
+                                    "outbound",
+                                    "error",
+                                    {"reason": "telnet_refusal", "detail": str(exc)},
+                                ),
+                            )
                             return
                     response_name = "DONT" if command == "WILL" else "WONT"
                     self._append(
@@ -305,12 +352,27 @@ class TelnetSession:
             self._record_disconnect("send_error")
             raise
 
-    def _record_disconnect(self, reason: str) -> None:
+    def _claim_disconnect(self, *, local: bool = False) -> bool:
         with self.state_lock:
-            if self.disconnect_recorded:
-                return
+            if self.disconnect_recorded or (self.closed and not local):
+                return False
             self.disconnect_recorded = True
+            return True
+
+    def _record_disconnect(
+        self,
+        reason: str,
+        *,
+        local: bool = False,
+        error: tuple[str, str, dict] | None = None,
+    ) -> bool:
+        if not self._claim_disconnect(local=local):
+            return False
+        if error:
+            direction, event, fields = error
+            self._append(direction, event, **fields)
         self._append("system", "disconnect", reason=reason)
+        return True
 
     def close(self, reason: str = "local_close") -> None:
         with self.state_lock:
@@ -327,7 +389,7 @@ class TelnetSession:
                 self.socket.close()
             except OSError:
                 pass
-        self._record_disconnect(reason)
+        self._record_disconnect(reason, local=True)
         if self.receiver and self.receiver is not threading.current_thread():
             self.receiver.join(timeout=max(1.0, self.read_timeout * 4))
 
@@ -347,7 +409,18 @@ def run_read(args: argparse.Namespace) -> int:
 
 
 def run_connect(args: argparse.Namespace) -> int:
-    session = TelnetSession(args.host, args.port, args.transcript, args.timeout)
+    allow_insecure = getattr(args, "allow_insecure", False)
+    if allow_insecure:
+        print("WARNING: using insecure raw TCP; local/private/test use only.")
+    session = TelnetSession(
+        args.host,
+        args.port,
+        args.transcript,
+        args.timeout,
+        tls_enabled=not allow_insecure,
+        ca_file=getattr(args, "ca_file", None),
+        server_hostname=getattr(args, "server_hostname", None),
+    )
     try:
         session.connect()
         print("Commands are sent as entered. Meta-commands: :read [cursor], :cursor, :close [reason].")
@@ -385,6 +458,20 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument("--port", required=True, type=int)
     connect.add_argument("--transcript", required=True, type=Path)
     connect.add_argument("--timeout", type=float, default=0.25)
+    connect.add_argument(
+        "--allow-insecure",
+        action="store_true",
+        help="use raw TCP; local/private/test only, never for public endpoints",
+    )
+    connect.add_argument(
+        "--ca-file",
+        type=Path,
+        help="optional additional CA bundle for TLS certificate verification",
+    )
+    connect.add_argument(
+        "--server-hostname",
+        help="TLS SNI and hostname-verification name (defaults to --host)",
+    )
     connect.set_defaults(function=run_connect)
     read = subparsers.add_parser("read", help="read durable transcript events")
     read.add_argument("--transcript", required=True, type=Path)

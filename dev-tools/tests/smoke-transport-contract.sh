@@ -71,6 +71,7 @@ telnet_responses = run_telnet_smoke_session(
     [("WORLDS", ["OK WORLDS"], "WORLDS")],
     1,
     open_session=open_telnet,
+    tls_enabled=False,
 )
 assert telnet_responses == ["OK WORLDS\n"]
 assert opened[0].sent == ["WORLDS\r\n"]
@@ -170,6 +171,7 @@ upstream_responses = run_telnet_smoke_session(
     open_session=open_after_transient_upstream_failure,
     retry_window_seconds=1,
     retry_interval_seconds=0,
+    tls_enabled=False,
 )
 assert upstream_responses == ["OK LOGIN"]
 assert len(upstream_attempts) == 2
@@ -200,6 +202,7 @@ for transport in ("telnet", "websocket"):
                 open_session=open_later_failure,
                 retry_window_seconds=1,
                 retry_interval_seconds=0,
+                tls_enabled=False,
             )
         else:
             run_websocket_smoke_session(

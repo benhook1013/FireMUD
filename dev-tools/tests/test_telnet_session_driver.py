@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import multiprocessing
 import socket
 import stat
 import subprocess
@@ -68,7 +69,50 @@ def wait_for(store, predicate, timeout=2):
     raise AssertionError(f"Timed out waiting for transcript: {store.read()}")
 
 
+def append_preconstructed_store(path, ready, start, results, index):
+    store = telnet_session.EvidenceStore(path)
+    ready.set()
+    if not start.wait(5):
+        raise RuntimeError("timed out waiting to start append")
+    results.put((index, store.append("inbound", "received", text=f"worker-{index}")))
+
+
 class TelnetSessionDriverTest(unittest.TestCase):
+    def test_transcript_append_allocates_unique_cursors_across_processes(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            store = telnet_session.EvidenceStore(transcript)
+            initial = store.append("system", "connect")
+            start = context.Event()
+            ready = [context.Event(), context.Event()]
+            results = context.Queue()
+            processes = [
+                context.Process(
+                    target=append_preconstructed_store,
+                    args=(transcript, ready[index], start, results, index),
+                )
+                for index in range(2)
+            ]
+            try:
+                for process in processes:
+                    process.start()
+                for event in ready:
+                    self.assertTrue(event.wait(2))
+                start.set()
+                records = [results.get(timeout=5)[1] for _ in processes]
+            finally:
+                start.set()
+                for process in processes:
+                    process.join(5)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(2)
+            self.assertEqual([process.exitcode for process in processes], [0, 0])
+            self.assertEqual(sorted(record["cursor"] for record in records), [2, 3])
+            resumed = store.read(after=initial["cursor"])
+            self.assertEqual(sorted(record["text"] for record in resumed), ["worker-0", "worker-1"])
+
     def test_read_skips_malformed_records_and_preserves_later_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"
@@ -85,6 +129,113 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 store.read(after=6),
                 [{"cursor": 7, "event": "received", "text": "later"}],
             )
+
+    def test_tls_default_wraps_socket_with_ca_and_hostname(self):
+        class FakeSocket:
+            def __init__(self):
+                self.closed = False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self, _size):
+                return b""
+
+            def shutdown(self, _how):
+                return None
+
+            def close(self):
+                self.closed = True
+
+        raw_socket = FakeSocket()
+        tls_socket = FakeSocket()
+        context = unittest.mock.Mock()
+        context.wrap_socket.return_value = tls_socket
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "preview.example",
+                32016,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                ca_file=Path(directory) / "extra-ca.pem",
+                server_hostname="public.example",
+            )
+            with (
+                patch.object(telnet_session.socket, "create_connection", return_value=raw_socket),
+                patch.object(telnet_session.ssl, "create_default_context", return_value=context),
+            ):
+                session.connect()
+            context.load_verify_locations.assert_called_once_with(
+                cafile=str(Path(directory) / "extra-ca.pem")
+            )
+            context.wrap_socket.assert_called_once_with(
+                raw_socket, server_hostname="public.example"
+            )
+            self.assertIs(session.socket, tls_socket)
+            session.close("tls_test_complete")
+
+    def test_tls_failure_closes_raw_socket_without_fallback(self):
+        class FakeSocket:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        raw_socket = FakeSocket()
+        context = unittest.mock.Mock()
+        context.wrap_socket.side_effect = telnet_session.ssl.SSLError("certificate rejected")
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "preview.example",
+                32016,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+            )
+            with (
+                patch.object(telnet_session.socket, "create_connection", return_value=raw_socket),
+                patch.object(telnet_session.ssl, "create_default_context", return_value=context),
+                self.assertRaises(telnet_session.ssl.SSLError),
+            ):
+                session.connect()
+            self.assertTrue(raw_socket.closed)
+            context.wrap_socket.assert_called_once_with(
+                raw_socket, server_hostname="preview.example"
+            )
+
+    def test_allow_insecure_is_explicit_parser_opt_in(self):
+        args = telnet_session.build_parser().parse_args(
+            [
+                "connect",
+                "--host",
+                "localhost",
+                "--port",
+                "32000",
+                "--transcript",
+                "/tmp/session.jsonl",
+                "--allow-insecure",
+            ]
+        )
+        self.assertTrue(args.allow_insecure)
+
+    def test_raw_mode_does_not_create_tls_context(self):
+        raw_socket = unittest.mock.Mock()
+        raw_socket.recv.return_value = b""
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            with (
+                patch.object(telnet_session.socket, "create_connection", return_value=raw_socket),
+                patch.object(telnet_session.ssl, "create_default_context") as create_context,
+            ):
+                session.connect()
+            create_context.assert_not_called()
+            session.close("raw_test_complete")
 
     def test_async_unsolicited_output_cursor_and_explicit_close(self):
         def handler(connection):
@@ -108,7 +259,12 @@ class TelnetSessionDriverTest(unittest.TestCase):
             transcript = Path(directory) / "session.jsonl"
             output = []
             session = telnet_session.TelnetSession(
-                "127.0.0.1", server.port, transcript, read_timeout=0.03, output=output.append
+                "127.0.0.1",
+                server.port,
+                transcript,
+                read_timeout=0.03,
+                output=output.append,
+                tls_enabled=False,
             )
             session.connect()
             records = wait_for(session.store, lambda rows: any(r.get("text") == "WELCOME\r\n" for r in rows))
@@ -164,7 +320,11 @@ class TelnetSessionDriverTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = []
             session = telnet_session.TelnetSession(
-                "127.0.0.1", server.port, Path(directory) / "session.jsonl", output=output.append
+                "127.0.0.1",
+                server.port,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
             )
             session.connect()
             records = wait_for(session.store, lambda rows: any("READY" in r.get("text", "") for r in rows))
@@ -174,6 +334,67 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertTrue(any(r["event"] == "telnet_negotiation" and r["command"] == "DONT" for r in records))
             self.assertTrue(any("INBOUND TELNET" in line and "option=42" in line for line in output))
             self.assertFalse(any("\xff" in r.get("text", "") for r in records))
+
+    def test_close_wins_receiver_disconnect_race(self):
+        class ClosingSocket:
+            def __init__(self):
+                self.entered = threading.Event()
+                self.release = threading.Event()
+
+            def recv(self, _size):
+                self.entered.set()
+                self.release.wait(2)
+                raise OSError("closed by test")
+
+            def shutdown(self, _how):
+                self.release.set()
+
+            def close(self):
+                self.release.set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+            fake_socket = ClosingSocket()
+            session.socket = fake_socket
+            session.receiver = threading.Thread(target=session._receive_loop, daemon=True)
+            session.receiver.start()
+            self.assertTrue(fake_socket.entered.wait(2))
+            session.close("demo_complete")
+
+            session.receiver.join(2)
+            records = session.store.read()
+            disconnects = [record for record in records if record["event"] == "disconnect"]
+            self.assertEqual([record["reason"] for record in disconnects], ["demo_complete"])
+            self.assertFalse(any(record["event"] == "error" for record in records))
+
+    def test_received_display_escapes_terminal_controls_without_mutating_evidence(self):
+        raw = "room \x1b[31mred\x1b]8;;https://example.test\x07\x01\r\n"
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+            session._append("inbound", "received", text=raw)
+
+            rendered = output[-1]
+            self.assertNotIn("\x1b", rendered)
+            self.assertNotIn("\x07", rendered)
+            self.assertNotIn("\x01", rendered)
+            self.assertIn(r"\x1b[31m", rendered)
+            self.assertIn(r"\x1b]8;;https://example.test\x07", rendered)
+            self.assertTrue(rendered.endswith("\r\n"))
+            self.assertEqual(session.store.read()[0]["text"], raw)
 
     def test_login_echo_redacts_password_in_output_and_transcript(self):
         secret = "secret-7"
@@ -193,7 +414,11 @@ class TelnetSessionDriverTest(unittest.TestCase):
             transcript = Path(directory) / "session.jsonl"
             output = []
             session = telnet_session.TelnetSession(
-                "127.0.0.1", server.port, transcript, output=output.append
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
             )
             session.connect()
             session.send_command(f"LOGIN demo@example.com {secret}")
@@ -251,7 +476,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             )
 
             class StubSession:
-                def __init__(self, host, port, transcript_path, timeout):
+                def __init__(self, host, port, transcript_path, timeout, **_kwargs):
                     self.store = telnet_session.EvidenceStore(transcript_path)
                     self.closed = False
 

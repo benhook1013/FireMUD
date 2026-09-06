@@ -59,6 +59,15 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - seed the preview bootstrap state needed for reviewer proof
 - run hosted smoke against the TCP/Telnet path
 
+The dev-demo credential-bearing account bootstrap runs on the self-hosted runner
+through the Kubernetes API: it first fail-closes on
+`kubectl auth can-i create pods/portforward`, then uses a loopback-only
+`kubectl port-forward --address 127.0.0.1 service/spring-cloud-gateway <port>:80`.
+Only the non-credential session/world bootstrap remains in the short-lived
+in-cluster pod; that pod receives the account-id ConfigMap only and never a
+credential Secret or credential environment variables. This bounded hop is required until an internal HTTPS/mTLS
+Gateway listener is available.
+
 Current implementation limitations:
 
 - preview redeploy is intentionally clean-state today; the workflow resets the namespace before deploy rather than preserving mutable PR state across updates

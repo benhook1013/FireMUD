@@ -154,3 +154,8 @@ Entry format:
   - Context: pausing a bounded review-request automation was incorrectly propagated to the wider implementation lane, while incidental coordination messages reinforced an obsolete orientation pause after later authorization had already started execution.
   - Observation: stopping one automation does not pause its parent task, coordination input does not replace unfinished work, and an orientation-only pause expires when the human authorizes implementation. A progress report alone does not transfer execution ownership.
   - Expected pattern: before ending while authorized work remains, identify the concrete blocker and the actual continuation owner or durable wakeup. Otherwise continue the lane autonomously within its existing scope; do not add recurring monitors or acknowledgement loops to compensate for an unclear stop boundary.
+
+- `2026-09-06`: Credential bootstrap requires the bounded Kubernetes port-forward hop
+  - Context: an earlier dev-demo correction preferred an in-cluster bootstrap pod for all account and session setup, but player credentials were thereby sent over an internal plaintext service path.
+  - Observation: until internal HTTPS/mTLS exists, credential-bearing account bootstrap must use the already-declared `pods/portforward` capability over the Kubernetes API, bound to runner loopback; only non-credential session/world setup should remain in-cluster.
+  - Expected pattern: fail closed with `kubectl auth can-i create pods/portforward`, use `--address 127.0.0.1`, keep readiness/PID/log/account-id cleanup bounded, and never emit credential material.
