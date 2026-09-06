@@ -5,6 +5,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -139,6 +140,7 @@ class AutomationScriptEventPublisherTest {
     status.setRegionEpoch(7L);
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
             client,
@@ -146,7 +148,8 @@ class AutomationScriptEventPublisherTest {
             gameInstanceRepository,
             commandToken -> Optional.empty(),
             builtInAliasResolver(),
-            Runnable::run);
+            Runnable::run,
+            meterRegistry);
 
     publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
 
@@ -155,6 +158,84 @@ class AutomationScriptEventPublisherTest {
         .contains("Skipping script event publish because the script pin tuple is partial")
         .contains("tenantId=9")
         .contains("gameInstanceId=99");
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "partial_tuple")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void skipsCommandEventWhenPatchIsPresentButBothPinFieldsAreAbsent() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run,
+            meterRegistry);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "partial_tuple")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void skipsCommandEventWhenPinIsAbsentAndCountsUnpinnedReason() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run,
+            meterRegistry);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "unpinned")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test

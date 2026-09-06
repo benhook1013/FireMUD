@@ -474,6 +474,38 @@ class GameInstanceServiceImplTest {
     assertEquals("WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive", error.getMessage());
   }
 
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "not-a-number,10,tenantId",
+    "1,not-a-number,gameInstanceId"
+  })
+  void startSessionPrefixesMalformedWorldIdentifiersAndRetainsCause(
+      String tenantId, String gameInstanceId, String fieldName) {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-malformed-world-id", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(worldPreparationSnapshot(tenantId, gameInstanceId, 1L));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: " + fieldName + " must be numeric", error.getMessage());
+    assertEquals(fieldName + " must be numeric", error.getCause().getMessage());
+  }
+
   @Test
   void startSessionFailsClosedWhenWorldPreparationStatusIsAlreadyActive() {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-active-world", 42L);
@@ -1300,7 +1332,8 @@ class GameInstanceServiceImplTest {
     IllegalStateException error =
         assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
-    assertEquals("gameInstanceId must be numeric", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_MALFORMED: gameInstanceId must be numeric", error.getMessage());
+    assertEquals("gameInstanceId must be numeric", error.getCause().getMessage());
     verify(worldManagementClient, never())
         .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
     verify(stateService, never()).saveState(any());

@@ -437,19 +437,19 @@ final class TickStagingService {
     List<CommandSelection> replaySelections = commandSelections(replayEntries);
     requireExactCommandSetAndScope(
         replayEntries, replaySelections, tenantId, gameInstanceId, ownership);
-    // The lock and tuple check must remain in the replay transaction through the durable replay
-    // decision. Remote follow-ups are intentionally outside this local tuple boundary.
-    List<GameplayCommand> replayLocalAutomation = localAutomationCommands(replaySelections);
-    GameInstance replayLockedInstance = null;
-    if (!replayLocalAutomation.isEmpty()) {
-      replayLockedInstance =
-          requireAuthoritativeLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
-    }
     Optional<TickBatch> existing =
         tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
             tenantId, gameInstanceId, "STAGED");
     if (existing.isEmpty()) {
       Instant completedAt = Instant.now();
+      // The lock and tuple check must remain in the replay transaction through the durable replay
+      // decision. Invalid persisted Automation pin evidence is terminalized without requiring a
+      // current authoritative owner row; only complete evidence is comparison-eligible.
+      GameInstance replayLockedInstance =
+          hasComparisonEligibleLocalAutomationCommands(replaySelections, java.util.Set.of())
+              ? requireAuthoritativeLocalAutomationPinTuple(
+                  tenantId, gameInstanceId, replaySelections)
+              : null;
       List<CommandSelection> acceptedSelections =
           classifyFreshStageSelections(replaySelections, replayLockedInstance, completedAt);
       List<TickQueuedCommandEnvelope> acceptedEntries =
@@ -496,7 +496,11 @@ final class TickStagingService {
       List<GameplayCommand> localAutomation = localAutomationCommands(replaySelections);
       java.util.Set<String> incompleteCommandIds =
           incompleteLocalAutomationCommandIds(replaySelections);
-      GameInstance lockedInstance = replayLockedInstance;
+      GameInstance lockedInstance =
+          hasComparisonEligibleLocalAutomationCommands(replaySelections, incompleteCommandIds)
+              ? requireAuthoritativeLocalAutomationPinTuple(
+                  tenantId, gameInstanceId, replaySelections)
+              : null;
       java.util.Set<String> mismatchedCommandIds =
           lockedInstance == null
               ? java.util.Set.of()
@@ -1163,6 +1167,18 @@ final class TickStagingService {
     return java.util.Set.copyOf(union);
   }
 
+  private boolean hasComparisonEligibleLocalAutomationCommands(
+      List<CommandSelection> selections, java.util.Set<String> excludedCommandIds) {
+    return localAutomationCommands(selections).stream()
+        .filter(command -> !excludedCommandIds.contains(command.getCommandId()))
+        .anyMatch(
+            command ->
+                hasCompleteScriptPinTuple(
+                    command.getScriptPatchVersion(),
+                    command.getScriptPinEpoch(),
+                    command.getScriptPinControlPlaneRequestId()));
+  }
+
   private GameInstance requireAuthoritativeLocalAutomationPinTuple(
       Long tenantId, Long gameInstanceId, List<CommandSelection> selections) {
     List<GameplayCommand> localCommands = localAutomationCommands(selections);
@@ -1197,9 +1213,6 @@ final class TickStagingService {
 
   private List<CommandSelection> classifyFreshStageSelections(
       List<CommandSelection> selections, GameInstance lockedInstance, Instant completedAt) {
-    if (lockedInstance == null) {
-      return selections;
-    }
     List<CommandSelection> accepted = new ArrayList<>(selections.size());
     List<GameplayCommand> rejected = new ArrayList<>();
     for (CommandSelection selection : selections) {
@@ -1215,6 +1228,10 @@ final class TickStagingService {
         terminalizeIncompleteScriptPinCommand(command, completedAt);
         rejected.add(command);
         continue;
+      }
+      if (lockedInstance == null) {
+        throw new IllegalStateException(
+            "A complete local Automation script pin tuple requires an authoritative game instance");
       }
       requireMatchingScriptPinTuple(command, lockedInstance);
       accepted.add(selection);

@@ -14,7 +14,11 @@ class V10__script_pin_epochTest {
         getClass().getClassLoader().getResourceAsStream("db/migration/V10__script_pin_epoch.sql")) {
       assertThat(stream).isNotNull();
       migration =
-          new String(stream.readAllBytes(), StandardCharsets.UTF_8).replaceAll("\\s+", " ").trim();
+          new String(stream.readAllBytes(), StandardCharsets.UTF_8)
+              .replaceAll("\\s+", " ")
+              .replace("( ", "(")
+              .replace(" )", ")")
+              .trim();
     }
 
     assertThat(migration)
@@ -25,7 +29,7 @@ class V10__script_pin_epochTest {
                 + "script_patch_pinned_control_plane_request_id = NULL")
         .contains(
             "NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL OR "
-                + "NULLIF( regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '' ) IS NULL")
+                + "NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL")
         .contains("SET script_pin_epoch = 1")
         .contains("script_pin_epoch IS NULL")
         .contains("script_patch_version")

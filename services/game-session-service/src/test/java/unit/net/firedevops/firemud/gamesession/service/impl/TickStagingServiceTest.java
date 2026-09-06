@@ -598,6 +598,7 @@ class TickStagingServiceTest {
     verify(gameplayCommandRepository).saveAll(any());
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
+    verify(gameInstanceRepository, never()).findByTenantIdAndGameInstanceIdForUpdate(any(), any());
     verify(redisTemplate).execute(any(), any(), any(Object[].class));
   }
 
@@ -702,6 +703,8 @@ class TickStagingServiceTest {
     assertEquals("FAILED", incompleteAutomation.getExecutionOutcome());
     assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", incompleteAutomation.getFailureCode());
     assertEquals("RETRY_QUEUED", player.getExecutionOutcome());
+    verify(gameInstanceRepository, org.mockito.Mockito.times(1))
+        .findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
     verify(tickBatchRepository).save(existingBatch);
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
     verify(redisTemplate).execute(any(), any(), any(Object[].class));
@@ -753,6 +756,7 @@ class TickStagingServiceTest {
     assertEquals("RETRY_QUEUED", player.getExecutionOutcome());
     assertEquals("INCOMPATIBLE_SEALED_REPLAY", existingBatch.getFailureCode());
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+    verify(gameInstanceRepository, never()).findByTenantIdAndGameInstanceIdForUpdate(any(), any());
     verify(redisTemplate).execute(any(), any(), any(Object[].class));
   }
 

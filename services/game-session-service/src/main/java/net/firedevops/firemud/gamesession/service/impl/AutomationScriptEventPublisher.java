@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -32,6 +34,8 @@ import org.springframework.util.StringUtils;
     justification = "Spring injects shared repository singletons for script-event publishing.")
 public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   private static final Logger LOG = LoggerFactory.getLogger(AutomationScriptEventPublisher.class);
+  private static final String SCRIPT_EVENT_PUBLISH_SKIPS_METRIC =
+      "game_session_script_event_publish_skips_total";
 
   private final AutomationScriptingClient client;
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
@@ -40,6 +44,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
   private final AdmittedTextCommandRegistryResolver admittedRegistryResolver;
   private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final Executor scriptEventExecutor;
+  private final MeterRegistry meterRegistry;
 
   public AutomationScriptEventPublisher(
       AutomationScriptingClient client,
@@ -55,7 +60,27 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
         textCommandMetadataResolver,
         null,
         builtInTextCommandAliasResolver,
-        scriptEventExecutor);
+        scriptEventExecutor,
+        Metrics.globalRegistry);
+  }
+
+  public AutomationScriptEventPublisher(
+      AutomationScriptingClient client,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameInstanceRepository gameInstanceRepository,
+      TextCommandMetadataResolver textCommandMetadataResolver,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      @Qualifier("scriptEventExecutor") Executor scriptEventExecutor,
+      MeterRegistry meterRegistry) {
+    this(
+        client,
+        runtimeRegionStatusRepository,
+        gameInstanceRepository,
+        textCommandMetadataResolver,
+        null,
+        builtInTextCommandAliasResolver,
+        scriptEventExecutor,
+        meterRegistry);
   }
 
   @org.springframework.beans.factory.annotation.Autowired
@@ -66,7 +91,8 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
       TextCommandMetadataResolver textCommandMetadataResolver,
       AdmittedTextCommandRegistryResolver admittedRegistryResolver,
       BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
-      @Qualifier("scriptEventExecutor") Executor scriptEventExecutor) {
+      @Qualifier("scriptEventExecutor") Executor scriptEventExecutor,
+      MeterRegistry meterRegistry) {
     this.client = client;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameInstanceRepository = gameInstanceRepository;
@@ -74,6 +100,7 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     this.admittedRegistryResolver = admittedRegistryResolver;
     this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.scriptEventExecutor = scriptEventExecutor;
+    this.meterRegistry = meterRegistry == null ? Metrics.globalRegistry : meterRegistry;
   }
 
   @Override
@@ -390,12 +417,16 @@ public class AutomationScriptEventPublisher implements ScriptEventPublisher {
     boolean hasOwnerRequest = StringUtils.hasText(scriptPinControlPlaneRequestId);
     if (!(hasPatch && hasEpoch && hasOwnerRequest)) {
       if (hasPatch || hasEpoch || hasOwnerRequest) {
+        meterRegistry
+            .counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "partial_tuple")
+            .increment();
         LOG.warn(
             "Skipping script event publish because the script pin tuple is partial tenantId={} gameInstanceId={} characterId={}",
             tenantId,
             gameInstanceId,
             entityId);
       } else {
+        meterRegistry.counter(SCRIPT_EVENT_PUBLISH_SKIPS_METRIC, "reason", "unpinned").increment();
         LOG.debug(
             "Skipping script event publish because no script patch is pinned tenantId={} gameInstanceId={} characterId={}",
             tenantId,
