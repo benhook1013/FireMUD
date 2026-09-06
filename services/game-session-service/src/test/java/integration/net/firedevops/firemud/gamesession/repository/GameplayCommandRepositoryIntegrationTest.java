@@ -461,6 +461,31 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void stagingEligibilityLockIsTenantAndGameInstanceQualified() {
+    GameplayCommand command = automationCommand("cmd-staging-scope", "dispatch-staging-scope");
+    repository.save(command);
+
+    assertThat(
+            transactionTemplate.execute(
+                status ->
+                    repository.lockAcceptedCommandForStaging(
+                        1L, 7L, "cmd-staging-scope", "say hello", false)))
+        .isTrue();
+    assertThat(
+            transactionTemplate.execute(
+                status ->
+                    repository.lockAcceptedCommandForStaging(
+                        2L, 7L, "cmd-staging-scope", "say hello", false)))
+        .isFalse();
+    assertThat(
+            transactionTemplate.execute(
+                status ->
+                    repository.lockAcceptedCommandForStaging(
+                        1L, 8L, "cmd-staging-scope", "say hello", false)))
+        .isFalse();
+  }
+
+  @Test
   void concurrentAutomationAdmissionsUseOneDurableIdentityRow() throws Exception {
     GameplayCommand first = automationCommand("auto-concurrent-1", "dispatch-concurrent");
     GameplayCommand second = automationCommand("auto-concurrent-2", "dispatch-concurrent");

@@ -624,9 +624,12 @@ public class GameInstanceRepository {
 
   private String effectiveOperationKind(
       String requestedOperationKind, String targetScriptPatchVersion, String previousPatch) {
-    return canDeriveRepin(requestedOperationKind) && targetScriptPatchVersion.equals(previousPatch)
-        ? "REPIN"
-        : requestedOperationKind;
+    boolean samePatch = targetScriptPatchVersion.equals(previousPatch);
+    if ("REPIN".equals(requestedOperationKind) && !samePatch) {
+      throw new IllegalArgumentException(
+          "REPIN requires target_script_patch_version to equal the current script patch");
+    }
+    return canDeriveRepin(requestedOperationKind) && samePatch ? "REPIN" : requestedOperationKind;
   }
 
   private boolean canDeriveRepin(String operationKind) {

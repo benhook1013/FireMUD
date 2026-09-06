@@ -24,6 +24,7 @@ import org.jooq.Select;
 import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -156,7 +157,7 @@ public class GameplayCommandRepository {
    * fields are compared under that lock so a caller cannot reuse a command identity with different
    * queue materialization evidence.
    */
-  @Transactional
+  @Transactional(propagation = Propagation.MANDATORY)
   public boolean lockAcceptedCommandForStaging(
       Long tenantId,
       Long gameInstanceId,
@@ -165,7 +166,12 @@ public class GameplayCommandRepository {
       boolean requiresSoloTick) {
     Optional<GameplayCommand> maybeCommand =
         dsl.selectFrom(GAMEPLAY_COMMAND)
-            .where(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId))
+            .where(
+                GAMEPLAY_COMMAND
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId)))
             .forUpdate()
             .fetchOptional(this::toEntity);
     if (maybeCommand.isEmpty()) {

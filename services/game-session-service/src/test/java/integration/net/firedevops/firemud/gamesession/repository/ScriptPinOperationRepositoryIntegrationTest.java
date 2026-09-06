@@ -151,6 +151,35 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void callerSuppliedRepinMustTargetTheRowLockedCurrentPatch() {
+    assertThatThrownBy(
+            () ->
+                repository.applyScriptPin(
+                    1L,
+                    7L,
+                    "REPIN",
+                    "patch-2",
+                    "request-invalid-repin",
+                    "operator",
+                    "repin",
+                    "EXPECT_EPOCH",
+                    1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REPIN requires target_script_patch_version to equal the current script patch");
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isZero();
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+  }
+
+  @Test
   void sameVersionFailureIsRepinAndReplayAndConflictUseItsDigest() {
     ScriptPinMutationResult failure =
         repository.recordScriptPinFailure(
