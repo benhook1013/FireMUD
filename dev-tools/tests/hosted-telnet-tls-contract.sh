@@ -44,6 +44,8 @@ assert volume["secret"]["secretName"] == "preview-release-telnet-tls"
 
 certificate = next(d for d in documents if d.get("kind") == "Certificate")
 assert certificate["spec"]["secretName"] == "preview-release-telnet-tls"
+assert certificate["spec"]["privateKey"]["algorithm"] == "RSA"
+assert certificate["spec"]["privateKey"]["encoding"] == "PKCS8"
 assert certificate["spec"]["dnsNames"] == ["preview-42.preview.example.test"]
 ingress = next(d for d in documents if d.get("kind") == "Ingress")
 assert ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"

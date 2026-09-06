@@ -7,6 +7,9 @@ metadata:
 {{ include "firemud.commonLabels" . | indent 4 }}
 spec:
   secretName: {{ .Values.previewStack.telnetTls.secretName }}
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS8
   dnsNames:
     - {{ .Values.preview.hostname | quote }}
   issuerRef:
