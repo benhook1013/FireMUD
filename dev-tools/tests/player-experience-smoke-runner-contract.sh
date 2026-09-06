@@ -22,6 +22,9 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u SMOKE_GATEWAY_API_BASE
   -u SMOKE_TELNET_HOST
   -u TCP_PROXY_PORT
+  -u PLAYER_EXPERIENCE_TELNET_TRANSPORT
+  -u PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME
+  -u PLAYER_EXPERIENCE_TELNET_CA_FILE
   -u SMOKE_ACCOUNT_API_BASE
   -u SMOKE_GAME_LOGIC_API_BASE
   -u SMOKE_GAME_SESSION_API_BASE
@@ -74,6 +77,56 @@ assert evidence_validator_module.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABL
 env_config = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
 assert env_config.queryability_profile == "staging"
 assert env_config.queryability_freshness_budget_seconds == 7200
+assert env_config.telnet_transport is None
+assert env_config.telnet_server_hostname is None
+assert env_config.telnet_ca_file is None
+
+runner_module.validate_telnet_transport_config(
+    env_config, {"websocket"}, simulate=False
+)
+invalid_tls_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None, telnet_transport="tls"
+)
+try:
+    runner_module.validate_telnet_transport_config(
+        invalid_tls_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "server-hostname" in str(exc)
+else:
+    raise AssertionError("TLS Telnet config without hostname was accepted")
+
+tls_config = runner_module.SmokeConfig.from_env(
+    "contract-test",
+    "telnet",
+    None,
+    telnet_transport="tls",
+    telnet_server_hostname="preview.example.test",
+    telnet_ca_file=runner_module.Path("ca.pem"),
+)
+runner_module.validate_telnet_transport_config(tls_config, {"telnet"}, simulate=False)
+plaintext_config = runner_module.SmokeConfig.from_env(
+    "contract-test", "telnet", None, telnet_transport="plaintext"
+)
+runner_module.validate_telnet_transport_config(
+    plaintext_config, {"telnet"}, simulate=False
+)
+for option in ("telnet_server_hostname", "telnet_ca_file"):
+    invalid_plaintext = runner_module.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport="plaintext",
+        **{option: "preview.example.test" if option.endswith("hostname") else runner_module.Path("ca.pem")},
+    )
+    try:
+        runner_module.validate_telnet_transport_config(
+            invalid_plaintext, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "only valid with" in str(exc)
+    else:
+        raise AssertionError(f"plaintext Telnet accepted {option}")
 
 for invalid_budget in ("1e308", "1e-100"):
     try:
@@ -214,6 +267,7 @@ config = runner_module.SmokeConfig.from_env(
     None,
     queryability_profile="staging",
     queryability_freshness_budget_seconds="7200",
+    telnet_transport="plaintext",
 )
 config.player_flow_canary = "advertised"
 config.player_flow_canary_identity = {"selfAttested": True}
@@ -383,7 +437,9 @@ os.environ["SMOKE_TIMEOUT_SECONDS"] = "10"
 expect_invalid_config("deploymentEventId must be a UUID")
 os.environ.pop("PLAYER_EXPERIENCE_DEPLOYMENT_EVENT_ID")
 os.environ.pop("SMOKE_TIMEOUT_SECONDS")
-config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+config = runner.SmokeConfig.from_env(
+    "contract-test", "websocket", None, telnet_transport="plaintext"
+)
 assert config.websocket_url == "ws://localhost:8080/ws/game"
 assert runner.metric_target_for_path("websocket") == "gateway"
 assert runner.metric_target_for_path("telnet") == "tcp_proxy"
@@ -2260,7 +2316,9 @@ runner = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = runner
 spec.loader.exec_module(runner)
 
-config = runner.SmokeConfig.from_env("contract-test", "websocket", None)
+config = runner.SmokeConfig.from_env(
+    "contract-test", "websocket", None, telnet_transport="plaintext"
+)
 config.username = "non-default@example.com"
 config.password = "non-default-password"
 config.player_flow_canary_identity = {
@@ -2505,14 +2563,14 @@ else:
     raise AssertionError("programmer/configuration fault was incorrectly converted to zero evidence")
 
 
-original_create_connection = runner.socket.create_connection
+original_open_telnet_socket = runner.open_telnet_socket
 
 
 def arbitrary_runtime_fault(*args, **kwargs):
     raise RuntimeError("unexpected programmer failure")
 
 
-runner.socket.create_connection = arbitrary_runtime_fault
+runner.open_telnet_socket = arbitrary_runtime_fault
 try:
     try:
         runner.blackbox_telnet_record(config, set())
@@ -2521,14 +2579,14 @@ try:
     else:
         raise AssertionError("arbitrary RuntimeError was incorrectly converted")
 finally:
-    runner.socket.create_connection = original_create_connection
+    runner.open_telnet_socket = original_open_telnet_socket
 
 
 def classified_operational_failure(*args, **kwargs):
     raise runner.ProbeOperationalFailure("expected telnet transport failure")
 
 
-runner.socket.create_connection = classified_operational_failure
+runner.open_telnet_socket = classified_operational_failure
 try:
     signals = runner.entrypath_signals(
         config,
@@ -2539,7 +2597,7 @@ try:
         ),
     )
 finally:
-    runner.socket.create_connection = original_create_connection
+    runner.open_telnet_socket = original_open_telnet_socket
 assert signals["entrypath_blackbox_probe_success"] == [
     {"path": "telnet", "target": "tcp_proxy", "value": 0}
 ]

@@ -6,6 +6,7 @@ RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 python3 - <<'PY' "$ROOT_DIR"
 import sys
+import ssl
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +14,12 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
-from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+from smoke_common import (
+    open_telnet_socket,
+    run_telnet_smoke_session,
+    run_transport_session,
+    run_websocket_smoke_session,
+)
 
 
 class FakeSession:
@@ -57,6 +63,91 @@ class CommandResponseSession(FakeSession):
 
 
 opened = []
+
+
+class FakeTlsContext:
+    def __init__(self, wrapped=None, failure=None):
+        self.wrapped = wrapped or FakeSession()
+        self.failure = failure
+        self.check_hostname = False
+        self.verify_mode = ssl.CERT_NONE
+        self.loaded_ca_files = []
+        self.wrap_calls = []
+
+    def load_verify_locations(self, *, cafile):
+        self.loaded_ca_files.append(cafile)
+
+    def wrap_socket(self, raw_socket, *, server_hostname):
+        self.wrap_calls.append((raw_socket, server_hostname))
+        if self.failure is not None:
+            raise self.failure
+        return self.wrapped
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_socket = FakeSession()
+tls_context = FakeTlsContext(wrapped=wrapped_tls_socket)
+with patch("smoke_common.socket.create_connection", return_value=raw_tls_socket) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+):
+    result = open_telnet_socket(
+        "203.0.113.10",
+        2323,
+        1,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file="ca.pem",
+    )
+assert result is wrapped_tls_socket
+assert connect.call_count == 1
+assert tls_context.loaded_ca_files == ["ca.pem"]
+assert tls_context.wrap_calls == [(raw_tls_socket, "preview.example.test")]
+assert tls_context.check_hostname is True
+assert tls_context.verify_mode == ssl.CERT_REQUIRED
+assert raw_tls_socket.closed is False
+
+
+failed_raw_tls_socket = FakeSession()
+failed_tls_context = FakeTlsContext(failure=ssl.SSLError("certificate mismatch"))
+with patch(
+    "smoke_common.socket.create_connection", return_value=failed_raw_tls_socket
+) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=failed_tls_context
+):
+    try:
+        open_telnet_socket(
+            "203.0.113.10",
+            2323,
+            1,
+            tls_enabled=True,
+            tls_server_hostname="preview.example.test",
+        )
+    except ssl.SSLError:
+        pass
+    else:
+        raise AssertionError("TLS failure unexpectedly succeeded")
+assert failed_raw_tls_socket.closed is True
+assert connect.call_count == 1
+
+
+try:
+    open_telnet_socket("example.test", 2323, 1)
+except TypeError as exc:
+    assert "tls_enabled" in str(exc)
+else:
+    raise AssertionError("Telnet socket helper accepted an omitted TLS mode")
+
+for invalid_options in (
+    {"tls_enabled": True},
+    {"tls_enabled": False, "tls_server_hostname": "example.test"},
+    {"tls_enabled": False, "tls_ca_file": "ca.pem"},
+):
+    try:
+        open_telnet_socket("example.test", 2323, 1, **invalid_options)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"invalid Telnet TLS options were accepted: {invalid_options}")
 
 
 def open_telnet():

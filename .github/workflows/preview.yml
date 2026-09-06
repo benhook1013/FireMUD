@@ -581,7 +581,7 @@ jobs:
             echo ""
             echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
             echo "- Demo login email: ${DEMO_SMOKE_EMAIL}"
-            echo "- Demo login password: ${DEMO_SMOKE_PASSWORD}"
+            echo "- Demo login password: repository smoke default (not printed)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summarize preview unavailability

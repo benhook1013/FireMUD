@@ -9,7 +9,6 @@ import importlib.util
 import json
 import math
 import os
-import socket
 import sys
 import time
 import uuid
@@ -90,6 +89,7 @@ from smoke_common import (
     http_request_json,
     http_request_json_with_headers,
     login_play_look_steps,
+    open_telnet_socket,
     quote_path,
     recv_until_socket,
     run_telnet_command_plan,
@@ -189,6 +189,30 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--telnet-transport",
+        choices=("tls", "plaintext"),
+        default=os.environ.get("PLAYER_EXPERIENCE_TELNET_TRANSPORT") or None,
+        help=(
+            "Explicit Telnet transport for live evidence. Required when Telnet "
+            "is exposed; no transport downgrade is attempted."
+        ),
+    )
+    parser.add_argument(
+        "--telnet-server-hostname",
+        default=os.environ.get("PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME") or None,
+        help="Server hostname for Telnet TLS SNI and certificate verification.",
+    )
+    parser.add_argument(
+        "--telnet-ca-file",
+        type=Path,
+        default=(
+            Path(os.environ["PLAYER_EXPERIENCE_TELNET_CA_FILE"])
+            if os.environ.get("PLAYER_EXPERIENCE_TELNET_CA_FILE")
+            else None
+        ),
+        help="Optional CA bundle for Telnet TLS certificate verification.",
+    )
+    parser.add_argument(
         "--prometheus-mirrors",
         choices=tuple(sorted(CAPABILITY_VALUES[PROMETHEUS_MIRRORS_CAPABILITY])),
         default=os.environ.get("PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS", "published"),
@@ -246,6 +270,9 @@ def main() -> int:
         synthetic_identity_evidence=args.synthetic_identity_evidence,
         queryability_profile=args.queryability_profile,
         queryability_freshness_budget_seconds=args.queryability_freshness_budget_seconds,
+        telnet_transport=args.telnet_transport,
+        telnet_server_hostname=args.telnet_server_hostname,
+        telnet_ca_file=args.telnet_ca_file,
     )
     try:
         validate_queryability_omission_config(config)
@@ -275,6 +302,14 @@ def main() -> int:
         allow_unadvertised_canary_budget=requested_canary_advertised,
     )
     establish_player_flow_canary_capability(config, initial_external_authority)
+    try:
+        validate_telnet_transport_config(
+            config,
+            declared_exposed_paths(initial_external_authority),
+            simulate=args.simulate,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     if (
         config.player_flow_canary == "advertised"
         and config.external_authority_evidence is not None
@@ -354,6 +389,9 @@ class SmokeConfig:
         websocket_url: str,
         telnet_host: str,
         telnet_port: int,
+        telnet_transport: str | None,
+        telnet_server_hostname: str | None,
+        telnet_ca_file: Path | None,
         account_api_base: str,
         game_logic_api_base: str,
         game_session_api_base: str,
@@ -385,6 +423,11 @@ class SmokeConfig:
         self.websocket_url = websocket_url
         self.telnet_host = telnet_host
         self.telnet_port = telnet_port
+        if telnet_transport not in (None, "tls", "plaintext"):
+            raise ValueError("telnet transport must be tls, plaintext, or omitted")
+        self.telnet_transport = telnet_transport
+        self.telnet_server_hostname = telnet_server_hostname
+        self.telnet_ca_file = telnet_ca_file
         self.account_api_base = account_api_base
         self.game_logic_api_base = game_logic_api_base
         self.game_session_api_base = game_session_api_base
@@ -432,6 +475,9 @@ class SmokeConfig:
         synthetic_identity_evidence: Path | None = None,
         queryability_profile: str | None = None,
         queryability_freshness_budget_seconds: str | float | None = None,
+        telnet_transport: str | None = None,
+        telnet_server_hostname: str | None = None,
+        telnet_ca_file: Path | None = None,
     ) -> SmokeConfig:
         prometheus_mirrors = prometheus_mirrors or os.environ.get(
             "PLAYER_EXPERIENCE_PROMETHEUS_MIRRORS", "published"
@@ -449,6 +495,14 @@ class SmokeConfig:
             if queryability_freshness_budget_seconds is not None
             else os.environ.get("PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS")
         )
+        if telnet_transport is None:
+            telnet_transport = os.environ.get("PLAYER_EXPERIENCE_TELNET_TRANSPORT") or None
+        if telnet_server_hostname is None:
+            telnet_server_hostname = (
+                os.environ.get("PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME") or None
+            )
+        if telnet_ca_file is None and os.environ.get("PLAYER_EXPERIENCE_TELNET_CA_FILE"):
+            telnet_ca_file = Path(os.environ["PLAYER_EXPERIENCE_TELNET_CA_FILE"])
         return cls(
             source=source,
             canary_path=canary_path,
@@ -460,6 +514,9 @@ class SmokeConfig:
             ),
             telnet_host=os.environ.get("SMOKE_TELNET_HOST", "localhost"),
             telnet_port=int(os.environ.get("TCP_PROXY_PORT", "2323")),
+            telnet_transport=telnet_transport,
+            telnet_server_hostname=telnet_server_hostname,
+            telnet_ca_file=telnet_ca_file,
             account_api_base=os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081"),
             game_logic_api_base=os.environ.get(
                 "SMOKE_GAME_LOGIC_API_BASE", "http://localhost:8085"
@@ -541,6 +598,51 @@ def validate_queryability_omission_config(config: SmokeConfig) -> None:
             "--queryability-freshness-budget-seconds or "
             "PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS"
         )
+
+
+def validate_telnet_transport_config(
+    config: SmokeConfig, exposed_paths: set[str], *, simulate: bool
+) -> None:
+    if simulate or "telnet" not in exposed_paths:
+        return
+    if config.telnet_transport is None:
+        raise ValueError(
+            "live Telnet evidence requires --telnet-transport tls|plaintext or "
+            "PLAYER_EXPERIENCE_TELNET_TRANSPORT"
+        )
+    if config.telnet_transport == "tls":
+        if (
+            not isinstance(config.telnet_server_hostname, str)
+            or not config.telnet_server_hostname.strip()
+        ):
+            raise ValueError(
+                "TLS Telnet evidence requires --telnet-server-hostname or "
+                "PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME"
+            )
+        return
+    if config.telnet_server_hostname is not None or config.telnet_ca_file is not None:
+        raise ValueError(
+            "Telnet hostname and CA options are only valid with "
+            "--telnet-transport tls"
+        )
+
+
+def telnet_socket_options(config: SmokeConfig) -> dict[str, Any]:
+    if config.telnet_transport == "tls":
+        return {
+            "tls_enabled": True,
+            "tls_server_hostname": config.telnet_server_hostname,
+            "tls_ca_file": config.telnet_ca_file,
+        }
+    if config.telnet_transport == "plaintext":
+        return {
+            "tls_enabled": False,
+            "tls_server_hostname": None,
+            "tls_ca_file": None,
+        }
+    raise ValueError(
+        "Telnet transport must be explicitly set to tls or plaintext before opening a socket"
+    )
 
 
 def load_synthetic_identity_evidence(path: Path | None) -> dict[str, Any] | None:
@@ -915,8 +1017,11 @@ def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str,
     if "telnet" in injected:
         return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 0}
     try:
-        with socket.create_connection(
-            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        with open_telnet_socket(
+            config.telnet_host,
+            config.telnet_port,
+            config.timeout_seconds,
+            **telnet_socket_options(config),
         ) as sock:
             recv_until_socket(sock, "\n", config.timeout_seconds)
             run_telnet_command_plan(
@@ -1073,8 +1178,11 @@ def run_telnet_canary(
         return simulated_canary_records(config, injected)
     try:
         step_results: list[dict[str, Any]] = []
-        with socket.create_connection(
-            (config.telnet_host, config.telnet_port), timeout=config.timeout_seconds
+        with open_telnet_socket(
+            config.telnet_host,
+            config.telnet_port,
+            config.timeout_seconds,
+            **telnet_socket_options(config),
         ) as sock:
             recv_until_socket(sock, "\n", config.timeout_seconds)
             run_telnet_command_plan(

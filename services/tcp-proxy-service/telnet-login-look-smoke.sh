@@ -170,7 +170,13 @@ else:
         play_expect,
         look_expect,
     )
-run_telnet_smoke_session(host, port, steps, timeout_seconds)
+run_telnet_smoke_session(
+    host,
+    port,
+    steps,
+    timeout_seconds,
+    tls_enabled=False,
+)
 
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")
