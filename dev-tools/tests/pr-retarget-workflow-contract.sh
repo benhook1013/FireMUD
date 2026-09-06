@@ -345,6 +345,7 @@ assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.ev
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
 require_contains "$preview_path" 'preview:paused'
 require_contains "$preview_path" 'EVENT_LABELS_JSON:'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 require_contains "$preview_path" '--labels-json "$LABELS_JSON"'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels immediately before helm deploy'
