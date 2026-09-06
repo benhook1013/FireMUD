@@ -512,6 +512,16 @@ class GameplayCommandRepositoryIntegrationTest {
     assertThat(matchingScope).isTrue();
     assertThat(foreignTenant).isFalse();
     assertThat(foreignInstance).isFalse();
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.execute(
+                    status ->
+                        repository.lockAcceptedCommandForStaging(
+                            1L, 7L, "cmd-staging-scope", "say goodbye", false)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "Gameplay command identity was reused with conflicting target or queue payload: "
+                + "cmd-staging-scope");
   }
 
   @Test

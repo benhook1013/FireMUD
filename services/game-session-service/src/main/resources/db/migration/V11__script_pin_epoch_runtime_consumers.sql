@@ -20,6 +20,13 @@ CREATE TABLE script_pin_operation (
     CONSTRAINT ck_script_pin_operation_kind CHECK (
         operation_kind IN ('SET', 'ROLLBACK', 'REPIN')
     ),
+    CONSTRAINT ck_script_pin_operation_required_text_nonblank CHECK (
+        BTRIM(control_plane_request_id) <> ''
+        AND BTRIM(target_script_patch_version) <> ''
+        AND BTRIM(actor_principal) <> ''
+        AND BTRIM(reason) <> ''
+        AND BTRIM(mutation_digest) <> ''
+    ),
     CONSTRAINT ck_script_pin_operation_previous_tuple CHECK (
         (previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL)
         OR

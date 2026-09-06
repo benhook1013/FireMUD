@@ -763,6 +763,9 @@ public class TickQueueControlService {
             gameInstanceId,
             command.getCommandId(),
             cleanupFailure);
+        if (!lease.isOwned()) {
+          break;
+        }
       }
     }
   }

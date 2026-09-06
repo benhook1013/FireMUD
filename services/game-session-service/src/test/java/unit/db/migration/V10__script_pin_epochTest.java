@@ -23,6 +23,9 @@ class V10__script_pin_epochTest {
         .contains(
             "SET script_patch_version = NULL, script_pin_epoch = NULL, "
                 + "script_patch_pinned_control_plane_request_id = NULL")
+        .contains(
+            "NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL OR "
+                + "NULLIF( regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '' ) IS NULL")
         .contains("SET script_pin_epoch = 1")
         .contains("script_pin_epoch IS NULL")
         .contains("script_patch_version")

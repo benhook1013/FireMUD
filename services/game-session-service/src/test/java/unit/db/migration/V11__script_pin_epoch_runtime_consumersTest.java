@@ -23,6 +23,12 @@ class V11__script_pin_epoch_runtime_consumersTest {
         .contains("CREATE TABLE script_pin_operation")
         .contains("operation_kind IN ('SET', 'ROLLBACK', 'REPIN')")
         .contains("mutation_digest")
+        .contains("CONSTRAINT ck_script_pin_operation_required_text_nonblank CHECK")
+        .contains("BTRIM(control_plane_request_id) <> ''")
+        .contains("BTRIM(target_script_patch_version) <> ''")
+        .contains("BTRIM(actor_principal) <> ''")
+        .contains("BTRIM(reason) <> ''")
+        .contains("BTRIM(mutation_digest) <> ''")
         .contains("committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP")
         .contains("PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id)")
         .contains("CONSTRAINT ck_script_pin_operation_previous_tuple CHECK")
@@ -41,6 +47,6 @@ class V11__script_pin_epoch_runtime_consumersTest {
         .contains("CREATE INDEX idx_script_pin_operation_instance")
         .contains(
             "ON script_pin_operation (tenant_id, game_instance_id, committed_at, control_plane_request_id)");
-    assertThat(migration.split("CHECK \\(", -1)).hasSize(6);
+    assertThat(migration.split("CHECK \\(", -1)).hasSize(7);
   }
 }

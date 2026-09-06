@@ -94,7 +94,8 @@ final class GameSessionRuntimeControlPlaneReadService {
     } catch (IllegalArgumentException ex) {
       throw new RuntimeStateException(
           "SCRIPT_PIN_STATE_INVALID",
-          "patch, positive epoch, and request id must be present together");
+          "patch, positive epoch, and request id must be present together",
+          ex);
     }
     validateWorldLifecycle(instance);
     CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);

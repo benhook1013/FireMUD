@@ -347,6 +347,9 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
     assertEquals(
         "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
         error.getMessage());
+    assertEquals(
+        "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present together",
+        error.getCause().getMessage());
     verify(world, never()).getWorldInstanceLifecycle(1L, 7L);
   }
 

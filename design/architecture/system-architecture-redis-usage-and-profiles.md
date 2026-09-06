@@ -6,7 +6,7 @@ This document describes **how** FireMUD uses Redis in different roles and enviro
 
 The live automation handoff still carries optional `dueTickId` for scheduler/timer work and omits a due point for immediate event-driven handoffs. The target tagged, mutually exclusive `duePoint` contract is not yet the live wire boundary; callers must not represent a wall-clock due point as a tick value.
 
-The target automation handoff also requires the complete Trigger Identity, including `scriptPinEpoch`, plus `automationDispatchId` and `commandOrdinal`. The current instance-bound trigger request carries and validates `scriptPinEpoch` plus the paired nonblank owner request identity but remains narrower than the complete contract; `commandOrdinal`, complete identity, and uniqueness/final-fence proof below are not implementation proof.
+The target automation handoff also requires the complete Trigger Identity, including `scriptPinEpoch`, plus `automationDispatchId` and `commandOrdinal`. The current instance-bound trigger request carries and validates the complete owner tuple `(scriptPatchVersion, scriptPinEpoch, scriptPinControlPlaneRequestId)`, including its paired nonblank owner request identity, but remains narrower than the complete Trigger Identity contract; `commandOrdinal`, complete identity, and uniqueness/final-fence proof below are not implementation proof.
 
 Separate Coordination and Cache/Rate-Limit Redis processes exist in current manifests, but role-specific application clients, ACLs, key/script registration, and ownership proof under [ADR 0171](./decisions/adr-0171-separated-redis-role-processes-and-owned-keyspaces.md) remain incomplete.
 

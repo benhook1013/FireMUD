@@ -22,8 +22,7 @@ class V12__gameplay_command_script_pin_fenceTest {
     assertThat(normalized)
         .contains("ADD COLUMN script_pin_epoch bigint")
         .contains("ADD COLUMN script_pin_control_plane_request_id character varying(128)")
-        .contains(
-            "CREATE INDEX idx_gameplay_command_recovery_accepted_unstaged ON gameplay_command USING btree (accepted_at, id) WHERE execution_outcome = 'ACCEPTED' AND staged_at IS NULL;")
+        .doesNotContain("idx_gameplay_command_recovery_accepted_unstaged")
         .contains(
             "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'AUTOMATION' AND completed_at IS NULL AND NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL;")
         .contains(

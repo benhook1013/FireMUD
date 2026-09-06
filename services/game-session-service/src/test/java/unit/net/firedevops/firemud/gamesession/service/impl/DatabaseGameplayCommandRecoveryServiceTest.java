@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -138,5 +139,15 @@ class DatabaseGameplayCommandRecoveryServiceTest {
     verify(executor).execute(recovery.capture());
     verifyNoInteractions(repository, queue);
     assertThat(recovery.getValue()).isNotNull();
+
+    Mockito.doThrow(new IllegalStateException("database unavailable"))
+        .when(repository)
+        .findAcceptedButUnstagedPage(
+            Mockito.any(), Mockito.isNull(), Mockito.eq(0L), Mockito.eq(100));
+    assertThatCode(recovery.getValue()::run).doesNotThrowAnyException();
+    verify(repository)
+        .findAcceptedButUnstagedPage(
+            Mockito.any(), Mockito.isNull(), Mockito.eq(0L), Mockito.eq(100));
+    verifyNoInteractions(queue);
   }
 }

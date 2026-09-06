@@ -107,11 +107,6 @@ final class TickStagingService {
   }
 
   void drainRemoteFollowups(
-      Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
-    drainRemoteFollowups(tenantId, gameInstanceId, ownership, null);
-  }
-
-  void drainRemoteFollowups(
       Long tenantId,
       Long gameInstanceId,
       TickQueueControlService.OwnershipSnapshot ownership,
@@ -455,15 +450,6 @@ final class TickStagingService {
             tenantId, gameInstanceId, "STAGED");
     if (existing.isEmpty()) {
       Instant completedAt = Instant.now();
-      if (replayLocalAutomation.stream()
-          .allMatch(
-              command ->
-                  hasCompleteScriptPinTuple(
-                      command.getScriptPatchVersion(),
-                      command.getScriptPinEpoch(),
-                      command.getScriptPinControlPlaneRequestId()))) {
-        requireReplayLocalAutomationPinTuple(replayLocalAutomation, replayLockedInstance);
-      }
       List<CommandSelection> acceptedSelections =
           classifyFreshStageSelections(replaySelections, replayLockedInstance, completedAt);
       List<TickQueuedCommandEnvelope> acceptedEntries =
@@ -510,12 +496,7 @@ final class TickStagingService {
       List<GameplayCommand> localAutomation = localAutomationCommands(replaySelections);
       java.util.Set<String> incompleteCommandIds =
           incompleteLocalAutomationCommandIds(replaySelections);
-      GameInstance lockedInstance =
-          localAutomation.stream()
-                  .anyMatch(command -> !incompleteCommandIds.contains(command.getCommandId()))
-              ? requireAuthoritativeLocalAutomationPinTuple(
-                  tenantId, gameInstanceId, replaySelections)
-              : null;
+      GameInstance lockedInstance = replayLockedInstance;
       java.util.Set<String> mismatchedCommandIds =
           lockedInstance == null
               ? java.util.Set.of()
@@ -1182,18 +1163,6 @@ final class TickStagingService {
     return java.util.Set.copyOf(union);
   }
 
-  private void requireReplayLocalAutomationPinTuple(
-      List<GameplayCommand> commands, GameInstance lockedInstance) {
-    for (GameplayCommand command : commands) {
-      requireCompleteScriptPinTuple(
-          command.getScriptPatchVersion(),
-          command.getScriptPinEpoch(),
-          command.getScriptPinControlPlaneRequestId(),
-          "local Automation command " + command.getCommandId());
-      requireMatchingScriptPinTuple(command, lockedInstance);
-    }
-  }
-
   private GameInstance requireAuthoritativeLocalAutomationPinTuple(
       Long tenantId, Long gameInstanceId, List<CommandSelection> selections) {
     List<GameplayCommand> localCommands = localAutomationCommands(selections);
@@ -1284,8 +1253,7 @@ final class TickStagingService {
     if (!matchesScriptPinTuple(command, instance)) {
       throw new LocalAutomationPinTupleMismatchException(
           "Local Automation command script pin tuple does not match the authoritative game instance commandId="
-              + command.getCommandId(),
-          instance);
+              + command.getCommandId());
     }
   }
 
@@ -1929,15 +1897,8 @@ final class TickStagingService {
 
   private static final class LocalAutomationPinTupleMismatchException
       extends IllegalStateException {
-    private final GameInstance instance;
-
-    private LocalAutomationPinTupleMismatchException(String message, GameInstance instance) {
+    private LocalAutomationPinTupleMismatchException(String message) {
       super(message);
-      this.instance = instance;
-    }
-
-    private GameInstance instance() {
-      return instance;
     }
   }
 

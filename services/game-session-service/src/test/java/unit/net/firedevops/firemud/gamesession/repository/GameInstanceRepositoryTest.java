@@ -56,7 +56,7 @@ class GameInstanceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     GameInstanceRepository repository = new GameInstanceRepository(dsl);
 
-    for (String controlPlaneRequestId : new String[] {null, " "}) {
+    for (String controlPlaneRequestId : new String[] {null, " ", ""}) {
       IllegalArgumentException applyError =
           assertThrows(
               IllegalArgumentException.class,
@@ -99,7 +99,7 @@ class GameInstanceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     GameInstanceRepository repository = new GameInstanceRepository(dsl);
 
-    for (String errorCode : new String[] {null, " "}) {
+    for (String errorCode : new String[] {null, " ", ""}) {
       IllegalArgumentException error =
           assertThrows(
               IllegalArgumentException.class,

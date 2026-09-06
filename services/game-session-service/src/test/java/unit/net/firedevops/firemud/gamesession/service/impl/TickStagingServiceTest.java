@@ -1889,6 +1889,66 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void replayRestoreFailureRetainsCommittedResolutionAndDurableWrites() {
+    doThrow(new IllegalStateException("Redis unavailable"))
+        .when(redisTemplate)
+        .execute(any(), any(), any(Object[].class));
+    List<Object> pendingRawEntries = List.of("N|cmd-1|look", "N|cmd-2|wave");
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-existing");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    GameplayCommand sealedCommand = gameplayCommand("cmd-1");
+    GameplayCommand redisOnlyCommand = gameplayCommand("cmd-2");
+    redisOnlyCommand.setCommandText("wave");
+    redisOnlyCommand.setSanitizedCommandText("wave");
+    redisOnlyCommand.setSourceType("PLAYER");
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
+        .thenReturn(List.of(sealedCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(sealedCommand, redisOnlyCommand));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2")))
+        .thenReturn(List.of(redisOnlyCommand));
+    String sealedManifest = replayManifestJson(service, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(service, List.of("N|cmd-1|look")));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickStagingService.ReplayReconciliationFailure failure =
+        assertThrows(
+            TickStagingService.ReplayReconciliationFailure.class,
+            () ->
+                service.resolveReplayBatchForTick(
+                    1L,
+                    2L,
+                    parseEntries(service, pendingRawEntries),
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    activeLease));
+
+    TickStagingService.ReplayResolution committedResolution = failure.resolution();
+    assertTrue(committedResolution.replacementCommitted());
+    assertEquals("PENDING_REPLAY", committedResolution.batch().getBatchSource());
+    assertEquals("RETRY_QUEUED", redisOnlyCommand.getExecutionOutcome());
+    assertEquals("GAMEPLAY_RETRY", redisOnlyCommand.getQueueSourceKind());
+    ArgumentCaptor<TickBatch> savedBatches = ArgumentCaptor.forClass(TickBatch.class);
+    verify(tickBatchRepository, org.mockito.Mockito.atLeast(2)).save(savedBatches.capture());
+    assertTrue(
+        savedBatches.getAllValues().stream()
+            .anyMatch(batch -> "PENDING_REPLAY".equals(batch.getBatchSource())));
+    verify(tickEffectRepository).saveAll(any());
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+  }
+
+  @Test
   void replayRestoreRemovesTerminalizedEntriesFilteredFromPendingRead() {
     GameplayCommand executable = gameplayCommand("cmd-executable");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-executable")))
@@ -1908,9 +1968,11 @@ class TickStagingServiceTest {
     assertTrue(resolution.batch() != null);
     ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
     verify(redisTemplate).execute(any(), any(), arguments.capture());
-    assertEquals("2", arguments.getValue()[1]);
-    assertEquals("1", arguments.getValue()[7]);
-    assertTrue(arguments.getValue()[8].toString().contains("cmd-terminalized"));
+    RestoreProjectionScriptArguments scriptArguments =
+        restoreProjectionScriptArguments(arguments.getValue());
+    assertEquals(2, scriptArguments.pendingCount());
+    assertEquals(1, scriptArguments.terminalizedCount());
+    assertTrue(scriptArguments.terminalizedPayloads().getFirst().contains("cmd-terminalized"));
   }
 
   @Test
@@ -1996,7 +2058,8 @@ class TickStagingServiceTest {
     service.drainRemoteFollowups(
         1L,
         2L,
-        new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+        new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+        activeLease);
 
     ArgumentCaptor<TickBatch> batchCaptor = ArgumentCaptor.forClass(TickBatch.class);
     verify(tickBatchRepository, org.mockito.Mockito.atLeastOnce()).save(batchCaptor.capture());
@@ -2069,8 +2132,8 @@ class TickStagingServiceTest {
             service.drainRemoteFollowups(
                 1L,
                 2L,
-                new TickQueueControlService.OwnershipSnapshot(
-                    "region-a", 1L, "fence-a", false, 0L)));
+                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+                activeLease));
 
     verify(remoteFollowupDrainService)
         .releaseClaimedFollowups(anyString(), eq("ROLLBACK_REQUEUED"), eq("remote effect failed"));
@@ -2121,6 +2184,28 @@ class TickStagingServiceTest {
     command.setRegionEpoch(1L);
     return command;
   }
+
+  private static RestoreProjectionScriptArguments restoreProjectionScriptArguments(
+      Object[] arguments) {
+    int pendingCount = Integer.parseInt(arguments[1].toString());
+    int sealedCountIndex = 2 + pendingCount;
+    int sealedCount = Integer.parseInt(arguments[sealedCountIndex].toString());
+    int redisOnlyCountIndex = sealedCountIndex + 1 + sealedCount;
+    int redisOnlyCount = Integer.parseInt(arguments[redisOnlyCountIndex].toString());
+    int terminalizedCountIndex = redisOnlyCountIndex + 1 + redisOnlyCount;
+    int terminalizedCount = Integer.parseInt(arguments[terminalizedCountIndex].toString());
+    int terminalizedPayloadStart = terminalizedCountIndex + 1;
+    List<String> terminalizedPayloads =
+        java.util.stream.IntStream.range(
+                terminalizedPayloadStart, terminalizedPayloadStart + terminalizedCount)
+            .mapToObj(index -> arguments[index].toString())
+            .toList();
+    return new RestoreProjectionScriptArguments(
+        pendingCount, terminalizedCount, terminalizedPayloads);
+  }
+
+  private record RestoreProjectionScriptArguments(
+      int pendingCount, int terminalizedCount, List<String> terminalizedPayloads) {}
 
   private static GameplayCommand copyGameplayCommand(GameplayCommand source) {
     var copy = new GameplayCommand();

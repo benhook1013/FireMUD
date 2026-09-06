@@ -391,6 +391,17 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void executeDurableEffectsRequiresLeaseBeforeScanningDrainedBatches() {
+    NullPointerException exception =
+        assertThrows(NullPointerException.class, () -> service.executeDurableEffects(1L, 2L, null));
+
+    assertEquals(
+        "Active tick lease is required to execute durable effects", exception.getMessage());
+    verify(tickBatchRepository, never())
+        .findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(1L, 2L, "DRAINED");
+  }
+
+  @Test
   void executeDurableEffectsPreservesClaimedDueTupleWhenStaleFenceRequeues() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-stale");

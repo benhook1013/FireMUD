@@ -40,7 +40,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
-import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -2393,7 +2392,6 @@ class TickStageScriptTest {
   private static final String PENDING_KEY = "gamesession:tick:pending:42:9001";
   private static final String COMMAND_INDEX_KEY = "gamesession:tick:command-index:42:9001";
   private static final String LEASE_KEY = "gamesession:tick:lock:42:9001";
-  private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
   private static final String LEASE_TOKEN = "lease-token";
   private static final RedisScript<Long> TICK_STAGE_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_stage.lua"), Long.class);
@@ -2409,6 +2407,7 @@ class TickStageScriptTest {
 
   private LettuceConnectionFactory connectionFactory;
   private RedisTemplate<String, Object> redisTemplate;
+  private RedisScriptTestSupport redisScriptTestSupport;
   private StringRedisTemplate lockRedisTemplate;
   private RedisTemplate<String, Object> scriptRedisTemplate;
 
@@ -2421,12 +2420,13 @@ class TickStageScriptTest {
     redisTemplate = new RedisTemplate<>();
     redisTemplate.setConnectionFactory(connectionFactory);
     redisTemplate.afterPropertiesSet();
+    redisScriptTestSupport = new RedisScriptTestSupport(redisTemplate);
     lockRedisTemplate = new StringRedisTemplate(connectionFactory);
     lockRedisTemplate.afterPropertiesSet();
     scriptRedisTemplate = new RedisTemplate<>();
     scriptRedisTemplate.setConnectionFactory(connectionFactory);
     scriptRedisTemplate.setKeySerializer(
-        new ProductionScriptKeySerializer(redisTemplate.getKeySerializer()));
+        RedisScriptTestSupport.productionScriptKeySerializer(redisTemplate.getKeySerializer()));
     scriptRedisTemplate.setValueSerializer(redisTemplate.getValueSerializer());
     scriptRedisTemplate.afterPropertiesSet();
     redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, COMMAND_INDEX_KEY, LEASE_KEY));
@@ -2679,38 +2679,15 @@ class TickStageScriptTest {
   }
 
   private List<byte[]> rawValues(String key) {
-    List<byte[]> values =
-        redisTemplate.execute(
-            (RedisCallback<List<byte[]>>)
-                connection -> connection.lRange(serializedKey(key), 0, -1));
-    return values == null ? List.of() : values;
+    return redisScriptTestSupport.rawValues(key);
   }
 
-  @SuppressWarnings("unchecked")
   private byte[] serializedKey(String key) {
-    RedisSerializer<Object> serializer = (RedisSerializer<Object>) redisTemplate.getKeySerializer();
-    if (serializer == null) {
-      throw new IllegalStateException("Redis key serializer is not configured");
-    }
-    byte[] serialized = serializer.serialize(key);
-    if (serialized == null) {
-      throw new IllegalStateException("Redis key serializer returned null");
-    }
-    return serialized;
+    return redisScriptTestSupport.serializedKey(key);
   }
 
-  @SuppressWarnings("unchecked")
   private byte[] serializeValue(Object value) {
-    RedisSerializer<Object> serializer =
-        (RedisSerializer<Object>) redisTemplate.getValueSerializer();
-    if (serializer == null) {
-      throw new IllegalStateException("Redis value serializer is not configured");
-    }
-    byte[] serialized = serializer.serialize(value);
-    if (serialized == null) {
-      throw new IllegalStateException("Redis value serializer returned null");
-    }
-    return serialized;
+    return redisScriptTestSupport.serializeValue(value);
   }
 
   private static byte[] serializedEnvelope(int typeCode, long payloadLength, byte[] payload) {
@@ -2733,8 +2710,7 @@ class TickStageScriptTest {
   }
 
   private List<String> values(String key) {
-    List<Object> values = redisTemplate.opsForList().range(key, 0, -1);
-    return values == null ? List.of() : values.stream().map(Object::toString).toList();
+    return redisScriptTestSupport.values(key);
   }
 
   private long execute(String leaseToken, String max, String mode) {
@@ -2779,27 +2755,5 @@ class TickStageScriptTest {
 
   private Object payload(String value) {
     return TickBatchExecutionService.restoreQueuePayloadArgument(value);
-  }
-
-  private static final class ProductionScriptKeySerializer implements RedisSerializer<Object> {
-    private final RedisSerializer<Object> queueKeySerializer;
-
-    @SuppressWarnings("unchecked")
-    private ProductionScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
-      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
-    }
-
-    @Override
-    public byte[] serialize(Object value) {
-      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
-        return new StringRedisSerializer().serialize((String) value);
-      }
-      return queueKeySerializer.serialize(value);
-    }
-
-    @Override
-    public Object deserialize(byte[] bytes) {
-      return queueKeySerializer.deserialize(bytes);
-    }
   }
 }

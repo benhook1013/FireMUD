@@ -33,6 +33,8 @@ import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class GameSessionOperatorControlPlaneServiceTest {
   @AfterEach
@@ -217,38 +219,43 @@ class GameSessionOperatorControlPlaneServiceTest {
     verifyNoInteractions(gameDesign, automation);
   }
 
-  @Test
-  void pinFailureMessagesCoverAllTargetValidationCodes() throws ReflectiveOperationException {
-    GameSessionOperatorControlPlaneService service =
-        service(mock(GameInstanceRepository.class), mock(TickService.class));
-    var messageMethod =
-        GameSessionOperatorControlPlaneService.class.getDeclaredMethod(
-            "pinFailureMessage", String.class);
-    messageMethod.setAccessible(true);
+  @ParameterizedTest
+  @CsvSource({
+    "SCRIPT_PIN_EXPECTATION_FAILED, expected current script pin does not match authoritative current tuple",
+    "SCRIPT_PIN_EPOCH_EXHAUSTED, script pin epoch exhausted",
+    "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT, rollback target is already the current script patch",
+    "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE, script patch authority is unavailable",
+    "SCRIPT_PATCH_NOT_PUBLISHED, script patch is not published",
+    "SCRIPT_PATCH_NOT_READY, script patch is not ready",
+    "SCRIPT_PATCH_TENANT_MISMATCH, script patch tenant does not match the game instance tenant",
+    "SCRIPT_PATCH_BASE_VERSION_MISMATCH, script patch base version does not match the game instance runtime version"
+  })
+  void pinFailureMessagesAreExposedBySetResponse(String errorCode, String expectedMessage) {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.applyScriptPin(
+            1L, 7L, "SET", "patch-new", "request-1", "operator", "pin", "EXPECT_UNPINNED", null))
+        .thenReturn(
+            new ScriptPinMutationResult(null, null, "patch-new", 1L, "request-1", errorCode));
 
-    var expectedMessages =
-        java.util.Map.of(
-            "SCRIPT_PIN_EXPECTATION_FAILED",
-            "expected current script pin does not match authoritative current tuple",
-            "SCRIPT_PIN_EPOCH_EXHAUSTED",
-            "script pin epoch exhausted",
-            "SCRIPT_PATCH_ROLLBACK_TARGET_CURRENT",
-            "rollback target is already the current script patch",
-            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE",
-            "script patch authority is unavailable",
-            "SCRIPT_PATCH_NOT_PUBLISHED",
-            "script patch is not published",
-            "SCRIPT_PATCH_NOT_READY",
-            "script patch is not ready",
-            "SCRIPT_PATCH_TENANT_MISMATCH",
-            "script patch tenant does not match the game instance tenant",
-            "SCRIPT_PATCH_BASE_VERSION_MISMATCH",
-            "script patch base version does not match the game instance runtime version");
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
 
-    expectedMessages.forEach(
-        (errorCode, expectedMessage) ->
-            assertThat(invokePinFailureMessage(messageMethod, service, errorCode))
-                .isEqualTo(expectedMessage));
+    assertThat(response.getError().getCode()).isEqualTo(errorCode);
+    assertThat(response.getError().getMessage()).isEqualTo(expectedMessage);
   }
 
   @Test
@@ -1135,17 +1142,6 @@ class GameSessionOperatorControlPlaneServiceTest {
       AutomationScriptingControlPlaneClient automation) {
     return new GameSessionOperatorControlPlaneService(
         repository, tickService, gameDesign, automation, mock(GameSessionProperties.class));
-  }
-
-  private static String invokePinFailureMessage(
-      java.lang.reflect.Method messageMethod,
-      GameSessionOperatorControlPlaneService service,
-      String errorCode) {
-    try {
-      return (String) messageMethod.invoke(service, errorCode);
-    } catch (ReflectiveOperationException ex) {
-      throw new AssertionError("Failed to invoke pin failure message mapping", ex);
-    }
   }
 
   private static GameInstance validUnpinnedInstance() {

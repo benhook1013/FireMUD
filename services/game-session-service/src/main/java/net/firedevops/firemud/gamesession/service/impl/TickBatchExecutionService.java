@@ -614,6 +614,7 @@ final class TickBatchExecutionService {
 
   void executeDurableEffects(
       Long tenantId, Long gameInstanceId, TickQueueControlService.QueueLockLease tickLease) {
+    Objects.requireNonNull(tickLease, "Active tick lease is required to execute durable effects");
     List<TickBatch> drainedBatches =
         tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             tenantId, gameInstanceId, "DRAINED");

@@ -66,7 +66,3 @@ ALTER TABLE gameplay_command
             AND NULLIF(regexp_replace(script_pin_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
         )
     ) /* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */;
-
-CREATE INDEX idx_gameplay_command_recovery_accepted_unstaged
-    ON gameplay_command USING btree (accepted_at, id)
-    WHERE execution_outcome = 'ACCEPTED' AND staged_at IS NULL;
