@@ -1,8 +1,0 @@
-CREATE TABLE log_events (
-    id BIGSERIAL PRIMARY KEY,
-    tenant_id BIGINT NOT NULL,
-    type VARCHAR(50) NOT NULL,
-    message VARCHAR(255) NOT NULL,
-    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    account_id BIGINT
-);

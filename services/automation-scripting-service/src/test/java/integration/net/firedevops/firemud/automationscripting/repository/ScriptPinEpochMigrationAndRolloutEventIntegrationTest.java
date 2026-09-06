@@ -1,10 +1,8 @@
 package net.firedevops.firemud.automationscripting.repository;
 
-import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -12,7 +10,6 @@ import java.util.UUID;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -97,42 +94,6 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     assertThat(rawProjectionRequestId(dsl, updated.getId())).isEqualTo("");
   }
 
-  @Test
-  void v5FailsClosedOnDuplicatePreInstanceOnLoadRowsWithoutDeletingEvidence() {
-    DSLContext dsl = migrateToV4();
-    insertDuplicatePreInstanceOnLoadRows(dsl);
-
-    assertThatThrownBy(this::migrateToLatestInSameSchema)
-        .isInstanceOf(FlywayException.class)
-        .hasStackTraceContaining("duplicate pre-instance");
-
-    assertThat(countRows(dsl, "tenant-pre-instance")).isEqualTo(2);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM script_event_ingress_audit "
-                    + "WHERE tenant_id = 'tenant-pre-instance' AND game_instance_id IS NULL"))
-        .isEqualTo(2L);
-  }
-
-  @Test
-  void v5FailsClosedOnDuplicateRetainedRuntimeRowsWithoutDeletingEvidence() {
-    DSLContext dsl = migrateToV4();
-    insertDuplicateRetainedRuntimeRows(dsl);
-
-    assertThatThrownBy(this::migrateToLatestInSameSchema)
-        .isInstanceOf(FlywayException.class)
-        .hasStackTraceContaining("duplicate retained runtime");
-
-    assertThat(countRows(dsl, "tenant-retained-runtime")).isEqualTo(2);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM script_event_ingress_audit "
-                    + "WHERE tenant_id = 'tenant-retained-runtime' "
-                    + "AND game_instance_id = 'instance-retained' "
-                    + "AND region_id IS NULL AND region_epoch IS NULL"))
-        .isEqualTo(2L);
-  }
-
   private DSLContext migrateToLatest() {
     schema = newSchemaName();
     Flyway.configure()
@@ -143,57 +104,6 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .load()
         .migrate();
     return schemaDsl();
-  }
-
-  private DSLContext migrateToV4() {
-    schema = newSchemaName();
-    Flyway.configure()
-        .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .target("4")
-        .load()
-        .migrate();
-    return schemaDsl();
-  }
-
-  private void migrateToLatestInSameSchema() {
-    Flyway.configure()
-        .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .load()
-        .migrate();
-  }
-
-  private void insertDuplicatePreInstanceOnLoadRows(DSLContext dsl) {
-    for (int i = 0; i < 2; i++) {
-      dsl.execute(
-          "INSERT INTO script_event_ingress_audit ("
-              + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
-              + "playable_state_scope, script_id, event_type, event_schema_version, "
-              + "script_patch_version, script_event_id, source_service, trigger_mode, "
-              + "admitted, admission_outcome, admission_reason) VALUES ("
-              + "'tenant-pre-instance', NULL, NULL, NULL, NULL, '', 'script-on-load', "
-              + "'onLoad', 'v1', 'patch-legacy', 'on-load-event', 'legacy-test', 'ON_LOAD', "
-              + "TRUE, 'ADMITTED', 'legacy evidence')");
-    }
-  }
-
-  private void insertDuplicateRetainedRuntimeRows(DSLContext dsl) {
-    for (int i = 0; i < 2; i++) {
-      dsl.execute(
-          "INSERT INTO script_event_ingress_audit ("
-              + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
-              + "playable_state_scope, script_id, event_type, event_schema_version, "
-              + "script_patch_version, script_event_id, source_service, trigger_mode, "
-              + "admitted, admission_outcome, admission_reason) VALUES ("
-              + "'tenant-retained-runtime', 'instance-retained', NULL, NULL, 'entity-retained', "
-              + "'INSTANCE', 'script-runtime', 'onEnterRegion', 'v1', 'patch-legacy', "
-              + "'retained-event', 'legacy-test', 'EVENT', TRUE, 'ADMITTED', 'legacy evidence')");
-    }
   }
 
   private ScriptPatchInstanceRolloutEvent rolloutEvent(
@@ -237,11 +147,6 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     return dsl.fetchValue(
         SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
         SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ID.eq(id));
-  }
-
-  private int countRows(DSLContext dsl, String tenantId) {
-    return dsl.fetchCount(
-        SCRIPT_EVENT_INGRESS_AUDIT, SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID.eq(tenantId));
   }
 
   private DSLContext schemaDsl() {

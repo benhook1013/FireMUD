@@ -75,10 +75,10 @@ CREATE TABLE script_event_ingress_audit (
     region_id VARCHAR(64),
     region_epoch BIGINT,
     entity_id VARCHAR(64),
-    playable_state_scope VARCHAR(32) NOT NULL DEFAULT '',
-    world_slug VARCHAR(64) NOT NULL DEFAULT '',
-    realm_slug VARCHAR(64) NOT NULL DEFAULT '',
-    pointer_version VARCHAR(64) NOT NULL DEFAULT '',
+    playable_state_scope VARCHAR(32) DEFAULT '',
+    world_slug VARCHAR(64) DEFAULT '',
+    realm_slug VARCHAR(64) DEFAULT '',
+    pointer_version VARCHAR(64) DEFAULT '',
     script_id VARCHAR(128),
     plugin_id VARCHAR(128),
     plugin_version_id VARCHAR(128),
@@ -86,6 +86,9 @@ CREATE TABLE script_event_ingress_audit (
     event_schema_version VARCHAR(32) NOT NULL,
     quota_class VARCHAR(64) NOT NULL DEFAULT 'STANDARD_RUNTIME',
     script_patch_version VARCHAR(128) NOT NULL,
+    script_pin_epoch BIGINT,
+    script_pin_control_plane_request_id VARCHAR(256),
+    request_digest VARCHAR(64) NOT NULL DEFAULT '',
     script_event_id VARCHAR(128) NOT NULL,
     source_service VARCHAR(128) NOT NULL,
     trigger_mode VARCHAR(64) NOT NULL,
@@ -101,21 +104,18 @@ CREATE TABLE script_event_ingress_audit (
     admission_outcome VARCHAR(128) NOT NULL,
     admission_reason VARCHAR(256) NOT NULL,
     resolved_handler_count INT NOT NULL DEFAULT 0,
+    claim_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT uq_script_event_ingress_audit_identity UNIQUE (
-        tenant_id,
-        game_instance_id,
-        region_id,
-        region_epoch,
-        entity_id,
-        playable_state_scope,
-        event_type,
-        event_schema_version,
-        script_patch_version,
-        script_event_id,
-        dry_run,
-        source_service
+    CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK (
+        request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK (
+        (script_pin_epoch IS NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND game_instance_id IS NOT NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     )
 );
 
@@ -124,6 +124,35 @@ CREATE INDEX idx_script_event_ingress_audit_tenant_created
 CREATE INDEX idx_script_event_ingress_audit_event_type
     ON script_event_ingress_audit(event_type, event_schema_version);
 
+CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_event_ingress_audit (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    entity_id,
+    playable_state_scope,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_pin_epoch,
+    script_event_id,
+    dry_run,
+    source_service
+) WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;
+
+/* [jooq ignore start] */
+CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
+    tenant_id,
+    script_id,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_event_id,
+    dry_run,
+    source_service
+) NULLS NOT DISTINCT WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;
+/* [jooq ignore stop] */
+
 CREATE TABLE script_event_bindings (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
@@ -131,6 +160,7 @@ CREATE TABLE script_event_bindings (
     event_type VARCHAR(128) NOT NULL,
     event_schema_version VARCHAR(32) NOT NULL,
     script_id VARCHAR(128) NOT NULL,
+    binding_id VARCHAR(128) NOT NULL DEFAULT '',
     target_scope_type VARCHAR(32) NOT NULL,
     target_scope_id VARCHAR(128) NOT NULL,
     priority INT NOT NULL DEFAULT 0,
@@ -144,6 +174,7 @@ CREATE TABLE script_event_bindings (
         event_type,
         event_schema_version,
         script_id,
+        binding_id,
         target_scope_type,
         target_scope_id
     )
@@ -156,7 +187,9 @@ CREATE INDEX idx_script_event_bindings_resolution ON script_event_bindings(
     event_schema_version,
     enabled,
     priority,
-    script_id
+    script_id,
+    binding_id,
+    id
 );
 
 CREATE TABLE script_work_items (
@@ -171,11 +204,17 @@ CREATE TABLE script_work_items (
     realm_slug VARCHAR(64) NOT NULL DEFAULT '',
     pointer_version VARCHAR(64) NOT NULL DEFAULT '',
     script_id VARCHAR(128) NOT NULL,
-    plugin_id VARCHAR(128),
-    plugin_version_id VARCHAR(128),
+    plugin_id VARCHAR(128) NOT NULL DEFAULT '',
+    plugin_version_id VARCHAR(128) NOT NULL DEFAULT '',
     event_type VARCHAR(128) NOT NULL,
     event_schema_version VARCHAR(32) NOT NULL,
+    quota_class VARCHAR(64) NOT NULL DEFAULT 'STANDARD_RUNTIME',
     script_patch_version VARCHAR(128) NOT NULL,
+    script_pin_epoch BIGINT NOT NULL DEFAULT 0,
+    script_pin_control_plane_request_id VARCHAR(256),
+    binding_id VARCHAR(128) NOT NULL DEFAULT '',
+    target_scope_type VARCHAR(32) NOT NULL DEFAULT '',
+    target_scope_id VARCHAR(128) NOT NULL DEFAULT '',
     script_event_id VARCHAR(128) NOT NULL,
     dry_run BOOLEAN NOT NULL DEFAULT FALSE,
     source_service VARCHAR(128) NOT NULL,
@@ -194,24 +233,56 @@ CREATE TABLE script_work_items (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT uq_script_work_item_trigger_identity UNIQUE (
-        tenant_id,
-        game_instance_id,
-        region_id,
-        region_epoch,
-        entity_id,
-        playable_state_scope,
-        world_slug,
-        realm_slug,
-        pointer_version,
-        script_id,
-        event_type,
-        event_schema_version,
-        script_patch_version,
-        script_event_id,
-        dry_run
+    CONSTRAINT ck_script_work_items_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     )
 );
+
+CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    entity_id,
+    playable_state_scope,
+    world_slug,
+    realm_slug,
+    pointer_version,
+    script_id,
+    plugin_id,
+    plugin_version_id,
+    binding_id,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_pin_epoch,
+    script_event_id,
+    dry_run
+) WHERE script_pin_epoch > 0;
+
+CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned ON script_work_items (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    entity_id,
+    playable_state_scope,
+    world_slug,
+    realm_slug,
+    pointer_version,
+    script_id,
+    plugin_id,
+    plugin_version_id,
+    binding_id,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_event_id,
+    dry_run
+) WHERE script_pin_epoch = 0;
 
 CREATE INDEX idx_script_work_items_status_created
     ON script_work_items(status, created_at);
@@ -236,6 +307,11 @@ CREATE TABLE script_event_audit (
     script_id VARCHAR(128) NOT NULL,
     plugin_id VARCHAR(128),
     plugin_version_id VARCHAR(128),
+    script_pin_epoch BIGINT,
+    script_pin_control_plane_request_id VARCHAR(256),
+    binding_id VARCHAR(128) NOT NULL DEFAULT '',
+    target_scope_type VARCHAR(32) NOT NULL DEFAULT '',
+    target_scope_id VARCHAR(128) NOT NULL DEFAULT '',
     event_type VARCHAR(128) NOT NULL,
     event_schema_version VARCHAR(32) NOT NULL,
     script_patch_version VARCHAR(128) NOT NULL,
@@ -255,24 +331,57 @@ CREATE TABLE script_event_audit (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT uq_script_event_audit_handler_identity UNIQUE (
-        tenant_id,
-        game_instance_id,
-        region_id,
-        region_epoch,
-        entity_id,
-        playable_state_scope,
-        world_slug,
-        realm_slug,
-        pointer_version,
-        script_id,
-        event_type,
-        event_schema_version,
-        script_patch_version,
-        script_event_id,
-        dry_run
+    CONSTRAINT ck_script_event_audit_pin_tuple CHECK (
+        (script_pin_epoch IS NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND game_instance_id IS NOT NULL
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
     )
 );
+
+CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    entity_id,
+    playable_state_scope,
+    world_slug,
+    realm_slug,
+    pointer_version,
+    script_id,
+    plugin_id,
+    plugin_version_id,
+    binding_id,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_pin_epoch,
+    script_event_id,
+    dry_run
+) WHERE script_pin_epoch > 0;
+
+CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit (
+    tenant_id,
+    game_instance_id,
+    region_id,
+    region_epoch,
+    entity_id,
+    playable_state_scope,
+    world_slug,
+    realm_slug,
+    pointer_version,
+    script_id,
+    plugin_id,
+    plugin_version_id,
+    binding_id,
+    event_type,
+    event_schema_version,
+    script_patch_version,
+    script_event_id,
+    dry_run
+) WHERE script_pin_epoch IS NULL;
 
 CREATE INDEX idx_script_event_audit_script_created
     ON script_event_audit(tenant_id, script_id, created_at);
@@ -306,6 +415,7 @@ CREATE TABLE script_patch_pin_projections (
     tenant_id VARCHAR(64) NOT NULL,
     game_instance_id VARCHAR(64) NOT NULL,
     observed_pinned_script_patch_version VARCHAR(128) NOT NULL DEFAULT '',
+    script_pin_epoch BIGINT,
     playable_state_scope VARCHAR(32) NOT NULL DEFAULT '',
     world_slug VARCHAR(64) NOT NULL DEFAULT '',
     realm_slug VARCHAR(64) NOT NULL DEFAULT '',
@@ -316,7 +426,16 @@ CREATE TABLE script_patch_pin_projections (
     observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     projection_refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT uq_script_patch_pin_projection_scope UNIQUE (tenant_id, game_instance_id)
+    CONSTRAINT uq_script_patch_pin_projection_scope UNIQUE (tenant_id, game_instance_id),
+    CONSTRAINT ck_script_patch_pin_projections_pin_tuple CHECK (
+        ((script_pin_epoch IS NULL)
+            AND NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NULL
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch IS NOT NULL
+            AND script_pin_epoch > 0
+            AND NULLIF(BTRIM(observed_pinned_script_patch_version), '') IS NOT NULL
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
+    )
 );
 
 CREATE INDEX idx_script_patch_pin_projection_scope
@@ -329,11 +448,19 @@ CREATE TABLE script_patch_instance_rollout_projections (
     script_patch_version VARCHAR(128) NOT NULL,
     rollout_status VARCHAR(64) NOT NULL,
     status_reason VARCHAR(256) NOT NULL,
+    script_pin_epoch BIGINT NOT NULL DEFAULT 0,
+    last_observed_control_plane_request_id VARCHAR(256) NOT NULL DEFAULT '',
     last_changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     projection_refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
     CONSTRAINT uq_script_patch_instance_rollout_projection_scope
-        UNIQUE (tenant_id, game_instance_id, script_patch_version)
+        UNIQUE (tenant_id, game_instance_id, script_patch_version),
+    CONSTRAINT ck_script_patch_instance_rollout_projections_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
+    )
 );
 
 CREATE INDEX idx_script_patch_instance_rollout_projection_scope
@@ -366,9 +493,17 @@ CREATE TABLE script_patch_instance_rollout_events (
     script_patch_version VARCHAR(128) NOT NULL,
     rollout_status VARCHAR(64) NOT NULL,
     status_reason VARCHAR(256) NOT NULL,
+    script_pin_epoch BIGINT NOT NULL DEFAULT 0,
+    last_observed_control_plane_request_id VARCHAR(256) NOT NULL DEFAULT '',
     observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     projection_refreshed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    row_version INT NOT NULL DEFAULT 0
+    row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT ck_script_patch_instance_rollout_events_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
+    )
 );
 
 CREATE INDEX idx_script_patch_instance_rollout_events_scope
@@ -402,8 +537,11 @@ CREATE TABLE script_handoff_events (
     game_instance_id VARCHAR(64) NOT NULL,
     script_patch_version VARCHAR(128) NOT NULL,
     script_id VARCHAR(128) NOT NULL,
-    plugin_id VARCHAR(128),
-    plugin_version_id VARCHAR(128),
+    plugin_id VARCHAR(128) NOT NULL DEFAULT '',
+    plugin_version_id VARCHAR(128) NOT NULL DEFAULT '',
+    script_pin_epoch BIGINT NOT NULL DEFAULT 0,
+    script_pin_control_plane_request_id VARCHAR(256),
+    binding_id VARCHAR(128) NOT NULL DEFAULT '',
     work_item_id BIGINT NOT NULL REFERENCES script_work_items(id),
     command_ordinal INT NOT NULL,
     automation_dispatch_id VARCHAR(128) NOT NULL,
@@ -427,7 +565,13 @@ CREATE TABLE script_handoff_events (
     handoff_outcome VARCHAR(128) NOT NULL,
     handoff_reason VARCHAR(256) NOT NULL,
     observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    row_version INT NOT NULL DEFAULT 0
+    row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT ck_script_handoff_events_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL)
+    )
 );
 
 CREATE INDEX idx_script_handoff_events_scope
@@ -508,6 +652,8 @@ CREATE TABLE script_schedule_instances (
     priority_tag VARCHAR(32) NOT NULL DEFAULT 'normal',
     target_scope_type VARCHAR(32) NOT NULL DEFAULT '',
     target_scope_id VARCHAR(128) NOT NULL DEFAULT '',
+    script_pin_epoch BIGINT NOT NULL DEFAULT 0,
+    binding_id VARCHAR(128) NOT NULL DEFAULT '',
     binding_priority INTEGER NOT NULL DEFAULT 0,
     requires_exclusive_event BOOLEAN NOT NULL DEFAULT FALSE,
     materialization_status VARCHAR(64) NOT NULL,
@@ -531,9 +677,16 @@ CREATE TABLE script_schedule_instances (
         playable_state_scope,
         plugin_id,
         plugin_version_id,
+        binding_id,
         target_scope_type,
         target_scope_id,
         schedule_definition_id
+    ),
+    CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK (
+        (script_pin_epoch = 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NULL)
+        OR (script_pin_epoch > 0
+            AND NULLIF(BTRIM(last_observed_control_plane_request_id), '') IS NOT NULL)
     )
 );
 
