@@ -147,3 +147,23 @@ These rules assume the current scheduler metric contract from `TickScheduler`:
 - `game_session_tick_scheduler_queue_depth_alert_threshold_cycles`
 
 Environment overlays may tune exact thresholds, but should preserve the alert names, owner, and runbook routing so scheduler pressure is visible and actionable. The alert expressions should prefer the exported threshold/cycle gauges over re-hardcoding numeric defaults in rule files, while dashboards should still show the raw queue-depth, merge, and rejection counters for diagnosis.
+
+## Pending Replay Restore Pressure
+
+The Game Session pending-replay restore path exposes a service-process-wide consecutive-failure signal. It deliberately has no tenant or game-instance labels; use the durable tick batch and runtime-health records to identify the exact affected scope.
+
+```yaml
+- alert: TickPendingReplayRestoreFailures
+  expr: tick_pending_replay_restore_consecutive_failures >= tick_pending_replay_restore_alert_threshold_failures
+  for: 1m
+  labels:
+    service: game-session-service
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+  annotations:
+    summary: Pending replay restore failures are preventing coordination convergence
+    description: The Game Session process has observed repeated fail-closed pending-replay restore failures. Redis lease loss and non-committing restore results preserve the durable batch and prevent tick advancement; inspect the current lease, pending projection, durable PENDING_REPLAY batch, and runtime-health evidence before remediation.
+```
+
+The alert uses the exported threshold rather than embedding the bootstrap value. The producer clears `tick_pending_replay_restore_consecutive_failures` only after the restore script commits and any durable Redis-only requeue bookkeeping succeeds. The related counters are `tick_pending_replay_restore_failures_total` and `tick_pending_replay_restore_alert_total`; the threshold gauge is `tick_pending_replay_restore_alert_threshold_failures`.

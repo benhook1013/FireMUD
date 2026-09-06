@@ -1,6 +1,11 @@
 package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -147,55 +152,60 @@ class GameSessionApplicationIntegrationTest {
                         .build())
                 .build());
     when(worldManagementClient.prepareWorldInstance(
-            42L,
-            1L,
-            7L,
-            "cp-1",
-            "ld-1",
-            11L,
-            "patch-1",
-            "{}",
-            "genrev-11",
-            77L,
-            "prb:42:11:77",
-            77L,
-            null))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("42")
-                        .setGameInstanceId("1")
-                        .setGameTemplateId("7")
-                        .setControlPlaneRequestId("cp-1")
-                        .setLaunchDescriptorId("ld-1")
-                        .setVersionId("11")
-                        .setReleaseBundleId("77")
-                        .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:42:11:77")
-                        .setVersionStateEpoch(77L)
-                        .setLifecycleEpoch(1L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
-                        .build())
-                .build());
-    when(worldManagementClient.activatePreparedWorldInstance(42L, 1L, 1L))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
-                .newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("42")
-                        .setGameInstanceId("1")
-                        .setLifecycleEpoch(2L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                        .build())
-                .build());
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            nullable(String.class),
+            anyString(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setGameTemplateId(Long.toString(invocation.getArgument(2, Long.class)))
+                            .setControlPlaneRequestId(invocation.getArgument(3, String.class))
+                            .setLaunchDescriptorId(invocation.getArgument(4, String.class))
+                            .setVersionId(Long.toString(invocation.getArgument(5, Long.class)))
+                            .setReleaseBundleId(
+                                Long.toString(invocation.getArgument(9, Long.class)))
+                            .setGenerationConfigRevision(invocation.getArgument(8, String.class))
+                            .setPublishedReleaseBundleRef(invocation.getArgument(10, String.class))
+                            .setVersionStateEpoch(invocation.getArgument(11, Long.class))
+                            .setLifecycleEpoch(1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                            .build())
+                    .build());
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(invocation.getArgument(2, Long.class) + 1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                            .build())
+                    .build());
     StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
 
     String responseBody =
@@ -206,12 +216,29 @@ class GameSessionApplicationIntegrationTest {
     ApiResponse<GameInstanceDto> body =
         OBJECT_MAPPER.readValue(responseBody, new TypeReference<ApiResponse<GameInstanceDto>>() {});
 
+    org.mockito.Mockito.verify(worldManagementClient)
+        .prepareWorldInstance(
+            eq(42L),
+            anyLong(),
+            eq(7L),
+            eq("cp-1"),
+            eq("ld-1"),
+            eq(11L),
+            org.mockito.ArgumentMatchers.isNull(),
+            eq("{}"),
+            eq("genrev-11"),
+            eq(77L),
+            eq("prb:42:11:77"),
+            eq(77L),
+            any());
+
     assertThat(body).isNotNull();
     assertThat(body.status()).isEqualTo(ResultStatus.SUCCESS);
     assertThat(body.data()).isNotNull();
     assertThat(body.data().tenantId()).isEqualTo(42L);
     assertThat(body.data().runtimeVersion()).isEqualTo("11");
-    assertThat(body.data().scriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(body.data().scriptPatchVersion()).isNull();
+    assertThat(body.data().scriptPinEpoch()).isNull();
     assertThat(body.data().gameTemplateId()).isEqualTo(7L);
     assertThat(body.data().launchDescriptorId()).isEqualTo("ld-1");
     assertThat(body.data().versionId()).isEqualTo(11L);

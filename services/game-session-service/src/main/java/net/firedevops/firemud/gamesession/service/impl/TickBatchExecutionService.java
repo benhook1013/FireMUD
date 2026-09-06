@@ -1,12 +1,17 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -20,7 +25,13 @@ import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecution
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
@@ -29,7 +40,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 final class TickBatchExecutionService {
   private static final Logger logger = LoggingUtil.getLogger(TickBatchExecutionService.class);
+  private static final int PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES = 3;
   private static final String REMOTE_FOLLOWUP_BATCH_SOURCE = "REMOTE_FOLLOWUP_DRAIN";
+  private static final DefaultRedisScript<Long> RESTORE_PENDING_PROJECTION_SCRIPT =
+      buildRestorePendingProjectionScript();
 
   private final MeterRegistry meterRegistry;
   private final RedisTemplate<String, Object> redisTemplate;
@@ -42,6 +56,12 @@ final class TickBatchExecutionService {
   private final TickQueueControlService tickQueueControlService;
   private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private final TransactionOperations transactionOperations;
+  private final RedisTemplate<String, Object> fencedScriptRedisTemplate;
+  private final Counter pendingReplayRestoreFailuresCounter;
+  private final Counter pendingReplayRestoreAlertCounter;
+  // This is intentionally service-process-wide and unlabelled; exact scope remains durable
+  // tick-batch/runtime-health evidence rather than a high-cardinality metric dimension.
+  private final AtomicInteger consecutivePendingReplayRestoreFailures = new AtomicInteger();
 
   @Autowired
   TickBatchExecutionService(
@@ -93,54 +113,264 @@ final class TickBatchExecutionService {
     this.tickQueueControlService = tickQueueControlService;
     this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
     this.transactionOperations = transactionOperations;
+    this.fencedScriptRedisTemplate = FencedRedisScriptSupport.createTemplate(redisTemplate);
+    this.pendingReplayRestoreFailuresCounter =
+        meterRegistry.counter("tick_pending_replay_restore_failures_total");
+    this.pendingReplayRestoreAlertCounter =
+        meterRegistry.counter("tick_pending_replay_restore_alert_total");
+    Gauge.builder(
+            "tick_pending_replay_restore_consecutive_failures",
+            consecutivePendingReplayRestoreFailures,
+            AtomicInteger::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "tick_pending_replay_restore_alert_threshold_failures",
+            this,
+            ignored -> PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES)
+        .register(meterRegistry);
   }
 
   void restorePendingProjection(
+      TickQueueControlService.QueueLockLease lease,
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries) {
+    restorePendingProjection(
+        lease, tenantId, gameInstanceId, pendingEntries, sealedEntries, List.of());
+  }
+
+  void restorePendingProjection(
+      TickQueueControlService.QueueLockLease lease,
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {
+    if (lease == null) {
+      throw new IllegalArgumentException("Active tick lease is required for pending projection");
+    }
+    tickQueueControlService.ensureCommandIndex(lease, tenantId, gameInstanceId);
+    requireRestorableCommandIdentifiers(pendingEntries);
+    requireRestorableCommandIdentifiers(sealedEntries);
+    requireRestorableCommandIdentifiers(terminalizedEntries);
+    List<TickQueuedCommandEnvelope> redisOnlyEntries =
+        redisOnlyEntries(pendingEntries, sealedEntries, terminalizedEntries);
+    String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
+    String queueKey = tickQueueControlService.queueKey(tenantId, gameInstanceId);
+    String commandIndexKey = tickQueueControlService.commandIndexKey(tenantId, gameInstanceId);
+    List<Object> scriptArguments = new ArrayList<>();
+    scriptArguments.add(lease.token());
+    scriptArguments.add(String.valueOf(pendingEntries.size()));
+    pendingEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(sealedEntries.size()));
+    sealedEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(redisOnlyEntries.size()));
+    redisOnlyEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(terminalizedEntries.size()));
+    terminalizedEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    Long restored;
+    try {
+      restored =
+          executeRestorePendingProjectionScript(
+              List.of(pendingKey, queueKey, commandIndexKey, lease.key()),
+              scriptArguments.toArray());
+    } catch (RuntimeException ex) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "exception");
+      throw ex;
+    }
+    if (Long.valueOf(-1L).equals(restored)) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "lease_lost");
+      lease.markLost();
+      throw new TickQueueControlService.QueueUnavailableException(
+          "Lost tick lock " + lease.key() + " during Redis pending projection reconciliation");
+    }
+    if (!Long.valueOf(1L).equals(restored)) {
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "not_committed");
+      throw new IllegalStateException(
+          "Redis pending projection reconciliation did not commit for gameInstanceId="
+              + gameInstanceId);
+    }
+    boolean durableRequeueRecorded = true;
+    try {
+      if (!redisOnlyEntries.isEmpty()) {
+        recordRequeuedActions(redisOnlyEntries);
+      }
+    } catch (RuntimeException ex) {
+      durableRequeueRecorded = false;
+      recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "durable_requeue");
+      logger.warn(
+          "Pending replay restore durable requeue reconciliation failed after Redis commit "
+              + "tenantId={} gameInstanceId={} redisOnlyCount={}",
+          tenantId,
+          gameInstanceId,
+          redisOnlyEntries.size(),
+          ex);
+    }
+    if (durableRequeueRecorded) {
+      consecutivePendingReplayRestoreFailures.set(0);
+    }
+  }
+
+  private void recordPendingReplayRestoreFailure(
+      Long tenantId, Long gameInstanceId, String failureKind) {
+    pendingReplayRestoreFailuresCounter.increment();
+    int consecutiveFailures = consecutivePendingReplayRestoreFailures.incrementAndGet();
+    if (consecutiveFailures == PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES) {
+      pendingReplayRestoreAlertCounter.increment();
+      logger.warn(
+          "Pending replay restore failure threshold reached tenantId={} gameInstanceId={} "
+              + "failureKind={} consecutiveFailures={} threshold={}",
+          tenantId,
+          gameInstanceId,
+          failureKind,
+          consecutiveFailures,
+          PENDING_REPLAY_RESTORE_ALERT_CONSECUTIVE_FAILURES);
+    }
+  }
+
+  private Long executeRestorePendingProjectionScript(List<String> keys, Object... arguments) {
+    if (fencedScriptRedisTemplate == null) {
+      return redisTemplate.execute(
+          RESTORE_PENDING_PROJECTION_SCRIPT, keys, unwrapRestoreScriptArguments(arguments));
+    }
+    RedisSerializer<?> valueSerializer = fencedScriptRedisTemplate.getValueSerializer();
+    if (valueSerializer == null) {
+      return redisTemplate.execute(
+          RESTORE_PENDING_PROJECTION_SCRIPT, keys, unwrapRestoreScriptArguments(arguments));
+    }
+    return fencedScriptRedisTemplate.execute(
+        RESTORE_PENDING_PROJECTION_SCRIPT,
+        restorePendingProjectionScriptArgumentSerializer(valueSerializer),
+        new GenericToStringSerializer<>(Long.class),
+        keys,
+        arguments);
+  }
+
+  private Object[] unwrapRestoreScriptArguments(Object[] arguments) {
+    return java.util.Arrays.stream(arguments)
+        .map(
+            argument ->
+                argument instanceof RestoreQueuePayloadArgument payload
+                    ? payload.value()
+                    : argument)
+        .toArray();
+  }
+
+  static Object restoreQueuePayloadArgument(String value) {
+    return new RestoreQueuePayloadArgument(value);
+  }
+
+  static RedisSerializer<Object> restorePendingProjectionScriptArgumentSerializer(
+      RedisSerializer<?> valueSerializer) {
+    return new RestorePendingProjectionScriptArgumentSerializer(valueSerializer);
+  }
+
+  private record RestoreQueuePayloadArgument(String value) {}
+
+  private static final class RestorePendingProjectionScriptArgumentSerializer
+      implements RedisSerializer<Object> {
+    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
+
+    @SuppressWarnings("unchecked")
+    private RestorePendingProjectionScriptArgumentSerializer(RedisSerializer<?> valueSerializer) {
+      this.valueSerializer = (RedisSerializer<Object>) valueSerializer;
+    }
+
+    private final RedisSerializer<Object> valueSerializer;
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof RestoreQueuePayloadArgument payload) {
+        return valueSerializer.serialize(payload.value());
+      }
+      if (value instanceof String string) {
+        return RAW_STRING_SERIALIZER.serialize(string);
+      }
+      throw new IllegalArgumentException(
+          "Restore script arguments must be strings or explicit queue payloads");
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return RAW_STRING_SERIALIZER.deserialize(bytes);
+    }
+  }
+
+  void preparePendingProjectionReconciliation(
       Long tenantId,
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries) {
     requireRestorableCommandIdentifiers(pendingEntries);
     requireRestorableCommandIdentifiers(sealedEntries);
+    List<TickQueuedCommandEnvelope> redisOnlyEntries =
+        redisOnlyEntries(pendingEntries, sealedEntries);
+    if (redisOnlyEntries.isEmpty()) {
+      return;
+    }
     Instant now = Instant.now();
+    updateGameplayCommands(
+        tenantId,
+        gameInstanceId,
+        null,
+        null,
+        redisOnlyEntries,
+        "RETRY_QUEUED",
+        "PENDING",
+        now,
+        "MANIFEST_MISMATCH",
+        "Redis pending entry was returned to queue because sealed replay manifest won",
+        false);
+  }
+
+  private List<TickQueuedCommandEnvelope> redisOnlyEntries(
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries) {
+    return redisOnlyEntries(pendingEntries, sealedEntries, List.of());
+  }
+
+  private List<TickQueuedCommandEnvelope> redisOnlyEntries(
+      List<TickQueuedCommandEnvelope> pendingEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<TickQueuedCommandEnvelope> terminalizedEntries) {
     Set<String> sealedCommandIds =
         sealedEntries.stream()
             .map(TickQueuedCommandEnvelope::commandId)
             .collect(java.util.stream.Collectors.toSet());
-    List<TickQueuedCommandEnvelope> redisOnlyEntries =
-        pendingEntries.stream()
-            .filter(
-                entry ->
-                    entry.commandId() != null
-                        && !entry.commandId().isBlank()
-                        && !sealedCommandIds.contains(entry.commandId()))
-            .toList();
-    if (!redisOnlyEntries.isEmpty()) {
-      requeueEntries(tenantId, gameInstanceId, redisOnlyEntries);
-      updateGameplayCommands(
-          tenantId,
-          gameInstanceId,
-          null,
-          null,
-          redisOnlyEntries,
-          "RETRY_QUEUED",
-          "PENDING",
-          now,
-          "MANIFEST_MISMATCH",
-          "Redis pending entry was returned to queue because sealed replay manifest won",
-          false);
-      recordRequeuedActions(redisOnlyEntries);
-    }
-    String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
-    redisTemplate.delete(pendingKey);
-    for (TickQueuedCommandEnvelope entry : sealedEntries) {
-      redisTemplate
-          .opsForList()
-          .rightPush(
-              pendingKey,
-              tickQueueControlService.queuePayload(
-                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
-    }
+    Set<String> terminalizedCommandIds =
+        terminalizedEntries.stream()
+            .map(TickQueuedCommandEnvelope::commandId)
+            .collect(java.util.stream.Collectors.toSet());
+    return pendingEntries.stream()
+        .filter(
+            entry ->
+                entry.commandId() != null
+                    && !entry.commandId().isBlank()
+                    && !sealedCommandIds.contains(entry.commandId())
+                    && !terminalizedCommandIds.contains(entry.commandId()))
+        .toList();
+  }
+
+  private String queuePayload(TickQueuedCommandEnvelope entry) {
+    return tickQueueControlService.queuePayload(
+        entry.requiresSoloTick(), entry.commandId(), entry.command());
+  }
+
+  private static DefaultRedisScript<Long> buildRestorePendingProjectionScript() {
+    DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+    script.setResultType(Long.class);
+    script.setScriptSource(
+        new ResourceScriptSource(new ClassPathResource("redis/restore_pending_projection.lua")));
+    return script;
+  }
+
+  static String restorePendingProjectionScriptText() {
+    return RESTORE_PENDING_PROJECTION_SCRIPT.getScriptAsString();
   }
 
   void markBatchManifestMismatch(
@@ -172,6 +402,34 @@ final class TickBatchExecutionService {
         false);
     recordRequeuedActions(entries);
     meterRegistry.counter("tick_manifest_mismatch_total").increment();
+  }
+
+  void markBatchIncompatibleReplay(
+      TickBatch batch, List<TickQueuedCommandEnvelope> entries, String failureMessage) {
+    Instant now = Instant.now();
+    String message = truncate(failureMessage, 500);
+    batch.setStatus("ABANDONED");
+    batch.setCompletedAt(now);
+    batch.setFailureCode("INCOMPATIBLE_SEALED_REPLAY");
+    batch.setFailureMessage(message);
+    tickBatchRepository.save(batch);
+    updateEffectStatuses(
+        batch.getTickBatchId(), "ABANDONED", now, "INCOMPATIBLE_SEALED_REPLAY", message);
+    updateGameplayCommands(
+        batch.getTenantId(),
+        batch.getGameInstanceId(),
+        batch.getRegionId(),
+        batch.getRegionEpoch(),
+        entries,
+        "RETRY_QUEUED",
+        "PENDING",
+        now,
+        "INCOMPATIBLE_SEALED_REPLAY",
+        message,
+        false);
+    recordRequeuedActions(entries);
+    // One abandoned batch produces one metric even when its sealed entries are replayed together.
+    meterRegistry.counter("tick_incompatible_sealed_replay_total").increment();
   }
 
   void markBatchDrained(TickBatch batch, List<TickQueuedCommandEnvelope> entries) {
@@ -277,7 +535,8 @@ final class TickBatchExecutionService {
       TickBatch batch,
       List<TickQueuedCommandEnvelope> entries,
       String failureCode,
-      String failureMessage) {
+      String failureMessage,
+      TickQueueControlService.QueueLockLease tickLease) {
     Instant now = Instant.now();
     boolean wasDrained = "DRAINED".equals(batch.getStatus());
     if (isRemoteFollowupBatch(batch)) {
@@ -290,7 +549,7 @@ final class TickBatchExecutionService {
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
     if (wasDrained) {
-      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage);
+      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage, tickLease);
     } else {
       updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
       updateGameplayCommands(
@@ -353,7 +612,9 @@ final class TickBatchExecutionService {
         batch.getTickBatchId(), failureCode, failureMessage);
   }
 
-  void executeDurableEffects(Long tenantId, Long gameInstanceId) {
+  void executeDurableEffects(
+      Long tenantId, Long gameInstanceId, TickQueueControlService.QueueLockLease tickLease) {
+    Objects.requireNonNull(tickLease, "Active tick lease is required to execute durable effects");
     List<TickBatch> drainedBatches =
         tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             tenantId, gameInstanceId, "DRAINED");
@@ -365,7 +626,7 @@ final class TickBatchExecutionService {
         if (isRemoteFollowupBatch(batch)) {
           markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
         } else {
-          abandonStaleDrainedBatch(batch, ex.getMessage());
+          abandonStaleDrainedBatch(batch, ex.getMessage(), tickLease);
         }
         continue;
       }
@@ -386,7 +647,7 @@ final class TickBatchExecutionService {
           if (isRemoteFollowupBatch(batch)) {
             markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
           } else {
-            abandonStaleDrainedBatch(batch, ex.getMessage());
+            abandonStaleDrainedBatch(batch, ex.getMessage(), tickLease);
           }
           continue batchLoop;
         }
@@ -420,14 +681,16 @@ final class TickBatchExecutionService {
     return Optional.of(status);
   }
 
-  private void abandonStaleDrainedBatch(TickBatch batch, String failureMessage) {
+  private void abandonStaleDrainedBatch(
+      TickBatch batch, String failureMessage, TickQueueControlService.QueueLockLease tickLease) {
     if (isRemoteFollowupBatch(batch)) {
       markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", failureMessage);
       return;
     }
     Instant now = Instant.now();
     List<GameplayCommand> commands =
-        requeueRemainingDrainedEffects(batch, now, "STALE_EXECUTOR_FENCE", failureMessage);
+        requeueRemainingDrainedEffects(
+            batch, now, "STALE_EXECUTOR_FENCE", failureMessage, tickLease);
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), "STALE_EXECUTOR_FENCE", failureMessage);
     batch.setStatus("ABANDONED");
@@ -444,12 +707,16 @@ final class TickBatchExecutionService {
   }
 
   private List<GameplayCommand> requeueRemainingDrainedEffects(
-      TickBatch batch, Instant now, String failureCode, String failureMessage) {
+      TickBatch batch,
+      Instant now,
+      String failureCode,
+      String failureMessage,
+      TickQueueControlService.QueueLockLease tickLease) {
     List<TickEffect> drainedEffects =
         tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
             batch.getTickBatchId(), "DRAINED");
     List<GameplayCommand> commands = loadCommandsForEffects(batch, drainedEffects);
-    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
+    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands, tickLease);
     for (TickEffect effect : drainedEffects) {
       effect.setStatus("ABANDONED");
       effect.setCompletedAt(now);
@@ -498,32 +765,24 @@ final class TickBatchExecutionService {
     }
   }
 
-  private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {
+  private void requeueCommands(
+      Long tenantId,
+      Long gameInstanceId,
+      List<GameplayCommand> commands,
+      TickQueueControlService.QueueLockLease tickLease) {
+    Objects.requireNonNull(tickLease, "Active tick lease is required to requeue drained commands");
     for (GameplayCommand command : commands) {
       requireRestorableCommandId(command.getCommandId());
     }
     for (int index = commands.size() - 1; index >= 0; index--) {
       GameplayCommand command = commands.get(index);
-      redisTemplate
-          .opsForList()
-          .leftPush(
-              tickQueueControlService.queueKey(tenantId, gameInstanceId),
-              tickQueueControlService.queuePayload(
-                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
-    }
-  }
-
-  private void requeueEntries(
-      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
-    requireRestorableCommandIdentifiers(entries);
-    for (int index = entries.size() - 1; index >= 0; index--) {
-      TickQueuedCommandEnvelope entry = entries.get(index);
-      redisTemplate
-          .opsForList()
-          .leftPush(
-              tickQueueControlService.queueKey(tenantId, gameInstanceId),
-              tickQueueControlService.queuePayload(
-                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
+      tickQueueControlService.requeueCommand(
+          tickLease,
+          tenantId,
+          gameInstanceId,
+          command.getCommandId(),
+          command.getCommandText(),
+          command.isRequiresSoloTick());
     }
   }
 

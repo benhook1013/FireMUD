@@ -78,6 +78,9 @@ class TcpProxyServiceImplTest {
     ArgumentCaptor<GameInstanceDto> stateCaptor = ArgumentCaptor.forClass(GameInstanceDto.class);
     Mockito.verify(sessionStateService).saveState(stateCaptor.capture());
     assertEquals("SUSPENDED", stateCaptor.getValue().status());
+    assertEquals("patch", stateCaptor.getValue().scriptPatchVersion());
+    assertEquals(3L, stateCaptor.getValue().scriptPinEpoch());
+    assertEquals("pin-request-3", stateCaptor.getValue().scriptPinControlPlaneRequestId());
   }
 
   @Test
@@ -544,6 +547,8 @@ class TcpProxyServiceImplTest {
     entity.setTenantId(tenantId);
     entity.setRuntimeVersion("rt");
     entity.setScriptPatchVersion("patch");
+    entity.setScriptPinEpoch(3L);
+    entity.setScriptPatchPinnedControlPlaneRequestId("pin-request-3");
     entity.setOwnerAccountId(99L);
     entity.setStatus("RUNNING");
     return entity;

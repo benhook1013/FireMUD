@@ -32,6 +32,8 @@ public class GameplayCommand {
   private String scriptId;
   private String executionHook;
   private String scriptPatchVersion;
+  private Long scriptPinEpoch;
+  private String scriptPinControlPlaneRequestId;
   private String pluginId;
   private String pluginVersionId;
   private String playableStateScope;

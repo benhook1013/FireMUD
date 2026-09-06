@@ -1,10 +1,13 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import java.util.List;
+import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
+import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
@@ -15,16 +18,23 @@ import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusReposito
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.RuntimeOwnershipStatus;
 import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
 @Service
 final class GameSessionRuntimeControlPlaneReadService {
+  private static final Logger logger =
+      LoggingUtil.getLogger(GameSessionRuntimeControlPlaneReadService.class);
   private static final List<String> ACTIVE_GAMEPLAY_COMMAND_OUTCOMES =
       List.of("ACCEPTED", "STAGED", "RETRY_QUEUED", "DRAINED");
 
@@ -34,6 +44,7 @@ final class GameSessionRuntimeControlPlaneReadService {
   private final RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final GameDesignClient gameDesignClient;
+  private final WorldManagementClient worldManagementClient;
 
   GameSessionRuntimeControlPlaneReadService(
       GameInstanceRepository gameInstanceRepository,
@@ -41,13 +52,15 @@ final class GameSessionRuntimeControlPlaneReadService {
       RemoteFollowupRepository remoteFollowupRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      GameDesignClient gameDesignClient) {
+      GameDesignClient gameDesignClient,
+      WorldManagementClient worldManagementClient) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.gameDesignClient = gameDesignClient;
+    this.worldManagementClient = worldManagementClient;
   }
 
   RuntimeOwnershipStatus getRuntimeOwnershipStatus(
@@ -67,13 +80,32 @@ final class GameSessionRuntimeControlPlaneReadService {
     if (instance.getTenantId() != tenantId) {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
+    if (!"RUNNING".equals(instance.getStatus())) {
+      throw new RuntimeStateException(
+          "GAME_INSTANCE_STATUS_INVALID", "runtime state requires a RUNNING game instance");
+    }
+    String pinnedScriptPatchVersion = instance.getScriptPatchVersion();
+    long scriptPinEpoch = instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch();
+    try {
+      ScriptPinTupleCoherence.requireCoherent(
+          pinnedScriptPatchVersion,
+          instance.getScriptPinEpoch(),
+          instance.getScriptPatchPinnedControlPlaneRequestId());
+    } catch (IllegalArgumentException ex) {
+      throw new RuntimeStateException(
+          "SCRIPT_PIN_STATE_INVALID",
+          "patch, positive epoch, and request id must be present together",
+          ex);
+    }
+    validateWorldLifecycle(instance);
     CurrentRoutingProjection routingProjection = resolveGameplayRouting(instance);
     return GameInstanceRuntimeState.newBuilder()
         .setTenantId(Long.toString(instance.getTenantId()))
         .setGameInstanceId(Long.toString(instance.getId()))
         .setRuntimeVersionId(instance.getRuntimeVersion())
         .setPinnedScriptPatchVersion(
-            instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+            pinnedScriptPatchVersion == null ? "" : pinnedScriptPatchVersion)
+        .setScriptPinEpoch(scriptPinEpoch)
         .setLaunchDescriptorId(
             instance.getLaunchDescriptorId() == null ? "" : instance.getLaunchDescriptorId())
         .setStatus(instance.getStatus() == null ? "" : instance.getStatus())
@@ -108,6 +140,106 @@ final class GameSessionRuntimeControlPlaneReadService {
         .setPublication(
             scriptPatchPublicationLink(instance.getTenantId(), instance.getScriptPatchVersion()))
         .build();
+  }
+
+  /** Persisted runtime state that cannot satisfy the control-plane read contract. */
+  static final class RuntimeStateException extends IllegalStateException {
+    private final String code;
+    private final String detailMessage;
+
+    RuntimeStateException(String code, String detailMessage) {
+      super(code + ": " + detailMessage);
+      this.code = code;
+      this.detailMessage = detailMessage;
+    }
+
+    RuntimeStateException(String code, String detailMessage, Throwable cause) {
+      super(code + ": " + detailMessage, cause);
+      this.code = code;
+      this.detailMessage = detailMessage;
+    }
+
+    String code() {
+      return code;
+    }
+
+    String detailMessage() {
+      return detailMessage;
+    }
+  }
+
+  private void validateWorldLifecycle(GameInstance instance) {
+    if (worldManagementClient == null) {
+      throw new RuntimeStateException(
+          "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable");
+    }
+    final GetWorldInstanceLifecycleResponse response;
+    try {
+      response =
+          worldManagementClient.getWorldInstanceLifecycle(instance.getTenantId(), instance.getId());
+    } catch (RuntimeException ex) {
+      throw new RuntimeStateException(
+          "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable", ex);
+    }
+    if (response == null) {
+      throw new RuntimeStateException("WORLD_AUTHORITY_MALFORMED", "World response was null");
+    }
+    if (response.hasError()) {
+      String upstreamCode = response.getError().getCode();
+      String upstreamMessage = response.getError().getMessage();
+      logger.warn(
+          "World lifecycle read failed for tenantId={} gameInstanceId={} upstreamCode={} upstreamMessage={}",
+          instance.getTenantId(),
+          instance.getId(),
+          upstreamCode,
+          upstreamMessage);
+      throw mapWorldLifecycleError(upstreamCode);
+    }
+    if (!response.hasWorldInstance()) {
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "World response omitted lifecycle snapshot");
+    }
+    WorldInstanceLifecycleSnapshot snapshot = response.getWorldInstance();
+    final long tenantId;
+    final long gameInstanceId;
+    try {
+      tenantId = parseExternalId(snapshot.getTenantId(), "tenantId");
+      gameInstanceId = parseExternalId(snapshot.getGameInstanceId(), "gameInstanceId");
+    } catch (IllegalArgumentException ex) {
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "lifecycle response has invalid identity");
+    }
+    if (tenantId != instance.getTenantId() || gameInstanceId != instance.getId()) {
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_SCOPE_MISMATCH",
+          "lifecycle response does not match the requested instance");
+    }
+    if (snapshot.getLifecycleEpoch() <= 0L) {
+      throw new RuntimeStateException(
+          "WORLD_INSTANCE_LIFECYCLE_INVALID", "lifecycle epoch must be positive");
+    }
+    if (snapshot.getStatus()
+        != WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
+      throw new RuntimeStateException("WORLD_INSTANCE_LIFECYCLE_INVALID", "instance is not ACTIVE");
+    }
+  }
+
+  private RuntimeStateException mapWorldLifecycleError(String upstreamCode) {
+    return switch (upstreamCode == null ? "" : upstreamCode) {
+      case "NOT_FOUND",
+          "WORLD_INSTANCE_NOT_FOUND",
+          "WORLD_INSTANCE_LIFECYCLE_STALE",
+          "INVALID_ARGUMENT" ->
+          new RuntimeStateException(
+              "WORLD_INSTANCE_LIFECYCLE_INVALID", "world instance lifecycle is invalid");
+      default ->
+          new RuntimeStateException(
+              "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable");
+    };
+  }
+
+  private long parseExternalId(String value, String fieldName) {
+    return RequestIdValidation.requirePositiveLong(value, fieldName);
   }
 
   private RuntimeRegionStatus findRuntimeOwnershipStatus(

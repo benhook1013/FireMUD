@@ -57,6 +57,7 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -214,12 +215,15 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (IllegalStateException ex) {
-      StartSessionResponse response =
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
           StartSessionResponse.newBuilder()
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+              .setError(expectedLifecycleError("startSession", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          StartSessionResponse.newBuilder().setError(internalFailure("startSession", ex)).build());
       responseObserver.onCompleted();
     }
   }
@@ -270,13 +274,19 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (IllegalStateException ex) {
-      StopSessionResponse response =
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
           StopSessionResponse.newBuilder()
               .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+              .setError(expectedLifecycleError("stopSession", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internalFailure("stopSession", ex))
+              .build());
       responseObserver.onCompleted();
     }
   }
@@ -309,15 +319,29 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (IllegalStateException ex) {
-      RestartSessionResponse response =
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
           RestartSessionResponse.newBuilder()
               .setSuccess(false)
-              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+              .setError(expectedLifecycleError("restartSession", ex))
+              .build());
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internalFailure("restartSession", ex))
+              .build());
       responseObserver.onCompleted();
     }
+  }
+
+  private ErrorDetail expectedLifecycleError(String operation, LifecycleOutcomeException cause) {
+    return GrpcAppErrors.error(meterRegistry, LOG, operation, cause.code(), cause.detailMessage());
+  }
+
+  private ErrorDetail internalFailure(String operation, IllegalStateException cause) {
+    return GrpcAppErrors.internal(meterRegistry, LOG, operation, cause);
   }
 
   @Override

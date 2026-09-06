@@ -3,12 +3,20 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 
 final class TriggerScriptEventRequestFactory {
   private TriggerScriptEventRequestFactory() {}
 
   static TriggerScriptEventRequest.Builder builder(
       CommonFields commonFields, RoutingBundle routingBundle) {
+    if (commonFields.scriptPinEpoch() < 0L) {
+      throw new IllegalArgumentException("scriptPinEpoch cannot be negative");
+    }
+    ScriptPinTupleCoherence.requireCoherent(
+        commonFields.scriptPatchVersion(),
+        commonFields.scriptPinEpoch() == 0L ? null : commonFields.scriptPinEpoch(),
+        commonFields.scriptPinControlPlaneRequestId());
     PlayableStateScope playableStateScope =
         requirePlayableStateScope(commonFields.playableStateScope());
     TriggerScriptEventRequest.Builder builder =
@@ -20,7 +28,13 @@ final class TriggerScriptEventRequestFactory {
             .setEntityId(commonFields.entityId())
             .setEventType(commonFields.eventType())
             .setEventSchemaVersion(commonFields.eventSchemaVersion())
-            .setScriptPatchVersion(commonFields.scriptPatchVersion())
+            .setScriptPatchVersion(
+                commonFields.scriptPatchVersion() == null ? "" : commonFields.scriptPatchVersion())
+            .setScriptPinEpoch(commonFields.scriptPinEpoch())
+            .setScriptPinControlPlaneRequestId(
+                commonFields.scriptPinControlPlaneRequestId() == null
+                    ? ""
+                    : commonFields.scriptPinControlPlaneRequestId())
             .setScriptEventId(commonFields.scriptEventId())
             .setIsDryRun(commonFields.isDryRun())
             .setTriggerMode(commonFields.triggerMode())
@@ -70,6 +84,9 @@ final class TriggerScriptEventRequestFactory {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      /** Zero represents an absent script pin epoch. */
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptEventId,
       boolean isDryRun,
       TriggerMode triggerMode,

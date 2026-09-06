@@ -1,10 +1,12 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
@@ -34,8 +36,13 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
@@ -48,6 +55,31 @@ class GameInstanceServiceImplTest {
   private GameInstanceServiceImpl service;
   private Map<Long, GameInstance> store;
   private AtomicLong nextId;
+
+  @Test
+  void legacyDtoConstructorRejectsNonblankPatchWithoutCompleteTuple() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new GameInstanceDto(
+                    7L,
+                    1L,
+                    "runtime-1",
+                    "patch-1",
+                    3L,
+                    "launch-1",
+                    11L,
+                    12L,
+                    13L,
+                    "generation-1",
+                    42L,
+                    "RUNNING"));
+
+    assertEquals(
+        "scriptPatchVersion requires scriptPinEpoch and script pin owner request id",
+        exception.getMessage());
+  }
 
   @BeforeEach
   void setup() {
@@ -89,6 +121,53 @@ class GameInstanceServiceImplTest {
     verify(stateService, times(2)).saveState(states.capture());
     assertEquals("STARTING", states.getAllValues().get(0).status());
     assertEquals("RUNNING", states.getAllValues().get(1).status());
+    assertNull(store.get(10L).getScriptPinEpoch());
+  }
+
+  @Test
+  void startSessionLeavesScriptPinTupleAbsentUntilOwnerPinTransition() {
+    doReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-pinned")
+                        .setTenantId("1")
+                        .setGameTemplateId(3L)
+                        .setControlPlaneRequestId("cp-pinned")
+                        .setVersionId(11L)
+                        .setScriptPatchVersion("patch-1")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .build())
+                .build())
+        .when(gameDesignClient)
+        .resolveLaunchDescriptor(any(Long.class), any(Long.class), any());
+
+    GameInstanceDto dto = service.startSession(new StartSessionRequest(1L, 3L, "cp-pinned", 42L));
+
+    assertNull(dto.scriptPatchVersion());
+    assertNull(dto.scriptPinEpoch());
+    assertNull(store.get(dto.id()).getScriptPinEpoch());
+    ArgumentCaptor<String> scriptPatchVersion = ArgumentCaptor.forClass(String.class);
+    verify(worldManagementClient)
+        .prepareWorldInstance(
+            eq(1L),
+            eq(dto.id()),
+            eq(3L),
+            eq("cp-pinned"),
+            eq("ld-pinned"),
+            eq(11L),
+            scriptPatchVersion.capture(),
+            eq("{}"),
+            eq("genrev-11"),
+            eq(77L),
+            eq("prb:1:11:77"),
+            eq(77L),
+            org.mockito.ArgumentMatchers.isNull());
+    assertNull(scriptPatchVersion.getValue());
   }
 
   @Test
@@ -132,7 +211,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService).saveState(states.capture());
@@ -237,12 +316,293 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
     verify(stateService, never()).saveState(any());
     assertEquals(0, store.size());
     verify(worldManagementClient, never())
         .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
+  void startSessionUsesPreparationAuthorityErrorWhenPreparationTransportFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-preparation-timeout", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenThrow(new IllegalStateException("preparation response timed out"));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals("world preparation authority unavailable", error.getMessage());
+    assertEquals("preparation response timed out", error.getCause().getMessage());
+    verify(stateService, never()).saveState(any());
+    verify(worldManagementClient, never())
+        .failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any());
+  }
+
+  @Test
+  void startSessionPreservesStartFailureWhenPreparedWorldCleanupTransportFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-fail-prepared", 42L);
+    doThrow(new IllegalStateException("state save failed")).when(stateService).saveState(any());
+    when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
+        .thenThrow(new IllegalStateException("fail-prepared response timed out"));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals("state save failed", error.getMessage());
+    verify(worldManagementClient)
+        .failPreparedWorldInstance(
+            eq(1L), eq(10L), eq(1L), eq("session start failed before admission opened"));
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldPreparationResponseIsNull() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-null-world", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(null);
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals("WORLD_AUTHORITY_MALFORMED: response was null", error.getMessage());
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldPreparationOmitsSnapshotAndError() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-empty-world", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse
+                .getDefaultInstance());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot", error.getMessage());
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldPreparationScopeDoesNotMatch() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-mismatched-world", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(worldPreparationSnapshot("2", "10", 1L));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_SCOPE_MISMATCH: lifecycle response does not match the requested instance",
+        error.getMessage());
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldPreparationEpochIsNotPositive() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-zero-world-epoch", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(worldPreparationSnapshot("1", "10", 0L));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals("WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive", error.getMessage());
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "not-a-number,10,tenantId",
+    "1,not-a-number,gameInstanceId"
+  })
+  void startSessionPrefixesMalformedWorldIdentifiersAndRetainsCause(
+      String tenantId, String gameInstanceId, String fieldName) {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-malformed-world-id", 42L);
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenReturn(worldPreparationSnapshot(tenantId, gameInstanceId, 1L));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: " + fieldName + " must be numeric", error.getMessage());
+    assertEquals(fieldName + " must be numeric", error.getCause().getMessage());
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldPreparationStatusIsAlreadyActive() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-active-world", 42L);
+    doReturn(
+            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("10")
+                        .setLifecycleEpoch(1L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                        .build())
+                .build())
+        .when(worldManagementClient)
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status", error.getMessage());
+    verify(worldManagementClient, never())
+        .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+    verify(stateService, never()).saveState(any());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = WorldInstanceLifecycleStatus.class,
+      names = {
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING",
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION"
+      })
+  void startSessionWithReplacementRejectsKnownNonActiveWorldLifecycle(
+      WorldInstanceLifecycleStatus status) {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-known-non-active-" + status.name(), 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(worldLifecycleSnapshot("2", "7", 3L, status));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE", error.getMessage());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void startSessionFailsClosedWhenWorldActivationOmitsSnapshotAndError() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-empty-activation", 42L);
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .getDefaultInstance());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot", error.getMessage());
+  }
+
+  @Test
+  void stopSessionFailsClosedWhenWorldTerminationOmitsSnapshotAndError() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse
+                .getDefaultInstance());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals(
+        "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot", error.getMessage());
   }
 
   @Test
@@ -296,6 +656,52 @@ class GameInstanceServiceImplTest {
             anyLong(), anyLong(), anyLong(), anyString(), eq("session stop requested"));
     assertEquals("STOPPED", dto.status());
     assertEquals("STOPPED", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionFinalizesLocallyWhenWorldIsAlreadyTerminated() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "1",
+                "10",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+
+    GameInstanceDto dto = service.stopSession(10L);
+
+    assertEquals("STOPPED", dto.status());
+    assertEquals("STOPPED", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void stopSessionMapsTerminationInProgressResponseToLifecycleOutcome() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.terminateWorldInstance(
+            anyLong(), anyLong(), anyLong(), any(), any()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
+                .setWorldInstance(
+                    WorldInstanceLifecycleSnapshot.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("10")
+                        .setLifecycleEpoch(3L)
+                        .setStatus(
+                            WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING)
+                        .build())
+                .build());
+
+    LifecycleOutcomeException error =
+        assertThrows(LifecycleOutcomeException.class, () -> service.stopSession(10L));
+
+    assertEquals("WORLD_TERMINATION_IN_PROGRESS", error.code());
+    assertEquals("session termination is already in progress", error.detailMessage());
+    assertEquals("STOPPING", store.get(10L).getStatus());
   }
 
   @Test
@@ -353,6 +759,9 @@ class GameInstanceServiceImplTest {
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
+    assertNull(store.get(7L).getScriptPatchVersion());
+    assertNull(store.get(7L).getScriptPinEpoch());
+    assertNull(store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
     verify(stateService, never()).deleteState(2L, 7L);
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(2)).saveState(states.capture());
@@ -379,7 +788,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
 
     assertEquals(1, store.size());
     assertEquals("STOPPING", store.get(7L).getStatus());
@@ -388,6 +797,89 @@ class GameInstanceServiceImplTest {
     ArgumentCaptor<GameInstanceDto> states = ArgumentCaptor.forClass(GameInstanceDto.class);
     verify(stateService, times(1)).saveState(states.capture());
     assertEquals(10L, states.getValue().id());
+  }
+
+  @Test
+  void startSessionWithReplacementFinalizesAlreadyTerminatedExistingSession() {
+    StartSessionRequest request = new StartSessionRequest(2L, 3L, "cp-terminated-replacement", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+
+    GameInstanceDto dto = service.startSession(request, true);
+
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    assertEquals("RUNNING", dto.status());
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void startSessionWithReplacementDoesNotRestoreAlreadyTerminatedExistingSessionOnFailure() {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-terminated-replacement-failure", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED));
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                .newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_ACTIVATION_FAILED")
+                        .setMessage("activation failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    verify(stateService).deleteState(2L, 7L);
+    verify(stateService, never()).saveState(argThat(state -> state.id() == 7L));
+  }
+
+  @Test
+  void startSessionWithReplacementLeavesExistingSessionStoppingWhenTerminationIsInProgress() {
+    StartSessionRequest request =
+        new StartSessionRequest(2L, 3L, "cp-terminating-replacement", 42L);
+    GameInstance existing = persistExisting(7L, 2L, "v1", null, 42L, "RUNNING");
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(worldManagementClient.getWorldInstanceLifecycle(2L, 7L))
+        .thenReturn(
+            worldLifecycleSnapshot(
+                "2",
+                "7",
+                3L,
+                WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    assertEquals(
+        "WORLD_TERMINATION_IN_PROGRESS: replaced session is already terminating",
+        error.getMessage());
+    assertEquals("STOPPING", store.get(7L).getStatus());
+    assertEquals(1, store.size());
+    verify(stateService).deleteState(2L, 10L);
+    verify(stateService, never()).saveState(argThat(state -> state.id() == 7L));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
 
   @Test
@@ -407,7 +899,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
 
     assertEquals(1, store.size());
     assertEquals("RUNNING", store.get(7L).getStatus());
@@ -441,7 +933,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.startSession(request, true));
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
 
     assertEquals("STOPPED", store.get(7L).getStatus());
     assertEquals("STARTING", store.get(10L).getStatus());
@@ -479,7 +971,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     verify(stateService).deleteState(1L, 10L);
     verify(stateService, never()).saveState(any(GameInstanceDto.class));
@@ -499,7 +991,7 @@ class GameInstanceServiceImplTest {
                         .build())
                 .build());
 
-    assertThrows(IllegalArgumentException.class, () -> service.stopSession(10L));
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
 
     assertEquals("RUNNING", store.get(10L).getStatus());
     verify(stateService).deleteState(1L, 10L);
@@ -508,6 +1000,72 @@ class GameInstanceServiceImplTest {
     assertEquals(10L, states.getValue().id());
     assertEquals("RUNNING", states.getValue().status());
     verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void stopSessionUsesLifecycleAuthorityConstantWhenLifecycleReadTransportFails() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenThrow(new IllegalStateException("lifecycle read timed out"));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("world lifecycle authority unavailable", error.getMessage());
+    assertEquals("lifecycle read timed out", error.getCause().getMessage());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+  }
+
+  @Test
+  void stopSessionLeavesStoppingStateWhenWorldTerminationIsInProgress() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse.newBuilder()
+                .setWorldInstance(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                        .newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("10")
+                        .setLifecycleEpoch(2L)
+                        .setStatus(
+                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                                .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING)
+                        .build())
+                .build());
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals(
+        "WORLD_TERMINATION_IN_PROGRESS: session termination is already in progress",
+        error.getMessage());
+    assertEquals("STOPPING", store.get(10L).getStatus());
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).saveState(any(GameInstanceDto.class));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = WorldInstanceLifecycleStatus.class,
+      names = {
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING",
+        "WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION"
+      })
+  void stopSessionRejectsKnownNonActiveWorldLifecycle(WorldInstanceLifecycleStatus status) {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(worldLifecycleSnapshot("1", "10", 3L, status));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE", error.getMessage());
+    assertEquals("RUNNING", store.get(10L).getStatus());
     verify(worldManagementClient, never())
         .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
   }
@@ -565,12 +1123,15 @@ class GameInstanceServiceImplTest {
         entity.getTenantId(),
         entity.getRuntimeVersion(),
         entity.getScriptPatchVersion(),
+        entity.getScriptPinEpoch(),
+        entity.getScriptPatchPinnedControlPlaneRequestId(),
         entity.getGameTemplateId(),
         entity.getLaunchDescriptorId(),
         entity.getVersionId(),
         entity.getReleaseBundleId(),
         entity.getVersionStateEpoch(),
         entity.getGenerationConfigRevision(),
+        entity.getRemapSetId(),
         entity.getOwnerAccountId(),
         entity.getStatus());
   }
@@ -662,7 +1223,8 @@ class GameInstanceServiceImplTest {
         assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
 
     assertEquals(
-        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle",
+        "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release"
+            + " bundle",
         error.getMessage());
   }
 
@@ -767,13 +1329,55 @@ class GameInstanceServiceImplTest {
             anyLong(),
             any());
 
-    IllegalArgumentException error =
-        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
-    assertEquals("gameInstanceId must be numeric", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_MALFORMED: gameInstanceId must be numeric", error.getMessage());
+    assertEquals("gameInstanceId must be numeric", error.getCause().getMessage());
     verify(worldManagementClient, never())
         .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
     verify(stateService, never()).saveState(any());
+  }
+
+  @Test
+  void persistExistingPreservesScriptPinOwnerRequestIdInCopiedTuple() {
+    GameInstance existing =
+        persistExisting(7L, 2L, "v1", "patch-1", 42L, "RUNNING", 3L, "pin-request-1");
+
+    assertEquals(3L, existing.getScriptPinEpoch());
+    assertEquals("pin-request-1", existing.getScriptPatchPinnedControlPlaneRequestId());
+    assertEquals("pin-request-1", store.get(7L).getScriptPatchPinnedControlPlaneRequestId());
+  }
+
+  private static net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse
+      worldPreparationSnapshot(String tenantId, String gameInstanceId, long lifecycleEpoch) {
+    return net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+        .setWorldInstance(
+            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot.newBuilder()
+                .setTenantId(tenantId)
+                .setGameInstanceId(gameInstanceId)
+                .setLifecycleEpoch(lifecycleEpoch)
+                .setStatus(
+                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
+                        .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                .build())
+        .build();
+  }
+
+  private static GetWorldInstanceLifecycleResponse worldLifecycleSnapshot(
+      String tenantId,
+      String gameInstanceId,
+      long lifecycleEpoch,
+      WorldInstanceLifecycleStatus status) {
+    return GetWorldInstanceLifecycleResponse.newBuilder()
+        .setWorldInstance(
+            WorldInstanceLifecycleSnapshot.newBuilder()
+                .setTenantId(tenantId)
+                .setGameInstanceId(gameInstanceId)
+                .setLifecycleEpoch(lifecycleEpoch)
+                .setStatus(status)
+                .build())
+        .build();
   }
 
   private void configureWorldActivation() {
@@ -791,64 +1395,71 @@ class GameInstanceServiceImplTest {
             anyString(),
             anyLong(),
             any()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("10")
-                        .setGameTemplateId("3")
-                        .setControlPlaneRequestId("cp")
-                        .setLaunchDescriptorId("ld-cp")
-                        .setVersionId("11")
-                        .setReleaseBundleId("77")
-                        .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:1:11:77")
-                        .setVersionStateEpoch(77L)
-                        .setLifecycleEpoch(1L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setGameTemplateId("3")
+                            .setControlPlaneRequestId("cp")
+                            .setLaunchDescriptorId("ld-cp")
+                            .setVersionId("11")
+                            .setReleaseBundleId("77")
+                            .setGenerationConfigRevision("genrev-11")
+                            .setPublishedReleaseBundleRef("prb:1:11:77")
+                            .setVersionStateEpoch(77L)
+                            .setLifecycleEpoch(1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                            .build())
+                    .build());
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
-                .newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("10")
-                        .setGameTemplateId("3")
-                        .setControlPlaneRequestId("cp")
-                        .setLaunchDescriptorId("ld-cp")
-                        .setVersionId("11")
-                        .setReleaseBundleId("77")
-                        .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:1:11:77")
-                        .setVersionStateEpoch(77L)
-                        .setLifecycleEpoch(2L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setGameTemplateId("3")
+                            .setControlPlaneRequestId("cp")
+                            .setLaunchDescriptorId("ld-cp")
+                            .setVersionId("11")
+                            .setReleaseBundleId("77")
+                            .setGenerationConfigRevision("genrev-11")
+                            .setPublishedReleaseBundleRef("prb:1:11:77")
+                            .setVersionStateEpoch(77L)
+                            .setLifecycleEpoch(2L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                            .build())
+                    .build());
     when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("10")
-                        .setLifecycleEpoch(2L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(2L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
+                            .build())
+                    .build());
     when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
@@ -868,19 +1479,22 @@ class GameInstanceServiceImplTest {
                     .build());
     when(worldManagementClient.terminateWorldInstance(
             anyLong(), anyLong(), anyLong(), anyString(), anyString()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("10")
-                        .setLifecycleEpoch(4L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(4L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
+                            .build())
+                    .build());
   }
 
   private GameInstance persistExisting(
@@ -890,11 +1504,26 @@ class GameInstanceServiceImplTest {
       String scriptPatchVersion,
       Long ownerAccountId,
       String status) {
+    return persistExisting(
+        id, tenantId, runtimeVersion, scriptPatchVersion, ownerAccountId, status, null, null);
+  }
+
+  private GameInstance persistExisting(
+      Long id,
+      Long tenantId,
+      String runtimeVersion,
+      String scriptPatchVersion,
+      Long ownerAccountId,
+      String status,
+      Long scriptPinEpoch,
+      String scriptPatchPinnedControlPlaneRequestId) {
     GameInstance instance = new GameInstance();
     instance.setId(id);
     instance.setTenantId(tenantId);
     instance.setRuntimeVersion(runtimeVersion);
     instance.setScriptPatchVersion(scriptPatchVersion);
+    instance.setScriptPinEpoch(scriptPinEpoch);
+    instance.setScriptPatchPinnedControlPlaneRequestId(scriptPatchPinnedControlPlaneRequestId);
     instance.setOwnerAccountId(ownerAccountId);
     instance.setStatus(status);
     store.put(id, copyOf(instance));
@@ -907,6 +1536,9 @@ class GameInstanceServiceImplTest {
     copy.setTenantId(instance.getTenantId());
     copy.setRuntimeVersion(instance.getRuntimeVersion());
     copy.setScriptPatchVersion(instance.getScriptPatchVersion());
+    copy.setScriptPinEpoch(instance.getScriptPinEpoch());
+    copy.setScriptPatchPinnedControlPlaneRequestId(
+        instance.getScriptPatchPinnedControlPlaneRequestId());
     copy.setOwnerAccountId(instance.getOwnerAccountId());
     copy.setStatus(instance.getStatus());
     return copy;

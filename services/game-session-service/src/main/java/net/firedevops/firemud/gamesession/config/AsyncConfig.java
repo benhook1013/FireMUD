@@ -36,6 +36,17 @@ public class AsyncConfig {
     return executor;
   }
 
+  @Bean(name = "gameplayCommandRecoveryExecutor")
+  public Executor gameplayCommandRecoveryExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(1);
+    executor.setMaxPoolSize(1);
+    executor.setQueueCapacity(1);
+    executor.setThreadNamePrefix("gameplay-command-recovery-");
+    executor.initialize();
+    return executor;
+  }
+
   @Bean(name = "commandHistoryRetentionScheduler")
   public ThreadPoolTaskScheduler commandHistoryRetentionScheduler() {
     ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();

@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer;
@@ -23,6 +24,7 @@ import org.jooq.Select;
 import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -146,6 +148,49 @@ public class GameplayCommandRepository {
         dsl.selectOne().from(TICK_EFFECT).where(TICK_EFFECT.COMMAND_ID.eq(commandId)));
   }
 
+  /**
+   * Serializes the durable admission decision with queue materialization.
+   *
+   * <p>The row lock is intentionally held by the caller's transaction while it performs the Redis
+   * materialization. A concurrent staging or terminal transition therefore either wins before this
+   * check, or observes the staged result after this transaction commits. The target and payload
+   * fields are compared under that lock so a caller cannot reuse a command identity with different
+   * queue materialization evidence.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean lockAcceptedCommandForStaging(
+      Long tenantId,
+      Long gameInstanceId,
+      String commandId,
+      String commandText,
+      boolean requiresSoloTick) {
+    Optional<GameplayCommand> maybeCommand =
+        dsl.selectFrom(GAMEPLAY_COMMAND)
+            .where(
+                GAMEPLAY_COMMAND
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(GAMEPLAY_COMMAND.GAME_INSTANCE_ID.eq(gameInstanceId))
+                    .and(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId)))
+            .forUpdate()
+            .fetchOptional(this::toEntity);
+    if (maybeCommand.isEmpty()) {
+      return false;
+    }
+    GameplayCommand command = maybeCommand.orElseThrow();
+    if (!Objects.equals(command.getTenantId(), tenantId)
+        || !Objects.equals(command.getGameInstanceId(), gameInstanceId)
+        || !Objects.equals(command.getCommandText(), commandText)
+        || command.isRequiresSoloTick() != requiresSoloTick) {
+      throw new IllegalArgumentException(
+          "Gameplay command identity was reused with conflicting target or queue payload: "
+              + commandId);
+    }
+    return "ACCEPTED".equals(command.getExecutionOutcome())
+        && command.getStagedAt() == null
+        && command.getCompletedAt() == null;
+  }
+
   public boolean markAcceptedCommandStaged(String commandId, Instant stagedAt) {
     return dsl.update(GAMEPLAY_COMMAND)
             .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "STAGED")
@@ -156,6 +201,7 @@ public class GameplayCommandRepository {
                     .COMMAND_ID
                     .eq(commandId)
                     .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
+                    .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
                     .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
             .execute()
         == 1;
@@ -195,16 +241,30 @@ public class GameplayCommandRepository {
             .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.in(executionOutcomes)));
   }
 
-  public List<GameplayCommand> findByExecutionOutcomeAndStagedAtIsNullAndAcceptedAtBefore(
-      String executionOutcome, Instant acceptedBefore) {
+  public List<GameplayCommand> findAcceptedButUnstagedPage(
+      Instant acceptedBefore, Instant afterAcceptedAt, long afterId, int pageSize) {
+    Condition condition =
+        GAMEPLAY_COMMAND
+            .EXECUTION_OUTCOME
+            .eq("ACCEPTED")
+            .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
+            .and(GAMEPLAY_COMMAND.ACCEPTED_AT.lt(toLocalDateTime(acceptedBefore)));
+    if (afterAcceptedAt != null) {
+      condition =
+          condition.and(
+              GAMEPLAY_COMMAND
+                  .ACCEPTED_AT
+                  .gt(toLocalDateTime(afterAcceptedAt))
+                  .or(
+                      GAMEPLAY_COMMAND
+                          .ACCEPTED_AT
+                          .eq(toLocalDateTime(afterAcceptedAt))
+                          .and(GAMEPLAY_COMMAND.ID.gt(afterId))));
+    }
     return dsl.selectFrom(GAMEPLAY_COMMAND)
-        .where(
-            GAMEPLAY_COMMAND
-                .EXECUTION_OUTCOME
-                .eq(executionOutcome)
-                .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
-                .and(GAMEPLAY_COMMAND.ACCEPTED_AT.lt(toLocalDateTime(acceptedBefore))))
+        .where(condition)
         .orderBy(GAMEPLAY_COMMAND.ACCEPTED_AT.asc(), GAMEPLAY_COMMAND.ID.asc())
+        .limit(pageSize)
         .fetch(this::toEntity);
   }
 
@@ -295,6 +355,10 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.SCRIPT_ID, entity.getScriptId())
             .set(GAMEPLAY_COMMAND.EXECUTION_HOOK, entity.getExecutionHook())
             .set(GAMEPLAY_COMMAND.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(GAMEPLAY_COMMAND.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+            .set(
+                GAMEPLAY_COMMAND.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
+                entity.getScriptPinControlPlaneRequestId())
             .set(GAMEPLAY_COMMAND.PLUGIN_ID, entity.getPluginId())
             .set(GAMEPLAY_COMMAND.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(GAMEPLAY_COMMAND.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
@@ -537,6 +601,8 @@ public class GameplayCommandRepository {
     record.setScriptId(entity.getScriptId());
     record.setExecutionHook(entity.getExecutionHook());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
+    record.setScriptPinEpoch(entity.getScriptPinEpoch());
+    record.setScriptPinControlPlaneRequestId(entity.getScriptPinControlPlaneRequestId());
     record.setPluginId(entity.getPluginId());
     record.setPluginVersionId(entity.getPluginVersionId());
     record.setPlayableStateScope(entity.getPlayableStateScope());
@@ -594,6 +660,9 @@ public class GameplayCommandRepository {
     entity.setScriptId(record.get(GAMEPLAY_COMMAND.SCRIPT_ID));
     entity.setExecutionHook(record.get(GAMEPLAY_COMMAND.EXECUTION_HOOK));
     entity.setScriptPatchVersion(record.get(GAMEPLAY_COMMAND.SCRIPT_PATCH_VERSION));
+    entity.setScriptPinEpoch(record.get(GAMEPLAY_COMMAND.SCRIPT_PIN_EPOCH));
+    entity.setScriptPinControlPlaneRequestId(
+        record.get(GAMEPLAY_COMMAND.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID));
     entity.setPluginId(record.get(GAMEPLAY_COMMAND.PLUGIN_ID));
     entity.setPluginVersionId(record.get(GAMEPLAY_COMMAND.PLUGIN_VERSION_ID));
     entity.setPlayableStateScope(record.get(GAMEPLAY_COMMAND.PLAYABLE_STATE_SCOPE));
