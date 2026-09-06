@@ -47,6 +47,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';",
             "request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'",
             "ck_script_event_ingress_audit_request_digest",
+            "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */",
             "ck_script_handoff_events_pin_tuple",
             "script_pin_control_plane_request_id")
         .doesNotContain(
@@ -95,15 +96,14 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "UPDATE script_event_ingress_audit SET region_id = COALESCE(region_id, ''), region_epoch = COALESCE(region_epoch, 0), entity_id = COALESCE(entity_id, ''),");
     assertThat(reconciliationStart).isGreaterThanOrEqualTo(0);
     assertThat(normalizedRuntimeStart).isGreaterThan(reconciliationStart);
-    int normalizedOnLoadDedup =
-        normalized.indexOf("The legacy nullable game-instance column allowed");
-    assertThat(normalizedOnLoadDedup).isGreaterThanOrEqualTo(0);
-    assertThat(preInstanceNormalization).isLessThan(normalizedOnLoadDedup);
-    assertThat(reconciliationStart).isLessThan(normalizedOnLoadDedup);
-    assertThat(normalized.substring(reconciliationStart, normalizedOnLoadDedup))
+    int duplicateIdentityCheck = normalized.indexOf("DO $$");
+    assertThat(duplicateIdentityCheck).isGreaterThanOrEqualTo(0);
+    assertThat(preInstanceNormalization).isLessThan(duplicateIdentityCheck);
+    assertThat(reconciliationStart).isLessThan(duplicateIdentityCheck);
+    assertThat(normalized.substring(reconciliationStart, duplicateIdentityCheck))
         .contains("entity_id = COALESCE(entity_id, '')", "WHERE game_instance_id IS NOT NULL")
         .doesNotContain("NULLS NOT DISTINCT", "WHERE game_instance_id IS NULL");
-    assertThat(normalized.substring(normalizedOnLoadDedup, normalizedRuntimeStart))
+    assertThat(normalized.substring(duplicateIdentityCheck, normalizedRuntimeStart))
         .contains(
             "WHERE game_instance_id IS NULL",
             "AND script_id IS NOT NULL",
@@ -139,7 +139,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .doesNotContain("script_pin_epoch IS NULL AND game_instance_id IS NULL");
 
     int auditTupleStart = migration.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
-    int auditTupleEnd = migration.indexOf("-- Every instance-scoped handoff", auditTupleStart);
+    int auditTupleEnd = migration.indexOf("ALTER TABLE script_handoff_events", auditTupleStart);
     assertThat(auditTupleStart).isGreaterThanOrEqualTo(0);
     assertThat(auditTupleEnd).isGreaterThan(auditTupleStart);
     assertThat(migration.substring(auditTupleStart, auditTupleEnd))
@@ -147,6 +147,23 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "script_pin_epoch > 0",
             "game_instance_id IS NOT NULL",
             "script_pin_control_plane_request_id");
+
+    int normalizedAuditTupleStart =
+        normalized.indexOf("ADD CONSTRAINT ck_script_event_audit_pin_tuple");
+    int normalizedHandoffTupleStart =
+        normalized.indexOf("ADD CONSTRAINT ck_script_handoff_events_pin_tuple");
+    assertThat(normalizedAuditTupleStart).isGreaterThan(normalizedIngressTupleStart);
+    assertThat(normalizedHandoffTupleStart).isGreaterThan(normalizedAuditTupleStart);
+
+    String notValidMarker = "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */";
+    int ingressTupleNotValid = normalized.indexOf(notValidMarker, normalizedIngressTupleStart);
+    int auditTupleNotValid = normalized.indexOf(notValidMarker, normalizedAuditTupleStart);
+    int handoffTupleNotValid = normalized.indexOf(notValidMarker, normalizedHandoffTupleStart);
+    assertThat(ingressTupleNotValid).isGreaterThan(normalizedIngressTupleStart);
+    assertThat(auditTupleNotValid).isGreaterThan(normalizedAuditTupleStart);
+    assertThat(handoffTupleNotValid).isGreaterThan(normalizedHandoffTupleStart);
+    assertThat(ingressTupleNotValid).isLessThan(normalizedAuditTupleStart);
+    assertThat(auditTupleNotValid).isLessThan(normalizedHandoffTupleStart);
 
     int auditPinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON");
@@ -162,7 +179,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     int normalizedOnLoadEnd = normalized.indexOf(") WHERE", normalizedOnLoadStart);
     assertThat(normalizedOnLoadStart).isGreaterThan(normalizedRuntimeStart);
     assertThat(normalizedOnLoadStart).isGreaterThanOrEqualTo(0);
-    assertThat(normalizedOnLoadStart).isGreaterThan(normalizedOnLoadDedup);
+    assertThat(normalizedOnLoadStart).isGreaterThan(duplicateIdentityCheck);
     assertThat(normalizedOnLoadEnd).isGreaterThan(normalizedOnLoadStart);
     assertThat(normalized.substring(normalizedOnLoadStart, normalizedOnLoadEnd))
         .contains("script_id")

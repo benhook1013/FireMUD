@@ -1962,6 +1962,37 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void timerEventIdentityUsesZeroSentinelForNullableRegionEpoch()
+      throws ReflectiveOperationException {
+    ScriptScheduleInstance instance =
+        tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);
+    Class<?> candidateClass =
+        Class.forName(ScriptScheduleInstanceServiceImpl.class.getName() + "$TimerFiringCandidate");
+    var constructor =
+        candidateClass.getDeclaredConstructor(
+            ScriptScheduleInstance.class,
+            String.class,
+            Long.class,
+            long.class,
+            String.class,
+            Long.class,
+            Instant.class,
+            boolean.class);
+    constructor.setAccessible(true);
+    Object nullableCandidate =
+        constructor.newInstance(instance, "region-1", null, 1L, "req-1", 130L, null, false);
+    Object zeroCandidate =
+        constructor.newInstance(instance, "region-1", 0L, 1L, "req-1", 130L, null, false);
+    var identityMethod = candidateClass.getDeclaredMethod("identity");
+    identityMethod.setAccessible(true);
+
+    String nullableIdentity = (String) identityMethod.invoke(nullableCandidate);
+    String zeroIdentity = (String) identityMethod.invoke(zeroCandidate);
+
+    assertThat(nullableIdentity).isEqualTo(zeroIdentity).contains("1:0").doesNotContain("null");
+  }
+
+  @Test
   void observeRuntimeTickProgressSeparatesSameVersionTimerIdentityByPinEpoch() {
     ScriptScheduleInstance first =
         tickSchedule("guard-1", "npc-guard", "guard.patrol.v1", 30L, 130L);

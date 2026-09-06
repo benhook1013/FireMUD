@@ -396,6 +396,13 @@ public class ScriptEventAuditRepository {
     String normalizedScriptPinControlPlaneRequestId =
         blankToNull(entity.getScriptPinControlPlaneRequestId());
     requireCoherentPinTuple(normalizedScriptPinEpoch, normalizedScriptPinControlPlaneRequestId);
+    ScriptEventAudit persisted =
+        findById(entity.getId())
+            .orElseThrow(
+                () ->
+                    AutomationScriptingJooqRepositorySupport.staleWrite(
+                        "script_event_audit", entity.getId()));
+    requireMatchingImmutableIdentity(entity, persisted);
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_AUDIT)
@@ -414,13 +421,8 @@ public class ScriptEventAuditRepository {
             .set(SCRIPT_EVENT_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_EVENT_AUDIT.TARGET_SCOPE_ID, entity.getTargetScopeId())
-            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, normalizedScriptPinEpoch)
-            .set(
-                SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                normalizedScriptPinControlPlaneRequestId)
             .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
-            .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
             .set(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_EVENT_AUDIT.DRY_RUN, entity.isDryRun())
             .set(SCRIPT_EVENT_AUDIT.SOURCE_SERVICE, entity.getSourceService())
@@ -441,14 +443,7 @@ public class ScriptEventAuditRepository {
                 SCRIPT_EVENT_AUDIT
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion()))
-                    .and(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
-                    .and(
-                        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(
-                            normalizedScriptPinEpoch))
-                    .and(
-                        SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID.isNotDistinctFrom(
-                            normalizedScriptPinControlPlaneRequestId)))
+                    .and(SCRIPT_EVENT_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -558,6 +553,24 @@ public class ScriptEventAuditRepository {
       String requestedRequestId, String existingRequestId) {
     if (!Objects.equals(requestedRequestId, blankToNull(existingRequestId))) {
       throw new IllegalStateException(PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE);
+    }
+  }
+
+  private static void requireMatchingImmutableIdentity(
+      ScriptEventAudit submitted, ScriptEventAudit persisted) {
+    if (!Objects.equals(submitted.getScriptPatchVersion(), persisted.getScriptPatchVersion())) {
+      throw new IllegalArgumentException(
+          "script_patch_version is immutable and conflicts with persisted identity");
+    }
+    if (!Objects.equals(normalizedScriptPinEpoch(submitted), normalizedScriptPinEpoch(persisted))) {
+      throw new IllegalArgumentException(
+          "script_pin_epoch is immutable and conflicts with persisted identity");
+    }
+    if (!Objects.equals(
+        blankToNull(submitted.getScriptPinControlPlaneRequestId()),
+        blankToNull(persisted.getScriptPinControlPlaneRequestId()))) {
+      throw new IllegalArgumentException(
+          "script_pin_control_plane_request_id is immutable and conflicts with persisted identity");
     }
   }
 

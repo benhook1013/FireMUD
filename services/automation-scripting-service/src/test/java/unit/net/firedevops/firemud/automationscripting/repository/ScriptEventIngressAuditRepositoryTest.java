@@ -113,14 +113,20 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
-  void saveFencesImmutableRequestAndPinTupleEvidenceWithTheRowVersionCas() {
-    AtomicReference<String> sqlRef = new AtomicReference<>();
-    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+  void saveRejectsImmutableIdentityConflictBeforeUpdate() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ScriptEventIngressAuditRecord persisted = persistedIngressRow();
+    AtomicReference<Boolean> updateCalled = new AtomicReference<>(false);
     MockDataProvider provider =
         context -> {
-          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
-          bindingsRef.set(context.bindings());
-          return new MockResult[] {new MockResult(0)};
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("update")) {
+            updateCalled.set(true);
+            return new MockResult[] {new MockResult(1)};
+          }
+          Result<ScriptEventIngressAuditRecord> result =
+              resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+          result.add(persisted);
+          return new MockResult[] {new MockResult(1, result)};
         };
     ScriptEventIngressAuditRepository repository =
         new ScriptEventIngressAuditRepository(
@@ -131,23 +137,56 @@ class ScriptEventIngressAuditRepositoryTest {
     entity.setGameInstanceId("game-1");
     entity.setScriptPatchVersion("patch-2");
     entity.setScriptPinEpoch(2L);
-    entity.setScriptPinControlPlaneRequestId("pin-request-2");
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
+    entity.setRequestDigest(REQUEST_DIGEST);
+
+    assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("immutable script identity conflicts with persisted row: script_patch_version");
+    assertThat(updateCalled).hasValue(false);
+  }
+
+  @Test
+  void saveRetainsRowVersionCasForGenuineStaleWrite() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    ScriptEventIngressAuditRecord persisted = persistedIngressRow();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.trim().startsWith("select")) {
+            Result<ScriptEventIngressAuditRecord> result =
+                resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+            result.add(persisted);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          sqlRef.set(sql);
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setId(7L);
+    entity.setRowVersion(4);
+    entity.setGameInstanceId("game-1");
+    entity.setScriptPatchVersion("patch-1");
+    entity.setScriptPinEpoch(2L);
+    entity.setScriptPinControlPlaneRequestId("pin-request-1");
     entity.setRequestDigest(REQUEST_DIGEST);
 
     assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class)
         .hasMessage("Stale write rejected for script_event_ingress_audit id=7");
-    assertThat(sqlRef.get())
-        .contains(
+    int whereStart = sqlRef.get().indexOf(" where ");
+    assertThat(whereStart).isGreaterThanOrEqualTo(0);
+    assertThat(sqlRef.get().substring(0, whereStart))
+        .doesNotContain(
             "script_patch_version",
             "script_pin_epoch",
             "script_pin_control_plane_request_id",
             "request_digest");
-    int whereStart = sqlRef.get().indexOf(" where ");
-    assertThat(whereStart).isGreaterThanOrEqualTo(0);
-    assertThat(sqlRef.get().substring(0, whereStart)).contains("request_digest");
-    assertThat(sqlRef.get().substring(whereStart)).contains("request_digest");
-    assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2", REQUEST_DIGEST);
+    assertThat(sqlRef.get().substring(whereStart)).contains("row_version");
   }
 
   @Test
@@ -497,6 +536,14 @@ class ScriptEventIngressAuditRepositoryTest {
             "game-session-service");
 
     assertThat(bindingsRef.get()).contains("");
+  }
+
+  private static ScriptEventIngressAuditRecord persistedIngressRow() {
+    ScriptEventIngressAuditRecord row = pinnedIngressRow("pin-request-1");
+    row.setId(7L);
+    row.setRowVersion(4);
+    row.setRequestDigest(REQUEST_DIGEST);
+    return row;
   }
 
   private static ScriptEventIngressAuditRecord pinnedIngressRow(String requestId) {

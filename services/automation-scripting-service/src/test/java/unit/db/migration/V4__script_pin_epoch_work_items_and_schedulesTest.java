@@ -38,7 +38,13 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
     String normalized = migration.replaceAll("\\s+", " ");
     int scheduleAlter = normalized.indexOf("ALTER TABLE script_schedule_instances");
     assertThat(scheduleAlter).isGreaterThanOrEqualTo(0);
-    String scheduleBlock = normalized.substring(scheduleAlter);
+    int scheduleConstraint =
+        normalized.indexOf(
+            "ADD CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK", scheduleAlter);
+    int scheduleConstraintEnd = normalized.indexOf(';', scheduleConstraint);
+    assertThat(scheduleConstraint).isGreaterThan(scheduleAlter);
+    assertThat(scheduleConstraintEnd).isGreaterThan(scheduleConstraint);
+    String scheduleBlock = normalized.substring(scheduleAlter, scheduleConstraintEnd);
     assertThat(scheduleBlock)
         .contains(
             "UPDATE script_schedule_instances",
@@ -55,10 +61,10 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "NOT VALID");
 
     int scheduleUpdate = migration.indexOf("UPDATE script_schedule_instances");
-    int scheduleConstraint =
+    int scheduleConstraintInMigration =
         migration.indexOf("ADD CONSTRAINT ck_script_schedule_instances_pin_tuple CHECK");
     assertThat(scheduleUpdate).isGreaterThanOrEqualTo(0);
-    assertThat(scheduleConstraint).isGreaterThan(scheduleUpdate);
+    assertThat(scheduleConstraintInMigration).isGreaterThan(scheduleUpdate);
 
     int unpinnedStart =
         migration.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned");

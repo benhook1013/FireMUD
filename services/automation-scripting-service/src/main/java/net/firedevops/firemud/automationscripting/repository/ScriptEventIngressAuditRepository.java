@@ -9,6 +9,7 @@ import static org.jooq.impl.DSL.field;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,6 +31,8 @@ import org.springframework.stereotype.Repository;
 public class ScriptEventIngressAuditRepository {
   private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
       "script_pin_control_plane_request_id conflicts with existing identity";
+  private static final String IMMUTABLE_IDENTITY_CONFLICT_PREFIX =
+      "immutable script identity conflicts with persisted row: ";
   private static final int MAX_EVENT_INGRESS_INSERT_ATTEMPTS = 2;
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
@@ -88,6 +91,8 @@ public class ScriptEventIngressAuditRepository {
     }
     requireCoherentPinTuple(entity);
     requireCanonicalRequestDigest(entity.getRequestDigest());
+    findById(entity.getId())
+        .ifPresent(persisted -> requireMatchingImmutableIdentity(entity, persisted));
     int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
@@ -106,15 +111,9 @@ public class ScriptEventIngressAuditRepository {
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_ID, entity.getPluginId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.PLUGIN_VERSION_ID, entity.getPluginVersionId())
-            .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
-            .set(
-                SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID,
-                blankToNull(entity.getScriptPinControlPlaneRequestId()))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.QUOTA_CLASS, entity.getQuotaClass())
-            .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
-            .set(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST, entity.getRequestDigest())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID, entity.getScriptEventId())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE, entity.getSourceService())
             .set(SCRIPT_EVENT_INGRESS_AUDIT.TRIGGER_MODE, entity.getTriggerMode())
@@ -137,18 +136,7 @@ public class ScriptEventIngressAuditRepository {
                 SCRIPT_EVENT_INGRESS_AUDIT
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion()))
-                    .and(
-                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.isNotDistinctFrom(
-                            entity.getScriptPatchVersion()))
-                    .and(
-                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.isNotDistinctFrom(
-                            entity.getScriptPinEpoch()))
-                    .and(
-                        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID
-                            .isNotDistinctFrom(
-                                blankToNull(entity.getScriptPinControlPlaneRequestId())))
-                    .and(SCRIPT_EVENT_INGRESS_AUDIT.REQUEST_DIGEST.eq(entity.getRequestDigest())))
+                    .and(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION.eq(entity.getRowVersion())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
@@ -174,8 +162,7 @@ public class ScriptEventIngressAuditRepository {
     }
     int updated =
         dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
-            .set(
-                SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(java.time.ZoneOffset.UTC))
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(ZoneOffset.UTC))
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, "ingress_reclaimed_stale")
             .set(SCRIPT_EVENT_INGRESS_AUDIT.ROW_VERSION, claim.getRowVersion() + 1)
             .where(
@@ -186,7 +173,7 @@ public class ScriptEventIngressAuditRepository {
                     .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_STATE.eq("IN_PROGRESS"))
                     .and(
                         SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT.le(
-                            staleBefore.atOffset(java.time.ZoneOffset.UTC))))
+                            staleBefore.atOffset(ZoneOffset.UTC))))
             .execute();
     if (updated != 1) {
       return Optional.empty();
@@ -205,8 +192,7 @@ public class ScriptEventIngressAuditRepository {
       return false;
     }
     return dsl.update(SCRIPT_EVENT_INGRESS_AUDIT)
-            .set(
-                SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(java.time.ZoneOffset.UTC))
+            .set(SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, now.atOffset(ZoneOffset.UTC))
             .where(
                 SCRIPT_EVENT_INGRESS_AUDIT
                     .ID
@@ -324,6 +310,26 @@ public class ScriptEventIngressAuditRepository {
     if (requestDigest == null || !requestDigest.matches("[0-9a-f]{64}")) {
       throw new IllegalArgumentException(
           "request_digest must be a canonical 64-character hexadecimal digest");
+    }
+  }
+
+  private static void requireMatchingImmutableIdentity(
+      ScriptEventIngressAudit submitted, ScriptEventIngressAudit persisted) {
+    if (!Objects.equals(submitted.getScriptPatchVersion(), persisted.getScriptPatchVersion())) {
+      throw new IllegalArgumentException(
+          IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_patch_version");
+    }
+    if (!Objects.equals(submitted.getScriptPinEpoch(), persisted.getScriptPinEpoch())) {
+      throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_pin_epoch");
+    }
+    if (!Objects.equals(
+        blankToNull(submitted.getScriptPinControlPlaneRequestId()),
+        blankToNull(persisted.getScriptPinControlPlaneRequestId()))) {
+      throw new IllegalArgumentException(
+          IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "script_pin_control_plane_request_id");
+    }
+    if (!Objects.equals(submitted.getRequestDigest(), persisted.getRequestDigest())) {
+      throw new IllegalArgumentException(IMMUTABLE_IDENTITY_CONFLICT_PREFIX + "request_digest");
     }
   }
 

@@ -154,6 +154,59 @@ class ScriptDesignDigestServiceImplTest {
   }
 
   @Test
+  void getDraftDesignDigestForScriptPatchNormalizesNullStringFields() {
+    ScriptDefinition nullScript = new ScriptDefinition();
+    ScriptDefinition emptyScript = new ScriptDefinition();
+    emptyScript.setName("");
+    emptyScript.setScriptVersion("");
+    emptyScript.setDefinition("");
+    ScriptEventBinding nullBinding = new ScriptEventBinding();
+    nullBinding.setPriorityTag(null);
+    ScriptEventBinding emptyBinding = new ScriptEventBinding();
+    emptyBinding.setScriptPatchVersion("");
+    emptyBinding.setEventType("");
+    emptyBinding.setEventSchemaVersion("");
+    emptyBinding.setScriptId("");
+    emptyBinding.setBindingId("");
+    emptyBinding.setTargetScopeType("");
+    emptyBinding.setTargetScopeId("");
+    emptyBinding.setPriorityTag("");
+
+    when(repository.findByTenantIdAndScriptVersionOrderByNameAsc(1L, "patch-1"))
+        .thenReturn(List.of(nullScript), List.of(emptyScript));
+    when(bindingRepository
+            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L, "patch-1"))
+        .thenReturn(List.of(nullBinding), List.of(emptyBinding));
+
+    var nullDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+    var emptyDigest = service.getDraftDesignDigestForScriptPatch("1", "patch-1");
+
+    assertEquals(emptyDigest.contentDigest(), nullDigest.contentDigest());
+  }
+
+  @Test
+  void getDraftDesignDigestForVersionNormalizesNullScriptStringFields() {
+    ScriptDefinition nullScript = new ScriptDefinition();
+    ScriptDefinition emptyScript = new ScriptDefinition();
+    emptyScript.setName("");
+    emptyScript.setScriptVersion("");
+    emptyScript.setDefinition("");
+
+    when(repository.findByTenantIdOrderByNameAscScriptVersionAsc(1L))
+        .thenReturn(List.of(nullScript), List.of(emptyScript));
+    when(bindingRepository
+            .findByTenantIdOrderByScriptPatchVersionAscEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+                1L))
+        .thenReturn(List.of(), List.of());
+
+    var nullDigest = service.getDraftDesignDigestForVersion("1", "7");
+    var emptyDigest = service.getDraftDesignDigestForVersion("1", "7");
+
+    assertEquals(emptyDigest.contentDigest(), nullDigest.contentDigest());
+  }
+
+  @Test
   void getDraftDesignDigestIsIndependentOfBindingOrder() {
     ScriptDefinition script = new ScriptDefinition();
     script.setTenantId(1L);
