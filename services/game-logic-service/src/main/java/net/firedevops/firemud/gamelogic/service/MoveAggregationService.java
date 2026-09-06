@@ -43,12 +43,13 @@ public class MoveAggregationService {
       } catch (IllegalArgumentException ex) {
         return errorResponse(builder, "INVALID_ARGUMENT", ex.getMessage());
       }
+      String resolvedTenantId = resolveTenantId(request);
       RoomSnapshot snapshot;
       try {
         GetRoomSnapshotResponse response =
             worldStub.getRoomSnapshot(
                 GetRoomSnapshotRequest.newBuilder()
-                    .setTenantId(resolveTenantId(request))
+                    .setTenantId(resolvedTenantId)
                     .setRoomInstance(currentRoom)
                     .setPreferredLocale(request.getPreferredLocale())
                     .setSessionAttestation(request.getSessionAttestation())
@@ -62,6 +63,14 @@ public class MoveAggregationService {
         return errorResponse(builder, ex, "WorldManagementService");
       }
 
+      if (StringUtils.hasText(snapshot.getTenantId())
+          && !resolvedTenantId.equals(snapshot.getTenantId())) {
+        return errorResponse(
+            builder,
+            "WORLD_UNAVAILABLE",
+            "WorldManagementService returned a snapshot for a different tenant");
+      }
+
       Optional<RoomExitSnapshot> maybeExit = findExit(snapshot, direction);
       if (maybeExit.isEmpty()) {
         return errorResponse(
@@ -72,14 +81,10 @@ public class MoveAggregationService {
 
       try {
         String destinationGameInstanceId = resolveGameInstanceId(request, snapshot);
-        String destinationTenantId =
-            StringUtils.hasText(snapshot.getTenantId())
-                ? snapshot.getTenantId()
-                : resolveTenantId(request);
         RoomInstanceRef destinationRoom =
             RuntimeRoomInstanceRefs.requireCanonical(
                 RoomInstanceRef.newBuilder()
-                    .setTenantId(destinationTenantId)
+                    .setTenantId(resolvedTenantId)
                     .setGameInstanceId(destinationGameInstanceId)
                     .setRoomInstanceId(maybeExit.get().getTargetRoomInstanceId())
                     .build());

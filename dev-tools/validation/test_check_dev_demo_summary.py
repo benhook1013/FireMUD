@@ -158,6 +158,19 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "must not create or mount credential Secret"):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_any_bootstrap_secret_create_subcommand(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            '\nkubectl -n "${PREVIEW_NAMESPACE}" create secret docker-registry unrelated-resource'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_accepts_image_pull_secret_reference(self):
         bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(
             lambda pod: pod["spec"].update(
@@ -374,6 +387,36 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
                 AssertionError, "authenticated Kubernetes.*missing"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_account_mode_in_parsed_session_pod(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: next(
+                item
+                for item in pod["spec"]["containers"][0]["env"]
+                if item.get("name") == "BOOTSTRAP_MODE"
+            ).update(value="account")
+        )
+        invalid_manifest += "\n# Preserve the raw transport marker: value: session"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must run the noncredential session bootstrap"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_nonlist_bootstrap_container_env(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["containers"][0].update(env={"name": "BOOTSTRAP_MODE"})
+        )
+        invalid_manifest += "\n# Preserve the raw transport marker: value: session"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, r"spec\.containers\[0\]\.env must be a list"
             ):
                 self.validator.validate_workflow(root)
 

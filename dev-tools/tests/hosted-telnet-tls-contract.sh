@@ -52,6 +52,18 @@ assert not issues, issues
 
 deployment = next(d for d in documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 container = deployment["spec"]["template"]["spec"]["containers"][0]
+expected_telnet_env_order = [
+    "TCP_PROXY_TLS_ENABLED",
+    "TCP_PROXY_TLS_CERT",
+    "TCP_PROXY_TLS_KEY",
+    "TCP_PROXY_TELNET_MODE",
+]
+telnet_env_order = [
+    entry["name"]
+    for entry in container.get("env", [])
+    if entry.get("name") in expected_telnet_env_order
+]
+assert telnet_env_order == expected_telnet_env_order, telnet_env_order
 env = {entry["name"]: entry.get("value") for entry in container.get("env", [])}
 assert env["TCP_PROXY_TLS_ENABLED"] == "true"
 assert env["TCP_PROXY_TLS_CERT"] == "/telnet-tls/tls.crt"
@@ -203,6 +215,12 @@ spring_profile_deployment = next(
     d for d in spring_profile_documents
     if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
 )
+spring_profile_telnet_env_order = [
+    entry["name"]
+    for entry in spring_profile_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])
+    if entry.get("name") in expected_telnet_env_order
+]
+assert spring_profile_telnet_env_order == expected_telnet_env_order, spring_profile_telnet_env_order
 spring_profile_env = {
     entry["name"]: entry.get("value")
     for entry in spring_profile_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])

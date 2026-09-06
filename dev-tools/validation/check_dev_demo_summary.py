@@ -99,7 +99,7 @@ BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
 )
 NON_CREDENTIAL_SECRET_KEYS = frozenset({"imagepullsecrets"})
 BOOTSTRAP_SECRET_CREATE_COMMAND = re.compile(
-    r"\bkubectl\b[^;&|]*\bcreate\s+secret\s+generic\b",
+    r"\bkubectl\b[^;&|]*\bcreate\s+secret(?:\s|$)",
     re.IGNORECASE,
 )
 
@@ -493,9 +493,14 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap pod must execute the single in-cluster bootstrap script"
         )
+    container_env = container.get("env", [])
+    if not isinstance(container_env, list):
+        raise AssertionError(
+            "dev-demo bootstrap pod spec.containers[0].env must be a list"
+        )
     environment = {
         item.get("name"): item.get("value")
-        for item in container.get("env", [])
+        for item in container_env
         if isinstance(item, dict)
     }
     if environment.get("BOOTSTRAP_MODE") != "session":

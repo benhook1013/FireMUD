@@ -110,7 +110,7 @@ class MoveAggregationServiceTest {
   }
 
   @Test
-  void resolveFallsBackToRequestGameInstanceIdWhenSnapshotOmitsIt() {
+  void resolveFallsBackToRequestTenantAndGameInstanceWhenSnapshotOmitsThem() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
             .setTenantId("")
@@ -151,7 +151,7 @@ class MoveAggregationServiceTest {
   }
 
   @Test
-  void resolvePrefersNonBlankSnapshotTenantOverRequestTenant() {
+  void resolveRejectsSnapshotTenantThatDiffersFromRequestTenant() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
             .setTenantId("snapshot-tenant")
@@ -182,8 +182,10 @@ class MoveAggregationServiceTest {
                 .setDirection("north")
                 .build());
 
-    assertThat(result.getSuccess()).isTrue();
-    assertThat(result.getDestinationRoomInstance().getTenantId()).isEqualTo("snapshot-tenant");
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("WORLD_UNAVAILABLE");
+    assertThat(result.getError().getMessage())
+        .contains("WorldManagementService returned a snapshot for a different tenant");
   }
 
   @Test

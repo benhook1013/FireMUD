@@ -1,6 +1,7 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- range $service := .Values.previewStack.services }}
+{{- $mountTelnetTls := and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -44,16 +45,14 @@ spec:
             {{- if $service.mountGrpcTls }}
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
-            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
-{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
-            {{- end }}
             {{- range $key, $value := $service.extraEnv }}
             {{- if ne $key "TCP_PROXY_TELNET_MODE" }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
-            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            {{- if $mountTelnetTls }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
 {{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
           {{- else }}
@@ -71,11 +70,9 @@ spec:
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
-            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
-{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
-            {{- end }}
-            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            {{- if $mountTelnetTls }}
 {{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
           {{- end }}
           {{- if $service.envFromShared }}
@@ -85,7 +82,7 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls (and $.Values.previewStack.telnetTls.enabled $service.mountTelnetTls) (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls $mountTelnetTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
@@ -102,7 +99,7 @@ spec:
               readOnly: true
             {{- end }}
             {{- end }}
-            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            {{- if $mountTelnetTls }}
             - name: telnet-tls
               mountPath: /telnet-tls
               readOnly: true
@@ -137,7 +134,7 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls (and $.Values.previewStack.telnetTls.enabled $service.mountTelnetTls) (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls $mountTelnetTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
@@ -154,7 +151,7 @@ spec:
             name: jwt-jwks
         {{- end }}
         {{- end }}
-        {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+        {{- if $mountTelnetTls }}
         - name: telnet-tls
           secret:
             secretName: {{ $.Values.previewStack.telnetTls.secretName }}
