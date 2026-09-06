@@ -34,6 +34,7 @@ import net.firedevops.firemud.gamesession.service.DurableRemoteFollowupExecution
 import net.firedevops.firemud.gamesession.service.RemoteFollowupDrainService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -876,7 +877,16 @@ class TickBatchExecutionServiceTest {
     service.restorePendingProjection(
         activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
 
-    verify(redisTemplate).execute(any(), any(), any(Object[].class));
+    ArgumentCaptor<List<String>> keys = ArgumentCaptor.forClass(List.class);
+    ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
+    verify(redisTemplate).execute(any(), keys.capture(), arguments.capture());
+    assertEquals(
+        List.of(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:lock:1:2"),
+        keys.getValue());
+    assertEquals("lease-token", arguments.getValue()[0]);
     verify(redisTemplate, never()).delete(anyString());
     verify(listOps, never()).rightPush(anyString(), any());
     verify(listOps, never()).leftPush(anyString(), any());

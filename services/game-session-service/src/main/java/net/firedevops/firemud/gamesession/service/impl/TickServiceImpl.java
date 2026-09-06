@@ -497,7 +497,7 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private Object[] rollbackArguments(List<TickQueuedCommandEnvelope> terminalizedEntries) {
+  static Object[] rollbackArguments(List<TickQueuedCommandEnvelope> terminalizedEntries) {
     if (terminalizedEntries.isEmpty()) {
       return new Object[] {"0"};
     }

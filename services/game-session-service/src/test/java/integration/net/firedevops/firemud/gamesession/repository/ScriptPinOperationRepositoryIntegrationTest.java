@@ -269,6 +269,73 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void expectedUnpinnedAllowsPinningAnUnpinnedInstance() {
+    dsl.update(GAME_INSTANCES)
+        .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, (String) null)
+        .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, (Long) null)
+        .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID, (String) null)
+        .where(GAME_INSTANCES.TENANT_ID.eq(1L).and(GAME_INSTANCES.ID.eq(7L)))
+        .execute();
+
+    ScriptPinMutationResult result =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-from-unpinned",
+            "request-from-unpinned",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null);
+
+    assertThat(result.succeeded()).isTrue();
+    assertThat(result.previousScriptPatchVersion()).isNull();
+    assertThat(result.previousScriptPinEpoch()).isNull();
+    assertThat(result.resultingScriptPatchVersion()).isEqualTo("patch-from-unpinned");
+    assertThat(result.resultingScriptPinEpoch()).isEqualTo(1L);
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-from-unpinned"))
+                .fetchOne(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND))
+        .isEqualTo("EXPECT_UNPINNED");
+  }
+
+  @Test
+  void expectedUnpinnedRejectsACurrentlyPinnedInstanceWithoutMutation() {
+    ScriptPinMutationResult result =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-from-pinned",
+            "request-unexpected-pin",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null);
+
+    assertThat(result.succeeded()).isFalse();
+    assertThat(result.errorCode()).isEqualTo("SCRIPT_PIN_EXPECTATION_FAILED");
+    assertThat(result.previousScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.previousScriptPinEpoch()).isEqualTo(1L);
+    assertThat(result.resultingScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(result.resultingScriptPinEpoch()).isEqualTo(1L);
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+  }
+
+  @Test
   void nullExpectedPinKindFailsClosedWithoutMutatingTheInstance() {
     org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
         .isThrownBy(

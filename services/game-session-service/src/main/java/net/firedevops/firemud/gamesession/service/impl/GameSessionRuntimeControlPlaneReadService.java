@@ -169,14 +169,14 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new IllegalStateException("world lifecycle authority unavailable", ex);
     }
     if (response == null) {
-      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: World response was null");
+      throw new RuntimeStateException("WORLD_AUTHORITY_MALFORMED", "World response was null");
     }
     if (response.hasError()) {
       String errorCode =
           response.getError().getCode().isBlank()
               ? "WORLD_AUTHORITY_UNAVAILABLE"
               : response.getError().getCode();
-      throw new IllegalStateException(errorCode + ": " + response.getError().getMessage());
+      throw new RuntimeStateException(errorCode, response.getError().getMessage());
     }
     if (!response.hasWorldInstance()) {
       throw new RuntimeStateException(

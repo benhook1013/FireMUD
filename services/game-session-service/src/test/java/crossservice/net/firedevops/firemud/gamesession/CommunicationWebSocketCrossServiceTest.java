@@ -7,6 +7,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
@@ -723,7 +724,8 @@ class CommunicationWebSocketCrossServiceTest {
       int pickupResponseCount = client.responseCount();
       client.send("GET Torch");
       assertThat(
-              client.awaitTranscriptContainingAllAfter(
+              awaitTranscriptContainingAllAfter(
+                  client,
                   pickupResponseCount,
                   "You pick up Torch.",
                   "Inventory:",
@@ -741,15 +743,19 @@ class CommunicationWebSocketCrossServiceTest {
 
       int containerResponseCount = client.responseCount();
       client.send("CONTAINER Backpack");
-      client.awaitTranscriptContainingAllAfter(
+      awaitTranscriptContainingAllAfter(
+          client,
           containerResponseCount,
           "Container: Backpack [backpack#1]",
           "- Ration [ration#1] (A dry trail ration)");
 
       int putResponseCount = client.responseCount();
       client.send("PUT Torch INTO Backpack");
-      client.awaitTranscriptContainingAllAfter(
-          putResponseCount, "You put Torch into Backpack.", "- Torch [torch#1] (A small torch)");
+      awaitTranscriptContainingAllAfter(
+          client,
+          putResponseCount,
+          "You put Torch into Backpack.",
+          "- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertPut(
           entityStub().lastPutRequest(),
           String.valueOf(TENANT_ID),
@@ -760,7 +766,8 @@ class CommunicationWebSocketCrossServiceTest {
 
       int takeResponseCount = client.responseCount();
       client.send("TAKE Torch FROM Backpack");
-      client.awaitTranscriptContainingAllAfter(
+      awaitTranscriptContainingAllAfter(
+          client,
           takeResponseCount,
           "You take Torch from Backpack.",
           "- Ration [ration#1] (A dry trail ration)");
@@ -775,7 +782,8 @@ class CommunicationWebSocketCrossServiceTest {
       int dropResponseCount = client.responseCount();
       client.send("DROP Torch");
       assertThat(
-              client.awaitTranscriptContainingAllAfter(
+              awaitTranscriptContainingAllAfter(
+                  client,
                   dropResponseCount,
                   "You drop Torch.",
                   "Inventory:",
@@ -981,6 +989,39 @@ class CommunicationWebSocketCrossServiceTest {
       GameplayWebSocketDriver client, int responseBaseline, String commandType) throws Exception {
     return GameplayStructuredCommandAssertions.awaitStructuredCommand(
         client, responseBaseline, commandType);
+  }
+
+  private String awaitTranscriptContainingAllAfter(
+      GameplayWebSocketDriver client, int responseCount, String... expectedSubstrings)
+      throws Exception {
+    AtomicReference<String> matchingTranscript = new AtomicReference<>();
+    client.awaitResponseMatching(
+        ignoredResponse -> {
+          List<String> responses = client.responses();
+          if (responseCount > responses.size()) {
+            return false;
+          }
+          String transcript = String.join("\n", responses.subList(responseCount, responses.size()));
+          if (!containsAll(transcript, expectedSubstrings)) {
+            return false;
+          }
+          matchingTranscript.set(transcript);
+          return true;
+        },
+        "new transcript after response "
+            + responseCount
+            + " containing "
+            + List.of(expectedSubstrings));
+    return matchingTranscript.get();
+  }
+
+  private boolean containsAll(String text, String... expectedSubstrings) {
+    for (String expectedSubstring : expectedSubstrings) {
+      if (!text.contains(expectedSubstring)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private JsonNode requirePayload(JsonNode envelope, String payloadType) {

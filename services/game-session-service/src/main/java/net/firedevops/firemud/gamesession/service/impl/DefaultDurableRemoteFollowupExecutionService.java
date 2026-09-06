@@ -578,8 +578,8 @@ public final class DefaultDurableRemoteFollowupExecutionService
     } catch (IllegalArgumentException ex) {
       return failure("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", ex.getMessage());
     }
-    // The split intentionally removed durable remote source/target pin tuples. Do not derive a
-    // target Trigger ingress tuple from the mutable target instance or generic patch metadata.
+    // Validation only proves payload shape; without durable source/target pin tuples its result is
+    // intentionally discarded before unconditional abandonment, rather than authorizing delivery.
     logger.warn(
         "Abandoning remote trigger-script followup because exact script pin tuples are unavailable "
             + "tenantId={} followupId={} originGameInstanceId={} targetGameInstanceId={} "

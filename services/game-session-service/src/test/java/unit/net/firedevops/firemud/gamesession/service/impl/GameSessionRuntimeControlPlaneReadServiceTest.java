@@ -78,11 +78,13 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 .build());
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals("diagnostic only", error.detailMessage());
     assertEquals("WORLD_AUTHORITY_UNAVAILABLE: diagnostic only", error.getMessage());
   }
 
@@ -100,11 +102,13 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
                 .build());
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals("world unavailable", error.detailMessage());
     assertEquals("WORLD_AUTHORITY_UNAVAILABLE: world unavailable", error.getMessage());
   }
 
@@ -186,11 +190,13 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
     when(world.getWorldInstanceLifecycle(1L, 7L)).thenReturn(null);
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
+    assertEquals("WORLD_AUTHORITY_MALFORMED", error.code());
+    assertEquals("World response was null", error.detailMessage());
     assertEquals("WORLD_AUTHORITY_MALFORMED: World response was null", error.getMessage());
   }
 

@@ -72,6 +72,36 @@ class GameInstanceScriptPinMigrationIntegrationTest {
             record -> record.get("script_patch_pinned_control_plane_request_id"))
         .containsExactly(null, null, null);
 
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .target("13")
+        .load()
+        .migrate();
+    dsl.execute(
+        "INSERT INTO game_instances (id, tenant_id, runtime_version, script_patch_version, "
+            + "script_pin_epoch, script_patch_pinned_control_plane_request_id, "
+            + "script_patch_pinned_at, script_patch_pinned_by, script_patch_pinned_reason, "
+            + "owner_account_id, status) VALUES "
+            + "(107, 42, '1.0.0', NULL, NULL, NULL, "
+            + "TIMESTAMP '2025-01-02 03:04:05', 'stale-owner', 'stale-reason', 107, 'STOPPED')");
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .target("14")
+        .load()
+        .migrate();
+    assertThat(
+            dsl.fetchOne(
+                "SELECT script_patch_pinned_at, script_patch_pinned_by, "
+                    + "script_patch_pinned_reason FROM game_instances WHERE id = 107"))
+        .extracting(
+            record -> record.get("script_patch_pinned_at"),
+            record -> record.get("script_patch_pinned_by"),
+            record -> record.get("script_patch_pinned_reason"))
+        .containsExactly(null, null, null);
+
     dsl.execute(
         "INSERT INTO game_instances (id, tenant_id, runtime_version, script_patch_version, "
             + "script_pin_epoch, script_patch_pinned_control_plane_request_id, owner_account_id, status) "

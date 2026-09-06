@@ -620,15 +620,11 @@ class TickServiceImplTest {
   }
 
   @Test
-  void rollbackArgumentsUseStringSerializerCompatibleCounts() throws Exception {
-    var method = TickServiceImpl.class.getDeclaredMethod("rollbackArguments", List.class);
-    method.setAccessible(true);
-
-    Object[] emptyArguments = (Object[]) method.invoke(service, List.of());
+  void rollbackArgumentsUseStringSerializerCompatibleCounts() {
+    Object[] emptyArguments = TickServiceImpl.rollbackArguments(List.of());
     Object[] terminalizedArguments =
-        (Object[])
-            method.invoke(
-                service, List.of(new TickQueuedCommandEnvelope(false, "cmd-terminalized", "look")));
+        TickServiceImpl.rollbackArguments(
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-terminalized", "look")));
 
     assertThat(emptyArguments).containsExactly("0");
     assertThat(terminalizedArguments).containsExactly("1", "cmd-terminalized");
@@ -2592,6 +2588,8 @@ class TickStageScriptTest {
 
     Long result =
         executeRestore(
+            // lease token; pending count/payloads; sealed count/payloads; Redis-only
+            // count/payloads; terminalized count/payloads
             LEASE_TOKEN,
             "2",
             payload(terminalized),

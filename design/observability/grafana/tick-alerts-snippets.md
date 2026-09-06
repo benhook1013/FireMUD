@@ -45,7 +45,7 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
     service: game-session-service
     severity: P1
     owner: gameplay
-    runbook: ../../architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
   annotations:
     summary: Tick effect replay convergence budget is breached
     description: The oldest pending tick effect exceeds the emitted replay convergence budget for one or more bounded scope-class rollups; investigate replay pressure, durable state, and approved fan-out or safety settings.

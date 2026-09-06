@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class V13__validate_gameplay_command_script_pin_fenceTest {
@@ -19,8 +20,12 @@ class V13__validate_gameplay_command_script_pin_fenceTest {
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
-    assertThat(migration.replaceAll("\\s+", " ").trim())
-        .isEqualTo(
-            "-- [jooq ignore start] ALTER TABLE gameplay_command VALIDATE CONSTRAINT gameplay_command_script_pin_tuple_coherent; -- [jooq ignore stop]");
+    List<String> nonEmptyLines = migration.lines().filter(line -> !line.isBlank()).toList();
+    assertThat(nonEmptyLines)
+        .containsExactly(
+            "-- [jooq ignore start]",
+            "ALTER TABLE gameplay_command",
+            "    VALIDATE CONSTRAINT gameplay_command_script_pin_tuple_coherent;",
+            "-- [jooq ignore stop]");
   }
 }
