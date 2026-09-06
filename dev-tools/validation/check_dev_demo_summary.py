@@ -473,6 +473,10 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
     pod_spec = bootstrap_pod.get("spec")
     if not isinstance(pod_spec, dict):
         raise AssertionError("dev-demo bootstrap pod must define spec as a mapping")
+    if pod_spec.get("automountServiceAccountToken") is not False:
+        raise AssertionError(
+            "dev-demo bootstrap pod must set automountServiceAccountToken: false"
+        )
     containers = pod_spec.get("containers")
     if not isinstance(containers, list) or not containers:
         raise AssertionError(
@@ -487,10 +491,6 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap pod must execute the single in-cluster bootstrap script"
         )
-    if container.get("envFrom"):
-        raise AssertionError(
-            "dev-demo bootstrap pod must not import credential Secret env"
-        )
     environment = {
         item.get("name"): item.get("value")
         for item in container.get("env", [])
@@ -500,6 +500,72 @@ def _validate_bootstrap_pod_spec(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap pod must run the noncredential session bootstrap"
         )
+
+    for container_group in ("containers", "initContainers", "ephemeralContainers"):
+        candidates = pod_spec.get(container_group, [])
+        if candidates is None:
+            continue
+        if not isinstance(candidates, list):
+            raise AssertionError(
+                f"dev-demo bootstrap pod spec.{container_group} must be a list"
+            )
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                raise AssertionError(
+                    "dev-demo bootstrap pod spec."
+                    f"{container_group}[{index}] must be a mapping"
+                )
+            if _contains_mapping_key(candidate.get("envFrom"), "secretRef"):
+                raise AssertionError(
+                    "dev-demo bootstrap pod must not import credential Secret env"
+                )
+            if _contains_mapping_key(candidate.get("env"), "secretKeyRef"):
+                raise AssertionError(
+                    "dev-demo bootstrap pod must not import credential Secret env"
+                )
+
+    volumes = pod_spec.get("volumes", [])
+    if volumes is None:
+        volumes = []
+    elif not isinstance(volumes, list):
+        raise AssertionError("dev-demo bootstrap pod spec.volumes must be a list")
+    if any(isinstance(volume, dict) and "secret" in volume for volume in volumes):
+        raise AssertionError(
+            "dev-demo session pod must not create or mount credential Secret material"
+        )
+
+    secret_key = _find_secret_mapping_key(pod_spec)
+    if secret_key is not None:
+        raise AssertionError(
+            "dev-demo bootstrap pod must not contain Secret-bearing pod spec key: "
+            f"{secret_key}"
+        )
+
+
+def _contains_mapping_key(value: object, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(
+            _contains_mapping_key(nested, key) for nested in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_mapping_key(nested, key) for nested in value)
+    return False
+
+
+def _find_secret_mapping_key(value: object) -> str | None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if isinstance(key, str) and "secret" in key.casefold():
+                return key
+            found = _find_secret_mapping_key(nested)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _find_secret_mapping_key(nested)
+            if found is not None:
+                return found
+    return None
 
 
 def _player_bootstrap_payload_end(source: str, start: int) -> int | None:

@@ -65,6 +65,18 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             deploy_job, "Create dev-demo smoke account"
         )["run"]
 
+    def _bootstrap_manifest_with_pod_mutation(self, mutate) -> str:
+        manifest = self._bootstrap_manifest_fixture()
+        pod = self.validator._extract_bootstrap_pod(manifest)
+        mutate(pod)
+        rendered_pod = self.validator.yaml.safe_dump(pod, sort_keys=False).rstrip()
+        manifest_start = manifest.index(
+            self.validator.BOOTSTRAP_MANIFEST_HEREDOC_OPENER
+        )
+        content_start = manifest.index("\n", manifest_start) + 1
+        content_end = manifest.index("\nEOF", content_start)
+        return manifest[:content_start] + rendered_pod + manifest[content_end:]
+
     def _write_workflow_fixture(
         self,
         root: Path,
@@ -347,6 +359,164 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_sidecar_credential_env_from(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["containers"].append(
+                {
+                    "name": "sidecar",
+                    "image": "python:3.12-alpine",
+                    "envFrom": [{"secretRef": {"name": "bootstrap-secret"}}],
+                }
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_init_container_credential_env_from(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].update(
+                initContainers=[
+                    {
+                        "name": "init",
+                        "image": "python:3.12-alpine",
+                        "envFrom": [
+                            {"secretRef": {"name": "bootstrap-secret"}}
+                        ],
+                    }
+                ]
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_ephemeral_container_credential_env_from(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].update(
+                ephemeralContainers=[
+                    {
+                        "name": "debugger",
+                        "image": "python:3.12-alpine",
+                        "envFrom": [
+                            {"secretRef": {"name": "bootstrap-secret"}}
+                        ],
+                    }
+                ]
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_key_ref_in_container_env(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["containers"][0]["env"].append(
+                {
+                    "name": "BOOTSTRAP_PASSWORD",
+                    "valueFrom": {
+                        "secretKeyRef": {
+                            "name": "bootstrap-secret",
+                            "key": "password",
+                        }
+                    },
+                }
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(AssertionError, "must not import credential Secret env"):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_volume(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["volumes"].append(
+                {
+                    "name": "bootstrap-secret",
+                    "secret": {"secretName": "bootstrap-secret"},
+                }
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_projected_secret_volume(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["volumes"].append(
+                {
+                    "name": "projected-secret",
+                    "projected": {
+                        "sources": [
+                            {"secret": {"name": "bootstrap-secret"}}
+                        ]
+                    },
+                }
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not contain Secret-bearing pod spec key"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_csi_secret_reference(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["volumes"].append(
+                {
+                    "name": "csi-volume",
+                    "csi": {
+                        "driver": "example.csi.k8s.io",
+                        "nodeStageSecretRef": {"name": "bootstrap-secret"},
+                    },
+                }
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not contain Secret-bearing pod spec key"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_automount_service_account_token(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].pop("automountServiceAccountToken")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must set automountServiceAccountToken: false"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_true_automount_service_account_token(self):
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].update(automountServiceAccountToken=True)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must set automountServiceAccountToken: false"
+            ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):

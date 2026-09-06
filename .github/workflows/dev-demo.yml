@@ -595,6 +595,7 @@ jobs:
           spec:
             restartPolicy: Never
             terminationGracePeriodSeconds: 0
+            automountServiceAccountToken: false
             containers:
               - name: dev-demo-bootstrap
                 image: python:3.12-alpine

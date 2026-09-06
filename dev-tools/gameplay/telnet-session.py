@@ -109,7 +109,26 @@ class EvidenceStore:
         return records
 
     def latest_cursor(self) -> int:
-        return self._next_seq - 1
+        with self._lock:
+            # Do not report the process-local cursor when another process has
+            # appended evidence. A shared flock makes this rescan consistent
+            # with append's exclusive writer lock.
+            try:
+                fd = os.open(self.path, os.O_RDONLY)
+            except FileNotFoundError:
+                # A missing transcript has no durable evidence. In particular,
+                # do not create it merely to answer a cursor query.
+                self._next_seq = 1
+                return 0
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH)
+                try:
+                    self._next_seq = self._find_next_seq()
+                    return self._next_seq - 1
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
 
 def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:

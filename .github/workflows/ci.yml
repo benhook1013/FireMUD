@@ -445,14 +445,6 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: 🐍 Set Up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: '3.14'
-
-      - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check PyYAML
-
       - name: Set up Helm
         run: |
           if ! command -v helm >/dev/null 2>&1; then
@@ -500,6 +492,14 @@ jobs:
 
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
+
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.14'
+
+      - name: 📦 Install Python script dependencies
+        run: python3 -m pip install --disable-pip-version-check PyYAML
 
       - name: 🧪 Validate hosted Telnet TLS contract
         run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh

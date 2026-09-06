@@ -37,6 +37,7 @@ env = {entry["name"]: entry.get("value") for entry in container.get("env", [])}
 assert env["TCP_PROXY_TLS_ENABLED"] == "true"
 assert env["TCP_PROXY_TLS_CERT"] == "/telnet-tls/tls.crt"
 assert env["TCP_PROXY_TLS_KEY"] == "/telnet-tls/tls.key"
+assert env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS"
 mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/telnet-tls")
 volumes = deployment["spec"]["template"]["spec"]["volumes"]
 volume = next(v for v in volumes if v["name"] == mount["name"])
@@ -60,6 +61,46 @@ reused = deepcopy(documents)
 reused_certificate = next(d for d in reused if d.get("kind") == "Certificate")
 reused_certificate["spec"]["secretName"] = ingress["spec"]["tls"][0]["secretName"]
 assert preflight.validate_hosted_telnet_tls_values(reused), "HTTP Ingress Secret reuse was accepted"
+
+cross_namespace_decoys = deepcopy(documents)
+cross_namespace_decoys.extend(
+    [
+        {
+            "kind": "Certificate",
+            "metadata": {
+                "name": "preview-release-telnet-tls",
+                "namespace": "other",
+            },
+            "spec": {"secretName": "wrong-cross-namespace-secret"},
+        },
+        {
+            "kind": "Ingress",
+            "metadata": {"name": "other-ingress", "namespace": "other"},
+            "spec": {"tls": [{"secretName": "preview-release-telnet-tls"}]},
+        },
+        {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "spec": {"template": {"spec": {"containers": []}}},
+        },
+    ]
+)
+assert not preflight.validate_hosted_telnet_tls_values(cross_namespace_decoys), (
+    "same-name resources in another namespace affected hosted Telnet TLS validation"
+)
+
+ambiguous_nodeports = deepcopy(documents)
+ambiguous_nodeports.append(
+    {
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+        "spec": {"type": "NodePort"},
+    }
+)
+ambiguous_issues = preflight.validate_hosted_telnet_tls_values(ambiguous_nodeports)
+assert any("exactly one tcp-proxy-service NodePort Service" in issue for issue in ambiguous_issues), (
+    "multiple cross-namespace tcp-proxy-service NodePorts were accepted"
+)
 
 disabled_documents = list(yaml.safe_load_all(Path(os.environ["DISABLED_RENDERED"]).read_text(encoding="utf-8")))
 assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "disabled TLS still renders a Certificate"

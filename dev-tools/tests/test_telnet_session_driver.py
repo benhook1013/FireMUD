@@ -77,6 +77,14 @@ def append_preconstructed_store(path, ready, start, results, index):
     results.put((index, store.append("inbound", "received", text=f"worker-{index}")))
 
 
+def read_latest_cursor_from_store(path, ready, start, results):
+    store = telnet_session.EvidenceStore(path)
+    ready.set()
+    if not start.wait(5):
+        raise RuntimeError("timed out waiting to read latest cursor")
+    results.put(store.latest_cursor())
+
+
 class TelnetSessionDriverTest(unittest.TestCase):
     def test_transcript_append_allocates_unique_cursors_across_processes(self):
         context = multiprocessing.get_context("fork")
@@ -112,6 +120,47 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual(sorted(record["cursor"] for record in records), [2, 3])
             resumed = store.read(after=initial["cursor"])
             self.assertEqual(sorted(record["text"] for record in resumed), ["worker-0", "worker-1"])
+
+    def test_latest_cursor_refreshes_independent_stores_across_processes(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            writer = telnet_session.EvidenceStore(transcript)
+            first = writer.append("system", "connect")
+            independent = telnet_session.EvidenceStore(transcript)
+            self.assertEqual(independent.latest_cursor(), first["cursor"])
+
+            start = context.Event()
+            ready = context.Event()
+            results = context.Queue()
+            process = context.Process(
+                target=read_latest_cursor_from_store,
+                args=(transcript, ready, start, results),
+            )
+            try:
+                process.start()
+                self.assertTrue(ready.wait(2))
+                second = independent.append("inbound", "received", text="external")
+                start.set()
+                observed = results.get(timeout=5)
+            finally:
+                start.set()
+                process.join(5)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(2)
+
+            self.assertEqual(process.exitcode, 0)
+            self.assertEqual(observed, second["cursor"])
+            self.assertEqual(writer.latest_cursor(), second["cursor"])
+
+    def test_latest_cursor_does_not_create_missing_transcript(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            store = telnet_session.EvidenceStore(transcript)
+
+            self.assertEqual(store.latest_cursor(), 0)
+            self.assertFalse(transcript.exists())
 
     def test_read_skips_malformed_records_and_preserves_later_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -108,8 +108,16 @@ runner_module.validate_telnet_transport_config(tls_config, {"telnet"}, simulate=
 plaintext_config = runner_module.SmokeConfig.from_env(
     "contract-test", "telnet", None, telnet_transport="plaintext"
 )
+try:
+    runner_module.validate_telnet_transport_config(
+        plaintext_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "rejects plaintext" in str(exc)
+else:
+    raise AssertionError("live exposed Telnet accepted plaintext transport")
 runner_module.validate_telnet_transport_config(
-    plaintext_config, {"telnet"}, simulate=False
+    plaintext_config, {"telnet"}, simulate=True
 )
 for option in ("telnet_server_hostname", "telnet_ca_file"):
     invalid_plaintext = runner_module.SmokeConfig.from_env(
@@ -124,7 +132,7 @@ for option in ("telnet_server_hostname", "telnet_ca_file"):
             invalid_plaintext, {"telnet"}, simulate=False
         )
     except ValueError as exc:
-        assert "only valid with" in str(exc)
+        assert "rejects plaintext" in str(exc)
     else:
         raise AssertionError(f"plaintext Telnet accepted {option}")
 

@@ -4083,21 +4083,36 @@ def validate_hosted_telnet_tls_values(
         if document.get("kind") == "Service"
         and metadata_name(document) == "tcp-proxy-service"
     ]
-    if not tcp_services:
+    nodeport_services = [
+        document
+        for document in tcp_services
+        if (document.get("spec") or {}).get("type") == "NodePort"
+    ]
+    if not nodeport_services:
         return issues
-    if any((document.get("spec") or {}).get("type") != "NodePort" for document in tcp_services):
+    if len(nodeport_services) != 1:
+        issues.append(
+            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+        )
         return issues
+    tcp_namespace = workload_namespace(nodeport_services[0])
 
     certificates = {
         metadata_name(document): document
         for document in documents
         if document.get("kind") == "Certificate"
         and metadata_name(document)
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
     }
     ingress_secrets = {
         ((document.get("spec") or {}).get("tls") or [{}])[0].get("secretName")
         for document in documents
         if document.get("kind") == "Ingress"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
     }
     tcp_certificate_names = {
         name for name in certificates if name and name.endswith("-telnet-tls")
@@ -4118,6 +4133,9 @@ def validate_hosted_telnet_tls_values(
         for document in documents
         if document.get("kind") == "Deployment"
         and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
     ]
     if len(deployments) != 1:
         issues.append("hosted TCP Proxy TLS requires exactly one tcp-proxy-service Deployment")

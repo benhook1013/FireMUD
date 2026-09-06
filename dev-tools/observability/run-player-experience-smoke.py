@@ -607,23 +607,22 @@ def validate_telnet_transport_config(
         return
     if config.telnet_transport is None:
         raise ValueError(
-            "live Telnet evidence requires --telnet-transport tls|plaintext or "
-            "PLAYER_EXPERIENCE_TELNET_TRANSPORT"
+            "live public Telnet evidence requires --telnet-transport tls and "
+            "--telnet-server-hostname (or the corresponding "
+            "PLAYER_EXPERIENCE_TELNET_* settings)"
         )
-    if config.telnet_transport == "tls":
-        if (
-            not isinstance(config.telnet_server_hostname, str)
-            or not config.telnet_server_hostname.strip()
-        ):
-            raise ValueError(
-                "TLS Telnet evidence requires --telnet-server-hostname or "
-                "PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME"
-            )
-        return
-    if config.telnet_server_hostname is not None or config.telnet_ca_file is not None:
+    if config.telnet_transport != "tls":
         raise ValueError(
-            "Telnet hostname and CA options are only valid with "
-            "--telnet-transport tls"
+            "live public Telnet evidence rejects plaintext; "
+            "--telnet-transport tls and --telnet-server-hostname are required"
+        )
+    if (
+        not isinstance(config.telnet_server_hostname, str)
+        or not config.telnet_server_hostname.strip()
+    ):
+        raise ValueError(
+            "TLS Telnet evidence requires --telnet-server-hostname or "
+            "PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME"
         )
 
 
