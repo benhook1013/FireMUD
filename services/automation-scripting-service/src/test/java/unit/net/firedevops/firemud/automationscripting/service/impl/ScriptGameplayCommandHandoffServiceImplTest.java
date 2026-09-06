@@ -1076,14 +1076,20 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
+    ScriptWorkItem item = workItem();
     ScriptGameplayCommandHandoffService.HandoffResult result =
         service.handoff(
-            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+            item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome())
         .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_REGION_SCOPE_ADVANCED);
     verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+    ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
+    verify(workItemRepository).save(workItemCaptor.capture());
+    assertThat(workItemCaptor.getValue().getStatus()).isEqualTo("CANCELED");
+    assertThat(workItemCaptor.getValue().getCancelReason())
+        .isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_SCOPE_CHANGED);
   }
 
   @Test

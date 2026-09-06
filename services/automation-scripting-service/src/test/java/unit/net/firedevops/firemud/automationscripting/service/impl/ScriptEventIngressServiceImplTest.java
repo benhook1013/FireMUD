@@ -3641,6 +3641,7 @@ class ScriptEventIngressServiceImplTest {
     } finally {
       allowWinnerToContinue.countDown();
       executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
     }
     verify(repository, times(1)).save(Mockito.any(ScriptEventIngressAudit.class));
   }
@@ -3845,6 +3846,7 @@ class ScriptEventIngressServiceImplTest {
     } finally {
       releaseOldOwner.countDown();
       executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
     }
   }
 

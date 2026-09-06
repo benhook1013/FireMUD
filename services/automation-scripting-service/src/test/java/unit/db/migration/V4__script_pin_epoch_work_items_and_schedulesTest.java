@@ -19,6 +19,28 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
       migration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
 
+    String normalized = migration.replaceAll("\\s+", " ");
+    int dropConstraint =
+        normalized.indexOf(
+            "ALTER TABLE script_work_items DROP CONSTRAINT uq_script_work_item_trigger_identity;");
+    int duplicateIdentityCheck = normalized.indexOf("DO $$");
+    int pinnedIdentityIndex =
+        normalized.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON");
+    int unpinnedIdentityIndex =
+        normalized.indexOf("CREATE UNIQUE INDEX uq_script_work_item_trigger_identity_unpinned ON");
+    assertThat(dropConstraint).isGreaterThanOrEqualTo(0);
+    assertThat(duplicateIdentityCheck).isGreaterThan(dropConstraint);
+    assertThat(pinnedIdentityIndex).isGreaterThan(duplicateIdentityCheck);
+    assertThat(unpinnedIdentityIndex).isGreaterThan(pinnedIdentityIndex);
+
+    assertThat(normalized)
+        .contains(
+            "CASE WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN '' ELSE plugin_id END",
+            "CASE WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN '' ELSE plugin_version_id END",
+            "HAVING COUNT(*) > 1",
+            "RAISE EXCEPTION",
+            "duplicate script work-item identities require reconciliation before plugin identity normalization");
+
     assertThat(migration)
         .contains(
             "CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items",
@@ -35,7 +57,6 @@ class V4__script_pin_epoch_work_items_and_schedulesTest {
             "/* [jooq ignore start] */ NOT VALID /* [jooq ignore stop] */")
         .doesNotContain("ADD CONSTRAINT uq_script_work_item_trigger_identity UNIQUE");
 
-    String normalized = migration.replaceAll("\\s+", " ");
     int scheduleAlter = normalized.indexOf("ALTER TABLE script_schedule_instances");
     assertThat(scheduleAlter).isGreaterThanOrEqualTo(0);
     int scheduleConstraint =

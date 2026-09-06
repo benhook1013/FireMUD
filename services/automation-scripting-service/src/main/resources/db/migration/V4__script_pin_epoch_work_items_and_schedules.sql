@@ -18,6 +18,49 @@ ALTER TABLE script_work_items
 ALTER TABLE script_work_items
     DROP CONSTRAINT uq_script_work_item_trigger_identity;
 
+-- V8 later canonicalizes any partial plugin identity to the script-only sentinel.  Check the
+-- resulting identity now so that the indexes below never hide a duplicate that would make the
+-- later backfill fail or silently change legacy deduplication semantics.
+/* [jooq ignore start] */
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM script_work_items
+        GROUP BY tenant_id,
+                 game_instance_id,
+                 region_id,
+                 region_epoch,
+                 entity_id,
+                 playable_state_scope,
+                 world_slug,
+                 realm_slug,
+                 pointer_version,
+                 script_id,
+                 CASE
+                     WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                     ELSE plugin_id
+                 END,
+                 CASE
+                     WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''
+                     ELSE plugin_version_id
+                 END,
+                 binding_id,
+                 event_type,
+                 event_schema_version,
+                 script_patch_version,
+                 script_pin_epoch,
+                 script_event_id,
+                 dry_run
+        HAVING COUNT(*) > 1
+    ) THEN
+        RAISE EXCEPTION
+            'duplicate script work-item identities require reconciliation before plugin identity normalization';
+    END IF;
+END
+$$;
+/* [jooq ignore stop] */
+
 CREATE UNIQUE INDEX uq_script_work_item_trigger_identity ON script_work_items (
         tenant_id,
         game_instance_id,

@@ -66,6 +66,8 @@ final class ScriptEventIngressRequestDigest {
 
   private static String canonicalJson(String rawJson) {
     if (rawJson == null || rawJson.isBlank()) {
+      // ADR 0172 binds the normalized semantic payload. An omitted proto string and JSON null both
+      // represent the absence of event payload content and intentionally share one digest value.
       return "null";
     }
     try {

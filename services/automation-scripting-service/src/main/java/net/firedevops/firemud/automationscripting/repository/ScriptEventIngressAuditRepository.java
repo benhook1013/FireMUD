@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptEventIngressAuditRecord;
 import org.jooq.Condition;
@@ -34,6 +35,7 @@ public class ScriptEventIngressAuditRepository {
   private static final String IMMUTABLE_IDENTITY_CONFLICT_PREFIX =
       "immutable script identity conflicts with persisted row: ";
   private static final int MAX_EVENT_INGRESS_INSERT_ATTEMPTS = 2;
+  private static final Pattern CANONICAL_REQUEST_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
   private final DSLContext dsl;
@@ -307,7 +309,8 @@ public class ScriptEventIngressAuditRepository {
   }
 
   private static void requireCanonicalRequestDigest(String requestDigest) {
-    if (requestDigest == null || !requestDigest.matches("[0-9a-f]{64}")) {
+    if (requestDigest == null
+        || !CANONICAL_REQUEST_DIGEST_PATTERN.matcher(requestDigest).matches()) {
       throw new IllegalArgumentException(
           "request_digest must be a canonical 64-character hexadecimal digest");
     }
