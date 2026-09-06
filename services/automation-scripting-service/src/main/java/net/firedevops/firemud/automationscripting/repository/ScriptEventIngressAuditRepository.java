@@ -153,10 +153,10 @@ public class ScriptEventIngressAuditRepository {
    *
    * <p>The expected row version is the abandoned owner's fence. A successful compare-and-set
    * advances that fence before the new owner can resolve or materialize handlers; row-version
-   * fencing is a reclaim-only operation. Owner-local lease renewals instead extend the
-   * {@code CLAIM_STARTED_AT} staleness window without advancing the row version, and a reclaimed
-   * owner's later final save fails closed as a stale write. A zero-row update means a concurrent
-   * owner already reclaimed or finalized the claim.
+   * fencing is a reclaim-only operation. Owner-local lease renewals instead extend the {@code
+   * CLAIM_STARTED_AT} staleness window without advancing the row version, and a reclaimed owner's
+   * later final save fails closed as a stale write. A zero-row update means a concurrent owner
+   * already reclaimed or finalized the claim.
    */
   public Optional<ScriptEventIngressAudit> reclaimStaleInProgress(
       ScriptEventIngressAudit claim, Instant staleBefore, Instant now) {
