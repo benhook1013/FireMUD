@@ -56,8 +56,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       "world preparation authority unavailable";
   private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
       "world termination authority unavailable";
-  private static final String WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE =
-      "WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE: instance is not ACTIVE";
   private static final String WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL =
       "WORLD_AUTHORITY_MALFORMED: response was null";
 
@@ -175,8 +173,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         if (existingLifecycle.getStatus()
             == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
           oldWorldTerminationRequested = true;
-          throw new IllegalStateException(
-              "WORLD_TERMINATION_IN_PROGRESS: replaced session is already terminating");
+          throw new LifecycleOutcomeException(
+              "WORLD_TERMINATION_IN_PROGRESS", "replaced session is already terminating");
         }
         if (existingLifecycle.getStatus()
             == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
@@ -243,8 +241,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       } else if (lifecycle.getStatus()
           == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
         worldTerminationRequested = true;
-        throw new IllegalStateException(
-            "WORLD_TERMINATION_IN_PROGRESS: session termination is already in progress");
+        throw new LifecycleOutcomeException(
+            "WORLD_TERMINATION_IN_PROGRESS", "session termination is already in progress");
       } else {
         requireLifecycleStatus(
             lifecycle, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
@@ -848,7 +846,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             || actualStatus
                 == WorldInstanceLifecycleStatus
                     .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)) {
-      throw new IllegalStateException(WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE);
+      throw new LifecycleOutcomeException(
+          "WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE", "instance is not ACTIVE");
     }
     throw new IllegalStateException(
         "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");

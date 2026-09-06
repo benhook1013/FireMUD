@@ -23,8 +23,7 @@ class V12__gameplay_command_script_pin_fenceTest {
         .contains("ADD COLUMN script_pin_epoch bigint")
         .contains("ADD COLUMN script_pin_control_plane_request_id character varying(128)")
         .contains(
-            "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'AUTOMATION'")
-        .contains("NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL")
+            "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'AUTOMATION' AND NULLIF(regexp_replace(remote_followup_id, '[[:space:]]', '', 'g'), '') IS NULL AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL;")
         .contains(
             "UPDATE gameplay_command SET script_patch_version = NULL WHERE upper(btrim(source_type)) = 'PLAYER' AND NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL;")
         .contains("ADD CONSTRAINT gameplay_command_script_pin_tuple_coherent")

@@ -302,10 +302,12 @@ final class TickStagingService {
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
     ReplayResolution resolution =
-        transactionOperations.execute(
-            status ->
-                resolveReplayBatchInTransaction(
-                    tenantId, gameInstanceId, replayEntries, ownership));
+        Objects.requireNonNull(
+            transactionOperations.execute(
+                status ->
+                    resolveReplayBatchInTransaction(
+                        tenantId, gameInstanceId, replayEntries, ownership)),
+            "Replay resolution transaction returned no result");
     if (resolution.redisReconciliation() != null) {
       ReplayRedisReconciliation reconciliation = resolution.redisReconciliation();
       // The durable replay decision is authoritative. Redis is only reconciled after the SQL
@@ -450,9 +452,17 @@ final class TickStagingService {
       Long gameInstanceId) {
     String message =
         "Legacy sealed Automation replay lacks exact script pin evidence and cannot be executed";
-    tickBatchExecutionService.markBatchIncompatibleReplay(batch, sealedEntries, message);
-    Instant now = Instant.now();
     java.util.Set<String> missingEvidenceIds = java.util.Set.copyOf(missingEvidenceCommandIds);
+    List<TickQueuedCommandEnvelope> eligibleEntries =
+        sealedEntries.stream()
+            .filter(entry -> !missingEvidenceIds.contains(entry.commandId()))
+            .toList();
+    List<TickQueuedCommandEnvelope> terminalizedEntries =
+        sealedEntries.stream()
+            .filter(entry -> missingEvidenceIds.contains(entry.commandId()))
+            .toList();
+    tickBatchExecutionService.markBatchIncompatibleReplay(batch, eligibleEntries, message);
+    Instant now = Instant.now();
     List<GameplayCommand> localAutomation =
         localAutomationCommands(sealedSelections).stream()
             .filter(command -> missingEvidenceIds.contains(command.getCommandId()))
@@ -470,14 +480,6 @@ final class TickStagingService {
     }
     tickBatchExecutionService.preparePendingProjectionReconciliation(
         tenantId, gameInstanceId, replayEntries, sealedEntries);
-    List<TickQueuedCommandEnvelope> eligibleEntries =
-        sealedEntries.stream()
-            .filter(entry -> !missingEvidenceIds.contains(entry.commandId()))
-            .toList();
-    List<TickQueuedCommandEnvelope> terminalizedEntries =
-        sealedEntries.stream()
-            .filter(entry -> missingEvidenceIds.contains(entry.commandId()))
-            .toList();
     return new ReplayResolution(
         batch,
         List.of(),

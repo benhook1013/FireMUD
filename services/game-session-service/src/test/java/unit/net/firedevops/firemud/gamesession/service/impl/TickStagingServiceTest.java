@@ -1182,6 +1182,8 @@ class TickStagingServiceTest {
         replayManifestJson(service, List.of("N|cmd-legacy-automation|look"))
             .replace("\"version\":2", "\"version\":1")
             .replace(",\"scriptPinEpoch\":1,\"scriptPinControlPlaneRequestId\":\"request-1\"", "");
+    assertFalse(v1Manifest.contains("scriptPinEpoch"));
+    assertFalse(v1Manifest.contains("scriptPinControlPlaneRequestId"));
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-legacy-automation");
     existingBatch.setTenantId(1L);

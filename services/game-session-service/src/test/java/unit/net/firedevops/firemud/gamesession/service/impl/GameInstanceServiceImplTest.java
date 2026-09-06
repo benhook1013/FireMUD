@@ -19,10 +19,6 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -341,34 +337,19 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
-  void failPreparedWorldInstanceUsesDedicatedAuthorityErrorWhenTransportFails()
-      throws ReflectiveOperationException {
+  void startSessionPreservesStartFailureWhenPreparedWorldCleanupTransportFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-fail-prepared", 42L);
+    doThrow(new IllegalStateException("state save failed")).when(stateService).saveState(any());
     when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
         .thenThrow(new IllegalStateException("fail-prepared response timed out"));
 
-    Class<?> preparedWorldInstanceType =
-        Arrays.stream(GameInstanceServiceImpl.class.getDeclaredClasses())
-            .filter(type -> type.getSimpleName().equals("PreparedWorldInstance"))
-            .findFirst()
-            .orElseThrow();
-    Method failPreparedMethod =
-        GameInstanceServiceImpl.class.getDeclaredMethod(
-            "failPreparedWorldInstance", preparedWorldInstanceType, String.class);
-    Constructor<?> constructor =
-        preparedWorldInstanceType.getDeclaredConstructor(long.class, long.class, long.class);
-    constructor.setAccessible(true);
-    Object preparedWorldInstance = constructor.newInstance(1L, 10L, 1L);
-    failPreparedMethod.setAccessible(true);
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.startSession(request));
 
-    InvocationTargetException invocation =
-        assertThrows(
-            InvocationTargetException.class,
-            () ->
-                failPreparedMethod.invoke(
-                    service, preparedWorldInstance, "session start failed before admission"));
-
-    assertEquals("world fail-prepared authority unavailable", invocation.getCause().getMessage());
-    assertEquals("fail-prepared response timed out", invocation.getCause().getCause().getMessage());
+    assertEquals("state save failed", error.getMessage());
+    verify(worldManagementClient)
+        .failPreparedWorldInstance(
+            eq(1L), eq(10L), eq(1L), eq("session start failed before admission opened"));
   }
 
   @Test

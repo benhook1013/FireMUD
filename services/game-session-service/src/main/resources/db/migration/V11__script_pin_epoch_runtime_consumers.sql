@@ -17,6 +17,9 @@ CREATE TABLE script_pin_operation (
     resulting_script_pin_epoch bigint,
     committed_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (tenant_id, game_instance_id, control_plane_request_id),
+    CONSTRAINT ck_script_pin_operation_kind CHECK (
+        operation_kind IN ('SET', 'ROLLBACK', 'REPIN')
+    ),
     CONSTRAINT ck_script_pin_operation_previous_tuple CHECK (
         (previous_script_patch_version IS NULL AND previous_script_pin_epoch IS NULL)
         OR

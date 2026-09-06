@@ -6,6 +6,9 @@ import static net.firedevops.firemud.gamesession.jooq.tables.GameInstances.GAME_
 import static net.firedevops.firemud.gamesession.jooq.tables.ScriptPinOperation.SCRIPT_PIN_OPERATION;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
@@ -17,6 +20,7 @@ import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SelectJoinStep;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -225,7 +229,7 @@ public class GameInstanceRepository {
     boolean repinEligible = canDeriveRepin(operationKind);
     return dsl.transactionResult(
         configuration -> {
-          DSLContext tx = org.jooq.impl.DSL.using(configuration);
+          DSLContext tx = DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
             if (!matchesMutationDigest(
@@ -432,7 +436,7 @@ public class GameInstanceRepository {
     boolean repinEligible = canDeriveRepin(operationKind);
     return dsl.transactionResult(
         configuration -> {
-          DSLContext tx = org.jooq.impl.DSL.using(configuration);
+          DSLContext tx = DSL.using(configuration);
           Record existing = findOperation(tx, tenantId, gameInstanceId, controlPlaneRequestId);
           if (existing != null) {
             if (!matchesMutationDigest(
@@ -665,14 +669,13 @@ public class GameInstanceRepository {
             canonical(expectedScriptPinEpoch));
     try {
       byte[] digest =
-          java.security.MessageDigest.getInstance("SHA-256")
-              .digest(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+          MessageDigest.getInstance("SHA-256").digest(normalized.getBytes(StandardCharsets.UTF_8));
       StringBuilder hex = new StringBuilder(digest.length * 2);
       for (byte value : digest) {
         hex.append(String.format("%02x", value));
       }
       return hex.toString();
-    } catch (java.security.NoSuchAlgorithmException ex) {
+    } catch (NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 unavailable", ex);
     }
   }

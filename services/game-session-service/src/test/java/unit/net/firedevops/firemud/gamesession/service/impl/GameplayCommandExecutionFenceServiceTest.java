@@ -107,6 +107,34 @@ class GameplayCommandExecutionFenceServiceTest {
   }
 
   @Test
+  void rejectsLocalAutomationCommandWithoutScriptPinEpoch() {
+    GameplayCommand command = automationCommand();
+    command.setScriptPinEpoch(null);
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
+  void rejectsLocalAutomationCommandWithoutScriptPinOwnerRequestId() {
+    GameplayCommand command = automationCommand();
+    command.setScriptPinControlPlaneRequestId(null);
+    when(gameInstanceRepository.findById(2L))
+        .thenReturn(Optional.of(pinnedInstance("patch-1", 4L, "request-1")));
+
+    GameplayCommandExecutionFenceService.FenceFailure failure =
+        service.validate(batch(), command).orElseThrow();
+
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", failure.code());
+    verifyNoInteractions(automationScriptingControlPlaneClient);
+  }
+
+  @Test
   void rejectsLocalAutomationCommandAgainstCurrentSemanticUnpinnedInstance() {
     GameplayCommand command = automationCommand();
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance(null)));

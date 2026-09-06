@@ -273,9 +273,8 @@ final class TickBatchExecutionService {
           sealedPayloadIndex = sealedPayloadIndex + 1
         end
 
-        local redisOnlyPayloadIndex = redisOnlyPayloadStartIndex
         for index = redisOnlyCount, 1, -1 do
-          local payload = ARGV[redisOnlyPayloadIndex + index - 1]
+          local payload = ARGV[redisOnlyPayloadStartIndex + index - 1]
           redis.call('LREM', queue, 0, payload)
           redis.call('LPUSH', queue, payload)
         end

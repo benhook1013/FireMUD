@@ -224,7 +224,7 @@ class GameSessionApplicationIntegrationTest {
             eq("cp-1"),
             eq("ld-1"),
             eq(11L),
-            nullable(String.class),
+            org.mockito.ArgumentMatchers.isNull(),
             eq("{}"),
             eq("genrev-11"),
             eq(77L),

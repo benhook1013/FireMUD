@@ -764,6 +764,45 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void acceptsExactly100CharacterScriptPinTarget() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    String target = "x".repeat(100);
+    GetPublishedScriptPatchVersionResponse publication = publishedPatch(1L, 200L, 100L);
+    publication =
+        publication.toBuilder()
+            .setScriptPatch(
+                publication.getScriptPatch().toBuilder().setScriptPatchVersion(target).build())
+            .build();
+    when(repository.findById(7L)).thenReturn(Optional.of(validUnpinnedInstance()));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, target)).thenReturn(publication);
+    when(automation.getScriptPatchStatus(1L, target))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.applyScriptPin(
+            1L, 7L, "SET", target, "request-1", "operator", "pin", "EXPECT_UNPINNED", null))
+        .thenReturn(new ScriptPinMutationResult(null, null, target, 1L, "request-1", null));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(
+                1L,
+                7L,
+                setRequest("request-1").toBuilder().setTargetScriptPatchVersion(target).build());
+
+    assertThat(response.hasError()).isFalse();
+    verify(repository)
+        .applyScriptPin(
+            1L, 7L, "SET", target, "request-1", "operator", "pin", "EXPECT_UNPINNED", null);
+  }
+
+  @Test
   void rejectsBlankScriptPinAuditMetadataBeforeRepositoryReadOrMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
@@ -930,12 +969,12 @@ class GameSessionOperatorControlPlaneServiceTest {
         .applyScriptPin(
             org.mockito.Mockito.anyLong(),
             org.mockito.Mockito.anyLong(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
-            org.mockito.Mockito.anyString(),
+            org.mockito.Mockito.nullable(String.class),
+            org.mockito.Mockito.nullable(String.class),
+            org.mockito.Mockito.nullable(String.class),
+            org.mockito.Mockito.nullable(String.class),
+            org.mockito.Mockito.nullable(String.class),
+            org.mockito.Mockito.nullable(String.class),
             org.mockito.Mockito.nullable(Long.class));
   }
 

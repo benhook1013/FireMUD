@@ -182,6 +182,13 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly(null, null, null);
+    assertThat(repository.findByCommandId("player-command"))
+        .get()
+        .extracting(
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly(null, null, null);
   }
 
   @Test

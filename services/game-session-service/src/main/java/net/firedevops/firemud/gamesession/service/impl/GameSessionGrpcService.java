@@ -216,6 +216,12 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
+          StartSessionResponse.newBuilder()
+              .setError(expectedLifecycleError("startSession", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
       onInternalFailure(responseObserver, "startSession", ex);
     }
@@ -267,6 +273,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(expectedLifecycleError("stopSession", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
       onInternalFailure(responseObserver, "stopSession", ex);
     }
@@ -300,9 +313,20 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (LifecycleOutcomeException ex) {
+      responseObserver.onNext(
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(expectedLifecycleError("restartSession", ex))
+              .build());
+      responseObserver.onCompleted();
     } catch (IllegalStateException ex) {
       onInternalFailure(responseObserver, "restartSession", ex);
     }
+  }
+
+  private ErrorDetail expectedLifecycleError(String operation, LifecycleOutcomeException cause) {
+    return GrpcAppErrors.error(meterRegistry, LOG, operation, cause.code(), cause.detailMessage());
   }
 
   private void onInternalFailure(

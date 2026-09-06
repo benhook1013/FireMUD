@@ -153,6 +153,34 @@ class AutomationScriptEventPublisherTest {
     verify(client, never()).triggerScriptEvent(Mockito.any());
   }
 
+  @Test
+  void skipsCommandEventWhenPinOwnerRequestIdHasNoPositiveEpoch() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(strings = {"", " ", "UNSPECIFIED", "UNKNOWN"})

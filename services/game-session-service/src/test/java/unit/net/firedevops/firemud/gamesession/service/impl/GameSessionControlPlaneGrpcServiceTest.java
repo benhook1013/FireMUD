@@ -221,44 +221,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setOwnerAccountId(99L);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    Mockito.when(
-            repository.applyScriptPin(
-                Mockito.anyLong(),
-                Mockito.anyLong(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.nullable(Long.class)))
-        .thenReturn(new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
-
     GameDesignClient gameDesign = gameDesignClient();
-    Mockito.when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-2"))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setTenantId("1")
-                        .setScriptPatchVersion("patch-2")
-                        .setVersionId(17L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .build())
-                .build());
-    AutomationScriptingControlPlaneClient automation =
-        Mockito.mock(AutomationScriptingControlPlaneClient.class);
-    Mockito.when(automation.getScriptPatchStatus(1L, "patch-2"))
-        .thenReturn(
-            net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse.newBuilder()
-                .setStatus(
-                    net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus
-                        .SCRIPT_PATCH_STATUS_READY)
-                .setBaseVersionId(7L)
-                .build());
+    AutomationScriptingControlPlaneClient automation = automationScriptingControlPlaneClient();
     Mockito.when(
             repository.applyScriptPin(
                 1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L))
@@ -312,45 +276,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
-    Mockito.when(
-            repository.applyScriptPin(
-                Mockito.anyLong(),
-                Mockito.anyLong(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.nullable(Long.class)))
-        .thenReturn(
-            new ScriptPinMutationResult("patch-2", 7L, "patch-1", 8L, "req-rollback-1", null));
-
     GameDesignClient gameDesign = gameDesignClient();
-    Mockito.when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-1"))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setTenantId("1")
-                        .setScriptPatchVersion("patch-1")
-                        .setVersionId(18L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .build())
-                .build());
-    AutomationScriptingControlPlaneClient automation =
-        Mockito.mock(AutomationScriptingControlPlaneClient.class);
-    Mockito.when(automation.getScriptPatchStatus(1L, "patch-1"))
-        .thenReturn(
-            net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse.newBuilder()
-                .setStatus(
-                    net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus
-                        .SCRIPT_PATCH_STATUS_READY)
-                .setBaseVersionId(7L)
-                .build());
+    AutomationScriptingControlPlaneClient automation = automationScriptingControlPlaneClient();
     Mockito.when(
             repository.applyScriptPin(
                 1L,
