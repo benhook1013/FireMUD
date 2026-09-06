@@ -2252,7 +2252,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                   instance.getGameInstanceId(),
                   instance.getPlayableStateScope(),
                   regionId,
-                  String.valueOf(regionEpoch),
+                  Long.toString(zeroIfNull(regionEpoch)),
                   blankToEmpty(instance.getTargetScopeType()),
                   blankToEmpty(instance.getTargetScopeId()),
                   targetEntityId(instance),

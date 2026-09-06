@@ -1075,18 +1075,11 @@ final class AutomationPatchControlPlaneService {
   }
 
   private static void requireCoherentScriptPinFilter(long scriptPinEpoch, String requestId) {
-    requireCoherentScriptPinFilter(
-        scriptPinEpoch,
-        requestId,
-        "script_pin_epoch and control-plane request ID must be supplied together");
-  }
-
-  private static void requireCoherentScriptPinFilter(
-      long scriptPinEpoch, String requestId, String mismatchMessage) {
     requireNonNegativeScriptPinEpoch(scriptPinEpoch);
     boolean hasRequestId = requestId != null && !requestId.isBlank();
     if ((scriptPinEpoch > 0) != hasRequestId) {
-      throw new IllegalArgumentException(mismatchMessage);
+      throw new IllegalArgumentException(
+          "script_pin_epoch and control-plane request ID must be supplied together");
     }
   }
 

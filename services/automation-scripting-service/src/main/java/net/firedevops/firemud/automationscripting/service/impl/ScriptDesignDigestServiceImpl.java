@@ -59,9 +59,9 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                 script ->
                     canonicalMap(
                         Map.of(
-                            "name", script.getName(),
-                            "version", script.getScriptVersion(),
-                            "definition", script.getDefinition())))
+                            "name", normalize(script.getName()),
+                            "version", normalize(script.getScriptVersion()),
+                            "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
@@ -103,9 +103,9 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
                 script ->
                     canonicalMap(
                         Map.of(
-                            "name", script.getName(),
-                            "version", script.getScriptVersion(),
-                            "definition", script.getDefinition())))
+                            "name", normalize(script.getName()),
+                            "version", normalize(script.getScriptVersion()),
+                            "definition", normalize(script.getDefinition()))))
             .toList();
     List<Map<String, Object>> bindings =
         bindingRepository
@@ -141,19 +141,24 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
   private Map<String, Object> bindingDigest(ScriptEventBinding binding) {
     return canonicalMap(
         Map.ofEntries(
-            Map.entry("scriptPatchVersion", binding.getScriptPatchVersion()),
-            Map.entry("eventType", binding.getEventType()),
-            Map.entry("eventSchemaVersion", binding.getEventSchemaVersion()),
-            Map.entry("scriptId", binding.getScriptId()),
-            Map.entry("bindingId", binding.getBindingId()),
-            Map.entry("targetScopeType", binding.getTargetScopeType()),
-            Map.entry("targetScopeId", binding.getTargetScopeId()),
+            Map.entry("scriptPatchVersion", normalize(binding.getScriptPatchVersion())),
+            Map.entry("eventType", normalize(binding.getEventType())),
+            Map.entry("eventSchemaVersion", normalize(binding.getEventSchemaVersion())),
+            Map.entry("scriptId", normalize(binding.getScriptId())),
+            Map.entry("bindingId", normalize(binding.getBindingId())),
+            Map.entry("targetScopeType", normalize(binding.getTargetScopeType())),
+            Map.entry("targetScopeId", normalize(binding.getTargetScopeId())),
             Map.entry("priority", binding.getPriority()),
-            Map.entry("priorityTag", binding.getPriorityTag()),
+            Map.entry("priorityTag", normalize(binding.getPriorityTag())),
             Map.entry("requiresExclusiveEvent", binding.isRequiresExclusiveEvent()),
             Map.entry("enabled", binding.isEnabled())));
   }
 
+  private static String normalize(String value) {
+    return value == null ? "" : value;
+  }
+
+  // canonicalMap sorts top-level keys; nested determinism relies on already-canonical structures.
   private static Map<String, Object> canonicalMap(Map<String, Object> values) {
     return new TreeMap<>(values);
   }

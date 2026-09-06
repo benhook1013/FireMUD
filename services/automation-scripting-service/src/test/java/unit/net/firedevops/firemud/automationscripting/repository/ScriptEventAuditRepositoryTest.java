@@ -276,7 +276,7 @@ class ScriptEventAuditRepositoryTest {
             "script_event_id",
             "dry_run");
     assertThat(conflictClause).doesNotContain("script_pin_control_plane_request_id");
-    assertThat(conflictClause).contains("where", "script_pin_epoch", "is null");
+    assertThat(conflictClause).contains("where", "script_pin_epoch\" is null");
   }
 
   @Test
@@ -315,7 +315,7 @@ class ScriptEventAuditRepositoryTest {
     String conflictClause = conflictClause(sqlRef.get());
     assertThat(conflictClause).contains("script_pin_epoch", "script_event_id", "dry_run");
     assertThat(conflictClause).doesNotContain("script_pin_control_plane_request_id");
-    assertThat(conflictClause).contains("where", "script_pin_epoch", "> 0");
+    assertThat(conflictClause).contains("where", "script_pin_epoch\" > 0");
     assertThat(conflictClause).doesNotContain("is not null");
   }
 
@@ -417,14 +417,17 @@ class ScriptEventAuditRepositoryTest {
   }
 
   @Test
-  void existingAuditUpdateCasIncludesNormalizedPinTuple() {
-    AtomicReference<String> sqlRef = new AtomicReference<>();
-    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+  void existingAuditUpdateRejectsConflictingImmutableIdentity() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now.plusSeconds(1));
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Integer> calls = new AtomicReference<>(0);
     MockDataProvider provider =
         context -> {
-          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
-          bindingsRef.set(context.bindings());
-          return new MockResult[] {new MockResult(0)};
+          calls.updateAndGet(value -> value + 1);
+          Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
         };
     ScriptEventAuditRepository repository =
         new ScriptEventAuditRepository(
@@ -438,12 +441,44 @@ class ScriptEventAuditRepositoryTest {
     entity.setScriptPatchVersion("patch-2");
 
     assertThatThrownBy(() -> repository.save(entity))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_version is immutable and conflicts with persisted identity");
+    assertThat(calls.get()).isEqualTo(1);
+  }
+
+  @Test
+  void existingAuditUpdateKeepsIdentityImmutableAndUsesRowVersionForStaleWrites() {
+    Instant now = Instant.parse("2026-08-01T00:00:00Z");
+    ScriptEventAuditRecord row = auditRecord(9L, now, now.plusSeconds(1));
+    row.setRowVersion(4);
+    List<String> queries = new ArrayList<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          queries.add(context.sql().toLowerCase(Locale.ROOT));
+          if (queries.size() == 1) {
+            Result<ScriptEventAuditRecord> result = resultDsl.newResult(SCRIPT_EVENT_AUDIT);
+            result.add(row);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptEventAudit entity = auditEntity(now);
+    entity.setId(9L);
+    entity.setRowVersion(3);
+
+    assertThatThrownBy(() -> repository.save(entity))
         .isInstanceOf(org.springframework.dao.OptimisticLockingFailureException.class)
         .hasMessage("Stale write rejected for script_event_audit id=9");
-    assertThat(sqlRef.get())
-        .contains(
+    assertThat(queries).hasSize(2);
+    assertThat(queries.get(1))
+        .contains("row_version")
+        .doesNotContain(
             "script_patch_version", "script_pin_epoch", "script_pin_control_plane_request_id");
-    assertThat(bindingsRef.get()).contains("patch-2", 2L, "pin-request-2");
   }
 
   @Test

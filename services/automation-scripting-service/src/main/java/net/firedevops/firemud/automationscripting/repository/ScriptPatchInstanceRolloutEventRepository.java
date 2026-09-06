@@ -39,7 +39,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
       Instant changedAfter,
       Instant changedBefore,
       Pageable pageable) {
-    requireCoherentPinFilter(scriptPinEpoch, lastObservedControlPlaneRequestId);
+    requireCoherentPinTuple(scriptPinEpoch, lastObservedControlPlaneRequestId);
     Condition condition = SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.TENANT_ID.eq(tenantId);
     if (!gameInstanceId.isBlank()) {
       condition =
@@ -211,18 +211,6 @@ public class ScriptPatchInstanceRolloutEventRepository {
   private static void requireCoherentPinTuple(ScriptPatchInstanceRolloutEvent entity) {
     requireCoherentPinTuple(
         entity.getScriptPinEpoch(), entity.getLastObservedControlPlaneRequestId());
-  }
-
-  private static void requireCoherentPinFilter(Long scriptPinEpoch, String requestId) {
-    if (scriptPinEpoch != null && scriptPinEpoch < 0L) {
-      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
-    }
-    boolean hasPositiveEpoch = scriptPinEpoch != null && scriptPinEpoch > 0L;
-    boolean hasRequestId = blankToNull(requestId) != null;
-    if (hasPositiveEpoch != hasRequestId) {
-      throw new IllegalArgumentException(
-          "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
-    }
   }
 
   private static void requireCoherentPinTuple(Long scriptPinEpoch, String requestId) {
