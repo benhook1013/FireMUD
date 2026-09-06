@@ -69,21 +69,20 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
-  void grpcBundleRenewsBeforeExpiryOnlyAfterTheCurrentGenerationIsAccepted() {
+  void grpcBundleRenewalIsExpiryDrivenWhileAcceptedGenerationRemainsAnAntiRollbackFloor() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret source = new GrpcTransportBundleGenerator().generate(plan);
     assertEquals(
         false,
-        GrpcTransportBundleGenerator.renewalRequired(source, 1, Duration.ofDays(7), Instant.now()));
+        GrpcTransportBundleGenerator.renewalRequired(source, Duration.ofDays(7), Instant.now()));
+    GrpcTransportBundleGenerator.validateAcceptedGeneration(2, 1);
+    assertThrows(
+        IllegalStateException.class,
+        () -> GrpcTransportBundleGenerator.validateAcceptedGeneration(1, 2));
     assertEquals(
         true,
-        GrpcTransportBundleGenerator.renewalRequired(
-            source, 1, Duration.ofDays(31), Instant.now()));
-    assertEquals(
-        false,
-        GrpcTransportBundleGenerator.renewalRequired(
-            source, 0, Duration.ofDays(31), Instant.now()));
+        GrpcTransportBundleGenerator.renewalRequired(source, Duration.ofDays(31), Instant.now()));
   }
 
   @Test

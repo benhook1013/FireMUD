@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.javaoperatorsdk.operator.api.config.informer.Informer;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
@@ -293,17 +294,19 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null,
           null);
     }
-    context.resourceOperations().removeFinalizer(HostedIdentityContract.FINALIZER);
-    return status(
-        resource,
-        HostedEnvironmentIdentityStatus.Phase.Retired,
-        "Retired",
-        "runtime absent; owned retained material removed",
-        false,
-        null,
-        null,
-        null,
-        null);
+    return finishRetirement(context);
+  }
+
+  static UpdateControl<HostedEnvironmentIdentity> finishRetirement(
+      Context<HostedEnvironmentIdentity> context) {
+    try {
+      context.resourceOperations().removeFinalizer(HostedIdentityContract.FINALIZER);
+    } catch (KubernetesClientException exception) {
+      if (exception.getCode() != 404) {
+        throw exception;
+      }
+    }
+    return UpdateControl.noUpdate();
   }
 
   private boolean deleteOwnedMaterial(EnvironmentIdentityPlan plan) {

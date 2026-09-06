@@ -1,13 +1,18 @@
 package net.firedevops.firemud.hostedidentity.reconcile;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
+import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -15,6 +20,7 @@ import java.util.Base64;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService;
 import net.firedevops.firemud.hostedidentity.kubernetes.DeploymentRolloutService;
 import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityScopeService;
@@ -28,6 +34,27 @@ import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
 
 class HostedIdentityReconcilerSafetyTest {
+  @Test
+  void retirementNeverRequestsStatusPatchAfterFinalizerRemovalOrDeletionRace() {
+    Context<HostedEnvironmentIdentity> context = mock(Context.class);
+    ResourceOperations<HostedEnvironmentIdentity> operations = mock(ResourceOperations.class);
+    when(context.resourceOperations()).thenReturn(operations);
+
+    UpdateControl<HostedEnvironmentIdentity> removed =
+        HostedIdentityReconciler.finishRetirement(context);
+    assertEquals(true, removed.isNoUpdate());
+    assertEquals(false, removed.isPatchStatus());
+    verify(operations).removeFinalizer(HostedIdentityContract.FINALIZER);
+
+    doThrow(new KubernetesClientException("deleted", 404, null))
+        .when(operations)
+        .removeFinalizer(HostedIdentityContract.FINALIZER);
+    UpdateControl<HostedEnvironmentIdentity> alreadyDeleted =
+        HostedIdentityReconciler.finishRetirement(context);
+    assertEquals(true, alreadyDeleted.isNoUpdate());
+    assertEquals(false, alreadyDeleted.isPatchStatus());
+  }
+
   @Test
   void pausedModeCannotMaterializeOrChangeFinalizers() {
     HostedIdentityProperties properties = new HostedIdentityProperties();

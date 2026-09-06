@@ -165,18 +165,23 @@ public class ServedEnvironmentProbe {
 
   int telnetPort(String name) {
     if ("dev-demo".equals(name)) {
-      return 32016;
+      int port = properties.getDevDemoTelnetPort();
+      if (port < 1 || port > 65535) {
+        throw new IllegalArgumentException("dev-demo Telnet port is outside the valid port range");
+      }
+      return port;
     }
     Matcher matcher = PREVIEW_NUMBER.matcher(name);
     if (!matcher.matches()) {
       throw new IllegalArgumentException("unsupported hosted environment name");
     }
-    int port = properties.getPreviewTelnetPortBase() + Integer.parseInt(matcher.group(1));
-    if (port < 32000 || port > 32015) {
+    int base = properties.getPreviewTelnetPortBase();
+    long port = (long) base + Integer.parseInt(matcher.group(1));
+    if (base < 1 || base > 65520 || port < base || port > base + 15L) {
       throw new IllegalArgumentException(
           "preview Telnet port is outside the fixed allocation window");
     }
-    return port;
+    return Math.toIntExact(port);
   }
 
   @FunctionalInterface

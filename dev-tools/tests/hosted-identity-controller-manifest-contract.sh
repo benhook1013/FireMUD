@@ -171,6 +171,43 @@ done
 require_regex "$ADMISSION" 'dev-demo'
 require_regex "$ADMISSION" 'pr-\[1-9\]\[0-9\]\*'
 require_literal "$ADMISSION" "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'"
+ADMISSION="$ADMISSION" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+policies = {
+    document["metadata"]["name"]: document
+    for document in yaml.safe_load_all(Path(os.environ["ADMISSION"]).read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("kind") == "ValidatingAdmissionPolicy"
+}
+break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
+callers = {
+    "firemud-hosted-identity-main": "firemud-hosted-identity-requester",
+    "firemud-hosted-identity-subresources": "firemud-hosted-identity-controller",
+    "firemud-hosted-identity-scope-roles": "firemud-hosted-identity-controller",
+    "firemud-hosted-identity-scope-rolebindings": "firemud-hosted-identity-controller",
+}
+for policy_name, service_account in callers.items():
+    expressions = [
+        validation["expression"]
+        for validation in policies[policy_name]["spec"]["validations"]
+    ]
+    caller_expression = next(
+        expression for expression in expressions if service_account in expression
+    )
+    assert caller_expression.startswith(f"{break_glass} ||"), policy_name
+
+role_expression = policies["firemud-hosted-identity-scope-roles"]["spec"]["validations"][0]["expression"]
+assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in role_expression
+assert "object.metadata.labels.size() == 6" in role_expression
+assert "object.rules.size() == 6" in role_expression
+binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spec"]["validations"][0]["expression"]
+assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
+assert "object.metadata.labels.size() == 5" in binding_expression
+assert "object.subjects.size() == 1" in binding_expression
+PY
 for phase in Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying Ready Degraded Blocked Retiring Retired; do
   require_literal "$CRD" "- $phase"
 done
@@ -389,6 +426,100 @@ if FAKE_CAN_I_ALLOW_DENIED=1 PATH="$validator_test_dir:$PATH" \
   fail "validator accepted an unexpectedly allowed permission"
 fi
 require_literal "$validator_error" "returned yes; expected no"
+)
+
+(
+bootstrap_test_dir="$(mktemp -d)"
+trap 'rm -rf "$bootstrap_test_dir"' EXIT
+bootstrap_output="$bootstrap_test_dir/output"
+bootstrap_error="$bootstrap_test_dir/error"
+cat >"$bootstrap_test_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "kustomize" ]]; then
+  cat <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          image: ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
+          env:
+            - name: FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256
+              value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__
+            - name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
+              value: __ACTIVATION_MODE_REQUIRED__
+YAML
+  exit 0
+fi
+if [[ "${1:-}" == "apply" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "rollout" ]]; then
+  exit 0
+fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "deployment" ]]; then
+  printf '1/1\n'
+  exit 0
+fi
+if [[ "${1:-}" == "get" && "${2:-}" == "crd" ]]; then
+  printf 'True\n'
+  exit 0
+fi
+if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicy" ]]; then
+  printf 'Fail\n'
+  exit 0
+fi
+if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicybinding" ]]; then
+  printf 'Deny\n'
+  exit 0
+fi
+if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then
+  if [[ " $* " == *" --all-namespaces "* || " $* " == *" --namespace=dev "* ]]; then
+    if [[ "${FAKE_CAN_I_ERROR:-0}" == "1" ]]; then
+      printf 'simulated authorization API failure\n' >&2
+      exit 2
+    fi
+    if [[ "${FAKE_CAN_I_ALLOW_DENIED:-0}" == "1" ]]; then
+      printf 'yes\n'
+      exit 0
+    fi
+    printf 'no\n'
+    exit 1
+  fi
+  printf 'yes\n'
+  exit 0
+fi
+printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$bootstrap_test_dir/kubectl"
+bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+bootstrap_fingerprint='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
+fi
+require_literal "$bootstrap_output" "activation=paused"
+if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an authorization API error"
+fi
+require_literal "$bootstrap_error" "failed with status 2"
+if FAKE_CAN_I_ALLOW_DENIED=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an unexpectedly allowed permission"
+fi
+require_literal "$bootstrap_error" "returned yes; expected no"
 )
 
 forbidden_preview='cert-manager.io'

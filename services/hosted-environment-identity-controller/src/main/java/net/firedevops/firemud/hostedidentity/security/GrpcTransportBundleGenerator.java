@@ -97,13 +97,11 @@ public class GrpcTransportBundleGenerator {
       }
     }
     long currentGeneration = issuanceGeneration(existing);
-    if (currentGeneration < accepted) {
-      throw new IllegalStateException("gRPC source issuance generation rolled back");
-    }
+    validateAcceptedGeneration(currentGeneration, accepted);
     if (renewBefore == null || renewBefore.isNegative() || renewBefore.isZero()) {
       throw new IllegalStateException("gRPC renewal window must be positive");
     }
-    if (!renewalRequired(existing, accepted, renewBefore, Instant.now())) {
+    if (!renewalRequired(existing, renewBefore, Instant.now())) {
       return existing;
     }
     long attemptedGeneration = nextGeneration(currentGeneration);
@@ -257,11 +255,15 @@ public class GrpcTransportBundleGenerator {
     }
   }
 
-  static boolean renewalRequired(
-      Secret secret, long acceptedGeneration, Duration renewBefore, Instant now) {
-    long currentGeneration = issuanceGeneration(secret);
-    return currentGeneration <= acceptedGeneration
-        && !leafNotAfter(secret).isAfter(now.plus(renewBefore));
+  static boolean renewalRequired(Secret secret, Duration renewBefore, Instant now) {
+    issuanceGeneration(secret);
+    return !leafNotAfter(secret).isAfter(now.plus(renewBefore));
+  }
+
+  static void validateAcceptedGeneration(long currentGeneration, long acceptedGeneration) {
+    if (currentGeneration < acceptedGeneration) {
+      throw new IllegalStateException("gRPC source issuance generation rolled back");
+    }
   }
 
   static Secret requireConflictWinner(Secret reread, long minimumGeneration) {

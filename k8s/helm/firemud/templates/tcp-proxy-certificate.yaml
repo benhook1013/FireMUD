@@ -4,11 +4,11 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.previewStack.telnetTls.secretName }}
+  name: {{ include "firemud.telnetTlsSecretName" . }}
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
 spec:
-  secretName: {{ .Values.previewStack.telnetTls.secretName }}
+  secretName: {{ include "firemud.telnetTlsSecretName" . }}
   privateKey:
     algorithm: RSA
     encoding: PKCS8

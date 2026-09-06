@@ -216,8 +216,15 @@ requester_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-r
 expect_can_i() {
   local expected="$1"
   shift
-  local result
-  result="$(kubectl auth can-i "$@" | tr -d '\r')"
+  local result status
+  if result="$(kubectl auth can-i "$@" | tr -d '\r')"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 0 && ! ( "$status" -eq 1 && "$expected" == "no" ) ]]; then
+    fail "auth can-i $* failed with status $status and output: $result"
+  fi
   [[ "$result" == "$expected" ]] || fail "auth can-i $* returned $result; expected $expected"
 }
 
