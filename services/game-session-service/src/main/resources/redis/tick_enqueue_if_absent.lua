@@ -99,7 +99,7 @@ if pushDirection ~= 'LEFT' and pushDirection ~= 'RIGHT' then
 end
 
 -- The marker makes the first use on a legacy scope pay one bounded-by-existing-data rebuild.
--- Rebuilding also repairs a partially lost index when the live projections still exist.
+-- Rebuilding also repairs a missing index when the live projections still exist.
 local markerReady = redis.call('GET', indexMarker) == INDEX_VERSION
 if not markerReady or (redis.call('EXISTS', commandIndex) == 0
     and (redis.call('LLEN', queue) > 0 or redis.call('LLEN', pending) > 0)) then

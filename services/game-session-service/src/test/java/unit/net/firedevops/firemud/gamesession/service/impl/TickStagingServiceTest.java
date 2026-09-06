@@ -700,6 +700,55 @@ class TickStagingServiceTest {
   }
 
   @Test
+  void equalReplayDigestTerminalizesIncompleteLocalAutomationAndRequeuesOnlyEligibleCommands() {
+    GameplayCommand automation = gameplayCommand("cmd-incomplete-current-replay");
+    automation.setSourceType("AUTOMATION");
+    GameplayCommand player = gameplayCommand("cmd-current-replay-player");
+    player.setSourceType("PLAYER");
+    player.setCommandText("wave");
+    player.setSanitizedCommandText("wave");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-incomplete-current-replay", "cmd-current-replay-player")))
+        .thenReturn(List.of(automation, player));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-current-replay-player")))
+        .thenReturn(List.of(player));
+
+    List<Object> replayRawEntries =
+        List.of("N|cmd-incomplete-current-replay|look", "N|cmd-current-replay-player|wave");
+    String sealedManifest = replayManifestJson(service, replayRawEntries);
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-incomplete-current-replay");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, sealedManifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickStagingService.ReplayResolution resolution =
+        service.resolveReplayBatchForTick(
+            1L,
+            2L,
+            parseEntries(service, replayRawEntries),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
+
+    assertTrue(resolution.recoveryOnly());
+    assertEquals("FAILED", automation.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", automation.getGameplayResult());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", automation.getFailureCode());
+    assertEquals("RETRY_QUEUED", player.getExecutionOutcome());
+    assertEquals("INCOMPATIBLE_SEALED_REPLAY", existingBatch.getFailureCode());
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
+  }
+
+  @Test
   void durableCommandAndSealedBatchModeOverrideStaleQueueMode() {
     GameplayCommand command = gameplayCommand("cmd-sealed-solo");
     command.setRequiresSoloTick(true);
@@ -1320,6 +1369,56 @@ class TickStagingServiceTest {
     verify(tickBatchRepository).save(existingBatch);
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
     verify(tickEffectRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void sealedReplayTerminalizesIncompleteAutomationManifestEvidence() {
+    GameplayCommand pendingPlayer = gameplayCommand("cmd-sealed-incomplete-pending-player");
+    pendingPlayer.setSourceType("PLAYER");
+    GameplayCommand sealedAutomation = gameplayCommand("cmd-sealed-incomplete-automation");
+    sealedAutomation.setSourceType("AUTOMATION");
+    sealedAutomation.setScriptPatchVersion("patch-1");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-sealed-incomplete-pending-player")))
+        .thenReturn(List.of(pendingPlayer));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-sealed-incomplete-automation")))
+        .thenReturn(List.of(sealedAutomation));
+
+    String sealedManifest =
+        replayManifestJson(service, List.of("N|cmd-sealed-incomplete-automation|look"));
+    TickBatch existingBatch = new TickBatch();
+    existingBatch.setTickBatchId("tb-sealed-incomplete-automation");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("region-a");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(shortHash(service, sealedManifest));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+
+    TickStagingService.ReplayResolution resolution =
+        service.resolveReplayBatchForTick(
+            1L,
+            2L,
+            List.of(
+                new TickQueuedCommandEnvelope(
+                    false, "cmd-sealed-incomplete-pending-player", "look")),
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
+
+    assertTrue(resolution.recoveryOnly());
+    assertEquals("ABANDONED", existingBatch.getStatus());
+    assertEquals("INCOMPATIBLE_SEALED_REPLAY", existingBatch.getFailureCode());
+    assertEquals("FAILED", sealedAutomation.getExecutionOutcome());
+    assertEquals("NOT_APPLIED", sealedAutomation.getGameplayResult());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", sealedAutomation.getFailureCode());
+    verify(tickBatchRepository).save(existingBatch);
+    verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
   }
 
   @Test

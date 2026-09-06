@@ -241,16 +241,30 @@ public class GameplayCommandRepository {
             .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.in(executionOutcomes)));
   }
 
-  public List<GameplayCommand> findByExecutionOutcomeAndStagedAtIsNullAndAcceptedAtBefore(
-      String executionOutcome, Instant acceptedBefore) {
+  public List<GameplayCommand> findAcceptedButUnstagedPage(
+      Instant acceptedBefore, Instant afterAcceptedAt, long afterId, int pageSize) {
+    Condition condition =
+        GAMEPLAY_COMMAND
+            .EXECUTION_OUTCOME
+            .eq("ACCEPTED")
+            .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
+            .and(GAMEPLAY_COMMAND.ACCEPTED_AT.lt(toLocalDateTime(acceptedBefore)));
+    if (afterAcceptedAt != null) {
+      condition =
+          condition.and(
+              GAMEPLAY_COMMAND
+                  .ACCEPTED_AT
+                  .gt(toLocalDateTime(afterAcceptedAt))
+                  .or(
+                      GAMEPLAY_COMMAND
+                          .ACCEPTED_AT
+                          .eq(toLocalDateTime(afterAcceptedAt))
+                          .and(GAMEPLAY_COMMAND.ID.gt(afterId))));
+    }
     return dsl.selectFrom(GAMEPLAY_COMMAND)
-        .where(
-            GAMEPLAY_COMMAND
-                .EXECUTION_OUTCOME
-                .eq(executionOutcome)
-                .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
-                .and(GAMEPLAY_COMMAND.ACCEPTED_AT.lt(toLocalDateTime(acceptedBefore))))
+        .where(condition)
         .orderBy(GAMEPLAY_COMMAND.ACCEPTED_AT.asc(), GAMEPLAY_COMMAND.ID.asc())
+        .limit(pageSize)
         .fetch(this::toEntity);
   }
 

@@ -81,5 +81,9 @@ end
 
 redis.call('LREM', queue, 0, ARGV[2])
 redis.call('LREM', pending, 0, ARGV[2])
+if indexedRaw and indexedRaw ~= ARGV[2] then
+  redis.call('LREM', queue, 0, indexedRaw)
+  redis.call('LREM', pending, 0, indexedRaw)
+end
 redis.call('HDEL', commandIndex, candidateId)
 return 1

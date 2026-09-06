@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -89,9 +88,11 @@ class TriggerScriptEventRequestFactoryTest {
             "snapshot",
             "{}");
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> TriggerScriptEventRequestFactory.builder(fields, null));
+    assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                + " together");
   }
 
   @Test

@@ -153,6 +153,9 @@ class GameplayCommandRepositoryIntegrationTest {
     saved.setScriptPatchVersion("patch-2");
     saved.setScriptPinEpoch(8L);
     saved.setScriptPinControlPlaneRequestId("pin-request-8");
+    saved.setExecutionOutcome("APPLIED");
+    saved.setGameplayResult("SUCCESS");
+    saved.setCompletedAt(Instant.parse("2026-07-05T06:02:00Z"));
     GameplayCommand updated = repository.save(saved);
 
     assertThat(updated)
@@ -214,6 +217,28 @@ class GameplayCommandRepositoryIntegrationTest {
             GameplayCommand::getScriptPinEpoch,
             GameplayCommand::getScriptPinControlPlaneRequestId)
         .containsExactly("remote-followup-1", "legacy-patch", null, null);
+  }
+
+  @Test
+  void saveRoundTripsCompletedLegacyPatchOnlyLocalAutomationHistory() {
+    GameplayCommand command = repositoryCommand("completed-legacy-command", "AUTOMATION");
+    command.setExecutionOutcome("APPLIED");
+    command.setGameplayResult("SUCCESS");
+    command.setCompletedAt(Instant.parse("2026-07-05T06:01:00Z"));
+    command.setScriptPatchVersion("legacy-patch");
+
+    repository.save(command);
+
+    assertThat(repository.findByCommandId("completed-legacy-command"))
+        .get()
+        .extracting(
+            GameplayCommand::getExecutionOutcome,
+            GameplayCommand::getCompletedAt,
+            GameplayCommand::getScriptPatchVersion,
+            GameplayCommand::getScriptPinEpoch,
+            GameplayCommand::getScriptPinControlPlaneRequestId)
+        .containsExactly(
+            "APPLIED", Instant.parse("2026-07-05T06:01:00Z"), "legacy-patch", null, null);
   }
 
   @Test

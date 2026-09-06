@@ -369,6 +369,90 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void missingRuntimeVersionIsClassifiedAsUnavailableAuthority() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setVersionId(null);
+    instance.setRuntimeVersion(null);
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    verifyNoScriptPinMutation(repository);
+  }
+
+  @Test
+  void nonnumericRuntimeVersionIsClassifiedAsUnavailableAuthority() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    AutomationScriptingControlPlaneClient automation =
+        mock(AutomationScriptingControlPlaneClient.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setVersionId(null);
+    instance.setRuntimeVersion("runtime-version");
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    when(gameDesign.getPublishedScriptPatchVersion(1L, "patch-new"))
+        .thenReturn(publishedPatch(1L, 200L, 100L));
+    when(automation.getScriptPatchStatus(1L, "patch-new"))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(100L)
+                .build());
+    when(repository.recordScriptPinFailure(
+            1L,
+            7L,
+            "SET",
+            "patch-new",
+            "request-1",
+            "operator",
+            "pin",
+            "EXPECT_UNPINNED",
+            null,
+            "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"))
+        .thenReturn(
+            new ScriptPinMutationResult(
+                null, null, null, null, "request-1", "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE"));
+
+    SetPinnedScriptPatchVersionResponse response =
+        newService(repository, tickService, gameDesign, automation)
+            .setPinnedScriptPatchVersion(1L, 7L, setRequest("request-1"));
+
+    assertThat(response.getError().getCode()).isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+    verifyNoScriptPinMutation(repository);
+  }
+
+  @Test
   void unavailableAuthorityRecordsEachAttemptAndReplaysStoredFailure() {
     GameInstanceRepository repository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);

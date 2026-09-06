@@ -152,6 +152,7 @@ if result ~= 1 then
   return result
 end
 
+local indexedRawById = {}
 for commandId, value in pairs(valuesById) do
   local indexedRaw = redis.call('HGET', commandIndex, commandId)
   if indexedRaw then
@@ -162,31 +163,45 @@ for commandId, value in pairs(valuesById) do
     if indexedValue ~= value then
       return -3
     end
+    indexedRawById[commandId] = indexedRaw
+  end
+end
+
+local function removePayloadEncoding(listKey, raw)
+  redis.call('LREM', listKey, 0, raw)
+  local _, commandId = parsePayload(raw)
+  local indexedRaw = indexedRawById[commandId]
+  if indexedRaw and indexedRaw ~= raw then
+    redis.call('LREM', listKey, 0, indexedRaw)
   end
 end
 
 local pendingPayloadIndex = pendingPayloadStartIndex
 for index = 1, pendingCount do
-  redis.call('LREM', pending, 0, ARGV[pendingPayloadIndex])
+  removePayloadEncoding(pending, ARGV[pendingPayloadIndex])
   pendingPayloadIndex = pendingPayloadIndex + 1
 end
 
 local sealedPayloadIndex = sealedPayloadStartIndex
 for index = 1, sealedCount do
+  -- Remove the exact sealed bytes before appending them in manifest order. A retry may
+  -- observe a pending list that already contains this sealed payload; replacing it keeps
+  -- restoration idempotent without changing the ordering of the sealed entries.
+  removePayloadEncoding(pending, ARGV[sealedPayloadIndex])
   redis.call('RPUSH', pending, ARGV[sealedPayloadIndex])
   sealedPayloadIndex = sealedPayloadIndex + 1
 end
 
 for index = redisOnlyCount, 1, -1 do
   local payload = ARGV[redisOnlyPayloadStartIndex + index - 1]
-  redis.call('LREM', queue, 0, payload)
+  removePayloadEncoding(queue, payload)
   redis.call('LPUSH', queue, payload)
 end
 local terminalizedPayloadIndex = terminalizedPayloadStartIndex
 for index = 1, terminalizedCount do
   local payload = ARGV[terminalizedPayloadIndex]
-  redis.call('LREM', pending, 0, payload)
-  redis.call('LREM', queue, 0, payload)
+  removePayloadEncoding(pending, payload)
+  removePayloadEncoding(queue, payload)
   terminalizedPayloadIndex = terminalizedPayloadIndex + 1
 end
 

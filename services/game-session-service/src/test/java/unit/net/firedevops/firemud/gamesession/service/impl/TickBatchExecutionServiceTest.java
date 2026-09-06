@@ -10,6 +10,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -56,6 +57,7 @@ class TickBatchExecutionServiceTest {
   private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private TickBatchExecutionService service;
+  private TickQueueControlService tickQueueControlService;
   private TickQueueControlService.QueueLockLease activeLease;
 
   @BeforeEach
@@ -98,6 +100,7 @@ class TickBatchExecutionServiceTest {
     activeLease = mock(TickQueueControlService.QueueLockLease.class);
     when(activeLease.key()).thenReturn("gamesession:tick:lock:1:2");
     when(activeLease.token()).thenReturn("lease-token");
+    tickQueueControlService = spy(newTickQueueControlService());
     service = newService(new ImmediateTransactionOperations());
 
     RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
@@ -367,10 +370,23 @@ class TickBatchExecutionServiceTest {
     batch.setRegionId("2");
     batch.setRegionEpoch(1L);
 
-    service.markBatchIncompatibleReplay(batch, List.of(), "sealed replay evidence is incompatible");
+    List<TickQueuedCommandEnvelope> sealedEntries =
+        List.of(
+            new TickQueuedCommandEnvelope(false, "cmd-incompatible-one", "look"),
+            new TickQueuedCommandEnvelope(false, "cmd-incompatible-two", "wave"));
+    GameplayCommand first = gameplayCommand("cmd-incompatible-one");
+    GameplayCommand second = gameplayCommand("cmd-incompatible-two");
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-incompatible-one", "cmd-incompatible-two")))
+        .thenReturn(List.of(first, second));
+
+    service.markBatchIncompatibleReplay(
+        batch, sealedEntries, "sealed replay evidence is incompatible");
 
     assertEquals("ABANDONED", batch.getStatus());
     assertEquals("INCOMPATIBLE_SEALED_REPLAY", batch.getFailureCode());
+    assertEquals("RETRY_QUEUED", first.getExecutionOutcome());
+    assertEquals("RETRY_QUEUED", second.getExecutionOutcome());
     assertEquals(1.0, meterRegistry.get("tick_incompatible_sealed_replay_total").counter().count());
   }
 
@@ -399,7 +415,7 @@ class TickBatchExecutionServiceTest {
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
         .thenReturn(List.of(command));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("RETRY_QUEUED", command.getExecutionOutcome());
     assertEquals("GAMEPLAY_RETRY", command.getQueueSourceKind());
@@ -425,7 +441,7 @@ class TickBatchExecutionServiceTest {
             new DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult(
                 "RETRY_QUEUED", "AUTH_UNAVAILABLE", "pointer authority unavailable"));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("DRAINED", effect.getStatus());
     assertEquals("AUTH_UNAVAILABLE", effect.getFailureCode());
@@ -451,7 +467,7 @@ class TickBatchExecutionServiceTest {
     when(durableGameplayCommandExecutionService.execute(effect, command))
         .thenReturn(Optional.empty());
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("APPLIED", effect.getStatus());
     assertEquals("APPLIED", batch.getStatus());
@@ -517,7 +533,7 @@ class TickBatchExecutionServiceTest {
                 new DurableGameplayCommandExecutionService.DurableGameplayCommandExecutionResult(
                     "APPLIED", "COMPLETED", "APPLIED", null, null)));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("ABANDONED", staleBatch.getStatus());
     assertEquals("STALE_EXECUTOR_FENCE", staleBatch.getFailureCode());
@@ -563,7 +579,7 @@ class TickBatchExecutionServiceTest {
                 new GameplayCommandExecutionFenceService.FenceFailure(
                     "STALE_COMMAND_TIMELINE", "Command belongs to an old runtime timeline")));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("REJECTED", effect.getStatus());
     assertEquals("STALE_COMMAND_TIMELINE", effect.getFailureCode());
@@ -595,7 +611,7 @@ class TickBatchExecutionServiceTest {
                     "STALE_SCRIPT_PIN_EPOCH",
                     "Gameplay command script pin epoch no longer matches the pinned instance epoch")));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("REJECTED", effect.getStatus());
     assertEquals("STALE_SCRIPT_PIN_EPOCH", effect.getFailureCode());
@@ -622,7 +638,7 @@ class TickBatchExecutionServiceTest {
     when(gameplayCommandRepository.findByCommandId("cmd-foreign"))
         .thenReturn(Optional.of(foreignCommand));
 
-    service.executeDurableEffects(1L, 2L);
+    service.executeDurableEffects(1L, 2L, activeLease);
 
     assertEquals("REJECTED", effect.getStatus());
     assertEquals("COMMAND_NOT_FOUND", effect.getFailureCode());
@@ -644,7 +660,8 @@ class TickBatchExecutionServiceTest {
     when(tickEffectRepository.findByTickBatchId("tb-partial-execution"))
         .thenReturn(List.of(effect));
 
-    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+    assertThrows(
+        IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L, activeLease));
 
     assertEquals("DRAINED", batch.getStatus());
     verify(durableRemoteFollowupExecutionService, never()).execute(any());
@@ -677,7 +694,8 @@ class TickBatchExecutionServiceTest {
         .when(durableRemoteFollowupExecutionService)
         .execute(remainingEffect);
 
-    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+    assertThrows(
+        IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L, activeLease));
     service.markRemoteFollowupBatchAbandoned(batch, "REMOTE_FAILURE", "later remote effect failed");
 
     assertEquals("ABANDONED", batch.getStatus());
@@ -819,7 +837,8 @@ class TickBatchExecutionServiceTest {
         .when(tickEffectRepository)
         .save(any());
 
-    assertThrows(IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L));
+    assertThrows(
+        IllegalStateException.class, () -> service.executeDurableEffects(1L, 2L, activeLease));
 
     assertEquals(
         List.of("transaction-begin", "remote-followup", "effect-save", "transaction-rollback"),
@@ -855,9 +874,11 @@ class TickBatchExecutionServiceTest {
             new TickQueuedCommandEnvelope(false, "cmd-applied", "look"),
             new TickQueuedCommandEnvelope(false, "cmd-retry", "north")),
         "ROLLBACK_REQUEUED",
-        "Plugin authority unavailable");
+        "Plugin authority unavailable",
+        activeLease);
 
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-retry|north");
+    verify(tickQueueControlService)
+        .requeueCommand(activeLease, 1L, 2L, "cmd-retry", "north", false);
     verify(listOps, never()).leftPush("gamesession:tick:queue:1:2", "N|cmd-applied|look");
     assertEquals("ABANDONED", remaining.getStatus());
     assertEquals("RETRY_QUEUED", retryCommand.getExecutionOutcome());
@@ -1153,7 +1174,7 @@ class TickBatchExecutionServiceTest {
         durableGameplayCommandExecutionService,
         durableRemoteFollowupExecutionService,
         remoteFollowupDrainService,
-        newTickQueueControlService(),
+        tickQueueControlService,
         gameplayCommandExecutionFenceService,
         transactionOperations);
   }

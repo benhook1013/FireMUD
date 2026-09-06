@@ -512,6 +512,16 @@ final class TickStagingService {
       } catch (LocalAutomationPinTupleMismatchException ex) {
         return terminalizeMismatchedLocalAutomationReplay(
             batch, replayEntries, tenantId, gameInstanceId, ownership, ex.instance(), ex);
+      } catch (IncompleteLocalAutomationPinTupleException ex) {
+        return terminalizeIncompleteAutomationReplay(
+            batch,
+            replayEntries,
+            replayEntries,
+            replaySelections,
+            incompleteLocalAutomationCommandIds(replaySelections, ex.commandId()),
+            tenantId,
+            gameInstanceId,
+            "Staged local Automation replay is missing a complete script pin tuple");
       }
       if (batch.isRequiresSoloTick() != replaySolo) {
         throw new IllegalStateException(
@@ -543,8 +553,32 @@ final class TickStagingService {
           tenantId,
           gameInstanceId);
     }
-    GameInstance lockedInstance =
-        requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, sealedSelections);
+    if (!sealedManifest.incompleteLocalAutomationPinEvidenceCommandIds().isEmpty()) {
+      return terminalizeIncompleteAutomationReplay(
+          batch,
+          replayEntries,
+          sealedEntries,
+          sealedSelections,
+          java.util.Set.copyOf(sealedManifest.incompleteLocalAutomationPinEvidenceCommandIds()),
+          tenantId,
+          gameInstanceId,
+          "Sealed local Automation replay is missing a complete script pin tuple");
+    }
+    GameInstance lockedInstance;
+    try {
+      lockedInstance =
+          requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, sealedSelections);
+    } catch (IncompleteLocalAutomationPinTupleException ex) {
+      return terminalizeIncompleteAutomationReplay(
+          batch,
+          replayEntries,
+          sealedEntries,
+          sealedSelections,
+          incompleteLocalAutomationCommandIds(sealedSelections, ex.commandId()),
+          tenantId,
+          gameInstanceId,
+          "Sealed local Automation replay is missing a complete script pin tuple");
+    }
     requireSealedReplayEvidence(sealedManifest.commands(), sealedSelections, lockedInstance);
     logger.warn(
         "Replay manifest mismatch for staged batch tickBatchId={} tenantId={} gameInstanceId={} expectedDigest={} actualDigest={}",
@@ -659,27 +693,74 @@ final class TickStagingService {
       Long tenantId,
       Long gameInstanceId,
       String message) {
+    return terminalizeAutomationReplay(
+        batch,
+        replayEntries,
+        sealedEntries,
+        sealedSelections,
+        incompatibleCommandIds,
+        tenantId,
+        gameInstanceId,
+        "INCOMPATIBLE_SEALED_REPLAY",
+        message);
+  }
+
+  private ReplayResolution terminalizeIncompleteAutomationReplay(
+      TickBatch batch,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<CommandSelection> sealedSelections,
+      java.util.Set<String> incompleteCommandIds,
+      Long tenantId,
+      Long gameInstanceId,
+      String message) {
+    return terminalizeAutomationReplay(
+        batch,
+        replayEntries,
+        sealedEntries,
+        sealedSelections,
+        incompleteCommandIds,
+        tenantId,
+        gameInstanceId,
+        INCOMPLETE_SCRIPT_PIN_FENCE,
+        message);
+  }
+
+  private ReplayResolution terminalizeAutomationReplay(
+      TickBatch batch,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      List<TickQueuedCommandEnvelope> sealedEntries,
+      List<CommandSelection> sealedSelections,
+      java.util.Set<String> terminalCommandIds,
+      Long tenantId,
+      Long gameInstanceId,
+      String terminalFailureCode,
+      String message) {
     List<TickQueuedCommandEnvelope> eligibleEntries =
         sealedEntries.stream()
-            .filter(entry -> !incompatibleCommandIds.contains(entry.commandId()))
+            .filter(entry -> !terminalCommandIds.contains(entry.commandId()))
             .toList();
     List<TickQueuedCommandEnvelope> terminalizedEntries =
         sealedEntries.stream()
-            .filter(entry -> incompatibleCommandIds.contains(entry.commandId()))
+            .filter(entry -> terminalCommandIds.contains(entry.commandId()))
             .toList();
     tickBatchExecutionService.markBatchIncompatibleReplay(batch, eligibleEntries, message);
     Instant now = Instant.now();
     List<GameplayCommand> localAutomation =
         localAutomationCommands(sealedSelections).stream()
-            .filter(command -> incompatibleCommandIds.contains(command.getCommandId()))
+            .filter(command -> terminalCommandIds.contains(command.getCommandId()))
             .toList();
     for (GameplayCommand command : localAutomation) {
-      command.setExecutionOutcome("FAILED");
-      command.setGameplayResult("NOT_APPLIED");
-      command.setCompletedAt(now);
-      command.setLastAttemptAt(now);
-      command.setFailureCode("INCOMPATIBLE_SEALED_REPLAY");
-      command.setFailureMessage(message);
+      if (INCOMPLETE_SCRIPT_PIN_FENCE.equals(terminalFailureCode)) {
+        terminalizeIncompleteScriptPinCommand(command, now);
+      } else {
+        command.setExecutionOutcome("FAILED");
+        command.setGameplayResult("NOT_APPLIED");
+        command.setCompletedAt(now);
+        command.setLastAttemptAt(now);
+        command.setFailureCode(terminalFailureCode);
+        command.setFailureMessage(message);
+      }
     }
     if (!localAutomation.isEmpty()) {
       gameplayCommandRepository.saveAll(localAutomation);
@@ -895,6 +976,7 @@ final class TickStagingService {
                   java.util.stream.Collectors.toMap(GameplayCommand::getCommandId, cmd -> cmd));
       List<TickQueuedCommandEnvelope> entries = new ArrayList<>(sealedCommands.size());
       List<String> legacyLocalAutomationMissingPinEvidenceCommandIds = new ArrayList<>();
+      List<String> incompleteLocalAutomationPinEvidenceCommandIds = new ArrayList<>();
       for (SealedReplayCommand sealedCommand : sealedCommands) {
         String commandId = sealedCommand.commandId();
         GameplayCommand command = commandsById.get(commandId);
@@ -905,9 +987,13 @@ final class TickStagingService {
                   + " for tickBatchId="
                   + batch.getTickBatchId());
         }
-        if (requireSealedReplayCommandEvidence(
-            sealedCommand, command, batch.getTickBatchId(), manifestVersion)) {
-          legacyLocalAutomationMissingPinEvidenceCommandIds.add(sealedCommand.commandId());
+        try {
+          if (requireSealedReplayCommandEvidence(
+              sealedCommand, command, batch.getTickBatchId(), manifestVersion)) {
+            legacyLocalAutomationMissingPinEvidenceCommandIds.add(sealedCommand.commandId());
+          }
+        } catch (IncompleteLocalAutomationPinTupleException ex) {
+          incompleteLocalAutomationPinEvidenceCommandIds.add(ex.commandId());
         }
         entries.add(
             new TickQueuedCommandEnvelope(
@@ -919,7 +1005,8 @@ final class TickStagingService {
       return new SealedReplayManifest(
           List.copyOf(entries),
           List.copyOf(sealedCommands),
-          List.copyOf(legacyLocalAutomationMissingPinEvidenceCommandIds));
+          List.copyOf(legacyLocalAutomationMissingPinEvidenceCommandIds),
+          List.copyOf(incompleteLocalAutomationPinEvidenceCommandIds));
     } catch (java.io.IOException ex) {
       throw new IllegalStateException(
           "Failed to restore sealed replay manifest for tickBatchId=" + batch.getTickBatchId(), ex);
@@ -1168,14 +1255,34 @@ final class TickStagingService {
       return null;
     }
     for (GameplayCommand command : localAutomationCommands(selections)) {
-      requireCompleteScriptPinTuple(
+      if (!hasCompleteScriptPinTuple(
           command.getScriptPatchVersion(),
           command.getScriptPinEpoch(),
-          command.getScriptPinControlPlaneRequestId(),
-          "local Automation command " + command.getCommandId());
+          command.getScriptPinControlPlaneRequestId())) {
+        throw new IncompleteLocalAutomationPinTupleException(
+            "local Automation command "
+                + command.getCommandId()
+                + " must have a complete script pin tuple",
+            command.getCommandId());
+      }
       requireMatchingScriptPinTuple(command, instance);
     }
     return instance;
+  }
+
+  private java.util.Set<String> incompleteLocalAutomationCommandIds(
+      List<CommandSelection> selections, String commandId) {
+    java.util.Set<String> commandIds = new java.util.LinkedHashSet<>();
+    for (GameplayCommand command : localAutomationCommands(selections)) {
+      if (!hasCompleteScriptPinTuple(
+          command.getScriptPatchVersion(),
+          command.getScriptPinEpoch(),
+          command.getScriptPinControlPlaneRequestId())) {
+        commandIds.add(command.getCommandId());
+      }
+    }
+    commandIds.add(commandId);
+    return java.util.Set.copyOf(commandIds);
   }
 
   private void requireReplayLocalAutomationPinTuple(
@@ -1376,17 +1483,23 @@ final class TickStagingService {
       if (manifestVersion == LEGACY_SEALED_MANIFEST_VERSION) {
         return true;
       }
-      throw new IllegalStateException(
+      throw new IncompleteLocalAutomationPinTupleException(
           "Sealed local Automation replay is missing script pin evidence commandId="
               + sealedCommand.commandId()
               + " tickBatchId="
-              + tickBatchId);
+              + tickBatchId,
+          sealedCommand.commandId());
     }
-    requireCompleteScriptPinTuple(
+    if (!hasCompleteScriptPinTuple(
         sealedCommand.scriptPatchVersion(),
         sealedCommand.scriptPinEpoch(),
-        sealedCommand.scriptPinControlPlaneRequestId(),
-        "sealed local Automation command " + sealedCommand.commandId());
+        sealedCommand.scriptPinControlPlaneRequestId())) {
+      throw new IncompleteLocalAutomationPinTupleException(
+          "Sealed local Automation command "
+              + sealedCommand.commandId()
+              + " must have a complete script pin tuple",
+          sealedCommand.commandId());
+    }
     if (!GameplayCommandSourceCoherence.normalizeText(sealedCommand.scriptPatchVersion())
             .equals(GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion()))
         || !Objects.equals(sealedCommand.scriptPinEpoch(), command.getScriptPinEpoch())
@@ -1931,6 +2044,20 @@ final class TickStagingService {
     }
   }
 
+  private static final class IncompleteLocalAutomationPinTupleException
+      extends IllegalStateException {
+    private final String commandId;
+
+    private IncompleteLocalAutomationPinTupleException(String message, String commandId) {
+      super(message);
+      this.commandId = commandId;
+    }
+
+    private String commandId() {
+      return commandId;
+    }
+  }
+
   static final class ReplayReconciliationFailure extends IllegalStateException {
     private final ReplayResolution resolution;
 
@@ -1954,7 +2081,8 @@ final class TickStagingService {
   private record SealedReplayManifest(
       List<TickQueuedCommandEnvelope> entries,
       List<SealedReplayCommand> commands,
-      List<String> legacyLocalAutomationMissingPinEvidenceCommandIds) {}
+      List<String> legacyLocalAutomationMissingPinEvidenceCommandIds,
+      List<String> incompleteLocalAutomationPinEvidenceCommandIds) {}
 
   private record SealedReplayCommand(
       String commandId,

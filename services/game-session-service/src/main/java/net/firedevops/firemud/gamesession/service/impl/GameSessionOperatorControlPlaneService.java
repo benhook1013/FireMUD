@@ -497,7 +497,10 @@ final class GameSessionOperatorControlPlaneService {
     }
 
     Long runtimeVersionId = runtimeVersionId(instance);
-    if (runtimeVersionId == null || !runtimeVersionId.equals(published.getBaseVersionId())) {
+    if (runtimeVersionId == null) {
+      return SCRIPT_PATCH_AUTHORITY_UNAVAILABLE;
+    }
+    if (!runtimeVersionId.equals(published.getBaseVersionId())) {
       return SCRIPT_PATCH_BASE_VERSION_MISMATCH;
     }
     return null;

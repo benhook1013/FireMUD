@@ -1336,7 +1336,7 @@ class TickServiceImplTest {
               return null;
             })
         .when(tickBatchExecutionService)
-        .executeDurableEffects(1L, 2L);
+        .executeDurableEffects(eq(1L), eq(2L), any());
     List<String> savedBatchStatuses = new ArrayList<>();
     doAnswer(
             invocation -> {
@@ -1403,7 +1403,7 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
     verify(tickBatchExecutionService, never())
-        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class), any());
   }
 
   @Test
@@ -2020,7 +2020,7 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertFalse(
         replacement.getSelectedWorkManifestJson().contains("cmd-2"));
     verify(tickBatchExecutionService, never())
-        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class), any());
     verify(redisTemplate, never()).execute(eq(rollbackMarker), any(), any(Object[].class));
   }
 
@@ -2093,7 +2093,7 @@ class TickServiceImplTest {
             .orElseThrow();
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", freshStage.getStatus());
     verify(tickBatchExecutionService)
-        .markBatchAbandoned(eq(freshStage), any(), any(String.class), any(String.class));
+        .markBatchAbandoned(eq(freshStage), any(), any(String.class), any(String.class), any());
     verify(redisTemplate).execute(eq(rollbackMarker), any(), any(Object[].class));
   }
 

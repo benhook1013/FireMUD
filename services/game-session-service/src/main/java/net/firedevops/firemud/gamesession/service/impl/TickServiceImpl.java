@@ -466,7 +466,7 @@ public class TickServiceImpl implements TickService {
               }
               if (rollbackSucceeded && activeBatch != null && !activeBatchDurablyDrained) {
                 tickBatchExecutionService.markBatchAbandoned(
-                    activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage());
+                    activeBatch, activeBatchEntries, failureCode(ex), ex.getMessage(), lease);
               } else if (rollbackSucceeded && activeBatchDurablyDrained) {
                 logger.warn(
                     "Durable tick drain committed before post-commit failure; preserving batch state "

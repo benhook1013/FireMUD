@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -534,7 +535,8 @@ final class TickBatchExecutionService {
       TickBatch batch,
       List<TickQueuedCommandEnvelope> entries,
       String failureCode,
-      String failureMessage) {
+      String failureMessage,
+      TickQueueControlService.QueueLockLease tickLease) {
     Instant now = Instant.now();
     boolean wasDrained = "DRAINED".equals(batch.getStatus());
     if (isRemoteFollowupBatch(batch)) {
@@ -547,7 +549,7 @@ final class TickBatchExecutionService {
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
     if (wasDrained) {
-      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage, null);
+      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage, tickLease);
     } else {
       updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
       updateGameplayCommands(
@@ -608,10 +610,6 @@ final class TickBatchExecutionService {
         batch.getTickBatchId(), completedAt, failureCode, failureMessage);
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), failureCode, failureMessage);
-  }
-
-  void executeDurableEffects(Long tenantId, Long gameInstanceId) {
-    executeDurableEffects(tenantId, gameInstanceId, null);
   }
 
   void executeDurableEffects(
@@ -771,31 +769,19 @@ final class TickBatchExecutionService {
       Long gameInstanceId,
       List<GameplayCommand> commands,
       TickQueueControlService.QueueLockLease tickLease) {
+    Objects.requireNonNull(tickLease, "Active tick lease is required to requeue drained commands");
     for (GameplayCommand command : commands) {
       requireRestorableCommandId(command.getCommandId());
     }
     for (int index = commands.size() - 1; index >= 0; index--) {
       GameplayCommand command = commands.get(index);
-      if (tickLease != null) {
-        tickQueueControlService.requeueCommand(
-            tickLease,
-            tenantId,
-            gameInstanceId,
-            command.getCommandId(),
-            command.getCommandText(),
-            command.isRequiresSoloTick());
-      } else {
-        // Unit tests use a serializer-free mock template; production recovery always supplies
-        // the owning tick lease and therefore uses the atomic indexed Redis script above.
-        redisTemplate
-            .opsForList()
-            .leftPush(
-                tickQueueControlService.queueKey(tenantId, gameInstanceId),
-                tickQueueControlService.queuePayload(
-                    command.isRequiresSoloTick(),
-                    command.getCommandId(),
-                    command.getCommandText()));
-      }
+      tickQueueControlService.requeueCommand(
+          tickLease,
+          tenantId,
+          gameInstanceId,
+          command.getCommandId(),
+          command.getCommandText(),
+          command.isRequiresSoloTick());
     }
   }
 

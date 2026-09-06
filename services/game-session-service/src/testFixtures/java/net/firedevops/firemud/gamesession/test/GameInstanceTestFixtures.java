@@ -10,48 +10,8 @@ public final class GameInstanceTestFixtures {
 
   private GameInstanceTestFixtures() {}
 
-  public static void ensureGameInstancesTable(JdbcTemplate jdbc) {
-    jdbc.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_instances (
-          id BIGSERIAL PRIMARY KEY,
-          tenant_id BIGINT NOT NULL,
-          runtime_version VARCHAR(100) NOT NULL,
-          script_patch_version VARCHAR(100),
-          script_pin_epoch BIGINT,
-          game_template_id BIGINT,
-          launch_descriptor_id VARCHAR(64),
-          version_id BIGINT,
-          release_bundle_id BIGINT,
-          version_state_epoch BIGINT,
-          generation_config_revision VARCHAR(128),
-          remap_set_id VARCHAR(64),
-          script_patch_pinned_at TIMESTAMP NULL,
-          script_patch_pinned_by VARCHAR(200) NULL,
-          script_patch_pinned_reason VARCHAR(500) NULL,
-          script_patch_pinned_control_plane_request_id VARCHAR(128) NULL,
-          owner_account_id BIGINT NOT NULL,
-          status VARCHAR(20) NOT NULL
-        )
-        """);
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS game_template_id BIGINT");
-    jdbc.execute(
-        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS launch_descriptor_id VARCHAR(64)");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS version_id BIGINT");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS release_bundle_id BIGINT");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS version_state_epoch BIGINT");
-    jdbc.execute(
-        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS generation_config_revision VARCHAR(128)");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS remap_set_id VARCHAR(64)");
-    jdbc.execute("ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS script_pin_epoch BIGINT");
-    jdbc.execute(
-        "ALTER TABLE game_instances ADD COLUMN IF NOT EXISTS "
-            + "script_patch_pinned_control_plane_request_id VARCHAR(128)");
-  }
-
   public static long insertRunningGameInstance(
       JdbcTemplate jdbc, long tenantId, long ownerAccountId, long gameTemplateId) {
-    ensureGameInstancesTable(jdbc);
     return Optional.ofNullable(
             jdbc.queryForObject(
                 """

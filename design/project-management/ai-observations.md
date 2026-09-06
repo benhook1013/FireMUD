@@ -174,3 +174,8 @@ Entry format:
   - Context: pausing a bounded review-request automation was incorrectly propagated to the wider implementation lane, while incidental coordination messages reinforced an obsolete orientation pause after later authorization had already started execution.
   - Observation: stopping one automation does not pause its parent task, coordination input does not replace unfinished work, and an orientation-only pause expires when the human authorizes implementation. A progress report alone does not transfer execution ownership.
   - Expected pattern: before ending while authorized work remains, identify the concrete blocker and the actual continuation owner or durable wakeup. Otherwise continue the lane autonomously within its existing scope; do not add recurring monitors or acknowledgement loops to compensate for an unclear stop boundary.
+
+- `2026-09-06`: Redis logical identity checks must retain exact stored bytes
+  - Context: tick queue scripts accepted raw and JDK-serialized payloads as the same logical command, but removal paths discarded the indexed byte representation before removing it from list projections.
+  - Observation: parsing two encodings to one logical identity does not make Redis byte comparisons interchangeable; `LREM` can leave the indexed representation behind and a later enqueue can duplicate that command after the index is deleted.
+  - Expected pattern: retain the exact indexed bytes through validation, remove both caller and indexed encodings when they differ, and prove retry and terminal-removal behavior against mixed encodings with real Redis execution.
