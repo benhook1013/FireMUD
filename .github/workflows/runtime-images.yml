@@ -73,9 +73,11 @@ jobs:
 
       - name: Derive image tags
         id: meta
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            HEAD_SHA="$EVENT_HEAD_SHA"
             CHECKOUT_REF="${GITHUB_SHA}"
           else
             HEAD_SHA="${GITHUB_SHA}"

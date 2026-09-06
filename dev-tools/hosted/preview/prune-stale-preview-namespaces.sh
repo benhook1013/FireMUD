@@ -77,9 +77,19 @@ for row in "${namespace_rows[@]}"; do
   pr_metadata=""
   if pr_metadata="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-      --jq '[.state, .base.ref, .user.login] | @tsv' 2>/dev/null
+      --jq '
+        def labels_valid:
+          ((.labels? | type) == "array")
+          and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
+        [
+          .state,
+          .base.ref,
+          .user.login,
+          (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
+          (if labels_valid then "valid" else "invalid" end)
+        ] | @tsv' 2>/dev/null
   )"; then
-    IFS=$'\t' read -r pr_state pr_base_ref pr_author <<<"$pr_metadata"
+    IFS=$'\t' read -r pr_state pr_base_ref pr_author pr_paused labels_valid <<<"$pr_metadata"
   else
     echo "Refusing to prune ${namespace}: GitHub API metadata is unavailable for PR #${pr_number}" >&2
     exit 1
@@ -90,7 +100,16 @@ for row in "${namespace_rows[@]}"; do
       --operation retain \
       --state "$pr_state" \
       --base-ref "$pr_base_ref" \
-      --author "$pr_author"
+      --author "$pr_author" \
+      --labels-json "$(if [[ "$labels_valid" == valid ]]; then
+        if [[ "$pr_paused" == true ]]; then
+          printf '%s' '[{"name":"preview:paused"}]'
+        else
+          printf '%s' '[]'
+        fi
+      else
+        printf '%s' 'malformed'
+      fi)"
   )"
   eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
   reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"

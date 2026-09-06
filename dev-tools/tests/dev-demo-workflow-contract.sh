@@ -35,6 +35,14 @@ for required in \
     exit 1
   }
 done
+grep -Fq -- 'elif [[ "$identity_name" == dev-demo ]]; then' "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" || {
+  echo "dev-demo waiter must map the two-argument identity name to runtime namespace dev" >&2
+  exit 1
+}
+grep -Fq -- 'runtime_namespace=dev' "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" || {
+  echo "dev-demo waiter must use runtime namespace dev" >&2
+  exit 1
+}
 deploy_body="$(sed -n '/^  dev-demo-deploy:/,/^  dev-demo-bootstrap:/p' "$workflow")"
 if grep -Fq -- 'Create dev-demo smoke account' <<<"$deploy_body"; then
   echo "$workflow must not bootstrap the smoke account before Active identity request" >&2
@@ -45,6 +53,10 @@ grep -Fq -- 'Create dev-demo smoke account' <<<"$bootstrap_body" || {
   echo "$workflow must bootstrap the smoke account after Active identity request" >&2
   exit 1
 }
+if grep -Eq '^        if:' <<<"$bootstrap_body"; then
+  echo "$workflow must not repeat the already-job-guarded bootstrap step condition" >&2
+  exit 1
+fi
 grep -Fq -- 'pods/portforward' "$runtime_rbac" || {
   echo "$runtime_rbac must grant the dev-demo bootstrap port-forward subresource" >&2
   exit 1

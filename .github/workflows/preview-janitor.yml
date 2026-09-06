@@ -43,16 +43,10 @@ jobs:
           helm version
 
       - name: Write preview kubeconfig
-        env:
-          PREVIEW_RUNTIME_KUBECONFIG: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          KUBECONFIG_PATH="$RUNNER_TEMP/preview-runtime.kubeconfig"
-          test -n "$PREVIEW_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$PREVIEW_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
-          chmod 600 "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
       - name: Verify preview cluster access
         run: |

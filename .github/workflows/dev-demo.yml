@@ -104,8 +104,6 @@ jobs:
     environment: dev-demo-cluster
     permissions:
       contents: read
-    env:
-      HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -116,14 +114,10 @@ jobs:
         with:
           version: v1.33.4
       - name: Write requester kubeconfig
-        run: |
-          set -euo pipefail
-          umask 077
-          path="$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
-          test -n "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
-          printf '%s\n' "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" > "$path"
-          chmod 600 "$path"
-          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
       - name: Apply canonical Active request
         run: |
           cat <<'EOF' | kubectl -n firemud-system apply -f -
@@ -169,16 +163,10 @@ jobs:
           helm version
 
       - name: Write dev-demo runtime kubeconfig
-        env:
-          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          KUBECONFIG_PATH="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
-          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
-          chmod 600 "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Verify cluster access
         id: cluster-access
@@ -339,18 +327,11 @@ jobs:
           version: v1.33.4
 
       - name: Write dev-demo runtime kubeconfig
-        env:
-          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          path="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
-          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$path"
-          chmod 600 "$path"
-          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
       - name: Export demo smoke defaults
-        if: ${{ needs.dev-demo-identity-request.result == 'success' }}
         run: |
           source ./dev-tools/smoke/demo-smoke-defaults.sh
           {
@@ -361,7 +342,6 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Create dev-demo smoke account
-        if: ${{ needs.dev-demo-identity-request.result == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
@@ -716,16 +696,10 @@ jobs:
           version: v1.33.4
 
       - name: Write dev-demo runtime kubeconfig
-        env:
-          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          path="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
-          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$path"
-          chmod 600 "$path"
-          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Wait for exact controller identity projection
         run: bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
@@ -839,16 +813,10 @@ jobs:
           helm version
 
       - name: Write dev-demo runtime kubeconfig
-        env:
-          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          KUBECONFIG_PATH="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
-          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
-          chmod 600 "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Delete dev-demo namespace and release
         run: |
@@ -874,8 +842,6 @@ jobs:
     environment: dev-demo-cluster
     permissions:
       contents: read
-    env:
-      HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -886,14 +852,10 @@ jobs:
         with:
           version: v1.33.4
       - name: Write requester kubeconfig
-        run: |
-          set -euo pipefail
-          umask 077
-          path="$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
-          test -n "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
-          printf '%s\n' "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" > "$path"
-          chmod 600 "$path"
-          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
       - name: Apply canonical Retired request
         run: |
           cat <<'EOF' | kubectl -n firemud-system apply -f -

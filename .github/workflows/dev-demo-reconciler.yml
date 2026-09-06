@@ -29,16 +29,10 @@ jobs:
           version: v1.33.4
 
       - name: Write preview kubeconfig
-        env:
-          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
-        run: |
-          set -euo pipefail
-          umask 077
-          KUBECONFIG_PATH="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
-          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
-          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
-          chmod 600 "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Verify cluster access
         run: |

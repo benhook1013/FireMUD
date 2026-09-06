@@ -15,6 +15,10 @@ helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   --set previewStack.certificateIdentity.mode=standalone \
   --namespace pr-42 >"$TMP_DIR/rendered-standalone.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string previewStack.certificateIdentity.mode= \
+  --namespace pr-42 >"$TMP_DIR/rendered-default.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
@@ -38,7 +42,15 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-spring-profile.yaml" --namespace pr-42 >"$TMP_DIR/rendered-spring-profile.yaml"
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" STANDALONE_RENDERED="$TMP_DIR/rendered-standalone.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=unsupported \
+  --namespace pr-42 >/dev/null 2>&1; then
+  echo "unsupported certificate identity mode unexpectedly rendered" >&2
+  exit 1
+fi
+
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" STANDALONE_RENDERED="$TMP_DIR/rendered-standalone.yaml" DEFAULT_RENDERED="$TMP_DIR/rendered-default.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -60,6 +72,14 @@ assert all("nodePort" not in port for port in hosted_service["spec"]["ports"]), 
 documents = list(yaml.safe_load_all(Path(os.environ["STANDALONE_RENDERED"]).read_text(encoding="utf-8")))
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
+
+default_documents = list(yaml.safe_load_all(Path(os.environ["DEFAULT_RENDERED"]).read_text(encoding="utf-8")))
+default_certificate = next(d for d in default_documents if d.get("kind") == "Certificate")
+default_ingress = next(d for d in default_documents if d.get("kind") == "Ingress")
+assert default_certificate["metadata"]["name"] == "preview-release-telnet-tls"
+assert default_ingress["metadata"]["annotations"]["cert-manager.io/cluster-issuer"] == "letsencrypt-prod"
+default_service = next(d for d in default_documents if d.get("kind") == "Service" and d["metadata"]["name"] == "tcp-proxy-service")
+assert any("nodePort" in port for port in default_service["spec"]["ports"]), "standalone default dropped the allocated NodePort"
 
 deployment = next(d for d in documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 container = deployment["spec"]["template"]["spec"]["containers"][0]

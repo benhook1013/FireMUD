@@ -340,6 +340,13 @@ require_contains "$image_wait_path" 'if ! workflow_payload="$('
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
 assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event.pull_request.number }}'
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+assert_job_contains preview.yml preview-deploy 'group: preview-render-${{ github.event.pull_request.number }}'
+assert_job_contains preview.yml preview-deploy 'cancel-in-progress: true'
+require_contains "$preview_path" 'retention-days: 7'
+if grep -Eq '^  preview-destroy:' "$preview_path"; then
+  echo "PR-controlled preview workflow must not keep a no-op closed-preview cleanup job" >&2
+  exit 1
+fi
 require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
 require_contains "$preview_janitor_path" 'cancel-in-progress: false'
 require_contains "$preview_janitor_path" 'queue: max'
@@ -352,6 +359,8 @@ assert_job_excludes preview.yml preview-deploy 'secrets.'
 require_contains "$preview_path" 'validate-preview-artifact.py'
 require_contains "$preview_path" 'sanitize "$rendered" "$sanitized"'
 require_contains "$preview_path" 'actions/upload-artifact@'
+require_contains "$preview_path" 'PR_LABELS_JSON:'
+require_contains "$preview_path" '--labels-json "$PR_LABELS_JSON"'
 if grep -Eq 'PREVIEW_(RUNTIME|KUBECONFIG)|HOSTED_IDENTITY_REQUESTER_KUBECONFIG|ensure-grpc-tls-secret|delete-hosted-namespace' "$preview_path"; then
   echo "PR-controlled preview render must not receive hosted credentials or lifecycle helpers" >&2
   exit 1
@@ -389,6 +398,17 @@ require_contains "$hosted_identity_workflow_path" 'desiredState: Active'
 require_contains "$hosted_identity_workflow_path" 'desiredState: Retired'
 require_contains "$hosted_identity_workflow_path" 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG'
 require_contains "$hosted_identity_workflow_path" 'PREVIEW_RUNTIME_KUBECONFIG'
+assert_job_excludes hosted-identity-request.yml deploy-runtime 'pull-requests: write'
+assert_job_excludes hosted-identity-request.yml deploy-runtime 'issues: write'
+assert_job_contains hosted-identity-request.yml verify-runtime 'pull-requests: write'
+assert_job_contains hosted-identity-request.yml verify-runtime 'issues: write'
+require_contains "$hosted_identity_workflow_path" 'gh api --paginate --slurp'
+require_contains "$hosted_identity_workflow_path" 'preview:paused'
+require_contains "$hosted_identity_workflow_path" 'labels_valid='
+if grep -Fq 'gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs' "$hosted_identity_workflow_path"; then
+  echo "trusted hosted workflow must select render runs without the SIGPIPE-prone gh-api/head pipeline" >&2
+  exit 1
+fi
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.observedGeneration'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.ingress.revision'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.telnet.revision'
@@ -413,8 +433,16 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- TCP: pending'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
+require_contains "$preview_reconciler_path" 'preview:paused'
+require_contains "$preview_reconciler_path" 'malformed label metadata'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$preview_reconciler_path" '--branch "${GITHUB_DEFAULT_BRANCH:-main}"'
+require_contains "$preview_reconciler_path" 'default_branch='
+require_contains "$preview_reconciler_path" '--branch "$default_branch"'
+require_contains "$preview_reconciler_path" '-f ref="$default_branch"'
+if grep -Fq 'GITHUB_DEFAULT_BRANCH' "$preview_reconciler_path"; then
+  echo "Preview reconciler must not use undefined GITHUB_DEFAULT_BRANCH" >&2
+  exit 1
+fi
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"

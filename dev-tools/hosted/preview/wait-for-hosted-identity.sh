@@ -8,7 +8,13 @@ fi
 
 identity_name="$1"
 expected_head_sha="$2"
-runtime_namespace="${3:-$identity_name}"
+if [[ $# -ge 3 ]]; then
+  runtime_namespace="$3"
+elif [[ "$identity_name" == dev-demo ]]; then
+  runtime_namespace=dev
+else
+  runtime_namespace="$identity_name"
+fi
 timeout_seconds="${4:-900}"
 
 if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]*)$ ]]; then

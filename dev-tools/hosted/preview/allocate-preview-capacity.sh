@@ -50,7 +50,17 @@ emit_output() {
 get_pr_state() {
   local pr_number="$1"
   gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-    --jq '[.state, .head.sha, (.labels | map(.name) | any(. == "preview:priority"))] | @tsv'
+    --jq '
+      def labels_valid:
+        ((.labels? | type) == "array")
+        and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
+      [
+        .state,
+        .head.sha,
+        (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
+        (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
+        (if labels_valid then "valid" else "invalid" end)
+      ] | @tsv'
 }
 
 find_unsatisfied_priority_pr() {
@@ -63,27 +73,54 @@ find_unsatisfied_priority_pr() {
   local pr_state
   local eligibility_output
   local eligible
+  local is_priority
+  local is_paused
+  local labels_valid
   local namespace
   local namespace_owner
   local namespace_head
 
   if ! priority_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-    --jq '.[] | select(.labels | map(.name) | any(. == "preview:priority")) | [.number, .head.sha, .head.repo.full_name, .user.login, .base.ref, .state] | @tsv')"; then
+    --jq '
+      def labels_valid:
+        ((.labels? | type) == "array")
+        and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
+      .[]
+      | [
+          .number,
+          .head.sha,
+          .head.repo.full_name,
+          .user.login,
+          .base.ref,
+          .state,
+          (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
+          (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
+          (if labels_valid then "valid" else "invalid" end)
+        ]
+      | @tsv')"; then
     echo "Unable to query current priority pull requests" >&2
     return 1
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state; do
+  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid; do
     if [[ -z "$pr_number" ]]; then
       continue
     fi
     if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
       continue
     fi
+    if [[ "$labels_valid" != valid ]]; then
+      echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
+      return 1
+    fi
+    if [[ "$is_priority" != true || "$is_paused" == true ]]; then
+      continue
+    fi
     if ! eligibility_output="$(python3 "$eligibility_script" \
       --operation deploy \
       --state "$pr_state" \
       --base-ref "$pr_base_ref" \
-      --author "$pr_author")"; then
+      --author "$pr_author" \
+      --labels-json '[]')"; then
       echo "Unable to evaluate preview eligibility for priority PR #${pr_number}" >&2
       return 1
     fi
@@ -144,7 +181,15 @@ emit_output reclaimed_pr ""
 echo "Active preview namespaces excluding ${target_namespace}: ${active_count}"
 echo "Configured preview capacity limit: ${max_active}"
 target_metadata="$(get_pr_state "$target_pr_number")"
-IFS=$'\t' read -r target_state current_target_head target_is_priority <<<"$target_metadata"
+IFS=$'\t' read -r target_state current_target_head target_is_priority target_is_paused target_labels_valid <<<"$target_metadata"
+if [[ "$target_labels_valid" != valid ]]; then
+  echo "Refusing capacity action for target PR #${target_pr_number}: malformed label metadata" >&2
+  exit 1
+fi
+if [[ "$target_is_paused" == true ]]; then
+  echo "Refusing capacity action for paused target PR #${target_pr_number}" >&2
+  exit 1
+fi
 if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" ]]; then
   echo "Refusing capacity action for stale target PR #${target_pr_number}" >&2
   exit 1
@@ -186,8 +231,8 @@ for row in "${sorted_candidates[@]}"; do
     echo "Skipping ${namespace}: PR #${pr_number} metadata is unavailable"
     continue
   fi
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority <<<"$candidate_metadata"
-  if [[ "$candidate_state" != "open" || "$candidate_is_priority" == "true" ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_is_paused candidate_labels_valid <<<"$candidate_metadata"
+  if [[ "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" || "$candidate_is_paused" == "true" ]]; then
     continue
   fi
   selected="$row"
@@ -277,8 +322,8 @@ fi
 # deploy, proof, or cleanup from racing this destructive boundary.
 revalidation_failure=""
 if target_metadata="$(get_pr_state "$target_pr_number")"; then
-  IFS=$'\t' read -r target_state current_target_head target_is_priority <<<"$target_metadata"
-  if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" ]]; then
+  IFS=$'\t' read -r target_state current_target_head target_is_priority target_is_paused target_labels_valid <<<"$target_metadata"
+  if [[ "$target_labels_valid" != valid || "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" || "$target_is_paused" == "true" ]]; then
     revalidation_failure="target PR #${target_pr_number} is no longer the current priority target"
   fi
 else
@@ -286,8 +331,8 @@ else
 fi
 
 if candidate_metadata="$(get_pr_state "$selected_pr")"; then
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority <<<"$candidate_metadata"
-  if [[ -z "$revalidation_failure" && ( "$candidate_state" != "open" || "$candidate_is_priority" == "true" ) ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_is_paused candidate_labels_valid <<<"$candidate_metadata"
+  if [[ -z "$revalidation_failure" && ( "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" || "$candidate_is_paused" == "true" ) ]]; then
     revalidation_failure="candidate PR #${selected_pr} is no longer an ordinary open PR"
   fi
 elif [[ -z "$revalidation_failure" ]]; then
