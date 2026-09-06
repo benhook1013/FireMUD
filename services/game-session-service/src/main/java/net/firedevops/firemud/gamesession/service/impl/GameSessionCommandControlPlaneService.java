@@ -203,6 +203,10 @@ public final class GameSessionCommandControlPlaneService {
                     gameplayCommandRepository,
                     runtimeRegionStatusRepository,
                     gameplayAdmissionPointerAuthorityService));
+    if (durableAdmission == null) {
+      throw new IllegalStateException(
+          "Gameplay command admission transaction returned no admission result");
+    }
     AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
         AutomationGameplayCommandAdmissionSupport.materializeAcceptedCommand(
             durableAdmission, admissionRequest, gameplayCommandRepository, tickService);

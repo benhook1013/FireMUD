@@ -66,6 +66,18 @@ class AutomationGameplayCommandAdmissionSupportTest {
   private GameplayAdmissionPointerAuthorityService pointerAuthority;
   private DurableRemoteFollowupExecutionService service;
 
+  @Test
+  void durableAdmissionRequiresCommandForInsertedOrRetryableRows() {
+    assertThrows(
+        NullPointerException.class,
+        () -> new AutomationGameplayCommandAdmissionSupport.DurableAdmission(null, null, true));
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new AutomationGameplayCommandAdmissionSupport.DurableAdmission(
+                null, null, false, true));
+  }
+
   @BeforeEach
   void setupRemoteFollowupFixture() {
     remoteFollowupRepository = mock(RemoteFollowupRepository.class);

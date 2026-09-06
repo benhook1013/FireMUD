@@ -54,6 +54,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       "world fail-prepared authority unavailable";
   private static final String WORLD_PREPARATION_AUTHORITY_UNAVAILABLE =
       "world preparation authority unavailable";
+  private static final String WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE =
+      "world lifecycle authority unavailable";
   private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
       "world termination authority unavailable";
   private static final String WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL =
@@ -813,7 +815,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private WorldInstanceLifecycleSnapshot readWorldInstanceLifecycle(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE);
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE);
     }
     final GetWorldInstanceLifecycleResponse lifecycleResponse;
     try {
@@ -821,7 +823,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           worldManagementClient.getWorldInstanceLifecycle(
               runningState.tenantId(), runningState.id());
     } catch (RuntimeException ex) {
-      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE, ex);
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE, ex);
     }
     if (lifecycleResponse == null) {
       throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);

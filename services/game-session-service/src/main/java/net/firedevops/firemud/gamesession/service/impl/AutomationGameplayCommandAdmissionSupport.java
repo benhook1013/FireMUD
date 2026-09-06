@@ -290,6 +290,13 @@ final class AutomationGameplayCommandAdmissionSupport {
 
   record DurableAdmission(
       AdmissionResult result, GameplayCommand command, boolean inserted, boolean retryExisting) {
+    DurableAdmission {
+      if ((inserted || retryExisting) && command == null) {
+        throw new NullPointerException(
+            "Gameplay command is required for inserted or retryable durable admission");
+      }
+    }
+
     DurableAdmission(AdmissionResult result, GameplayCommand command, boolean inserted) {
       this(result, command, inserted, false);
     }

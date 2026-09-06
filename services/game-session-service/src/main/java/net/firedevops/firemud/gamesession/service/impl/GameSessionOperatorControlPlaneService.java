@@ -80,10 +80,7 @@ final class GameSessionOperatorControlPlaneService {
   GetPinnedScriptPatchVersionResponse getPinnedScriptPatchVersion(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
-    ScriptPinTupleCoherence.requireCoherent(
-        instance.getScriptPatchVersion(),
-        instance.getScriptPinEpoch(),
-        instance.getScriptPatchPinnedControlPlaneRequestId());
+    requireCoherentPinForRead(instance);
     return GetPinnedScriptPatchVersionResponse.newBuilder()
         .setPinnedScriptPatchVersion(
             instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
@@ -103,10 +100,7 @@ final class GameSessionOperatorControlPlaneService {
   GetGameSessionPinConvergenceResponse getGameSessionPinConvergence(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
-    ScriptPinTupleCoherence.requireCoherent(
-        instance.getScriptPatchVersion(),
-        instance.getScriptPinEpoch(),
-        instance.getScriptPatchPinnedControlPlaneRequestId());
+    requireCoherentPinForRead(instance);
     return GetGameSessionPinConvergenceResponse.newBuilder()
         .setTenantId(Long.toString(instance.getTenantId()))
         .setGameInstanceId(Long.toString(instance.getId()))
@@ -537,6 +531,20 @@ final class GameSessionOperatorControlPlaneService {
       throw new IllegalArgumentException("tenant_id does not own game_instance_id");
     }
     return instance;
+  }
+
+  private void requireCoherentPinForRead(GameInstance instance) {
+    try {
+      ScriptPinTupleCoherence.requireCoherent(
+          instance.getScriptPatchVersion(),
+          instance.getScriptPinEpoch(),
+          instance.getScriptPatchPinnedControlPlaneRequestId());
+    } catch (IllegalArgumentException ex) {
+      throw new GameSessionRuntimeControlPlaneReadService.RuntimeStateException(
+          "SCRIPT_PIN_STATE_INVALID",
+          "patch, positive epoch, and request id must be present together",
+          ex);
+    }
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(

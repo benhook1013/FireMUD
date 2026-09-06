@@ -973,6 +973,20 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionUsesLifecycleAuthorityConstantWhenLifecycleReadTransportFails() {
+    persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenThrow(new IllegalStateException("lifecycle read timed out"));
+
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("world lifecycle authority unavailable", error.getMessage());
+    assertEquals("lifecycle read timed out", error.getCause().getMessage());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+  }
+
+  @Test
   void stopSessionLeavesStoppingStateWhenWorldTerminationIsInProgress() {
     persistExisting(10L, 1L, "v1", null, 42L, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))

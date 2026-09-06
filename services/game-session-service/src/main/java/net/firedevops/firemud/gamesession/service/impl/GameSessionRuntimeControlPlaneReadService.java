@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import java.util.List;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
@@ -27,10 +28,13 @@ import net.firedevops.firemud.gamesession.v1.ScriptPatchPublicationLink;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
 @Service
 final class GameSessionRuntimeControlPlaneReadService {
+  private static final Logger logger =
+      LoggingUtil.getLogger(GameSessionRuntimeControlPlaneReadService.class);
   private static final List<String> ACTIVE_GAMEPLAY_COMMAND_OUTCOMES =
       List.of("ACCEPTED", "STAGED", "RETRY_QUEUED", "DRAINED");
 
@@ -180,11 +184,15 @@ final class GameSessionRuntimeControlPlaneReadService {
       throw new RuntimeStateException("WORLD_AUTHORITY_MALFORMED", "World response was null");
     }
     if (response.hasError()) {
-      String errorCode =
-          response.getError().getCode().isBlank()
-              ? "WORLD_AUTHORITY_UNAVAILABLE"
-              : response.getError().getCode();
-      throw new RuntimeStateException(errorCode, response.getError().getMessage());
+      String upstreamCode = response.getError().getCode();
+      String upstreamMessage = response.getError().getMessage();
+      logger.warn(
+          "World lifecycle read failed for tenantId={} gameInstanceId={} upstreamCode={} upstreamMessage={}",
+          instance.getTenantId(),
+          instance.getId(),
+          upstreamCode,
+          upstreamMessage);
+      throw mapWorldLifecycleError(upstreamCode);
     }
     if (!response.hasWorldInstance()) {
       throw new RuntimeStateException(
@@ -213,6 +221,20 @@ final class GameSessionRuntimeControlPlaneReadService {
         != WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
       throw new RuntimeStateException("WORLD_INSTANCE_LIFECYCLE_INVALID", "instance is not ACTIVE");
     }
+  }
+
+  private RuntimeStateException mapWorldLifecycleError(String upstreamCode) {
+    return switch (upstreamCode == null ? "" : upstreamCode) {
+      case "NOT_FOUND",
+          "WORLD_INSTANCE_NOT_FOUND",
+          "WORLD_INSTANCE_LIFECYCLE_STALE",
+          "INVALID_ARGUMENT" ->
+          new RuntimeStateException(
+              "WORLD_INSTANCE_LIFECYCLE_INVALID", "world instance lifecycle is invalid");
+      default ->
+          new RuntimeStateException(
+              "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable");
+    };
   }
 
   private long parseExternalId(String value, String fieldName) {

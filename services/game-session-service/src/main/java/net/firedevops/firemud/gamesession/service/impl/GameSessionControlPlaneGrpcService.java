@@ -681,6 +681,19 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (GameSessionRuntimeControlPlaneReadService.RuntimeStateException ex) {
+      GetPinnedScriptPatchVersionResponse response =
+          GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetPinnedScriptPatchVersion",
+                      ex.code(),
+                      ex.detailMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
@@ -715,6 +728,19 @@ public final class GameSessionControlPlaneGrpcService
       GetGameSessionPinConvergenceResponse response =
           GetGameSessionPinConvergenceResponse.newBuilder()
               .setError(authorizationError("GetGameSessionPinConvergence", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameSessionRuntimeControlPlaneReadService.RuntimeStateException ex) {
+      GetGameSessionPinConvergenceResponse response =
+          GetGameSessionPinConvergenceResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetGameSessionPinConvergence",
+                      ex.code(),
+                      ex.detailMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

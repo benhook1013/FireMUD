@@ -405,6 +405,39 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getPinnedScriptPatchVersionMapsMalformedPersistedPinState() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.getPinnedScriptPatchVersion(
+        GetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("SCRIPT_PIN_STATE_INVALID", responseRef.get().getError().getCode());
+    assertEquals(
+        "patch, positive epoch, and request id must be present together",
+        responseRef.get().getError().getMessage());
+  }
+
+  @Test
   void getGameInstanceRuntimeStateReturnsCanonicalVersionAndPinMetadata() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
@@ -1023,6 +1056,39 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertNotNull(responseRef.get());
     assertFalse(responseRef.get().hasError());
     assertEquals(false, responseRef.get().getIsStale());
+  }
+
+  @Test
+  void getGameSessionPinConvergenceMapsMalformedPersistedPinState() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetGameSessionPinConvergenceResponse> responseRef = new AtomicReference<>();
+    service.getGameSessionPinConvergence(
+        GetGameSessionPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameSessionPinConvergenceResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("SCRIPT_PIN_STATE_INVALID", responseRef.get().getError().getCode());
+    assertEquals(
+        "patch, positive epoch, and request id must be present together",
+        responseRef.get().getError().getMessage());
   }
 
   @Test

@@ -84,8 +84,9 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
     assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
-    assertEquals("diagnostic only", error.detailMessage());
-    assertEquals("WORLD_AUTHORITY_UNAVAILABLE: diagnostic only", error.getMessage());
+    assertEquals("world lifecycle authority unavailable", error.detailMessage());
+    assertEquals(
+        "WORLD_AUTHORITY_UNAVAILABLE: world lifecycle authority unavailable", error.getMessage());
   }
 
   @Test
@@ -108,8 +109,60 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
     assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
-    assertEquals("world unavailable", error.detailMessage());
-    assertEquals("WORLD_AUTHORITY_UNAVAILABLE: world unavailable", error.getMessage());
+    assertEquals("world lifecycle authority unavailable", error.detailMessage());
+    assertEquals(
+        "WORLD_AUTHORITY_UNAVAILABLE: world lifecycle authority unavailable", error.getMessage());
+  }
+
+  @Test
+  void runtimeReadMapsKnownWorldLifecycleErrorsToStableLocalFailure() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("WORLD_INSTANCE_NOT_FOUND")
+                        .setMessage("internal world row details")
+                        .build())
+                .build());
+    GameSessionRuntimeControlPlaneReadService service = service(world);
+
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
+        assertThrows(
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", error.code());
+    assertEquals("world instance lifecycle is invalid", error.detailMessage());
+    assertEquals(
+        "WORLD_INSTANCE_LIFECYCLE_INVALID: world instance lifecycle is invalid",
+        error.getMessage());
+  }
+
+  @Test
+  void runtimeReadMapsUnknownWorldLifecycleErrorsToUnavailableWithoutLeakingDetails() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("UPSTREAM_PRIVATE_CODE")
+                        .setMessage("private upstream diagnostic")
+                        .build())
+                .build());
+    GameSessionRuntimeControlPlaneReadService service = service(world);
+
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
+        assertThrows(
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals("world lifecycle authority unavailable", error.detailMessage());
+    assertEquals(
+        "WORLD_AUTHORITY_UNAVAILABLE: world lifecycle authority unavailable", error.getMessage());
   }
 
   @Test

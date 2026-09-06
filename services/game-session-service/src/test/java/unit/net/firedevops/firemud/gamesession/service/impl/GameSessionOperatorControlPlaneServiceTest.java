@@ -694,6 +694,36 @@ class GameSessionOperatorControlPlaneServiceTest {
   }
 
   @Test
+  void pinReadMapsIncoherentPersistedTupleToStableRuntimeStateFailure() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setScriptPatchVersion("patch-old");
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    assertThatExceptionOfType(GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class)
+        .isThrownBy(() -> service(repository, tickService).getPinnedScriptPatchVersion(1L, 7L))
+        .withMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                + " together");
+  }
+
+  @Test
+  void convergenceReadMapsIncoherentPersistedTupleToStableRuntimeStateFailure() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    GameInstance instance = validUnpinnedInstance();
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
+    when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    assertThatExceptionOfType(GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class)
+        .isThrownBy(() -> service(repository, tickService).getGameSessionPinConvergence(1L, 7L))
+        .withMessage(
+            "SCRIPT_PIN_STATE_INVALID: patch, positive epoch, and request id must be present"
+                + " together");
+  }
+
+  @Test
   void rejectsBlankScriptPatchPinTargetBeforeRepositoryReadOrMutation() {
     GameInstanceRepository gameInstanceRepository = mock(GameInstanceRepository.class);
     TickService tickService = mock(TickService.class);
