@@ -29,9 +29,9 @@ The current hosted cluster reliably supports roughly one full-stack preview. Kee
 
 ## Decision
 
-PR previews remain disposable and reproducible. Eligibility is a prerequisite for allocation, not evidence that allocation succeeded. Each successfully allocated preview for an eligible new PR head receives a clean namespace and deterministic seed state; state persists only within that deployed head and is not backed up. The namespace is deleted when the PR closes, the preview is explicitly released, or its bounded renewable lease expires. Expiry is visible to the PR and never silently evicts an actively leased review session.
+PR previews remain disposable and reproducible. Eligibility is a prerequisite for allocation, not evidence that allocation succeeded. Each successfully allocated preview for an eligible new PR head receives a clean namespace and deterministic seed state; state persists only within that deployed head and is not backed up. The namespace is deleted when the PR closes, the preview is explicitly released, or its bounded renewable lease expires. Expiry is visible to the PR and never silently evicts an actively leased review session. The exact `preview:priority` label is the bounded operator-visible exception: while capacity is full, a currently labelled request may reclaim the oldest ordinary allocation but never another currently labelled allocation. Reclaim waits in the durable bounded non-cancelling lifecycle queue for any active deploy/proof lifecycle to finish, revalidates both label states immediately before deletion, and makes the displaced status and prior result visible on its pull request. Priority is an allocation decision at that serialized boundary, not a guarantee about GitHub's raw job-scheduling order.
 
-Eligibility may be explicit/on-demand when capacity requires it. A request that passes eligibility but is not allocated, including because capacity is exhausted, reports `preview_unavailable`, never success. A slice that claims hosted preview proof must retain a successful result bound to its current head SHA.
+Eligible same-repository pull requests request allocation automatically; ordinary allocation remains first-come. A request that passes eligibility but is not allocated, including because capacity is exhausted or every allocation is priority-protected, reports `preview_unavailable`, never success. A slice that claims hosted preview proof must retain a successful result bound to its current head SHA.
 
 One transport-neutral semantic assertion set describes the shared player outcome:
 
@@ -59,7 +59,7 @@ Persistent creator playtests, upgrade/state-preservation proof, and long investi
 - Both supported public transports receive real ingress proof; neither stands in for the other.
 - Shared semantic assertions reduce duplicated gameplay expectations while adapters retain path-specific checks.
 - Browser automation and static-frontend deployment add proof work, but only short checks after the dominant full-stack deployment cost.
-- Lease management makes scarce capacity explicit and may require reviewers to renew or request a preview.
+- Lease management and the visible priority label make scarce capacity explicit; ordinary previews may be displaced, while priority-labelled previews wait rather than preempting each other.
 - Reviewer-created state is lost on redeploy; retained playtests use another environment.
 
 ## Alternatives Considered
@@ -78,7 +78,7 @@ This is fast and useful for diagnosis but bypasses the TCP edge or deployed brow
 
 ## Implementation and Proof Obligations
 
-Implement the static frontend preview workload and route, shared semantic assertion model, Telnet adapter, bounded Playwright browser journey, head-SHA evidence binding, lease/eligibility handling, and visible unavailable/expired outcomes. Prove clean redeploy, pod restart within a head, lease renewal/expiry, active-lease protection, capacity exhaustion, PR closure cleanup, namespace trust isolation, both public paths, browser reconnect/logout/non-reuse, and diagnostic backend smoke independence.
+Implement the static frontend preview workload and route, shared semantic assertion model, Telnet adapter, bounded Playwright browser journey, head-SHA evidence binding, lease/eligibility handling, and visible unavailable/expired/reclaimed outcomes. Prove clean redeploy, pod restart within a head, lease renewal/expiry, active-lifecycle protection, ordinary oldest-first priority reclaim, all-priority refusal, capacity exhaustion, PR closure cleanup, namespace trust isolation, both public paths, browser reconnect/logout/non-reuse, and diagnostic backend smoke independence.
 
 ## Reversibility and Revisit Triggers
 

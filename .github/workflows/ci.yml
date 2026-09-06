@@ -265,6 +265,7 @@ jobs:
           bash ./dev-tools/tests/smoke-transport-contract.sh
           bash ./dev-tools/tests/reset-service-db-contract.sh
           bash ./dev-tools/tests/preview-eligibility-contract.sh
+          bash ./dev-tools/tests/preview-priority-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/preflight-contract.sh
           bash ./dev-tools/tests/verify-backups-velero-contract.sh

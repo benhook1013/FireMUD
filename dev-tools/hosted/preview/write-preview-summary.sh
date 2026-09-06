@@ -60,6 +60,19 @@ EOF
 - TCP: \`telnet ${hostname} ${telnet_port}\`
 EOF
     ;;
+  reclaimed)
+    cat <<EOF
+## ⚠️ Preview Slot Reassigned
+
+- PR: #${pr_number}
+- Current hosted environment: unavailable
+- Reassigned to priority PR: #${failure_stage}
+- Previous head SHA: \`${head_sha:-unavailable}\`
+- Previous image tag: \`${image_tag:-unavailable}\`
+- Previous host: https://${hostname}
+- Historical proof: retained below when a prior workflow summary was available
+EOF
+    ;;
   cleanup)
     cat <<EOF
 ## ⏳ Preview Cleanup In Progress
