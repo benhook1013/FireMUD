@@ -146,13 +146,15 @@ sorted_preview_comment_rows="$(sort_preview_comment_rows "$preview_comment_rows"
 comment_id="$(awk -F '\t' 'NF >= 2 { latest = $2 } END { print latest }' <<< "$sorted_preview_comment_rows")"
 
 if [[ -n "$comment_id" ]]; then
+  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -F "body=@${body_file}" >/dev/null
   while IFS=$'\t' read -r _ duplicate_comment_id; do
     if [[ -z "$duplicate_comment_id" || "$duplicate_comment_id" == "$comment_id" ]]; then
       continue
     fi
-    gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${duplicate_comment_id}" >/dev/null
+    if ! gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${duplicate_comment_id}" >/dev/null; then
+      printf 'warning: failed to delete duplicate preview comment %s\n' "$duplicate_comment_id" >&2
+    fi
   done <<< "$sorted_preview_comment_rows"
-  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -F "body=@${body_file}" >/dev/null
 else
   gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${pr_number}/comments" -F "body=@${body_file}" >/dev/null
 fi

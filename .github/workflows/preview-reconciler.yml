@@ -140,7 +140,4 @@ jobs:
               -f "inputs[head_sha]=${head_sha}" \
               -f 'inputs[preview_domain]=preview.firedevops.net'
             dispatch_sent=true
-            if [[ "$namespace_exists" != "true" ]]; then
-              available_slots=$((available_slots - 1))
-            fi
           done

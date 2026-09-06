@@ -347,6 +347,7 @@ for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
   assert_job_contains preview.yml "$job" 'cancel-in-progress: false'
   assert_job_contains preview.yml "$job" 'queue: max'
+  assert_job_contains preview.yml "$job" 'persist-credentials: false'
 done
 require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
 require_contains "$preview_janitor_path" 'cancel-in-progress: false'
@@ -436,6 +437,10 @@ require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
+if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
+  echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2
+  exit 1
+fi
 if grep -Fq 'displayTitle == "PR Preview Environment"' "$preview_reconciler_path"; then
   echo "Preview reconciler must not identify PR-triggered runs by display title" >&2
   exit 1

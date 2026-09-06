@@ -149,11 +149,6 @@ async function publishPreviewComment({
     return;
   }
 
-  for (const comment of previewComments) {
-    if (comment.id === existing?.id) continue;
-    await deleteCommentIfPresent(github, context, comment);
-  }
-
   if (existing) {
     await github.rest.issues.updateComment({
       ...context.repo,
@@ -166,6 +161,11 @@ async function publishPreviewComment({
       issue_number: prNumber,
       body,
     });
+  }
+
+  for (const comment of previewComments) {
+    if (comment.id === existing?.id) continue;
+    await deleteCommentIfPresent(github, context, comment);
   }
 }
 

@@ -111,6 +111,9 @@ case "$resource" in
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
+      if [[ "${FAKE_COMMENT_DELETE_FAIL:-false}" == "true" ]]; then
+        exit 1
+      fi
     elif [[ "$*" == *"--method PATCH"* ]]; then
       printf '%s\n' PATCH >> "$FAKE_COMMENT_METHOD_LOG"
       printf '%s\n' "${resource##*/}" > "${FAKE_COMMENT_TARGET_LOG:-/dev/null}"
@@ -224,6 +227,7 @@ reset_case() {
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
   export FAKE_DELETE_FAIL=false
+  export FAKE_COMMENT_DELETE_FAIL=false
   export FAKE_PUBLISH_FAIL_PHASE=''
   export FAKE_PUBLISH_FAIL_PHASES=''
   export FAKE_PUBLISH_FAIL_COUNT=0
@@ -331,15 +335,38 @@ export FAKE_COMMENT_JSON='[
 bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
   101 900 head-101 image-101 pr-101.preview.firedevops.net \
   'previous preview result' reclaimed
+test "$(sed -n '1p' "$FAKE_COMMENT_METHOD_LOG")" = PATCH
 grep -qx 'DELETE 100' "$FAKE_COMMENT_METHOD_LOG"
 grep -qx 'DELETE 300' "$FAKE_COMMENT_METHOD_LOG"
 grep -qx 'DELETE 400' "$FAKE_COMMENT_METHOD_LOG"
-grep -qx 'PATCH' "$FAKE_COMMENT_METHOD_LOG"
 grep -qx '200' "$FAKE_COMMENT_TARGET_LOG"
 if grep -q 'DELETE 200' "$FAKE_COMMENT_METHOD_LOG"; then
   echo "canonical latest preview comment was deleted" >&2
   exit 1
 fi
+
+reset_case
+export FAKE_COMMENT_BODY="$TEMP_DIR/comment-body"
+export FAKE_COMMENT_JSON='[
+  {"id":300,"created_at":"2026-01-06T00:00:00Z","updated_at":"2026-01-04T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":200,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy canonical"},
+  {"id":100,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"<!-- firemud-preview-summary -->\n### Preview Summary\nGenerated duplicate"},
+  {"id":400,"created_at":"2026-01-03T00:00:00Z","user":{"login":"github-actions[bot]"},"body":"### Preview Summary\nLegacy duplicate"}
+]'
+export FAKE_COMMENT_DELETE_FAIL=true
+if ! bash "$ROOT_DIR/dev-tools/hosted/preview/publish-preview-reclaimed.sh" \
+  101 900 head-101 image-101 pr-101.preview.firedevops.net \
+  'previous preview result' reclaimed 2>"$TEMP_DIR/comment-delete.stderr"; then
+  echo "duplicate deletion failure suppressed canonical preview publication" >&2
+  exit 1
+fi
+test "$(sed -n '1p' "$FAKE_COMMENT_METHOD_LOG")" = PATCH
+grep -qx '200' "$FAKE_COMMENT_TARGET_LOG"
+grep -q '<!-- firemud-preview-reclaimed -->' "$FAKE_COMMENT_BODY"
+grep -q 'DELETE 100' "$FAKE_COMMENT_METHOD_LOG"
+grep -q 'DELETE 300' "$FAKE_COMMENT_METHOD_LOG"
+grep -q 'DELETE 400' "$FAKE_COMMENT_METHOD_LOG"
+grep -q 'warning: failed to delete duplicate preview comment 100' "$TEMP_DIR/comment-delete.stderr"
 
 reset_case
 export FAKE_COMMENT_JSON='[

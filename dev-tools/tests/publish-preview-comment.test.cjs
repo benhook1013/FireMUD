@@ -316,6 +316,39 @@ test("deletes duplicate summaries, tolerates a concurrent 404, and updates the c
   assert.equal(result.calls.updates[0].comment_id, "403");
 });
 
+test("publishes the canonical update before propagating a duplicate deletion error", async () => {
+  const { github, calls } = makeGithub({
+    pullRequests: [{ state: "open", head: { sha: "head-123" } }],
+    comments: [
+      previewComment("501", "<!-- firemud-preview-summary -->\nduplicate", "2026-09-01T00:00:00Z"),
+      previewComment("502", "### Preview Summary\ncanonical", "2026-09-02T00:00:00Z"),
+    ],
+    deletedCommentStatuses: { "501": 500 },
+  });
+  const core = { info: () => {} };
+
+  await withEnvironment(
+    { PREVIEW_PR_NUMBER: "123", PREVIEW_HEAD_SHA: "head-123" },
+    async () => {
+      await assert.rejects(
+        publishPreviewComment({
+          github,
+          context,
+          core,
+          mode: "success",
+          summaryExecutor: () => "generated preview summary",
+        }),
+        /delete failed with status 500/,
+      );
+    },
+  );
+
+  assert.deepEqual(calls.deleted, ["501"]);
+  assert.equal(calls.updates.length, 1);
+  assert.equal(calls.updates[0].comment_id, "502");
+  assert.equal(calls.creates.length, 0);
+});
+
 test("passes a trimmed failure stage only to failure summaries", async () => {
   const result = await publish({
     mode: "failure",
