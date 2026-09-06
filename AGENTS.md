@@ -31,7 +31,7 @@ This file is the always-on project, authority, and safety kernel for AI work. Re
 
 - Use Gradle task paths without a `services:` prefix, for example `./gradlew :tcp-proxy-service:test`. Run heavier Gradle work from WSL in this repository and use the default daemon unless debugging it. Prefer native Linux Docker against `unix:///var/run/docker.sock` over Windows wrappers.
 - Prefer standard CLI tools for routine inspection. `gh` and `python3` are available and may be used when requested.
-- Record reusable process, tooling, environment, or design lessons in [AI observations](design/project-management/ai-observations.md). During ordinary autonomous work, append dated entries; do not silently rewrite or delete prior observations. A human-requested [repository health check](design/developer-workflows/repository-health-check.md) authorizes evidence-based removal of entries shown to be addressed, obsolete, or disproved; retain only genuine blockers or deliberate postponements with their reason and reconsideration trigger.
+- Record reusable process, tooling, environment, or design lessons in [AI observations](design/project-management/ai-observations.md). During ordinary autonomous work, append dated entries; do not silently rewrite or delete prior observations. Explicitly assigned Overseer stewardship follows the bounded process in [AI delegation and review](design/developer-workflows/ai-delegation-and-review.md); a human-requested [repository health check](design/developer-workflows/repository-health-check.md) separately authorizes evidence-based removal of entries shown to be addressed, obsolete, or disproved. Retain only genuine blockers or deliberate postponements with their reason and reconsideration trigger.
 
 ## Conditional Workflows
 
