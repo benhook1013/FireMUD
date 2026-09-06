@@ -103,7 +103,10 @@ class HostedIdentityReconcilerSafetyTest {
     when(runtime.read(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
         .thenReturn(RuntimeProfileService.RuntimeProfile.absent());
     CertificateMaterialService certificates = mock(CertificateMaterialService.class);
+    SecretProjectionService projections = mock(SecretProjectionService.class);
     HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
+    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    ServedEnvironmentProbe probes = mock(ServedEnvironmentProbe.class);
     Context<HostedEnvironmentIdentity> context = mock(Context.class);
     HostedIdentityReconciler reconciler =
         new HostedIdentityReconciler(
@@ -111,17 +114,17 @@ class HostedIdentityReconcilerSafetyTest {
             mock(AdmissionValidator.class),
             new EnvironmentIdentityPlanner(properties),
             certificates,
-            mock(SecretProjectionService.class),
+            projections,
             scope,
             runtime,
-            mock(DeploymentRolloutService.class),
-            mock(ServedEnvironmentProbe.class),
+            rollout,
+            probes,
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
             properties);
 
     UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource(), context);
 
-    verifyNoInteractions(certificates, scope, context);
+    verifyNoInteractions(certificates, projections, scope, rollout, probes, context);
     org.junit.jupiter.api.Assertions.assertEquals(
         HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
         result.getResource().orElseThrow().getStatus().getPhase());

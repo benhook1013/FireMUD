@@ -452,10 +452,11 @@ jobs:
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
       - name: Wait for exact controller identity projection
-        run: bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-          "pr-${{ needs.validate-target.outputs.pr_number }}" \
-          "${{ needs.validate-target.outputs.head_sha }}" \
-          "${{ needs.validate-target.outputs.namespace }}" 900
+        run: |
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            "pr-${{ needs.validate-target.outputs.pr_number }}" \
+            "${{ needs.validate-target.outputs.head_sha }}" \
+            "${{ needs.validate-target.outputs.namespace }}" 900
 
       - name: Wait for runtime rollouts
         env:
@@ -578,8 +579,9 @@ jobs:
           test "$(jq -r '.head.repo.full_name' <<<"$pull_request_json")" = "$GITHUB_REPOSITORY"
           test "$(jq -r '.head.sha' <<<"$pull_request_json")" = "$EXPECTED_HEAD_SHA"
       - name: Delete runtime and wait for NotFound
-        run: bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
-          --delete-runtime "${{ needs.validate-target.outputs.namespace }}"
+        run: |
+          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+            --delete-runtime "${{ needs.validate-target.outputs.namespace }}"
 
       - name: Publish trusted preview removal
         if: ${{ success() }}

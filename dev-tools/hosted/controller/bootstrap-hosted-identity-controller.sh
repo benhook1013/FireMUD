@@ -83,7 +83,7 @@ done
 [[ -n "$IMAGE_REF" ]] || fail "an immutable --image is required"
 [[ "$IMAGE_REF" =~ ^ghcr\.io/benhook1013/hosted-environment-identity-controller@sha256:[0-9a-f]{64}$ ]] || \
   fail "--image must be the approved controller repository pinned by a 64-hex sha256 digest"
-[[ "$GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || \
+[[ "$GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$ ]] || \
   fail "--grpc-trust-anchor-sha256 or FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256 must be a 64-hex fingerprint"
 case "$ACTIVATION_MODE" in
   paused|observe|active) ;;

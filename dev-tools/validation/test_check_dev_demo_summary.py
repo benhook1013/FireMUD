@@ -60,11 +60,9 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def _bootstrap_manifest_fixture(self) -> str:
         workflow = self.validator._load_workflow(ROOT)
-        deploy_job = workflow["jobs"].get(
-            "dev-demo-bootstrap", workflow["jobs"]["dev-demo-deploy"]
-        )
+        bootstrap_job = workflow["jobs"]["dev-demo-bootstrap"]
         return self.validator._find_step(
-            deploy_job, "Create dev-demo smoke account"
+            bootstrap_job, "Create dev-demo smoke account", "dev-demo-bootstrap"
         )["run"]
 
     def _bootstrap_manifest_with_pod_mutation(self, mutate) -> str:
@@ -91,9 +89,21 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 "dev-demo-deploy": {
                     "steps": [
                         {
+                            "name": "Prepare dev-demo runtime",
+                            "run": "echo prepare",
+                        }
+                    ]
+                },
+                "dev-demo-bootstrap": {
+                    "steps": [
+                        {
                             "name": "Create dev-demo smoke account",
                             "run": bootstrap_manifest,
-                        },
+                        }
+                    ]
+                },
+                "dev-demo-verify": {
+                    "steps": [
                         {
                             "name": "Smoke dev-demo over TCP",
                             "if": smoke_condition,
@@ -104,7 +114,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                             "run": summary_run,
                         },
                     ]
-                }
+                },
             }
         }
         workflow_path = root / ".github/workflows/dev-demo.yml"
@@ -138,7 +148,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 AssertionError,
                 "dev-demo summaries must not reference bootstrap credential material; "
-                "offending summary writers: dev-demo-deploy/Summarize dev-demo access",
+                "offending summary writers: dev-demo-verify/Summarize dev-demo access",
             ):
                 self.validator.validate_workflow(root)
 

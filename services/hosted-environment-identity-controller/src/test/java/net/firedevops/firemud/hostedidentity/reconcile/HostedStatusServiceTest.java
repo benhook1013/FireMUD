@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
+import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.RuntimeProfile;
@@ -108,5 +109,51 @@ class HostedStatusServiceTest {
     assertEquals(null, resource.getStatus().getProfile().getRuntimeNamespaceUid());
     assertEquals(null, resource.getStatus().getProfile().getDeployedHeadSha());
     assertEquals(null, resource.getStatus().getProfile().getTelnetPort());
+  }
+
+  @Test
+  void readyTransitionTimeChangesOnlyWhenStatusReasonOrMessageChanges() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("pr-42")
+            .withNamespace("firemud-system")
+            .withGeneration(9L)
+            .build());
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    HostedCondition previous = new HostedCondition("Ready", "False", "Waiting", "not ready");
+    previous.setLastTransitionTime("2026-01-01T00:00:00Z");
+    oldStatus.setConditions(java.util.List.of(previous));
+    resource.setStatus(oldStatus);
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Pending,
+        "Waiting",
+        "not ready",
+        false,
+        null,
+        null,
+        null,
+        null);
+    assertEquals(
+        "2026-01-01T00:00:00Z",
+        resource.getStatus().getConditions().get(0).getLastTransitionTime());
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        "Blocked",
+        "not ready",
+        false,
+        null,
+        null,
+        null,
+        null);
+    assertFalse(
+        "2026-01-01T00:00:00Z"
+            .equals(resource.getStatus().getConditions().get(0).getLastTransitionTime()));
   }
 }

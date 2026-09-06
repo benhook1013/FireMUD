@@ -259,11 +259,14 @@ jobs:
 
       - name: Inject fixed trusted dev-demo Telnet port
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        env:
+          TELNET_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
         run: |
           set -euo pipefail
+          test "$TELNET_PORT" = 32016
           kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" patch service tcp-proxy-service \
             --type=strategic \
-            --patch '{"spec":{"ports":[{"port":2323,"nodePort":32016}]}}'
+            --patch "{\"spec\":{\"ports\":[{\"port\":2323,\"nodePort\":${TELNET_PORT}}]}}"
 
       - name: Mark runtime preparation complete
         id: runtime-prepared
@@ -702,8 +705,9 @@ jobs:
           path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Wait for exact controller identity projection
-        run: bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-          dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" dev 900
+        run: |
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" dev 900
 
       - name: Wait for dev-demo runtime rollouts
         env:
@@ -723,10 +727,12 @@ jobs:
         id: runtime-port
         env:
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          EXPECTED_TELNET_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
         run: |
           set -euo pipefail
           port="$(kubectl -n "$RUNTIME_NAMESPACE" get service tcp-proxy-service -o jsonpath='{.spec.ports[?(@.port==2323)].nodePort}')"
-          test "$port" = 32016
+          test "$EXPECTED_TELNET_PORT" = 32016
+          test "$port" = "$EXPECTED_TELNET_PORT"
           echo "port=$port" >> "$GITHUB_OUTPUT"
 
       - name: Export demo smoke defaults
@@ -740,6 +746,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Smoke dev-demo over TCP
+        if: ${{ !cancelled() }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
@@ -779,7 +786,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
-            "32016" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
             "${DEV_DEMO_STAGE:-identity-or-runtime-proof}" >> "$GITHUB_STEP_SUMMARY"
 
   dev-demo-destroy:

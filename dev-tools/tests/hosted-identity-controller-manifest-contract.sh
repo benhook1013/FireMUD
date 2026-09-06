@@ -206,13 +206,22 @@ for forbidden_requester_permission in secrets certificates; do
     fail "requester role has forbidden $forbidden_requester_permission access"
   fi
 done
-cluster_role_rbac="$(sed -n '/^kind: ClusterRole$/,/^kind: ClusterRoleBinding$/p' "$RBAC")"
+cluster_role_rbac="$(awk '
+  /^---$/ { in_document = 0 }
+  /^kind: ClusterRole$/ { in_document = 1 }
+  in_document { print }
+' "$RBAC")"
 for forbidden_cluster_permission in secrets certificates hostedenvironmentidentities; do
   if grep -Fqi -- "$forbidden_cluster_permission" <<<"$cluster_role_rbac"; then
     fail "controller ClusterRole has broad $forbidden_cluster_permission access"
   fi
 done
-scope_writer_rbac="$(sed -n '/^  name: firemud-hosted-identity-scope-writer$/,/^kind: ClusterRoleBinding$/p' "$RBAC")"
+scope_writer_rbac="$(awk '
+  /^---$/ { in_document = 0; is_scope_writer = 0 }
+  /^kind: ClusterRole$/ { in_document = 1 }
+  in_document && /^  name: firemud-hosted-identity-scope-writer$/ { is_scope_writer = 1 }
+  in_document && is_scope_writer { print }
+' "$RBAC")"
 for text_value in \
   "- roles" \
   "- rolebindings" \
@@ -225,6 +234,7 @@ for text_value in \
   grep -Fq -- "$text_value" <<<"$scope_writer_rbac" || \
     fail "scope-writer ClusterRole is missing $text_value"
 done
+require_literal "$ADMISSION" "object.metadata.name == object.roleRef.name"
 for forbidden_scope_permission in 'apiGroups: ["*"]' 'resources: ["*"]' namespaces secrets certificates; do
   if grep -Fqi -- "$forbidden_scope_permission" <<<"$scope_writer_rbac"; then
     fail "scope-writer ClusterRole has forbidden $forbidden_scope_permission access"
@@ -277,6 +287,7 @@ for text_value in \
   'operator bootstrap/debug' \
   'paused|observe|active' \
   --grpc-trust-anchor-sha256 \
+  'GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$' \
   '@sha256:[0-9a-f]{64}'; do
   require_literal "$BOOTSTRAP" "$text_value"
 done
@@ -317,6 +328,68 @@ done
 for forbidden_command in 'kubectl apply' 'kubectl delete' 'kubectl replace'; do
   forbid_literal "$VALIDATE" "$forbidden_command"
 done
+
+(
+validator_test_dir="$(mktemp -d)"
+trap 'rm -rf "$validator_test_dir"' EXIT
+validator_output="$validator_test_dir/output"
+validator_error="$validator_test_dir/error"
+cat >"$validator_test_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == "get" && "$2" == "namespace" ]]; then
+  exit 0
+fi
+if [[ "$1" == "get" && "$2" == "crd" ]]; then
+  exit 0
+fi
+if [[ "$1" == "get" && "$2" == "validatingadmissionpolicy" ]]; then
+  printf 'Fail\n'
+  exit 0
+fi
+if [[ "$1" == "get" && "$2" == "validatingadmissionpolicybinding" ]]; then
+  printf 'Deny\n'
+  exit 0
+fi
+if [[ "$1" == "-n" && "$3" == "get" && "$4" == "deployment" ]]; then
+  printf 'firemud-hosted-identity-controller\n'
+  exit 0
+fi
+if [[ "$1" == "auth" && "$2" == "can-i" ]]; then
+  if [[ " $* " == *" --all-namespaces "* || " $* " == *" --namespace=dev "* ]]; then
+    if [[ "${FAKE_CAN_I_ERROR:-0}" == "1" ]]; then
+      echo 'simulated authorization API failure' >&2
+      exit 2
+    fi
+    if [[ "${FAKE_CAN_I_ALLOW_DENIED:-0}" == "1" ]]; then
+      printf 'yes\n'
+      exit 0
+    fi
+    printf 'no\n'
+    exit 1
+  fi
+  printf 'yes\n'
+  exit 0
+fi
+echo "unexpected fake kubectl invocation: $*" >&2
+exit 2
+SH
+chmod +x "$validator_test_dir/kubectl"
+PATH="$validator_test_dir:$PATH" bash "$VALIDATE" >"$validator_output" 2>"$validator_error" || \
+  fail "validator rejected expected auth can-i no results: $(cat "$validator_error")"
+require_literal "$validator_output" "RBAC and admission discovery checks passed"
+if FAKE_CAN_I_ERROR=1 PATH="$validator_test_dir:$PATH" \
+  bash "$VALIDATE" >"$validator_output" 2>"$validator_error"; then
+  fail "validator accepted an authorization API error"
+fi
+require_literal "$validator_error" "failed with status 2"
+if FAKE_CAN_I_ALLOW_DENIED=1 PATH="$validator_test_dir:$PATH" \
+  bash "$VALIDATE" >"$validator_output" 2>"$validator_error"; then
+  fail "validator accepted an unexpectedly allowed permission"
+fi
+require_literal "$validator_error" "returned yes; expected no"
+)
 
 forbidden_preview='cert-manager.io'
 forbid_literal "$PREVIEW_RBAC" "$forbidden_preview"

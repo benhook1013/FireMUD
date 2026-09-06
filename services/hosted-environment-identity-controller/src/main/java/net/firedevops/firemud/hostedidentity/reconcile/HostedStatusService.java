@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
 import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
@@ -33,6 +34,13 @@ public class HostedStatusService {
       RoleStatus grpc) {
     HostedEnvironmentIdentityStatus status =
         resource.getStatus() == null ? new HostedEnvironmentIdentityStatus() : resource.getStatus();
+    HostedCondition previousReady =
+        status.getConditions() == null
+            ? null
+            : status.getConditions().stream()
+                .filter(condition -> "Ready".equals(condition.getType()))
+                .findFirst()
+                .orElse(null);
     RuntimeProfile previousProfile = status.getProfile();
     boolean profileChanged = !profileMatches(previousProfile, runtimeProfile);
     boolean effectiveReady = ready && !profileChanged;
@@ -68,9 +76,21 @@ public class HostedStatusService {
     HostedCondition condition =
         new HostedCondition("Ready", effectiveReady ? "True" : "False", reason, message);
     condition.setObservedGeneration(resource.getMetadata().getGeneration());
-    condition.setLastTransitionTime(Instant.now().toString());
+    condition.setLastTransitionTime(
+        sameConditionState(previousReady, condition)
+                && previousReady.getLastTransitionTime() != null
+                && !previousReady.getLastTransitionTime().isBlank()
+            ? previousReady.getLastTransitionTime()
+            : Instant.now().toString());
     status.setConditions(List.of(condition));
     return status;
+  }
+
+  private static boolean sameConditionState(HostedCondition previous, HostedCondition current) {
+    return previous != null
+        && Objects.equals(previous.getStatus(), current.getStatus())
+        && Objects.equals(previous.getReason(), current.getReason())
+        && Objects.equals(previous.getMessage(), current.getMessage());
   }
 
   public static RoleStatus role(

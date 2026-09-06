@@ -30,6 +30,10 @@ public class SecretMaterialValidator {
   private static final String CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
   private static final Pattern CERTIFICATE_BLOCK =
       Pattern.compile("-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", Pattern.DOTALL);
+  private static final Pattern PRIVATE_KEY_BLOCK =
+      Pattern.compile(
+          "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
+          Pattern.DOTALL);
 
   public MaterialSummary validate(
       Secret secret,
@@ -134,32 +138,36 @@ public class SecretMaterialValidator {
     Matcher matcher = CERTIFICATE_BLOCK.matcher(pem);
     List<X509Certificate> certificates = new ArrayList<>();
     CertificateFactory factory = CertificateFactory.getInstance("X.509");
+    int consumed = 0;
     while (matcher.find()) {
+      if (!pem.substring(consumed, matcher.start()).isBlank()) {
+        throw new MaterialValidationException("certificate PEM contains an unexpected label");
+      }
       String body = matcher.group(1).replaceAll("\\s", "");
       byte[] der = Base64.getDecoder().decode(body);
       certificates.add(
           (X509Certificate) factory.generateCertificate(new ByteArrayInputStream(der)));
+      consumed = matcher.end();
     }
-    if (certificates.isEmpty()) {
+    if (certificates.isEmpty() || !pem.substring(consumed).isBlank()) {
       throw new MaterialValidationException("certificate PEM contains no X.509 certificate");
     }
     return certificates;
   }
 
   private static PrivateKey parsePrivateKey(String pem) throws Exception {
-    byte[] der = pemBytes(pem, "PRIVATE KEY");
+    byte[] der = pemBytes(pem);
     return KeyFactory.getInstance("RSA")
         .generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(der));
   }
 
-  private static byte[] pemBytes(String pem, String label) {
+  private static byte[] pemBytes(String pem) {
     String decodedPem = new String(Base64.getDecoder().decode(pem), StandardCharsets.US_ASCII);
-    String normalized =
-        decodedPem
-            .replaceAll("-----BEGIN [^-]+-----", "")
-            .replaceAll("-----END [^-]+-----", "")
-            .replaceAll("\\s", "");
-    return Base64.getDecoder().decode(normalized.getBytes(StandardCharsets.US_ASCII));
+    Matcher matcher = PRIVATE_KEY_BLOCK.matcher(decodedPem);
+    if (!matcher.matches()) {
+      throw new MaterialValidationException("private key PEM must use the PRIVATE KEY label");
+    }
+    return Base64.getDecoder().decode(matcher.group(1).replaceAll("\\s", ""));
   }
 
   private static void validateSans(X509Certificate certificate, Collection<String> expectedDnsNames)

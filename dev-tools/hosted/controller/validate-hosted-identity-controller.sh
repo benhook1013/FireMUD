@@ -47,8 +47,17 @@ kubectl -n "$CONTROL_NAMESPACE" get deployment "$DEPLOYMENT_NAME" \
 expect_can_i() {
   local expected="$1"
   shift
-  local result
-  result="$(kubectl auth can-i "$@" | tr -d '\r')"
+  local result status
+  if result="$(kubectl auth can-i "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+  result="${result//$'\r'/}"
+  case "$result:$status" in
+    yes:0 | no:1) ;;
+    *) fail "auth can-i $* failed with status $status and output: $result" ;;
+  esac
   [[ "$result" == "$expected" ]] || fail "auth can-i $* returned $result; expected $expected"
 }
 

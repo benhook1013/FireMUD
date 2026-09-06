@@ -170,6 +170,30 @@ def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None
             _validate_sanitized_secret_refs(child, f"{path}[{index}]")
 
 
+def _strip_annotations(value: object) -> None:
+    if isinstance(value, dict):
+        metadata = value.get("metadata")
+        if isinstance(metadata, dict):
+            metadata.pop("annotations", None)
+        for child in value.values():
+            _strip_annotations(child)
+    elif isinstance(value, list):
+        for child in value:
+            _strip_annotations(child)
+
+
+def _validate_no_annotations(value: object, path: str = "object") -> None:
+    if isinstance(value, dict):
+        metadata = value.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("annotations"):
+            fail(f"{path}.metadata retains untrusted annotations")
+        for key, child in value.items():
+            _validate_no_annotations(child, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_no_annotations(child, f"{path}[{index}]")
+
+
 def sanitize(source: Path, destination: Path) -> None:
     """Produce the credential-free artifact consumed by the trusted workflow."""
 
@@ -197,7 +221,7 @@ def sanitize(source: Path, destination: Path) -> None:
             for port in sanitized.get("spec", {}).get("ports", []):
                 if isinstance(port, dict):
                     port.pop("nodePort", None)
-        sanitized.setdefault("metadata", {}).pop("annotations", None)
+        _strip_annotations(sanitized)
         _validate_sanitized_secret_refs(sanitized)
         documents.append(sanitized)
     if not documents:
@@ -338,8 +362,7 @@ def validate_manifest(
         namespace = metadata.get("namespace")
         if namespace is not None and namespace != expected_namespace:
             fail(f"{document['kind']}/{name} targets namespace {namespace!r}")
-        if metadata.get("annotations"):
-            fail(f"{document['kind']}/{name} retains untrusted annotations")
+        _validate_no_annotations(document)
         for location, value in walk(document):
             if location.endswith(".nodePort"):
                 fail(f"{location} retains a PR-selected nodePort")

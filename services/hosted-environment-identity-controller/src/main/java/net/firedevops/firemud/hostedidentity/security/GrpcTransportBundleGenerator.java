@@ -10,6 +10,7 @@ import java.math.BigInteger;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
 import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPrivateCrtKey;
@@ -23,7 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -47,6 +49,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class GrpcTransportBundleGenerator {
   private static final String TYPE = "Opaque";
+  private static final SecureRandom SERIAL_RANDOM = new SecureRandom();
+  private static final Pattern CERTIFICATE_PEM =
+      Pattern.compile(
+          "\\A\\s*-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----\\s*\\z",
+          Pattern.DOTALL);
+  private static final Pattern PRIVATE_KEY_PEM =
+      Pattern.compile(
+          "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
+          Pattern.DOTALL);
 
   public Secret ensure(
       KubernetesClient client,
@@ -68,7 +79,8 @@ public class GrpcTransportBundleGenerator {
     validateCa(caSource, expectedTrustAnchorSha256);
     long accepted = acceptedGeneration == null ? 0 : acceptedGeneration;
     if (existing == null) {
-      Secret generated = generate(plan, caSource, Math.max(1, accepted + 1));
+      long attemptedGeneration = nextGeneration(accepted);
+      Secret generated = generate(plan, caSource, attemptedGeneration);
       try {
         return client.secrets().inNamespace(plan.identityNamespace()).resource(generated).create();
       } catch (KubernetesClientException exception) {
@@ -80,7 +92,8 @@ public class GrpcTransportBundleGenerator {
                 .secrets()
                 .inNamespace(plan.identityNamespace())
                 .withName(plan.grpcSecretName())
-                .get());
+                .get(),
+            attemptedGeneration);
       }
     }
     long currentGeneration = issuanceGeneration(existing);
@@ -93,7 +106,8 @@ public class GrpcTransportBundleGenerator {
     if (!renewalRequired(existing, accepted, renewBefore, Instant.now())) {
       return existing;
     }
-    Secret replacement = generate(plan, caSource, currentGeneration + 1);
+    long attemptedGeneration = nextGeneration(currentGeneration);
+    Secret replacement = generate(plan, caSource, attemptedGeneration);
     replacement.getMetadata().setResourceVersion(existing.getMetadata().getResourceVersion());
     try {
       return client.secrets().inNamespace(plan.identityNamespace()).resource(replacement).replace();
@@ -106,7 +120,8 @@ public class GrpcTransportBundleGenerator {
               .secrets()
               .inNamespace(plan.identityNamespace())
               .withName(plan.grpcSecretName())
-              .get());
+              .get(),
+          attemptedGeneration);
     }
   }
 
@@ -126,8 +141,7 @@ public class GrpcTransportBundleGenerator {
               root,
               root,
               grpcDnsNames(plan),
-              true,
-              1);
+              true);
       X509Certificate leafCertificate =
           certificate(
               "CN=FireMUD hosted transport, O=FireMUD",
@@ -135,8 +149,7 @@ public class GrpcTransportBundleGenerator {
               leaf,
               root,
               grpcDnsNames(plan),
-              false,
-              2);
+              false);
       Map<String, String> data = new LinkedHashMap<>();
       data.put("tls.crt", pem(leafCertificate));
       data.put("tls.key", pem(leaf.getPrivate()));
@@ -167,8 +180,7 @@ public class GrpcTransportBundleGenerator {
               leaf,
               caKey,
               grpcDnsNames(plan),
-              false,
-              3);
+              false);
       Map<String, String> data = new LinkedHashMap<>();
       data.put("tls.crt", pem(leafCertificate));
       data.put("tls.key", pem(leaf.getPrivate()));
@@ -252,9 +264,13 @@ public class GrpcTransportBundleGenerator {
         && !leafNotAfter(secret).isAfter(now.plus(renewBefore));
   }
 
-  static Secret requireConflictWinner(Secret reread) {
+  static Secret requireConflictWinner(Secret reread, long minimumGeneration) {
     if (reread == null) {
       throw new IllegalStateException("gRPC source conflict winner is absent after reread");
+    }
+    if (issuanceGeneration(reread) < minimumGeneration) {
+      throw new IllegalStateException(
+          "gRPC source conflict winner did not reach the attempted issuance generation");
     }
     return reread;
   }
@@ -303,14 +319,13 @@ public class GrpcTransportBundleGenerator {
       KeyPair subjectKey,
       KeyPair issuerKey,
       List<String> dnsNames,
-      boolean ca,
-      int serial)
+      boolean ca)
       throws Exception {
     Instant now = Instant.now();
     JcaX509v3CertificateBuilder builder =
         new JcaX509v3CertificateBuilder(
             new X500Name(issuer),
-            BigInteger.valueOf(serial * 1000L + ThreadLocalRandom.current().nextLong(1, 999)),
+            newCertificateSerial(),
             Date.from(now.minus(Duration.ofMinutes(1))),
             Date.from(now.plus(Duration.ofDays(30))),
             new X500Name(subject),
@@ -343,6 +358,25 @@ public class GrpcTransportBundleGenerator {
     return new JcaX509CertificateConverter().setProvider("BC").getCertificate(holder);
   }
 
+  static BigInteger newCertificateSerial() {
+    BigInteger serial;
+    do {
+      serial = new BigInteger(159, SERIAL_RANDOM);
+    } while (serial.signum() <= 0);
+    return serial;
+  }
+
+  static long nextGeneration(long current) {
+    if (current < 0) {
+      throw new IllegalStateException("gRPC source issuance generation is invalid");
+    }
+    try {
+      return Math.addExact(current, 1);
+    } catch (ArithmeticException exception) {
+      throw new IllegalStateException("gRPC source issuance generation is exhausted", exception);
+    }
+  }
+
   private static String requiredData(Secret source, String key) {
     String value = source.getData() == null ? null : source.getData().get(key);
     if (value == null) {
@@ -352,32 +386,36 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static X509Certificate parseCertificate(String encoded) throws Exception {
-    byte[] pem = Base64.getDecoder().decode(encoded);
-    String content = new String(pem, java.nio.charset.StandardCharsets.US_ASCII);
-    String normalized =
-        content
-            .replaceAll("-----BEGIN [^-]+-----", "")
-            .replaceAll("-----END [^-]+-----", "")
-            .replaceAll("\\s", "");
-    byte[] der = Base64.getDecoder().decode(normalized);
+    byte[] der = pemBytes(encoded, CERTIFICATE_PEM, "CERTIFICATE");
     return (X509Certificate)
         java.security.cert.CertificateFactory.getInstance("X.509")
             .generateCertificate(new java.io.ByteArrayInputStream(der));
   }
 
   private static java.security.PrivateKey parsePrivateKey(String encoded) throws Exception {
-    byte[] pem = Base64.getDecoder().decode(encoded);
-    String content = new String(pem, java.nio.charset.StandardCharsets.US_ASCII);
-    String normalized =
-        content
-            .replaceAll("-----BEGIN [^-]+-----", "")
-            .replaceAll("-----END [^-]+-----", "")
-            .replaceAll("\\s", "");
     return KeyFactory.getInstance("RSA")
-        .generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(normalized)));
+        .generatePrivate(
+            new PKCS8EncodedKeySpec(pemBytes(encoded, PRIVATE_KEY_PEM, "PRIVATE KEY")));
+  }
+
+  private static byte[] pemBytes(String encoded, Pattern expected, String label) {
+    String content =
+        new String(Base64.getDecoder().decode(encoded), java.nio.charset.StandardCharsets.US_ASCII);
+    Matcher matcher = expected.matcher(content);
+    if (!matcher.matches()) {
+      throw new IllegalStateException("configured gRPC CA material must use " + label + " PEM");
+    }
+    return Base64.getDecoder().decode(matcher.group(1).replaceAll("\\s", ""));
   }
 
   private static String pem(Object object) throws Exception {
+    if (object instanceof java.security.PrivateKey privateKey) {
+      String body =
+          Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(privateKey.getEncoded());
+      String value = "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";
+      return Base64.getEncoder()
+          .encodeToString(value.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    }
     StringWriter output = new StringWriter();
     try (JcaPEMWriter writer = new JcaPEMWriter(output)) {
       writer.writeObject(object);

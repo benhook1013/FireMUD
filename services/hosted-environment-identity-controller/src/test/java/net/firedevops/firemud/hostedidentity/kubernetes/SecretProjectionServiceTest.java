@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
@@ -31,7 +32,21 @@ class SecretProjectionServiceTest {
 
     assertEquals(first, second);
     assertEquals(71, first.length());
+    assertTrue(first.matches("sha256:[0-9a-f]{64}"));
     assertNotEquals(first, service.revisionFor(Map.of("tls.key", encoded("other"))));
+  }
+
+  @Test
+  void acceptedRevisionRequiresTheCanonicalAlgorithmPrefixAndFullDigest() {
+    SecretProjectionService service = new SecretProjectionService();
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.acknowledge(null, null, "ingress", "1".repeat(64), 1, 1, "2".repeat(64)));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.acknowledge(
+                null, null, "ingress", "sha256:" + "1".repeat(63), 1, 1, "2".repeat(64)));
   }
 
   @Test

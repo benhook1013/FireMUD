@@ -29,7 +29,7 @@ public class SecretProjectionService {
       String provenance) {
     requireGeneration(sourceGeneration);
     requireGeneration(sourceObjectGeneration);
-    requireDigest(spkiSha256, "SPKI fingerprint");
+    requireFingerprint(spkiSha256, "SPKI fingerprint");
     if (source == null || source.getData() == null || source.getData().isEmpty()) {
       throw new IllegalArgumentException("validated source Secret is required");
     }
@@ -45,8 +45,8 @@ public class SecretProjectionService {
       long oldObjectGeneration =
           generation(old, HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION);
       String oldSpki = value(old, HostedIdentityContract.SPKI_SHA256_ANNOTATION);
-      requireDigest(oldRevision, "runtime revision");
-      requireDigest(oldSpki, "runtime SPKI fingerprint");
+      requireRevision(oldRevision, "runtime revision");
+      requireFingerprint(oldSpki, "runtime SPKI fingerprint");
       if (revision.equals(oldRevision)) {
         if (sourceGeneration != oldGeneration
             || sourceObjectGeneration != oldObjectGeneration
@@ -118,10 +118,10 @@ public class SecretProjectionService {
       long expectedGeneration,
       long expectedObjectGeneration,
       String expectedSpki) {
-    requireDigest(expectedRevision, "expected revision");
+    requireRevision(expectedRevision, "expected revision");
     requireGeneration(expectedGeneration);
     requireGeneration(expectedObjectGeneration);
-    requireDigest(expectedSpki, "expected SPKI fingerprint");
+    requireFingerprint(expectedSpki, "expected SPKI fingerprint");
     var operation =
         client.secrets().inNamespace(plan.runtimeNamespace()).withName(targetName(plan, role));
     Secret current = operation.get();
@@ -290,8 +290,13 @@ public class SecretProjectionService {
     if (value < 1) throw new IllegalArgumentException("source generation must be positive");
   }
 
-  private static void requireDigest(String value, String kind) {
-    if (value == null || !value.matches("(?:sha256:)?[0-9a-f]{64}"))
+  private static void requireRevision(String value, String kind) {
+    if (value == null || !value.matches("sha256:[0-9a-f]{64}"))
+      throw new IllegalStateException(kind + " is invalid");
+  }
+
+  private static void requireFingerprint(String value, String kind) {
+    if (value == null || !value.matches("[0-9a-f]{64}"))
       throw new IllegalStateException(kind + " is invalid");
   }
 

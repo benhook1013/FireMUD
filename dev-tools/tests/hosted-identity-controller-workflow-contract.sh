@@ -140,13 +140,18 @@ validator = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(validator)
 
 
-def deployment(secret_name):
+def deployment(secret_name, annotations=None):
     return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
-        "metadata": {"name": "account-service", "namespace": "pr-42"},
+        "metadata": {
+            "name": "account-service",
+            "namespace": "pr-42",
+            "annotations": annotations,
+        },
         "spec": {
             "template": {
+                "metadata": {"annotations": annotations},
                 "spec": {
                     "containers": [
                         {
@@ -174,8 +179,27 @@ def deployment(secret_name):
 with TemporaryDirectory() as temporary_directory:
     source = Path(temporary_directory) / "rendered.yaml"
     destination = Path(temporary_directory) / "sanitized.yaml"
-    source.write_text(yaml.safe_dump(deployment("firemud-secret")), encoding="utf-8")
+    annotated = deployment(
+        "firemud-secret",
+        {"sidecar.istio.io/inject": "true"},
+    )
+    source.write_text(yaml.safe_dump(annotated), encoding="utf-8")
     validator.sanitize(source, destination)
+    sanitized = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert "annotations" not in sanitized["metadata"], sanitized
+    assert "annotations" not in sanitized["spec"]["template"]["metadata"], sanitized
+
+    nested_only = deployment(
+        "firemud-secret",
+        {"sidecar.istio.io/inject": "true"},
+    )
+    nested_only["metadata"].pop("annotations")
+    try:
+        validator._validate_no_annotations(nested_only)
+    except ValueError as error:
+        assert "spec.template.metadata" in str(error), error
+    else:
+        raise AssertionError("untrusted pod-template annotations were accepted")
 
     source.write_text(yaml.safe_dump(deployment("unapproved-secret")), encoding="utf-8")
     try:

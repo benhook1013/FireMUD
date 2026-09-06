@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
@@ -19,6 +20,7 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.net.ssl.SSLSocket;
@@ -86,11 +88,41 @@ class SecretMaterialValidatorTest {
 
   @Test
   void conflictRereadMustFindTheWinningSecret() {
-    Secret winner = new SecretBuilder().withType("Opaque").build();
-    assertEquals(winner, GrpcTransportBundleGenerator.requireConflictWinner(winner));
+    Secret winner =
+        new SecretBuilder()
+            .withNewMetadata()
+            .addToAnnotations("firemud.dev/issuance-generation", "4")
+            .endMetadata()
+            .withType("Opaque")
+            .build();
+    assertEquals(winner, GrpcTransportBundleGenerator.requireConflictWinner(winner, 4));
     assertThrows(
         IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.requireConflictWinner(null));
+        () -> GrpcTransportBundleGenerator.requireConflictWinner(null, 4));
+    assertThrows(
+        IllegalStateException.class,
+        () -> GrpcTransportBundleGenerator.requireConflictWinner(winner, 5));
+  }
+
+  @Test
+  void certificateSerialsAreStrongPositiveAndUniqueWithinAnIssuer() {
+    var serials = new HashSet<java.math.BigInteger>();
+    for (int index = 0; index < 128; index++) {
+      var serial = GrpcTransportBundleGenerator.newCertificateSerial();
+      assertTrue(serial.signum() > 0);
+      assertTrue(serial.bitLength() <= 159);
+      assertTrue(serials.add(serial));
+    }
+  }
+
+  @Test
+  void issuanceGenerationCannotWrapOrStartBelowZero() {
+    assertEquals(1, GrpcTransportBundleGenerator.nextGeneration(0));
+    assertThrows(
+        IllegalStateException.class,
+        () -> GrpcTransportBundleGenerator.nextGeneration(Long.MAX_VALUE));
+    assertThrows(
+        IllegalStateException.class, () -> GrpcTransportBundleGenerator.nextGeneration(-1));
   }
 
   @Test
@@ -102,6 +134,9 @@ class SecretMaterialValidatorTest {
     X509Certificate leaf = certificate(source.getData().get("tls.crt"));
 
     leaf.verify(ca.getPublicKey());
+    assertTrue(ca.getSerialNumber().signum() > 0);
+    assertTrue(leaf.getSerialNumber().signum() > 0);
+    assertNotEquals(ca.getSerialNumber(), leaf.getSerialNumber());
     assertTrue(ca.getKeyUsage()[5]);
     assertTrue(ca.getKeyUsage()[6]);
     assertFalse(ca.getKeyUsage()[0]);
@@ -149,6 +184,15 @@ class SecretMaterialValidatorTest {
                     "ca.crt", generated.getData().get("ca.crt"),
                     "ca.key", generated.getData().get("tls.key")))
             .build();
+    Secret wrongPemLabels =
+        new SecretBuilder(generated)
+            .withData(
+                Map.of(
+                    "ca.crt",
+                    relabel(generated.getData().get("ca.crt"), "CERTIFICATE", "X509 CERTIFICATE"),
+                    "ca.key",
+                    generated.getData().get("tls.key")))
+            .build();
 
     assertThrows(
         IllegalStateException.class,
@@ -156,6 +200,42 @@ class SecretMaterialValidatorTest {
     assertThrows(
         IllegalStateException.class,
         () -> GrpcTransportBundleGenerator.validateCa(mismatchedKey, fingerprint));
+    assertThrows(
+        IllegalStateException.class,
+        () -> GrpcTransportBundleGenerator.validateCa(wrongPemLabels, fingerprint));
+  }
+
+  @Test
+  void materialValidationRequiresCanonicalCertificateAndPrivateKeyPemLabels() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(generated);
+    Map<String, String> wrongCertificate = new LinkedHashMap<>(generated.getData());
+    wrongCertificate.put(
+        "tls.crt", relabel(wrongCertificate.get("tls.crt"), "CERTIFICATE", "X509 CERTIFICATE"));
+    Map<String, String> wrongKey = new LinkedHashMap<>(generated.getData());
+    wrongKey.put("tls.key", relabel(wrongKey.get("tls.key"), "PRIVATE KEY", "RSA PRIVATE KEY"));
+
+    var validator = new SecretMaterialValidator();
+    assertThrows(
+        SecretMaterialValidator.MaterialValidationException.class,
+        () ->
+            validator.validate(
+                new SecretBuilder(generated).withData(wrongCertificate).build(),
+                GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                "Opaque",
+                true,
+                fingerprint));
+    assertThrows(
+        SecretMaterialValidator.MaterialValidationException.class,
+        () ->
+            validator.validate(
+                new SecretBuilder(generated).withData(wrongKey).build(),
+                GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                "Opaque",
+                true,
+                fingerprint));
   }
 
   @Test
@@ -202,6 +282,10 @@ class SecretMaterialValidatorTest {
 
   private static String encode(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private static String relabel(String encoded, String oldLabel, String newLabel) {
+    return encode(pemText(encoded).replace(oldLabel, newLabel));
   }
 
   private static X509Certificate certificate(String encoded) throws Exception {

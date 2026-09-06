@@ -57,8 +57,15 @@ public class RuntimeProfileService {
     }
   }
 
-  static boolean isValidTelnetPort(EnvironmentIdentityPlan plan, int port) {
-    return plan.name().equals("dev-demo") ? port == 32016 : port >= 32000 && port <= 32015;
+  boolean isValidTelnetPort(EnvironmentIdentityPlan plan, int port) {
+    if (port < 1 || port > 65535) {
+      return false;
+    }
+    if (plan.name().equals("dev-demo")) {
+      return port == properties.getDevDemoTelnetPort();
+    }
+    int base = properties.getPreviewTelnetPortBase();
+    return base >= 1 && base <= 65520 && port >= base && port <= base + 15;
   }
 
   static void validateRuntimeLabels(EnvironmentIdentityPlan plan, Map<String, String> labels) {

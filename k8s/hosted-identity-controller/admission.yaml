@@ -429,6 +429,7 @@ spec:
             object.roleRef.name == 'firemud-hosted-runtime-scope')) &&
           object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
           object.roleRef.kind == 'Role' &&
+          object.metadata.name == object.roleRef.name &&
           object.subjects.size() == 1 &&
           object.subjects[0].kind == 'ServiceAccount' &&
           object.subjects[0].name == 'firemud-hosted-identity-controller' &&

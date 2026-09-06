@@ -18,23 +18,39 @@ import org.junit.jupiter.api.Test;
 class RuntimeProfileServiceTest {
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
+  private final RuntimeProfileService service =
+      new RuntimeProfileService(new HostedIdentityProperties());
 
   @Test
   void previewPortsAreLimitedToTheAllocatedSixteenPortWindow() {
     var plan = planner.plan("pr-42");
-    assertTrue(RuntimeProfileService.isValidTelnetPort(plan, 32000));
-    assertTrue(RuntimeProfileService.isValidTelnetPort(plan, 32015));
-    assertFalse(RuntimeProfileService.isValidTelnetPort(plan, 31999));
-    assertFalse(RuntimeProfileService.isValidTelnetPort(plan, 32016));
-    assertFalse(RuntimeProfileService.isValidTelnetPort(plan, 32042));
+    assertTrue(service.isValidTelnetPort(plan, 32000));
+    assertTrue(service.isValidTelnetPort(plan, 32015));
+    assertFalse(service.isValidTelnetPort(plan, 31999));
+    assertFalse(service.isValidTelnetPort(plan, 32016));
+    assertFalse(service.isValidTelnetPort(plan, 32042));
   }
 
   @Test
   void devDemoUsesOnlyItsFixedPort() {
     var plan = planner.plan("dev-demo");
-    assertTrue(RuntimeProfileService.isValidTelnetPort(plan, 32016));
-    assertFalse(RuntimeProfileService.isValidTelnetPort(plan, 32015));
-    assertFalse(RuntimeProfileService.isValidTelnetPort(plan, 32116));
+    assertTrue(service.isValidTelnetPort(plan, 32016));
+    assertFalse(service.isValidTelnetPort(plan, 32015));
+    assertFalse(service.isValidTelnetPort(plan, 32116));
+  }
+
+  @Test
+  void configuredPortsOwnTheRuntimeValidationBoundary() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setPreviewTelnetPortBase(41000);
+    properties.setDevDemoTelnetPort(42000);
+    RuntimeProfileService configured = new RuntimeProfileService(properties);
+
+    assertTrue(configured.isValidTelnetPort(planner.plan("pr-42"), 41000));
+    assertTrue(configured.isValidTelnetPort(planner.plan("pr-42"), 41015));
+    assertFalse(configured.isValidTelnetPort(planner.plan("pr-42"), 32000));
+    assertTrue(configured.isValidTelnetPort(planner.plan("dev-demo"), 42000));
+    assertFalse(configured.isValidTelnetPort(planner.plan("dev-demo"), 32016));
   }
 
   @Test
