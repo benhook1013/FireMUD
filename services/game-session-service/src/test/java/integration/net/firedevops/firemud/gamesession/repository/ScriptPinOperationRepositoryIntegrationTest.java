@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ScriptPinOperationRepositoryIntegrationTest {
+  private static final String INSERT_SCRIPT_PIN_OPERATION_SQL =
+      "INSERT INTO script_pin_operation ("
+          + "tenant_id, game_instance_id, control_plane_request_id, operation_kind, "
+          + "target_script_patch_version, expected_pin_kind, expected_script_pin_epoch, "
+          + "actor_principal, reason, mutation_digest, outcome, error_code, "
+          + "previous_script_patch_version, previous_script_pin_epoch, "
+          + "resulting_script_patch_version, resulting_script_pin_epoch) "
+          + "VALUES (1, 7, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -65,6 +75,211 @@ class ScriptPinOperationRepositoryIntegrationTest {
         .set(GAME_INSTANCES.STATUS, "RUNNING")
         .set(GAME_INSTANCES.ROW_VERSION, 0L)
         .execute();
+  }
+
+  @Test
+  void baselineEnforcesScriptPinOperationChecksAndAllowsValidOutcomeShapes() {
+    insertScriptPinOperation(
+        "direct-valid-committed",
+        "SET",
+        "patch-committed",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "direct committed",
+        "digest-direct-committed",
+        "COMMITTED",
+        null,
+        "patch-1",
+        1L,
+        "patch-committed",
+        2L);
+    insertScriptPinOperation(
+        "direct-valid-failed-unpinned",
+        "SET",
+        "patch-failed-unpinned",
+        "EXPECT_UNPINNED",
+        null,
+        "operator",
+        "direct failed unpinned",
+        "digest-direct-failed-unpinned",
+        "FAILED",
+        "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE",
+        null,
+        null,
+        null,
+        null);
+    insertScriptPinOperation(
+        "direct-valid-failed-pinned",
+        "SET",
+        "patch-failed-pinned",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "direct failed pinned",
+        "digest-direct-failed-pinned",
+        "FAILED",
+        "SCRIPT_PATCH_AUTHORITY_UNAVAILABLE",
+        "patch-1",
+        1L,
+        "patch-1",
+        1L);
+
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(3);
+    assertThat(
+            dsl.select(
+                    SCRIPT_PIN_OPERATION.OUTCOME,
+                    SCRIPT_PIN_OPERATION.ERROR_CODE,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("direct-valid-committed"))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("COMMITTED");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE)).isNull();
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+                  .isEqualTo("patch-committed");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+            });
+    assertThat(
+            dsl.select(
+                    SCRIPT_PIN_OPERATION.OUTCOME,
+                    SCRIPT_PIN_OPERATION.ERROR_CODE,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(
+                    SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq(
+                        "direct-valid-failed-unpinned"))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION)).isNull();
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isNull();
+            });
+    assertThat(
+            dsl.select(
+                    SCRIPT_PIN_OPERATION.OUTCOME,
+                    SCRIPT_PIN_OPERATION.ERROR_CODE,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION,
+                    SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(
+                    SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("direct-valid-failed-pinned"))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(SCRIPT_PIN_OPERATION.OUTCOME)).isEqualTo("FAILED");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.ERROR_CODE))
+                  .isEqualTo("SCRIPT_PATCH_AUTHORITY_UNAVAILABLE");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PATCH_VERSION))
+                  .isEqualTo("patch-1");
+              assertThat(record.get(SCRIPT_PIN_OPERATION.RESULTING_SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
+
+    assertConstraintRejected(
+        "ck_script_pin_operation_kind",
+        "direct-invalid-kind",
+        "INVALID",
+        "patch-invalid-kind",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "invalid kind",
+        "digest-invalid-kind",
+        "COMMITTED",
+        null,
+        "patch-1",
+        1L,
+        "patch-invalid-kind",
+        2L);
+    assertConstraintRejected(
+        "ck_script_pin_operation_required_text_nonblank",
+        "direct-invalid-required-text",
+        "SET",
+        "patch-invalid-required-text",
+        "EXPECT_EPOCH",
+        1L,
+        " ",
+        "invalid required text",
+        "digest-invalid-required-text",
+        "COMMITTED",
+        null,
+        "patch-1",
+        1L,
+        "patch-invalid-required-text",
+        2L);
+    assertConstraintRejected(
+        "ck_script_pin_operation_previous_tuple",
+        "direct-invalid-previous-tuple",
+        "SET",
+        "patch-invalid-previous-tuple",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "invalid previous tuple",
+        "digest-invalid-previous-tuple",
+        "COMMITTED",
+        null,
+        "patch-previous-only",
+        null,
+        "patch-invalid-previous-tuple",
+        2L);
+    assertConstraintRejected(
+        "ck_script_pin_operation_resulting_tuple",
+        "direct-invalid-committed-result",
+        "SET",
+        "patch-invalid-committed-result",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "invalid committed result",
+        "digest-invalid-committed-result",
+        "COMMITTED",
+        null,
+        "patch-1",
+        1L,
+        null,
+        null);
+    assertConstraintRejected(
+        "ck_script_pin_operation_expected_pin",
+        "direct-invalid-expected-pin",
+        "SET",
+        "patch-invalid-expected-pin",
+        "EXPECT_EPOCH",
+        null,
+        "operator",
+        "invalid expected pin",
+        "digest-invalid-expected-pin",
+        "COMMITTED",
+        null,
+        "patch-1",
+        1L,
+        "patch-invalid-expected-pin",
+        2L);
+    assertConstraintRejected(
+        "ck_script_pin_operation_outcome_error",
+        "direct-invalid-outcome-error",
+        "SET",
+        "patch-invalid-outcome-error",
+        "EXPECT_EPOCH",
+        1L,
+        "operator",
+        "invalid outcome error",
+        "digest-invalid-outcome-error",
+        "COMMITTED",
+        "UNEXPECTED_ERROR",
+        "patch-1",
+        1L,
+        "patch-invalid-outcome-error",
+        2L);
+
+    assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(3);
   }
 
   @Test
@@ -860,6 +1075,16 @@ class ScriptPinOperationRepositoryIntegrationTest {
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
               assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(Long.MAX_VALUE);
             });
+  }
+
+  private void assertConstraintRejected(String constraintName, Object... values) {
+    assertThatThrownBy(() -> insertScriptPinOperation(values))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining(constraintName);
+  }
+
+  private void insertScriptPinOperation(Object... values) {
+    dsl.execute(INSERT_SCRIPT_PIN_OPERATION_SQL, values);
   }
 
   private ScriptPinMutationResult applyAfterBarrier(

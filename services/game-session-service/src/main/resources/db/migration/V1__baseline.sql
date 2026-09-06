@@ -288,9 +288,21 @@ CREATE TABLE script_pin_operation (
         (previous_script_patch_version IS NOT NULL AND previous_script_pin_epoch IS NOT NULL AND previous_script_pin_epoch > 0)
     ),
     CONSTRAINT ck_script_pin_operation_resulting_tuple CHECK (
-        (resulting_script_patch_version IS NULL AND resulting_script_pin_epoch IS NULL)
+        (outcome = 'COMMITTED'
+            AND resulting_script_patch_version IS NOT NULL
+            AND BTRIM(resulting_script_patch_version) <> ''
+            AND resulting_script_pin_epoch IS NOT NULL
+            AND resulting_script_pin_epoch > 0)
         OR
-        (resulting_script_patch_version IS NOT NULL AND resulting_script_pin_epoch IS NOT NULL AND resulting_script_pin_epoch > 0)
+        (outcome = 'FAILED'
+            AND (
+                (resulting_script_patch_version IS NULL AND resulting_script_pin_epoch IS NULL)
+                OR
+                (resulting_script_patch_version IS NOT NULL
+                    AND BTRIM(resulting_script_patch_version) <> ''
+                    AND resulting_script_pin_epoch IS NOT NULL
+                    AND resulting_script_pin_epoch > 0)
+            ))
     ),
     CONSTRAINT ck_script_pin_operation_expected_pin CHECK (
         (expected_pin_kind = 'EXPECT_UNPINNED' AND expected_script_pin_epoch IS NULL)
