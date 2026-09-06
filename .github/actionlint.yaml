@@ -1,3 +1,14 @@
 self-hosted-runner:
   labels:
     - preview
+
+# GitHub Actions added concurrency.queue in May 2026. This repository's pinned
+# actionlint v1.7.11 does not parse it, so suppress only that known parser lag
+# in the two workflows that use the shared preview lifecycle queue.
+paths:
+  .github/workflows/preview.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/preview-janitor.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
