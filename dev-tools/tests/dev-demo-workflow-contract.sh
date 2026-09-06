@@ -82,6 +82,19 @@ if grep -Eq '^        if:' <<<"$bootstrap_body"; then
   echo "$workflow must not repeat the already-job-guarded bootstrap step condition" >&2
   exit 1
 fi
+verify_body="$(workflow_job_body dev-demo-verify)"
+[[ -n "$verify_body" ]] || {
+  echo "$workflow is missing the dev-demo-verify job body" >&2
+  exit 1
+}
+grep -Fq -- 'if: ${{ success() && !cancelled() }}' <<<"$verify_body" || {
+  echo "$workflow must gate hosted TCP smoke on successful identity/rollout/port prerequisites" >&2
+  exit 1
+}
+grep -Fq -- 'if: ${{ always() && failure() }}' <<<"$verify_body" || {
+  echo "$workflow must retain failure summary reporting after verification failures" >&2
+  exit 1
+}
 grep -Fq -- 'pods/portforward' "$runtime_rbac" || {
   echo "$runtime_rbac must grant the dev-demo bootstrap port-forward subresource" >&2
   exit 1

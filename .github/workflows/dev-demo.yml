@@ -746,7 +746,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Smoke dev-demo over TCP
-        if: ${{ !cancelled() }}
+        if: ${{ success() && !cancelled() }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}

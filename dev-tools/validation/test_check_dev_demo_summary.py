@@ -82,7 +82,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         root: Path,
         bootstrap_manifest: str,
         summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
-        smoke_condition: str = "${{ !cancelled() }}",
+        smoke_condition: str = "${{ success() && !cancelled() }}",
     ) -> None:
         workflow = {
             "jobs": {
@@ -602,17 +602,45 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):
+    def test_validate_workflow_rejects_smoke_condition_without_success_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(
                 root,
                 self._bootstrap_manifest_fixture(),
-                smoke_condition="${{ success() }}",
+                smoke_condition="${{ !cancelled() }}",
             )
             with self.assertRaisesRegex(
                 AssertionError,
-                "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure",
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_inverted_cancellation_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ success() && !!cancelled() }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_contradictory_smoke_condition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ success() && !cancelled() && failure() }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
             ):
                 self.validator.validate_workflow(root)
 

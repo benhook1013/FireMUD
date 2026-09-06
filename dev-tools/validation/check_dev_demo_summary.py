@@ -16,6 +16,7 @@ from pathlib import Path
 import yaml
 
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/dev-demo.yml")
+CANONICAL_SMOKE_CONDITION = "${{success()&&!cancelled()}}"
 ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset(
     {"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"}
 )
@@ -764,9 +765,14 @@ def validate_workflow(root: Path) -> None:
         verify_job, "Smoke dev-demo over TCP", "dev-demo-verify"
     )
     smoke_condition = smoke_step.get("if")
-    if not isinstance(smoke_condition, str) or "!cancelled()" not in smoke_condition:
+    normalized_smoke_condition = (
+        re.sub(r"\s+", "", smoke_condition)
+        if isinstance(smoke_condition, str)
+        else None
+    )
+    if normalized_smoke_condition != CANONICAL_SMOKE_CONDITION:
         raise AssertionError(
-            "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure"
+            "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run"
         )
     bootstrap_manifest = bootstrap_step.get("run")
     if not isinstance(bootstrap_manifest, str):

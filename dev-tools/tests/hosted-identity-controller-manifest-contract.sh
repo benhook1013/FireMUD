@@ -207,6 +207,13 @@ binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spe
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
 assert "object.metadata.labels.size() == 5" in binding_expression
 assert "object.subjects.size() == 1" in binding_expression
+namespace_expression = policies["firemud-hosted-system-namespace-guard"]["spec"]["validations"][0]["expression"]
+assert namespace_expression.startswith(f"({break_glass} &&")
+assert "(request.operation == 'DELETE' ? request.name : object.metadata.name)" in namespace_expression
+assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_expression
+assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression
+assert "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
+assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
 PY
 for phase in Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying Ready Degraded Blocked Retiring Retired; do
   require_literal "$CRD" "- $phase"

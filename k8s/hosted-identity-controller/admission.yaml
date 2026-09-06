@@ -478,8 +478,8 @@ spec:
     - expression: >-
         (request.userInfo.groups.exists(group, group == 'system:masters') &&
          request.operation in ['CREATE', 'DELETE'] &&
-         ((request.operation == 'DELETE' && request.name == 'firemud-system') ||
-          (request.operation == 'CREATE' && object.metadata.name == 'firemud-system'))) ||
+         (request.operation == 'DELETE' ? request.name : object.metadata.name)
+           .matches('^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$')) ||
         (request.operation in ['UPDATE', 'PATCH'] &&
          request.name == 'firemud-system' &&
          object.metadata.name == 'firemud-system' &&
@@ -515,7 +515,7 @@ spec:
            object.metadata.labels['firemud.dev/identity-name'] == (object.metadata.name == 'dev-identity' ? 'dev-demo' : object.metadata.name.substring(0, object.metadata.name.size() - 9)) &&
            object.metadata.labels['firemud.dev/environment-class'] == (object.metadata.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
            object.metadata.labels['firemud.dev/retention'] == 'retained')))
-      message: firemud-system CREATE/DELETE requires system:masters; updates are no-op only and retained identity Namespaces are controller-managed
+      message: firemud-system and retained identity Namespace CREATE/DELETE operations require system:masters; updates are no-op only and ordinary retained identity lifecycle is controller-managed
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
