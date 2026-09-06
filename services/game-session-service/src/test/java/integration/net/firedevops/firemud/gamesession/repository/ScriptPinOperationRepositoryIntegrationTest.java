@@ -299,6 +299,48 @@ class ScriptPinOperationRepositoryIntegrationTest {
   }
 
   @Test
+  void unconditionalPinOverridesMismatchedCurrentEpochAndPersistsOperationKind() {
+    ScriptPinMutationResult result =
+        repository.applyScriptPin(
+            1L,
+            7L,
+            "SET",
+            "patch-unconditional",
+            "request-unconditional",
+            "platform-admin",
+            "break-glass repin",
+            "UNCONDITIONAL",
+            null);
+
+    assertThat(result.succeeded()).isTrue();
+    assertThat(result.previousScriptPinEpoch()).isEqualTo(1L);
+    assertThat(result.resultingScriptPinEpoch()).isEqualTo(2L);
+    assertThat(result.resultingScriptPatchVersion()).isEqualTo("patch-unconditional");
+    assertThat(
+            dsl.select(GAME_INSTANCES.SCRIPT_PATCH_VERSION, GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            record -> {
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION))
+                  .isEqualTo("patch-unconditional");
+              assertThat(record.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(2L);
+            });
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.OPERATION_KIND, SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-unconditional"))
+                .fetchOne())
+        .satisfies(
+            operation -> {
+              assertThat(operation.get(SCRIPT_PIN_OPERATION.OPERATION_KIND)).isEqualTo("SET");
+              assertThat(operation.get(SCRIPT_PIN_OPERATION.EXPECTED_PIN_KIND))
+                  .isEqualTo("UNCONDITIONAL");
+            });
+  }
+
+  @Test
   void expectedUnpinnedAllowsPinningAnUnpinnedInstance() {
     dsl.update(GAME_INSTANCES)
         .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, (String) null)

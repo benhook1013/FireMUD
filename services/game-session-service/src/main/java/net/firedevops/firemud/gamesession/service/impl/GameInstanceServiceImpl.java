@@ -915,6 +915,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       throw new IllegalStateException(
           "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot");
     }
+    if (snapshot == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     final long responseTenantId;
     final long responseGameInstanceId;
     try {
@@ -922,7 +925,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       responseGameInstanceId =
           requirePositiveExternalId(snapshot.getGameInstanceId(), "gameInstanceId");
     } catch (IllegalArgumentException ex) {
-      throw new IllegalStateException(ex.getMessage(), ex);
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: " + ex.getMessage(), ex);
     }
     if (responseTenantId != expectedTenantId || responseGameInstanceId != expectedGameInstanceId) {
       throw new IllegalStateException(

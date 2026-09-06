@@ -67,6 +67,7 @@ class V14__clear_unpinned_script_pin_metadataTest {
     int statementEnd = migration.indexOf(";", where);
     assertThat(update).isGreaterThanOrEqualTo(0);
     assertThat(where).isGreaterThan(update);
+    assertThat(statementEnd).isGreaterThan(where);
     String whereClause = migration.substring(where, statementEnd);
     assertThat(whereClause)
         .contains("NULLIF(regexp_replace(script_patch_version")
