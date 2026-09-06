@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -55,6 +56,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @SuppressFBWarnings(
@@ -80,6 +83,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static final String REASON_RUNTIME_SCOPE_CHANGED = "runtime_scope_changed";
   private static final String REASON_PLAYABLE_STATE_SCOPE_CHANGED = "playable_state_scope_changed";
   private static final String REASON_SCRIPT_PATCH_MISMATCH = "script_patch_mismatch";
+  private static final String REASON_SCRIPT_PIN_EPOCH_MISMATCH = "script_pin_epoch_mismatch";
+  private static final String REASON_SCRIPT_PIN_REQUEST_ID_REQUIRED =
+      "script_pin_control_plane_request_id_required";
+  private static final String REASON_SCRIPT_PIN_REQUEST_ID_MISMATCH =
+      "script_pin_control_plane_request_id_mismatch";
   private static final String REASON_PLUGIN_BINDING_MISMATCH = "plugin_binding_mismatch";
   private static final String REASON_MATERIALIZATION_NOT_READY = "materialization_not_ready";
   private static final String REASON_ROUTING_BUNDLE_CHANGED = "routing_bundle_changed";
@@ -104,6 +112,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptSchedulerProperties schedulerProperties;
   private final MeterRegistry meterRegistry;
+  private final ObjectMapper objectMapper;
 
   public ScriptScheduleInstanceServiceImpl(
       ScriptScheduleDefinitionRepository scheduleDefinitionRepository,
@@ -118,7 +127,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       GameDesignControlPlaneClient gameDesignControlPlaneClient,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       ScriptSchedulerProperties schedulerProperties,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ObjectMapper objectMapper) {
     this.scheduleDefinitionRepository = scheduleDefinitionRepository;
     this.scheduleInstanceRepository = scheduleInstanceRepository;
     this.pinProjectionRepository = pinProjectionRepository;
@@ -132,6 +142,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.schedulerProperties = schedulerProperties;
     this.meterRegistry = meterRegistry;
+    this.objectMapper = objectMapper;
   }
 
   @Override
@@ -155,12 +166,23 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       // the existing projection until the owner returns an exact-scope response.
       return;
     }
-    if (runtimeState == null || runtimeState.getPinnedScriptPatchVersion().isBlank()) {
+    if (runtimeState == null) {
       scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+      return;
+    }
+    if (runtimeState.getPinnedScriptPatchVersion().isBlank()) {
+      if (runtimeState.getScriptPinEpoch() <= 0
+          && blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()).isBlank()) {
+        scheduleInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+      } else {
+        markRetainedSchedulesPending(tenantId, gameInstanceId);
+      }
       return;
     }
     if (runtimeState.getRegionId().isBlank()
         || runtimeState.getRegionEpoch() <= 0
+        || runtimeState.getScriptPinEpoch() <= 0
+        || blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()).isBlank()
         || !hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())
         || !RoutingBundleSupport.fromRuntimeState(runtimeState).isPresent()) {
       // Schedule activation is scoped to the authoritative runtime timeline. A partial
@@ -195,6 +217,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               instance.getPlayableStateScope(),
               instance.getPluginId(),
               instance.getPluginVersionId(),
+              applicableBindingId(instance),
               instance.getScheduleDefinitionId(),
               instance.getTargetScopeType(),
               instance.getTargetScopeId()),
@@ -218,6 +241,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                 normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
                 definition.getPluginId(),
                 definition.getPluginVersionId(),
+                applicableBindingId(definition, binding),
                 definition.getScheduleDefinitionId(),
                 binding.getTargetScopeType(),
                 binding.getTargetScopeId());
@@ -256,6 +280,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
                             instance.getPlayableStateScope(),
                             instance.getPluginId(),
                             instance.getPluginVersionId(),
+                            applicableBindingId(instance),
                             instance.getScheduleDefinitionId(),
                             instance.getTargetScopeType(),
                             instance.getTargetScopeId())))
@@ -286,11 +311,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       RoutingBundleSupport.RoutingBundle routingBundle =
           RoutingBundleSupport.normalize(
               projection.getWorldSlug(), projection.getRealmSlug(), projection.getPointerVersion());
+      long scriptPinEpoch =
+          projection.getScriptPinEpoch() == null ? 0L : projection.getScriptPinEpoch();
       GameInstanceRuntimeState.Builder runtimeState =
           GameInstanceRuntimeState.newBuilder()
               .setTenantId(projection.getTenantId())
               .setGameInstanceId(projection.getGameInstanceId())
               .setPinnedScriptPatchVersion(projection.getObservedPinnedScriptPatchVersion())
+              .setScriptPinEpoch(scriptPinEpoch)
               .setRegionId(blankToEmpty(projection.getRuntimeRegionId()))
               .setRegionEpoch(projection.getRuntimeRegionEpoch())
               .setPlayableStateScope(toPlayableStateScope(projection.getPlayableStateScope()))
@@ -300,7 +328,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
               .setScriptPatchPinnedControlPlaneRequestId(
                   projection.getLastObservedControlPlaneRequestId())
               .setScriptPatchPinnedAtMs(projection.getObservedAt().toEpochMilli());
-      if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
+      if (runtimeState.getRegionId().isBlank()
+          || runtimeState.getRegionEpoch() <= 0
+          || runtimeState.getScriptPinEpoch() <= 0) {
         // A pin projection without a complete runtime scope is not authoritative enough to
         // reconcile or delete schedule rows. The next complete projection will retry it.
         markRetainedSchedulesPending(tenantId, projection.getGameInstanceId());
@@ -435,6 +465,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
             .toList();
     int fired = 0;
     for (ScriptScheduleInstance instance : tickInstances) {
+      if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+        continue;
+      }
+      if (!hasCompleteScriptPinTuple(instance)) {
+        fenceMaterialization(instance, now);
+        updates.add(instance);
+        continue;
+      }
       TickAdvanceResult advance;
       try {
         advance =
@@ -469,6 +507,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       }
     }
     for (ScriptScheduleInstance instance : wallClockInstances) {
+      if (STATUS_FENCED.equals(instance.getMaterializationStatus())) {
+        continue;
+      }
+      if (!hasCompleteScriptPinTuple(instance)) {
+        fenceMaterialization(instance, now);
+        updates.add(instance);
+        continue;
+      }
       WallClockAdvanceResult advance;
       try {
         advance = advanceWallClockProgress(instance, observation, observedAt, now);
@@ -587,6 +633,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String tenantId,
       String gameInstanceId,
       String scriptPatchVersion,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       String scriptId,
       String eventType,
       String finalReason,
@@ -594,19 +642,49 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       long changedBeforeMs,
       int limit) {
     requireText(tenantId, "tenant_id");
+    if (scriptPinEpoch < 0) {
+      throw new IllegalArgumentException("script_pin_epoch must be non-negative");
+    }
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
-    return eventAuditRepository
-        .findTimerAuditEvents(
-            tenantId,
-            blankToEmpty(gameInstanceId),
-            blankToEmpty(scriptPatchVersion),
-            blankToEmpty(scriptId),
-            blankToEmpty(eventType),
-            blankToEmpty(finalReason),
-            changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs),
-            changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs),
-            org.springframework.data.domain.PageRequest.of(0, boundedLimit))
-        .stream()
+    String normalizedTenant = tenantId;
+    String normalizedInstance = blankToEmpty(gameInstanceId);
+    String normalizedPatch = blankToEmpty(scriptPatchVersion);
+    String normalizedScript = blankToEmpty(scriptId);
+    String normalizedEvent = blankToEmpty(eventType);
+    String normalizedReason = blankToEmpty(finalReason);
+    Instant changedAfter = changedAfterMs <= 0 ? null : Instant.ofEpochMilli(changedAfterMs);
+    Instant changedBefore = changedBeforeMs <= 0 ? null : Instant.ofEpochMilli(changedBeforeMs);
+    org.springframework.data.domain.PageRequest page =
+        org.springframework.data.domain.PageRequest.of(0, boundedLimit);
+    String normalizedPinRequestId = blankToEmpty(scriptPinControlPlaneRequestId);
+    boolean hasPinEpoch = scriptPinEpoch > 0;
+    boolean hasPinRequestId = !normalizedPinRequestId.isBlank();
+    boolean hasPinFilter = hasPinEpoch || hasPinRequestId;
+    List<ScriptEventAudit> audits =
+        !hasPinFilter
+            ? eventAuditRepository.findTimerAuditEvents(
+                normalizedTenant,
+                normalizedInstance,
+                normalizedPatch,
+                normalizedScript,
+                normalizedEvent,
+                normalizedReason,
+                changedAfter,
+                changedBefore,
+                page)
+            : eventAuditRepository.findTimerAuditEvents(
+                normalizedTenant,
+                normalizedInstance,
+                normalizedPatch,
+                hasPinEpoch ? scriptPinEpoch : null,
+                hasPinRequestId ? normalizedPinRequestId : null,
+                normalizedScript,
+                normalizedEvent,
+                normalizedReason,
+                changedAfter,
+                changedBefore,
+                page);
+    return audits.stream()
         .map(ScriptScheduleInstanceServiceImpl::toTimerAuditSummary)
         .map(summary -> withPublication(tenantId, summary))
         .toList();
@@ -692,6 +770,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setTenantId(tenantId);
     instance.setGameInstanceId(gameInstanceId);
     instance.setScriptPatchVersion(definition.getScriptPatchVersion());
+    long scriptPinEpoch = runtimeState.getScriptPinEpoch();
+    instance.setScriptPinEpoch(scriptPinEpoch);
     instance.setScriptId(definition.getScriptId());
     instance.setPlayableStateScope(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()));
@@ -700,6 +780,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setPointerVersion(routingBundle.pointerVersion());
     instance.setPluginId(blankToEmpty(definition.getPluginId()));
     instance.setPluginVersionId(blankToEmpty(definition.getPluginVersionId()));
+    instance.setBindingId(applicableBindingId(definition, binding));
     instance.setEventType(definition.getEventType());
     instance.setScheduleDefinitionId(definition.getScheduleDefinitionId());
     instance.setScheduleKind(definition.getScheduleKind());
@@ -712,7 +793,9 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     instance.setRequiresExclusiveEvent(binding.isRequiresExclusiveEvent());
     instance.setObservedRuntimeVersionId(blankToEmpty(runtimeState.getRuntimeVersionId()));
     instance.setLastObservedControlPlaneRequestId(
-        blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId()));
+        scriptPinEpoch > 0
+            ? blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId())
+            : "");
     instance.setScheduleMetadataJson(definition.getScheduleMetadataJson());
     instance.setScheduleSemanticsHash(definition.getScheduleSemanticsHash());
     instance.setPinObservedAt(pinObservedAt);
@@ -761,6 +844,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     // The durable observed runtime tuple is the generation boundary. A semantics hash is
     // diagnostic only and cannot infer continuity across a new pin/reset with identical text.
     return Objects.equals(instance.getScriptPatchVersion(), definition.getScriptPatchVersion())
+        && instance.getScriptPinEpoch() > 0
+        && instance.getScriptPinEpoch() == runtimeState.getScriptPinEpoch()
         && Objects.equals(
             blankToEmpty(instance.getObservedRuntimeVersionId()),
             blankToEmpty(runtimeState.getRuntimeVersionId()))
@@ -804,6 +889,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         && instance.getCadenceValue() == definition.getCadenceValue()
         && Objects.equals(instance.getCadenceUnit(), definition.getCadenceUnit())
         && Objects.equals(instance.getPriorityTag(), definition.getPriorityTag())
+        && Objects.equals(applicableBindingId(instance), applicableBindingId(definition, binding))
         && instance.getBindingPriority() == binding.getPriority()
         && instance.isRequiresExclusiveEvent() == binding.isRequiresExclusiveEvent();
   }
@@ -1093,9 +1179,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(instance.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    audit.setBindingId(applicableBindingId(instance));
+    audit.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
+    audit.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPinEpoch(candidate.scriptPinEpoch());
+    audit.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     audit.setScriptEventId(scriptEventId);
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
@@ -1241,10 +1332,15 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     item.setScriptId(instance.getScriptId());
     item.setPluginId(blankToEmpty(instance.getPluginId()));
     item.setPluginVersionId(blankToEmpty(instance.getPluginVersionId()));
+    item.setBindingId(applicableBindingId(instance));
+    item.setTargetScopeType(blankToEmpty(instance.getTargetScopeType()));
+    item.setTargetScopeId(blankToEmpty(instance.getTargetScopeId()));
     item.setEventType(instance.getEventType());
     item.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     item.setQuotaClass(ScriptQuotaClasses.STANDARD_RUNTIME);
     item.setScriptPatchVersion(instance.getScriptPatchVersion());
+    item.setScriptPinEpoch(candidate.scriptPinEpoch());
+    item.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     item.setScriptEventId(scriptEventId);
     item.setDryRun(SCHEDULER_IS_DRY_RUN);
     item.setSourceService(SOURCE_SERVICE);
@@ -1313,6 +1409,18 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (runtimeState.getRegionId().isBlank() || runtimeState.getRegionEpoch() <= 0) {
       return MaterializationEligibility.authorityUnavailable();
     }
+    if (runtimeState.getScriptPinEpoch() <= 0 || instance.getScriptPinEpoch() <= 0) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    String runtimeRequestId =
+        blankToEmpty(runtimeState.getScriptPatchPinnedControlPlaneRequestId());
+    String instanceRequestId = blankToEmpty(instance.getLastObservedControlPlaneRequestId());
+    if (runtimeRequestId.isBlank()) {
+      return MaterializationEligibility.authorityUnavailable();
+    }
+    if (instanceRequestId.isBlank()) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PIN_REQUEST_ID_REQUIRED);
+    }
     if (!hasExplicitPlayableStateScope(runtimeState.getPlayableStateScope())) {
       return MaterializationEligibility.authorityUnavailable();
     }
@@ -1342,6 +1450,12 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     if (!Objects.equals(
         runtimeState.getPinnedScriptPatchVersion(), instance.getScriptPatchVersion())) {
       return MaterializationEligibility.proven(REASON_SCRIPT_PATCH_MISMATCH);
+    }
+    if (runtimeState.getScriptPinEpoch() != instance.getScriptPinEpoch()) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PIN_EPOCH_MISMATCH);
+    }
+    if (!runtimeRequestId.equals(instanceRequestId)) {
+      return MaterializationEligibility.proven(REASON_SCRIPT_PIN_REQUEST_ID_MISMATCH);
     }
     if (!Objects.equals(
         normalizePlayableStateScope(runtimeState.getPlayableStateScope()),
@@ -1522,9 +1636,14 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     audit.setScriptId(instance.getScriptId());
     audit.setPluginId(blankToEmpty(workItem.getPluginId()));
     audit.setPluginVersionId(blankToEmpty(workItem.getPluginVersionId()));
+    audit.setBindingId(applicableBindingId(workItem));
+    audit.setTargetScopeType(blankToEmpty(workItem.getTargetScopeType()));
+    audit.setTargetScopeId(blankToEmpty(workItem.getTargetScopeId()));
     audit.setEventType(instance.getEventType());
     audit.setEventSchemaVersion(DEFAULT_SCHEMA_VERSION);
     audit.setScriptPatchVersion(instance.getScriptPatchVersion());
+    audit.setScriptPinEpoch(candidate.scriptPinEpoch());
+    audit.setScriptPinControlPlaneRequestId(candidate.scriptPinControlPlaneRequestId());
     audit.setScriptEventId(workItem.getScriptEventId());
     audit.setDryRun(SCHEDULER_IS_DRY_RUN);
     audit.setSourceService(SOURCE_SERVICE);
@@ -1629,8 +1748,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.scriptId(),
         summary.pluginId(),
         summary.pluginVersionId(),
+        summary.bindingId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
+        summary.scriptPinControlPlaneRequestId(),
         summary.scriptEventId(),
         summary.triggerMode(),
         summary.sourceState(),
@@ -1655,6 +1777,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.tenantId(),
         summary.gameInstanceId(),
         summary.scriptPatchVersion(),
+        summary.scriptPinEpoch(),
         summary.scriptId(),
         summary.playableStateScope(),
         summary.worldSlug(),
@@ -1662,6 +1785,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         summary.pointerVersion(),
         summary.pluginId(),
         summary.pluginVersionId(),
+        summary.bindingId(),
         summary.eventType(),
         summary.scheduleDefinitionId(),
         summary.scheduleKind(),
@@ -1814,8 +1938,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         audit.getScriptId(),
         blankToEmpty(audit.getPluginId()),
         blankToEmpty(audit.getPluginVersionId()),
+        blankToEmpty(audit.getBindingId()),
         audit.getEventType(),
         audit.getScriptPatchVersion(),
+        audit.getScriptPinEpoch() == null ? 0L : audit.getScriptPinEpoch(),
+        blankToEmpty(audit.getScriptPinControlPlaneRequestId()),
         audit.getScriptEventId(),
         audit.getTriggerMode(),
         blankToEmpty(audit.getSourceState()),
@@ -1835,32 +1962,38 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   private static String timerReadSnapshotToken(TimerFiringCandidate candidate) {
     ScriptScheduleInstance instance = candidate.instance();
     return "automation:"
-        + instance.getEventType()
-        + ":"
-        + instance.getGameInstanceId()
-        + ":"
-        + candidate.regionEpoch()
-        + ":"
-        + candidate.duePointToken()
-        + ":"
-        + shortHash(instance.getScheduleDefinitionId());
+        + lengthPrefixedIdentity(
+            instance.getEventType(),
+            instance.getGameInstanceId(),
+            Long.toString(zeroIfNull(candidate.regionEpoch())),
+            instance.getScriptPatchVersion(),
+            Long.toString(candidate.scriptPinEpoch()),
+            candidate.duePointToken(),
+            shortHash(applicableBindingId(instance)),
+            shortHash(blankToEmpty(instance.getScheduleDefinitionId())));
   }
 
-  private static String timerPayload(TimerFiringCandidate candidate) {
+  private String timerPayload(TimerFiringCandidate candidate) {
     ScriptScheduleInstance instance = candidate.instance();
-    String dueField =
-        candidate.wallClock()
-            ? "\"dueAt\":" + candidate.dueAt().toEpochMilli()
-            : "\"dueTickId\":" + candidate.dueTickId();
-    return "{\"scheduleId\":\""
-        + escape(instance.getScheduleDefinitionId())
-        + "\","
-        + dueField
-        + ",\"targetScopeType\":\""
-        + escape(instance.getTargetScopeType())
-        + "\",\"targetScopeId\":\""
-        + escape(instance.getTargetScopeId())
-        + "\"}";
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("scheduleId", blankToEmpty(instance.getScheduleDefinitionId()));
+    payload.put("bindingId", applicableBindingId(instance));
+    payload.put("scriptPatchVersion", blankToEmpty(instance.getScriptPatchVersion()));
+    payload.put("scriptPinEpoch", candidate.scriptPinEpoch());
+    payload.put(
+        "scriptPinControlPlaneRequestId", blankToEmpty(candidate.scriptPinControlPlaneRequestId()));
+    if (candidate.wallClock()) {
+      payload.put("dueAt", candidate.dueAt().toEpochMilli());
+    } else {
+      payload.put("dueTickId", candidate.dueTickId());
+    }
+    payload.put("targetScopeType", blankToEmpty(instance.getTargetScopeType()));
+    payload.put("targetScopeId", blankToEmpty(instance.getTargetScopeId()));
+    try {
+      return objectMapper.writeValueAsString(payload);
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("timer_payload_json_invalid", ex);
+    }
   }
 
   private static String scheduleKey(ScriptScheduleInstance instance) {
@@ -1869,6 +2002,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + blankToEmpty(instance.getPluginId())
         + "|"
         + blankToEmpty(instance.getPluginVersionId())
+        + "|"
+        + applicableBindingId(instance)
         + "|"
         + blankToEmpty(instance.getTargetScopeType())
         + "|"
@@ -1891,10 +2026,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
   }
 
-  private static String escape(String value) {
-    return blankToEmpty(value).replace("\\", "\\\\").replace("\"", "\\\"");
-  }
-
   private ScheduleInstanceSummary toSummary(ScriptScheduleInstance instance) {
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
@@ -1903,6 +2034,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         instance.getTenantId(),
         instance.getGameInstanceId(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
         instance.getScriptId(),
         blankToEmpty(instance.getPlayableStateScope()),
         routingBundle.worldSlug(),
@@ -1910,6 +2042,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         routingBundle.pointerVersion(),
         instance.getPluginId(),
         instance.getPluginVersionId(),
+        applicableBindingId(instance),
         instance.getEventType(),
         instance.getScheduleDefinitionId(),
         instance.getScheduleKind(),
@@ -1944,6 +2077,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       String playableStateScope,
       String pluginId,
       String pluginVersionId,
+      String bindingId,
       String scheduleDefinitionId,
       String targetScopeType,
       String targetScopeId) {
@@ -1952,6 +2086,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
         + blankToEmpty(pluginId)
         + "\u0000"
         + blankToEmpty(pluginVersionId)
+        + "\u0000"
+        + blankToEmpty(bindingId)
         + "\u0000"
         + blankToEmpty(targetScopeType)
         + "\u0000"
@@ -1962,6 +2098,29 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
   private static String bindingKey(String scriptId, String eventType) {
     return blankToEmpty(scriptId) + "\u0000" + blankToEmpty(eventType);
+  }
+
+  private static String applicableBindingId(
+      ScriptScheduleDefinition definition, ScriptEventBinding binding) {
+    return isPluginOwned(definition.getPluginId(), definition.getPluginVersionId())
+        ? blankToEmpty(binding.getBindingId())
+        : "";
+  }
+
+  private static String applicableBindingId(ScriptScheduleInstance instance) {
+    return isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())
+        ? blankToEmpty(instance.getBindingId())
+        : "";
+  }
+
+  private static String applicableBindingId(ScriptWorkItem workItem) {
+    return isPluginOwned(workItem.getPluginId(), workItem.getPluginVersionId())
+        ? blankToEmpty(workItem.getBindingId())
+        : "";
+  }
+
+  private static boolean isPluginOwned(String pluginId, String pluginVersionId) {
+    return !blankToEmpty(pluginId).isBlank() && !blankToEmpty(pluginVersionId).isBlank();
   }
 
   private static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
@@ -1993,6 +2152,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
       ScriptScheduleInstance instance,
       String regionId,
       Long regionEpoch,
+      long scriptPinEpoch,
+      String scriptPinControlPlaneRequestId,
       Long dueTickId,
       Instant dueAt,
       boolean wallClock) {
@@ -2001,6 +2162,8 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
           instance,
           blankToEmpty(instance.getRuntimeRegionId()),
           instance.getRuntimeRegionEpoch(),
+          requirePositiveScriptPinEpoch(instance),
+          requireScriptPinControlPlaneRequestId(instance),
           dueTickId,
           null,
           false);
@@ -2008,22 +2171,54 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
     private static TimerFiringCandidate tick(
         ScriptScheduleInstance instance, long dueTickId, String regionId, long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          requireScriptPinControlPlaneRequestId(instance),
+          dueTickId,
+          null,
+          false);
     }
 
     private static TimerFiringCandidate wallClock(
         ScriptScheduleInstance instance, Instant dueAt, String regionId, long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          requireScriptPinControlPlaneRequestId(instance),
+          null,
+          dueAt,
+          true);
     }
 
     private static TimerFiringCandidate suppressedTick(
         ScriptScheduleInstance instance, long dueTickId, String regionId, Long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, dueTickId, null, false);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          requireScriptPinControlPlaneRequestId(instance),
+          dueTickId,
+          null,
+          false);
     }
 
     private static TimerFiringCandidate suppressedWallClock(
         ScriptScheduleInstance instance, Instant dueAt, String regionId, Long regionEpoch) {
-      return new TimerFiringCandidate(instance, regionId, regionEpoch, null, dueAt, true);
+      return new TimerFiringCandidate(
+          instance,
+          regionId,
+          regionEpoch,
+          requirePositiveScriptPinEpoch(instance),
+          requireScriptPinControlPlaneRequestId(instance),
+          null,
+          dueAt,
+          true);
     }
 
     private String duePointToken() {
@@ -2035,30 +2230,57 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
 
     private String identity() {
-      return lengthPrefixedIdentity(
-          instance.getTenantId(),
-          instance.getGameInstanceId(),
-          instance.getPlayableStateScope(),
-          regionId,
-          String.valueOf(regionEpoch),
-          blankToEmpty(instance.getTargetScopeType()),
-          blankToEmpty(instance.getTargetScopeId()),
-          targetEntityId(instance),
-          instance.getScriptId(),
-          blankToEmpty(instance.getPluginId()),
-          blankToEmpty(instance.getPluginVersionId()),
-          instance.getEventType(),
-          DEFAULT_SCHEMA_VERSION,
-          instance.getScriptPatchVersion(),
-          instance.getScheduleDefinitionId(),
-          wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId,
-          Boolean.toString(SCHEDULER_IS_DRY_RUN),
-          SCHEDULER_TRIGGER_MODE);
+      List<String> values = new ArrayList<>();
+      values.add(blankToEmpty(instance.getTenantId()));
+      values.add(blankToEmpty(instance.getGameInstanceId()));
+      values.add(blankToEmpty(instance.getPlayableStateScope()));
+      values.add(blankToEmpty(regionId));
+      values.add(Long.toString(zeroIfNull(regionEpoch)));
+      values.add(blankToEmpty(instance.getTargetScopeType()));
+      values.add(blankToEmpty(instance.getTargetScopeId()));
+      values.add(targetEntityId(instance));
+      values.add(blankToEmpty(instance.getScriptId()));
+      values.add(blankToEmpty(instance.getPluginId()));
+      values.add(blankToEmpty(instance.getPluginVersionId()));
+      values.add(blankToEmpty(instance.getEventType()));
+      values.add(DEFAULT_SCHEMA_VERSION);
+      values.add(blankToEmpty(instance.getScriptPatchVersion()));
+      values.add(Long.toString(scriptPinEpoch));
+      if (isPluginOwned(instance.getPluginId(), instance.getPluginVersionId())) {
+        values.add(applicableBindingId(instance));
+      }
+      values.add(blankToEmpty(instance.getScheduleDefinitionId()));
+      values.add(wallClock ? "dueAt:" + dueAt.toEpochMilli() : "dueTickId:" + dueTickId);
+      values.add(Boolean.toString(SCHEDULER_IS_DRY_RUN));
+      values.add(SCHEDULER_TRIGGER_MODE);
+      return lengthPrefixedIdentity(values.toArray(String[]::new));
     }
 
     private String finalReason() {
       return wallClock ? "timer_due_at_" + dueAt.toEpochMilli() : "timer_due_tick_" + dueTickId;
     }
+  }
+
+  private static long requirePositiveScriptPinEpoch(ScriptScheduleInstance instance) {
+    if (instance.getScriptPinEpoch() <= 0) {
+      throw new IllegalArgumentException("script_pin_epoch_required");
+    }
+    return instance.getScriptPinEpoch();
+  }
+
+  private static String requireScriptPinControlPlaneRequestId(ScriptScheduleInstance instance) {
+    String requestId = blankToEmpty(instance.getLastObservedControlPlaneRequestId());
+    if (requestId.isBlank()) {
+      throw new IllegalArgumentException(REASON_SCRIPT_PIN_REQUEST_ID_REQUIRED);
+    }
+    return requestId;
+  }
+
+  private static boolean hasCompleteScriptPinTuple(ScriptScheduleInstance instance) {
+    return instance != null
+        && instance.getScriptPinEpoch() > 0
+        && !blankToEmpty(instance.getScriptPatchVersion()).isBlank()
+        && !blankToEmpty(instance.getLastObservedControlPlaneRequestId()).isBlank();
   }
 
   private static String blankToEmpty(String value) {

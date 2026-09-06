@@ -10,7 +10,10 @@ public class ScriptHandoffEvent {
   private String tenantId;
   private String gameInstanceId;
   private String scriptPatchVersion;
+  private long scriptPinEpoch;
+  private String scriptPinControlPlaneRequestId;
   private String scriptId;
+  private String bindingId = "";
   private String pluginId;
   private String pluginVersionId;
   private Long workItemId;

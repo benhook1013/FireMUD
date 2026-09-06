@@ -16,6 +16,7 @@ public interface ScriptPatchPinProjectionService {
       String tenantId,
       String gameInstanceId,
       String observedPinnedScriptPatchVersion,
+      long scriptPinEpoch,
       String lastObservedControlPlaneRequestId,
       long observedAtMs,
       long projectionAsOfMs,

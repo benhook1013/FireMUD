@@ -46,7 +46,11 @@ public class ScriptEventBindingRepository {
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_TYPE.eq(eventType))
                 .and(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.eq(eventSchemaVersion))
                 .and(SCRIPT_EVENT_BINDINGS.ENABLED.eq(true)))
-        .orderBy(SCRIPT_EVENT_BINDINGS.PRIORITY.asc(), SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+        .orderBy(
+            SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -60,7 +64,9 @@ public class ScriptEventBindingRepository {
             SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
             SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
             SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
-            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -77,7 +83,9 @@ public class ScriptEventBindingRepository {
             SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
             SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
             SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
-            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc())
+            SCRIPT_EVENT_BINDINGS.SCRIPT_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -103,6 +111,7 @@ public class ScriptEventBindingRepository {
             .set(SCRIPT_EVENT_BINDINGS.EVENT_TYPE, entity.getEventType())
             .set(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION, entity.getEventSchemaVersion())
             .set(SCRIPT_EVENT_BINDINGS.SCRIPT_ID, entity.getScriptId())
+            .set(SCRIPT_EVENT_BINDINGS.BINDING_ID, entity.getBindingId())
             .set(SCRIPT_EVENT_BINDINGS.TARGET_SCOPE_TYPE, entity.getTargetScopeType())
             .set(SCRIPT_EVENT_BINDINGS.TARGET_SCOPE_ID, entity.getTargetScopeId())
             .set(SCRIPT_EVENT_BINDINGS.PRIORITY, entity.getPriority())
@@ -136,6 +145,7 @@ public class ScriptEventBindingRepository {
     record.setEventType(entity.getEventType());
     record.setEventSchemaVersion(entity.getEventSchemaVersion());
     record.setScriptId(entity.getScriptId());
+    record.setBindingId(entity.getBindingId());
     record.setTargetScopeType(entity.getTargetScopeType());
     record.setTargetScopeId(entity.getTargetScopeId());
     record.setPriority(entity.getPriority());
@@ -153,6 +163,7 @@ public class ScriptEventBindingRepository {
     entity.setEventType(record.get(SCRIPT_EVENT_BINDINGS.EVENT_TYPE));
     entity.setEventSchemaVersion(record.get(SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION));
     entity.setScriptId(record.get(SCRIPT_EVENT_BINDINGS.SCRIPT_ID));
+    entity.setBindingId(record.get(SCRIPT_EVENT_BINDINGS.BINDING_ID));
     entity.setTargetScopeType(record.get(SCRIPT_EVENT_BINDINGS.TARGET_SCOPE_TYPE));
     entity.setTargetScopeId(record.get(SCRIPT_EVENT_BINDINGS.TARGET_SCOPE_ID));
     Integer priority = record.get(SCRIPT_EVENT_BINDINGS.PRIORITY);

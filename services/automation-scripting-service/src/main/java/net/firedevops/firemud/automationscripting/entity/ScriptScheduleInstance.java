@@ -9,6 +9,7 @@ public class ScriptScheduleInstance {
   private String tenantId;
   private String gameInstanceId;
   private String scriptPatchVersion;
+  private long scriptPinEpoch;
   private String scriptId;
   private String playableStateScope = "";
   private String worldSlug = "";
@@ -16,6 +17,7 @@ public class ScriptScheduleInstance {
   private String pointerVersion = "";
   private String pluginId = "";
   private String pluginVersionId = "";
+  private String bindingId = "";
   private String eventType;
   private String scheduleDefinitionId;
   private String scheduleKind;

@@ -92,11 +92,13 @@ class AutomationPatchControlPlaneServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    9L,
                     "npc-guard",
                     "SHARED",
                     "demo",
                     "production",
                     "17",
+                    "",
                     "",
                     "",
                     "onTimerExpire",
@@ -171,6 +173,8 @@ class AutomationPatchControlPlaneServiceTest {
 
     assertThat(response.hasError()).isFalse();
     assertThat(response.getSchedulesCount()).isEqualTo(1);
+    assertThat(response.getSchedules(0).getScriptPinEpoch()).isEqualTo(9L);
+    assertThat(response.getSchedules(0).getLastObservedControlPlaneRequestId()).isEqualTo("req-9");
     assertThat(response.getSchedules(0).getCurrentRuntimeRegionId()).isEqualTo("region-1");
     assertThat(response.getSchedules(0).getIsRoutingBundleStale()).isFalse();
     assertThat(response.getSchedules(0).getPublication().getVersionId()).isEqualTo(17L);
@@ -212,6 +216,8 @@ class AutomationPatchControlPlaneServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    2L,
+                    "pin-request-1",
                     "script-1",
                     "plugin-1",
                     "plugin-v1",
@@ -321,6 +327,9 @@ class AutomationPatchControlPlaneServiceTest {
 
     assertThat(response.hasError()).isFalse();
     assertThat(response.getEventsCount()).isEqualTo(1);
+    assertThat(response.getEvents(0).getScriptPinEpoch()).isEqualTo(2L);
+    assertThat(response.getEvents(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-1");
     assertThat(response.getEvents(0).getCurrentTargetRuntimeRegionId()).isEqualTo("region-live");
     assertThat(response.getEvents(0).getIsTargetRuntimeScopeStale()).isTrue();
     assertThat(response.getEvents(0).getGameplayRemoteTargetCommandGameplayResult())
@@ -342,6 +351,8 @@ class AutomationPatchControlPlaneServiceTest {
                     "1",
                     "game-1",
                     "patch-1",
+                    2L,
+                    "pin-request-1",
                     "script-1",
                     "plugin-1",
                     "plugin-v1",
@@ -428,6 +439,8 @@ class AutomationPatchControlPlaneServiceTest {
                     "",
                     "onCommand",
                     "patch-1",
+                    3L,
+                    "pin-request-3",
                     "event-1",
                     "DEAD_LETTERED",
                     "STALE_TIMELINE",
@@ -479,6 +492,9 @@ class AutomationPatchControlPlaneServiceTest {
 
     assertThat(response.hasError()).isFalse();
     assertThat(response.getDeadLettersCount()).isEqualTo(1);
+    assertThat(response.getDeadLetters(0).getScriptPinEpoch()).isEqualTo(3L);
+    assertThat(response.getDeadLetters(0).getScriptPinControlPlaneRequestId())
+        .isEqualTo("pin-request-3");
     assertThat(response.getDeadLetters(0).getWorldSlug()).isBlank();
     assertThat(response.getDeadLetters(0).getRealmSlug()).isBlank();
     assertThat(response.getDeadLetters(0).getPointerVersion()).isBlank();

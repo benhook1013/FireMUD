@@ -35,6 +35,16 @@ public final class JooqPersistenceSupport {
     return offsetDateTime == null ? null : offsetDateTime.toInstant();
   }
 
+  /** Returns {@code null} for a null or blank value, preserving non-blank values as supplied. */
+  public static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+
+  /** Returns an empty string for a null or blank value, preserving non-blank values as supplied. */
+  public static String blankToEmpty(String value) {
+    return value == null || value.isBlank() ? "" : value;
+  }
+
   public static int limitOrDefault(Pageable pageable, int fallback) {
     return pageable == null || pageable.isUnpaged() ? fallback : pageable.getPageSize();
   }
