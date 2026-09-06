@@ -191,15 +191,25 @@ final class TickBatchExecutionService {
           "Redis pending projection reconciliation did not commit for gameInstanceId="
               + gameInstanceId);
     }
+    boolean durableRequeueRecorded = true;
     try {
       if (!redisOnlyEntries.isEmpty()) {
         recordRequeuedActions(redisOnlyEntries);
       }
     } catch (RuntimeException ex) {
+      durableRequeueRecorded = false;
       recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "durable_requeue");
-      throw ex;
+      logger.warn(
+          "Pending replay restore durable requeue reconciliation failed after Redis commit "
+              + "tenantId={} gameInstanceId={} redisOnlyCount={}",
+          tenantId,
+          gameInstanceId,
+          redisOnlyEntries.size(),
+          ex);
     }
-    consecutivePendingReplayRestoreFailures.set(0);
+    if (durableRequeueRecorded) {
+      consecutivePendingReplayRestoreFailures.set(0);
+    }
   }
 
   private void recordPendingReplayRestoreFailure(

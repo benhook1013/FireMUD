@@ -176,12 +176,16 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
         .thenThrow(new RuntimeException("transport unavailable"));
     GameSessionRuntimeControlPlaneReadService service = service(world);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
-    assertEquals("world lifecycle authority unavailable", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals("world lifecycle authority unavailable", error.detailMessage());
+    assertEquals(
+        "WORLD_AUTHORITY_UNAVAILABLE: world lifecycle authority unavailable", error.getMessage());
+    assertEquals("transport unavailable", error.getCause().getMessage());
   }
 
   @Test
@@ -204,12 +208,15 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
   void runtimeReadFailsClosedWhenWorldLifecycleAuthorityIsNotConfigured() {
     GameSessionRuntimeControlPlaneReadService service = service(null);
 
-    IllegalStateException error =
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
         assertThrows(
-            IllegalStateException.class,
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
             () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
 
-    assertEquals("world lifecycle authority unavailable", error.getMessage());
+    assertEquals("WORLD_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals("world lifecycle authority unavailable", error.detailMessage());
+    assertEquals(
+        "WORLD_AUTHORITY_UNAVAILABLE: world lifecycle authority unavailable", error.getMessage());
   }
 
   @Test

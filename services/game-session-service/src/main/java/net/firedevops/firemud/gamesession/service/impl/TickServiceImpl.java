@@ -309,6 +309,7 @@ public class TickServiceImpl implements TickService {
                         normalizedTenantId,
                         normalizedQueueTargetId,
                         replayEntries,
+                        replayResult.terminalizedEntries(),
                         ownership,
                         lease);
                 durableReplayDecisionCommitted = replayResolution.replacementCommitted();
@@ -378,6 +379,7 @@ public class TickServiceImpl implements TickService {
                   normalizedTenantId, normalizedQueueTargetId);
           requireResolvedPendingEntries(stagedResult, normalizedQueueTargetId);
           activeBatchEntries = stagedResult.entries();
+          terminalizedBatchEntries = stagedResult.terminalizedEntries();
           if (!activeBatchEntries.isEmpty()) {
             TickStagingService.BatchCreationResult batchCreationResult =
                 tickStagingService.createBatchForTick(
@@ -389,7 +391,10 @@ public class TickServiceImpl implements TickService {
                     activeBatchEntries);
             activeBatch = batchCreationResult.batch();
             activeBatchEntries = batchCreationResult.drainEntries();
-            terminalizedBatchEntries = batchCreationResult.terminalizedEntries();
+            List<TickQueuedCommandEnvelope> batchTerminalizedEntries =
+                batchCreationResult.terminalizedEntries();
+            terminalizedBatchEntries =
+                mergeEntriesByCommandId(terminalizedBatchEntries, batchTerminalizedEntries);
             activeBatchDurablyDrained = false;
           }
           if (activeBatch != null) {
@@ -507,6 +512,19 @@ public class TickServiceImpl implements TickService {
       arguments[index + 1] = terminalizedEntries.get(index).commandId();
     }
     return arguments;
+  }
+
+  private List<TickQueuedCommandEnvelope> mergeEntriesByCommandId(
+      List<TickQueuedCommandEnvelope> first, List<TickQueuedCommandEnvelope> second) {
+    java.util.LinkedHashMap<String, TickQueuedCommandEnvelope> entriesByCommandId =
+        new java.util.LinkedHashMap<>();
+    for (TickQueuedCommandEnvelope entry : first) {
+      entriesByCommandId.putIfAbsent(entry.commandId(), entry);
+    }
+    for (TickQueuedCommandEnvelope entry : second) {
+      entriesByCommandId.putIfAbsent(entry.commandId(), entry);
+    }
+    return List.copyOf(entriesByCommandId.values());
   }
 
   private void commitPending(

@@ -89,6 +89,13 @@ class TickQueueControlServiceTest {
               return command;
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(true);
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     when(runtimeRegionStatusRepository.ensureBaseline(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -142,6 +149,51 @@ class TickQueueControlServiceTest {
   }
 
   @Test
+  void enqueueCommandDoesNotDuplicateExactQueueOrPendingPayload() {
+    when(listOps.range("gamesession:tick:queue:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-existing|look"));
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-existing|look"));
+
+    service.enqueueCommand(1L, 2L, "cmd-existing", "look", false);
+
+    verify(listOps, never()).rightPush(any(), any());
+    verify(gameplayCommandRepository).markAcceptedCommandStaged(eq("cmd-existing"), any());
+  }
+
+  @Test
+  void enqueueCommandFailsClosedWhenQueueAndPendingPayloadsConflict() {
+    when(listOps.range("gamesession:tick:queue:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-conflict|look"));
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-conflict|say hello"));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd-conflict", "look", false));
+
+    verify(listOps, never()).rightPush(any(), any());
+    verify(listOps, never()).remove(any(), anyLong(), any());
+    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
+  void enqueueCommandDoesNotTouchRedisWhenDurableEligibilityFenceLoses() {
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            eq(1L), eq(2L), eq("cmd-ineligible"), eq("look"), eq(false)))
+        .thenReturn(false);
+
+    assertThrows(
+        TickQueueControlService.QueueUnavailableException.class,
+        () -> service.enqueueCommand(1L, 2L, "cmd-ineligible", "look", false));
+
+    verify(listOps, never()).range(any(), anyLong(), anyLong());
+    verify(listOps, never()).rightPush(any(), any());
+    verify(listOps, never()).remove(any(), anyLong(), any());
+    verify(gameplayCommandRepository, never()).markAcceptedCommandStaged(any(), any());
+  }
+
+  @Test
   void queuePayloadRejectsMissingDurableCommandIdWithoutSentinel() {
     assertThrows(IllegalArgumentException.class, () -> service.queuePayload(false, null, "look"));
     assertThrows(
@@ -190,6 +242,9 @@ class TickQueueControlServiceTest {
 
   @Test
   void enqueueCommandRemovesPayloadWhenDurableTransitionIsRejected() {
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            eq(1L), eq(2L), eq("cmd-terminal"), eq("look"), eq(false)))
+        .thenReturn(true);
     when(gameplayCommandRepository.markAcceptedCommandStaged(eq("cmd-terminal"), any()))
         .thenReturn(false);
 

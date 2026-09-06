@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer;
@@ -146,6 +147,44 @@ public class GameplayCommandRepository {
         dsl.selectOne().from(TICK_EFFECT).where(TICK_EFFECT.COMMAND_ID.eq(commandId)));
   }
 
+  /**
+   * Serializes the durable admission decision with queue materialization.
+   *
+   * <p>The row lock is intentionally held by the caller's transaction while it performs the Redis
+   * materialization. A concurrent staging or terminal transition therefore either wins before this
+   * check, or observes the staged result after this transaction commits. The target and payload
+   * fields are compared under that lock so a caller cannot reuse a command identity with different
+   * queue materialization evidence.
+   */
+  @Transactional
+  public boolean lockAcceptedCommandForStaging(
+      Long tenantId,
+      Long gameInstanceId,
+      String commandId,
+      String commandText,
+      boolean requiresSoloTick) {
+    Optional<GameplayCommand> maybeCommand =
+        dsl.selectFrom(GAMEPLAY_COMMAND)
+            .where(GAMEPLAY_COMMAND.COMMAND_ID.eq(commandId))
+            .forUpdate()
+            .fetchOptional(this::toEntity);
+    if (maybeCommand.isEmpty()) {
+      return false;
+    }
+    GameplayCommand command = maybeCommand.orElseThrow();
+    if (!Objects.equals(command.getTenantId(), tenantId)
+        || !Objects.equals(command.getGameInstanceId(), gameInstanceId)
+        || !Objects.equals(command.getCommandText(), commandText)
+        || command.isRequiresSoloTick() != requiresSoloTick) {
+      throw new IllegalArgumentException(
+          "Gameplay command identity was reused with conflicting target or queue payload: "
+              + commandId);
+    }
+    return "ACCEPTED".equals(command.getExecutionOutcome())
+        && command.getStagedAt() == null
+        && command.getCompletedAt() == null;
+  }
+
   public boolean markAcceptedCommandStaged(String commandId, Instant stagedAt) {
     return dsl.update(GAMEPLAY_COMMAND)
             .set(GAMEPLAY_COMMAND.EXECUTION_OUTCOME, "STAGED")
@@ -156,6 +195,7 @@ public class GameplayCommandRepository {
                     .COMMAND_ID
                     .eq(commandId)
                     .and(GAMEPLAY_COMMAND.EXECUTION_OUTCOME.eq("ACCEPTED"))
+                    .and(GAMEPLAY_COMMAND.STAGED_AT.isNull())
                     .and(GAMEPLAY_COMMAND.COMPLETED_AT.isNull()))
             .execute()
         == 1;

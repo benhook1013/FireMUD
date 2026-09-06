@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -29,6 +30,8 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -46,6 +49,8 @@ public class TickQueueControlService {
       RedisScript.of(new ClassPathResource("redis/tick_unlock_if_owned.lua"), Long.class);
   private static final RedisScript<Long> RENEW_IF_OWNED_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_renew_if_owned.lua"), Long.class);
+  private static final RedisScript<Long> ENQUEUE_IF_ABSENT_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_enqueue_if_absent.lua"), Long.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final StringRedisTemplate lockRedisTemplate;
@@ -55,6 +60,7 @@ public class TickQueueControlService {
   private final RuntimeIdentity runtimeIdentity;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final ScheduledExecutorService queueLockRenewalExecutor;
+  private volatile RedisTemplate<String, Object> fencedScriptRedisTemplate;
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
@@ -110,16 +116,20 @@ public class TickQueueControlService {
     boolean completionRegistered =
         registerEnqueueCompletion(leases, tenantId, queueTargetId, payload, pushed);
     try {
+      if (!gameplayCommandRepository.lockAcceptedCommandForStaging(
+          tenantId, queueTargetId, commandId, command, requiresSoloTick)) {
+        throw new QueueUnavailableException(
+            "Command is no longer eligible for queue staging: " + commandId);
+      }
       leases.requireOwned();
-      redisTemplate.opsForList().rightPush(queueKey(tenantId, queueTargetId), payload);
-      pushed.set(true);
+      pushed.set(materializeQueuePayload(tenantId, queueTargetId, payload, leases.tickLease()));
       leases.requireOwned();
       if (!gameplayCommandRepository.markAcceptedCommandStaged(commandId, Instant.now())) {
         throw new QueueUnavailableException(
             "Command is no longer eligible for queue staging: " + commandId);
       }
     } catch (RuntimeException ex) {
-      if (!completionRegistered) {
+      if (!completionRegistered && pushed.get()) {
         removeLatestQueuePayload(tenantId, queueTargetId, payload);
       }
       throw ex;
@@ -372,6 +382,143 @@ public class TickQueueControlService {
 
   String pendingKey(Long tenantId, Long sessionId) {
     return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
+  }
+
+  /**
+   * Materializes one command into the queue exactly once across the queue and pending projections.
+   * The production path is one fenced Redis script; the direct-list fallback exists only for unit
+   * tests that provide a serializer-free mock template.
+   */
+  private boolean materializeQueuePayload(
+      Long tenantId, Long queueTargetId, String payload, QueueLockLease lease) {
+    RedisTemplate<String, Object> scriptTemplate = fencedScriptTemplate();
+    if (scriptTemplate == null || scriptTemplate.getValueSerializer() == null) {
+      return materializeQueuePayloadWithoutScript(tenantId, queueTargetId, payload);
+    }
+    Long result =
+        scriptTemplate.execute(
+            ENQUEUE_IF_ABSENT_SCRIPT,
+            new EnqueueScriptArgumentSerializer(scriptTemplate.getValueSerializer()),
+            new org.springframework.data.redis.serializer.GenericToStringSerializer<>(Long.class),
+            List.of(
+                queueKey(tenantId, queueTargetId),
+                pendingKey(tenantId, queueTargetId),
+                lease.key()),
+            lease.token(),
+            new QueuePayloadArgument(payload));
+    if (result == null || result == -1L) {
+      lease.markLost();
+      throw new QueueUnavailableException(
+          "Lost enqueue lock " + lease.key() + " during Redis materialization");
+    }
+    if (result == -2L) {
+      throw new IllegalArgumentException(
+          "Gameplay command identity was reused with a conflicting queue payload");
+    }
+    if (result == -3L) {
+      throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    if (result == 0L) {
+      return false;
+    }
+    if (result == 1L) {
+      return true;
+    }
+    lease.markLost();
+    throw new QueueUnavailableException("Invalid Redis materialization result");
+  }
+
+  private RedisTemplate<String, Object> fencedScriptTemplate() {
+    RedisTemplate<String, Object> template = fencedScriptRedisTemplate;
+    if (template != null) {
+      return template;
+    }
+    synchronized (this) {
+      if (fencedScriptRedisTemplate == null) {
+        fencedScriptRedisTemplate = FencedRedisScriptSupport.createTemplate(redisTemplate);
+      }
+      return fencedScriptRedisTemplate;
+    }
+  }
+
+  private boolean materializeQueuePayloadWithoutScript(
+      Long tenantId, Long queueTargetId, String payload) {
+    String commandId = commandIdFromQueuePayload(payload);
+    String queueKey = queueKey(tenantId, queueTargetId);
+    String pendingKey = pendingKey(tenantId, queueTargetId);
+    boolean foundExact = false;
+    for (String key : List.of(queueKey, pendingKey)) {
+      List<Object> entries = redisTemplate.opsForList().range(key, 0, -1);
+      if (entries == null) {
+        continue;
+      }
+      for (Object entry : entries) {
+        String existingPayload = entry == null ? null : entry.toString();
+        if (existingPayload == null
+            || !commandId.equals(commandIdFromQueuePayload(existingPayload))) {
+          continue;
+        }
+        if (!Objects.equals(existingPayload, payload)) {
+          throw new IllegalArgumentException(
+              "Gameplay command identity was reused with a conflicting queue payload");
+        }
+        foundExact = true;
+      }
+    }
+    if (foundExact) {
+      return false;
+    }
+    redisTemplate.opsForList().rightPush(queueKey, payload);
+    return true;
+  }
+
+  private static String commandIdFromQueuePayload(String payload) {
+    if (payload == null
+        || payload.length() < 4
+        || (payload.charAt(0) != 'N' && payload.charAt(0) != 'S')
+        || payload.charAt(1) != '|') {
+      throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    int idEnd = payload.indexOf('|', 2);
+    if (idEnd <= 2) {
+      throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    if (payload.substring(idEnd + 1).isBlank()) {
+      throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    String commandId = payload.substring(2, idEnd);
+    requireDurableCommandIdWireSafe(commandId, "command_id");
+    return commandId;
+  }
+
+  private record QueuePayloadArgument(String value) {}
+
+  private static final class EnqueueScriptArgumentSerializer implements RedisSerializer<Object> {
+    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
+
+    @SuppressWarnings("unchecked")
+    private EnqueueScriptArgumentSerializer(RedisSerializer<?> valueSerializer) {
+      this.valueSerializer = (RedisSerializer<Object>) valueSerializer;
+    }
+
+    private final RedisSerializer<Object> valueSerializer;
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof QueuePayloadArgument payload) {
+        return valueSerializer.serialize(payload.value());
+      }
+      if (value instanceof String string) {
+        return RAW_STRING_SERIALIZER.serialize(string);
+      }
+      throw new IllegalArgumentException(
+          "Enqueue script arguments must be strings or explicit queue payloads");
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return RAW_STRING_SERIALIZER.deserialize(bytes);
+    }
   }
 
   Optional<QueueLockLease> tryAcquireTickLease(

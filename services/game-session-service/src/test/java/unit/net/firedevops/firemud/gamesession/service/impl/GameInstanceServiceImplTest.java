@@ -1078,6 +1078,7 @@ class GameInstanceServiceImplTest {
         entity.getRuntimeVersion(),
         entity.getScriptPatchVersion(),
         entity.getScriptPinEpoch(),
+        entity.getScriptPatchPinnedControlPlaneRequestId(),
         entity.getGameTemplateId(),
         entity.getLaunchDescriptorId(),
         entity.getVersionId(),

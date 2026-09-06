@@ -555,6 +555,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getRuntimeVersion(),
         instance.getScriptPatchVersion(),
         instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId(),
         instance.getGameTemplateId(),
         instance.getLaunchDescriptorId(),
         instance.getVersionId(),
@@ -569,6 +570,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private void restoreSessionSnapshot(GameInstance instance, GameInstanceDto snapshot) {
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
+    instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
+    instance.setScriptPinEpoch(snapshot.scriptPinEpoch());
+    instance.setScriptPatchPinnedControlPlaneRequestId(snapshot.scriptPinControlPlaneRequestId());
     instance.setGameTemplateId(snapshot.gameTemplateId());
     instance.setLaunchDescriptorId(snapshot.launchDescriptorId());
     instance.setVersionId(snapshot.versionId());
@@ -588,6 +592,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.runtimeVersion(),
         snapshot.scriptPatchVersion(),
         snapshot.scriptPinEpoch(),
+        snapshot.scriptPinControlPlaneRequestId(),
         snapshot.gameTemplateId(),
         snapshot.launchDescriptorId(),
         snapshot.versionId(),

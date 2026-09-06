@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -899,6 +900,30 @@ class TickBatchExecutionServiceTest {
                 .counter()
                 .count()
             > 0.0);
+  }
+
+  @Test
+  void restorePendingProjectionCompletesAfterPostCommitRequeueBookkeepingFailure() {
+    TickQueuedCommandEnvelope sealed = new TickQueuedCommandEnvelope(false, "cmd-1", "look");
+    TickQueuedCommandEnvelope redisOnly = new TickQueuedCommandEnvelope(false, "cmd-2", "wave");
+    doThrow(new IllegalStateException("command read failed"))
+        .when(gameplayCommandRepository)
+        .findByCommandIdIn(List.of("cmd-2"));
+
+    assertDoesNotThrow(
+        () ->
+            service.restorePendingProjection(
+                activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
+
+    verify(redisTemplate).execute(any(), any(), any(Object[].class));
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_pending_replay_restore_failures_total").counter().count(),
+        0.001);
+    assertEquals(
+        1.0,
+        meterRegistry.get("tick_pending_replay_restore_consecutive_failures").gauge().value(),
+        0.001);
   }
 
   @Test

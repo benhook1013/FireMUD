@@ -10,6 +10,9 @@ final class TriggerScriptEventRequestFactory {
 
   static TriggerScriptEventRequest.Builder builder(
       CommonFields commonFields, RoutingBundle routingBundle) {
+    if (commonFields.scriptPinEpoch() < 0L) {
+      throw new IllegalArgumentException("scriptPinEpoch cannot be negative");
+    }
     ScriptPinTupleCoherence.requireCoherent(
         commonFields.scriptPatchVersion(),
         commonFields.scriptPinEpoch() == 0L ? null : commonFields.scriptPinEpoch(),

@@ -108,6 +108,13 @@ class TickServiceImplTest {
               return command;
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(true);
     runtimeIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -96,7 +95,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void terminalizesUnexpectedQueueFailureAndReturnsSameRejectionOnRetry() {
+  void leavesUnexpectedQueueFailureRetryableForTheSameAdmissionIdentity() {
     GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -108,16 +107,14 @@ class AutomationGameplayCommandAdmissionSupportTest {
     instance.setTenantId(1L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
 
-    GameplayCommand failed = new GameplayCommand();
-    populateAdmissionFields(failed, automationRequest());
-    failed.setCommandId("auto-failed");
-    failed.setExecutionOutcome("FAILED");
-    failed.setFailureCode("QUEUE_UNAVAILABLE");
-    failed.setFailureMessage("Gameplay command queue unavailable");
+    GameplayCommand accepted = new GameplayCommand();
+    populateAdmissionFields(accepted, automationRequest());
+    accepted.setCommandId("auto-failed");
+    accepted.setExecutionOutcome("ACCEPTED");
     when(gameplayCommandRepository
             .findByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndAutomationDispatchId(
                 1L, 2L, "region-alpha", 7L, "dispatch-1"))
-        .thenReturn(Optional.empty(), Optional.of(failed));
+        .thenReturn(Optional.empty(), Optional.of(accepted), Optional.of(accepted));
     when(gameplayCommandRepository.insertIfAbsentByIdempotencyIdentity(any()))
         .thenAnswer(
             invocation -> {
@@ -125,9 +122,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
               command.setCommandId("auto-failed");
               return new GameplayCommandRepository.IdempotentInsertResult(command, true);
             });
-    when(gameplayCommandRepository.markAcceptedCommandFailed(any(), any(), any(), any()))
-        .thenReturn(true);
-
     RuntimeRegionStatus ownership = new RuntimeRegionStatus();
     ownership.setTenantId(1L);
     ownership.setGameInstanceId(2L);
@@ -156,16 +150,13 @@ class AutomationGameplayCommandAdmissionSupportTest {
             tickService);
 
     assertFalse(first.accepted());
-    assertEquals("REJECTED", first.admissionOutcome());
+    assertEquals("RETRY_QUEUED", first.admissionOutcome());
     assertEquals("UNAVAILABLE", first.errorCode());
-    assertEquals(first, retry);
+    assertFalse(retry.accepted());
+    assertEquals("RETRY_QUEUED", retry.admissionOutcome());
     verify(gameInstanceRepository, times(2)).findByTenantIdAndGameInstanceIdForUpdate(1L, 2L);
-    verify(gameplayCommandRepository)
-        .markAcceptedCommandFailed(
-            eq("auto-failed"),
-            eq("QUEUE_UNAVAILABLE"),
-            eq("Gameplay command queue unavailable"),
-            org.mockito.ArgumentMatchers.any());
+    verify(gameplayCommandRepository, never())
+        .markAcceptedCommandFailed(any(), any(), any(), any());
   }
 
   @Test
@@ -520,6 +511,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
             "remote-followup-1",
             "say hello",
             false,
+            null,
+            null,
             null);
 
     AdmissionResult result =
@@ -591,7 +584,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
   }
 
   @Test
-  void rejectsDuplicateWhileAdmissionIsStillAcceptedAndDoesNotQueue() {
+  void reDrivesDuplicateWhileAdmissionIsStillAccepted() {
     GameInstanceRepository gameInstanceRepository = mockGameInstanceRepository();
     GameplayCommandRepository gameplayCommandRepository = mock(GameplayCommandRepository.class);
     RuntimeRegionStatusRepository runtimeRegionStatusRepository =
@@ -620,15 +613,12 @@ class AutomationGameplayCommandAdmissionSupportTest {
             runtimeRegionStatusRepository,
             tickService);
 
-    assertFalse(result.accepted());
-    assertEquals("REJECTED", result.admissionOutcome());
+    assertTrue(result.accepted());
+    assertEquals("ENQUEUED", result.admissionOutcome());
     assertEquals("auto-in-flight", result.commandId());
-    assertEquals("UNAVAILABLE", result.errorCode());
-    assertEquals("Gameplay command admission is still in flight", result.errorMessage());
     verify(gameplayCommandRepository, org.mockito.Mockito.never())
         .insertIfAbsentByIdempotencyIdentity(any());
-    verify(tickService, org.mockito.Mockito.never())
-        .enqueueCommand(any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    verify(tickService).enqueueCommand(1L, 2L, "auto-in-flight", "say hello", false);
   }
 
   @Test
@@ -1267,6 +1257,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
                         null,
                         "say hello",
                         false,
+                        null,
+                        null,
                         null),
                     gameInstanceRepository,
                     gameplayCommandRepository,
@@ -1338,6 +1330,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
                         null,
                         "say hello",
                         false,
+                        null,
+                        null,
                         null),
                     gameInstanceRepository,
                     gameplayCommandRepository,
@@ -1540,6 +1534,8 @@ class AutomationGameplayCommandAdmissionSupportTest {
         remoteFollowupId,
         "say hello",
         false,
+        null,
+        null,
         null);
   }
 

@@ -95,6 +95,32 @@ class TriggerScriptEventRequestFactoryTest {
   }
 
   @Test
+  void rejectsNegativeScriptPinEpoch() {
+    TriggerScriptEventRequestFactory.CommonFields fields =
+        new TriggerScriptEventRequestFactory.CommonFields(
+            "tenant",
+            "instance",
+            "region",
+            1L,
+            "entity",
+            "onCommand",
+            "v1",
+            "patch-1",
+            -1L,
+            "request-1",
+            "event-1",
+            false,
+            TriggerMode.TRIGGER_MODE_NORMAL,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "snapshot",
+            "{}");
+
+    assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("scriptPinEpoch cannot be negative");
+  }
+
+  @Test
   void rejectsIncompleteScriptPinTupleBeforeBuildingRequest() {
     TriggerScriptEventRequestFactory.CommonFields fields =
         new TriggerScriptEventRequestFactory.CommonFields(

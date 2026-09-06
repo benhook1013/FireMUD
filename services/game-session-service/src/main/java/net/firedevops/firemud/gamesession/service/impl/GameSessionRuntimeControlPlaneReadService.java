@@ -148,6 +148,12 @@ final class GameSessionRuntimeControlPlaneReadService {
       this.detailMessage = detailMessage;
     }
 
+    RuntimeStateException(String code, String detailMessage, Throwable cause) {
+      super(code + ": " + detailMessage, cause);
+      this.code = code;
+      this.detailMessage = detailMessage;
+    }
+
     String code() {
       return code;
     }
@@ -159,14 +165,16 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private void validateWorldLifecycle(GameInstance instance) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world lifecycle authority unavailable");
+      throw new RuntimeStateException(
+          "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable");
     }
     final GetWorldInstanceLifecycleResponse response;
     try {
       response =
           worldManagementClient.getWorldInstanceLifecycle(instance.getTenantId(), instance.getId());
     } catch (RuntimeException ex) {
-      throw new IllegalStateException("world lifecycle authority unavailable", ex);
+      throw new RuntimeStateException(
+          "WORLD_AUTHORITY_UNAVAILABLE", "world lifecycle authority unavailable", ex);
     }
     if (response == null) {
       throw new RuntimeStateException("WORLD_AUTHORITY_MALFORMED", "World response was null");

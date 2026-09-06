@@ -80,8 +80,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return new DurableAdmission(
-          existingAdmissionResult(existing.orElseThrow(), requestedCommand), null, false);
+      return existingDurableAdmission(existing.orElseThrow(), requestedCommand);
     }
 
     return admitFreshDurably(
@@ -125,7 +124,11 @@ final class AutomationGameplayCommandAdmissionSupport {
     GameplayCommand requestedCommand = acceptedAutomationCommand(request);
     Optional<GameplayCommand> existing = findExistingCommand(request, gameplayCommandRepository);
     if (existing.isPresent()) {
-      return existingAdmissionResult(existing.orElseThrow(), requestedCommand);
+      return materializeAcceptedCommand(
+          existingDurableAdmission(existing.orElseThrow(), requestedCommand),
+          request,
+          gameplayCommandRepository,
+          tickService);
     }
 
     final List<GameplayAdmissionPointerSnapshot> currentPointers;
@@ -243,7 +246,7 @@ final class AutomationGameplayCommandAdmissionSupport {
     }
     command = insertResult.command();
     if (!insertResult.inserted()) {
-      return new DurableAdmission(existingAdmissionResult(command, requestedCommand), null, false);
+      return existingDurableAdmission(command, requestedCommand);
     }
     return new DurableAdmission(null, command, true);
   }
@@ -253,36 +256,55 @@ final class AutomationGameplayCommandAdmissionSupport {
       AdmissionRequest request,
       GameplayCommandRepository gameplayCommandRepository,
       TickService tickService) {
-    if (!durableAdmission.inserted()) {
+    if (!durableAdmission.inserted() && !durableAdmission.retryExisting()) {
       return durableAdmission.result();
     }
     GameplayCommand command = durableAdmission.command();
     try {
       tickService.enqueueCommand(
-          request.tenantId(),
-          request.gameInstanceId(),
+          command.getTenantId(),
+          command.getGameInstanceId(),
           command.getCommandId(),
-          request.command(),
-          request.requiresSoloTick());
-      triggerImmediateAutomationTick(tickService, request.tenantId(), request.gameInstanceId());
+          command.getCommandText(),
+          command.isRequiresSoloTick());
+      triggerImmediateAutomationTick(
+          tickService, command.getTenantId(), command.getGameInstanceId());
       return new AdmissionResult(true, "ENQUEUED", command.getCommandId(), null, null);
     } catch (IllegalArgumentException ex) {
+      if (durableAdmission.retryExisting()) {
+        return new AdmissionResult(
+            false, "REJECTED", command.getCommandId(), "IDEMPOTENCY_CONFLICT", ex.getMessage());
+      }
       markAutomationFailed(command, "INVALID_ARGUMENT", ex.getMessage(), gameplayCommandRepository);
       return new AdmissionResult(
           false, "REJECTED", command.getCommandId(), "INVALID_ARGUMENT", ex.getMessage());
     } catch (TickQueueControlService.QueueUnavailableException ex) {
-      markAutomationFailed(
-          command, "QUEUE_UNAVAILABLE", ex.getMessage(), gameplayCommandRepository);
       return new AdmissionResult(
-          false, "REJECTED", command.getCommandId(), "UNAVAILABLE", ex.getMessage());
+          false, "RETRY_QUEUED", command.getCommandId(), "UNAVAILABLE", ex.getMessage());
     } catch (RuntimeException ex) {
       String message = "Gameplay command queue unavailable";
-      markAutomationFailed(command, "QUEUE_UNAVAILABLE", message, gameplayCommandRepository);
-      return new AdmissionResult(false, "REJECTED", command.getCommandId(), "UNAVAILABLE", message);
+      return new AdmissionResult(
+          false, "RETRY_QUEUED", command.getCommandId(), "UNAVAILABLE", message);
     }
   }
 
-  record DurableAdmission(AdmissionResult result, GameplayCommand command, boolean inserted) {}
+  record DurableAdmission(
+      AdmissionResult result, GameplayCommand command, boolean inserted, boolean retryExisting) {
+    DurableAdmission(AdmissionResult result, GameplayCommand command, boolean inserted) {
+      this(result, command, inserted, false);
+    }
+  }
+
+  private static DurableAdmission existingDurableAdmission(
+      GameplayCommand existing, GameplayCommand requestedCommand) {
+    AdmissionResult result = existingAdmissionResult(existing, requestedCommand);
+    boolean retryExisting =
+        "ACCEPTED".equals(existing.getExecutionOutcome())
+            && existing.getStagedAt() == null
+            && existing.getCompletedAt() == null
+            && "UNAVAILABLE".equals(result.errorCode());
+    return new DurableAdmission(result, retryExisting ? existing : null, false, retryExisting);
+  }
 
   private static AdmissionResult existingAdmissionResult(
       GameplayCommand command, GameplayCommand requestedCommand) {
@@ -838,65 +860,7 @@ final class AutomationGameplayCommandAdmissionSupport {
       boolean requiresSoloTick,
       Long dueTickId,
       Long scriptPinEpoch,
-      String scriptPinControlPlaneRequestId) {
-    AdmissionRequest(
-        Long tenantId,
-        Long gameInstanceId,
-        String regionId,
-        Long regionEpoch,
-        String sourceType,
-        String automationDispatchId,
-        String automationWorkItemId,
-        String scriptId,
-        String scriptPatchVersion,
-        String pluginId,
-        String pluginVersionId,
-        String playableStateScope,
-        String worldSlug,
-        String realmSlug,
-        Long pointerVersion,
-        String originSourceKind,
-        String originSourceState,
-        Long originSourceOrdinal,
-        Long originSourceDueTickId,
-        Long originSourceDueAtMs,
-        String targetEntityId,
-        String remoteCoordinatorId,
-        String remoteFollowupId,
-        String command,
-        boolean requiresSoloTick,
-        Long dueTickId) {
-      this(
-          tenantId,
-          gameInstanceId,
-          regionId,
-          regionEpoch,
-          sourceType,
-          automationDispatchId,
-          automationWorkItemId,
-          scriptId,
-          scriptPatchVersion,
-          pluginId,
-          pluginVersionId,
-          playableStateScope,
-          worldSlug,
-          realmSlug,
-          pointerVersion,
-          originSourceKind,
-          originSourceState,
-          originSourceOrdinal,
-          originSourceDueTickId,
-          originSourceDueAtMs,
-          targetEntityId,
-          remoteCoordinatorId,
-          remoteFollowupId,
-          command,
-          requiresSoloTick,
-          dueTickId,
-          null,
-          null);
-    }
-  }
+      String scriptPinControlPlaneRequestId) {}
 
   record AdmissionResult(
       boolean accepted,

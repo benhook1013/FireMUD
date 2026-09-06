@@ -10,6 +10,7 @@ public record GameInstanceDto(
     @NotNull @Size(max = 100) String runtimeVersion,
     String scriptPatchVersion,
     Long scriptPinEpoch,
+    String scriptPinControlPlaneRequestId,
     Long gameTemplateId,
     String launchDescriptorId,
     Long versionId,
@@ -28,6 +29,7 @@ public record GameInstanceDto(
    * <p>A nonblank script patch is rejected because this constructor cannot carry the complete
    * pinned tuple. Callers with pinned state must use the canonical record constructor.
    */
+  @Deprecated
   public GameInstanceDto(
       Long id,
       @NotNull Long tenantId,
@@ -46,6 +48,7 @@ public record GameInstanceDto(
         tenantId,
         runtimeVersion,
         rejectLegacyScriptPatch(scriptPatchVersion),
+        null,
         null,
         gameTemplateId,
         launchDescriptorId,

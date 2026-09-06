@@ -7,11 +7,11 @@ import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.service.GameplayCommandRecoveryService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @ConditionalOnProperty(
@@ -27,10 +27,14 @@ public class DatabaseGameplayCommandRecoveryService implements GameplayCommandRe
       LoggingUtil.getLogger(DatabaseGameplayCommandRecoveryService.class);
 
   private final GameplayCommandRepository gameplayCommandRepository;
+  private final TickQueueControlService tickQueueControlService;
 
+  @Autowired
   public DatabaseGameplayCommandRecoveryService(
-      GameplayCommandRepository gameplayCommandRepository) {
+      GameplayCommandRepository gameplayCommandRepository,
+      TickQueueControlService tickQueueControlService) {
     this.gameplayCommandRepository = gameplayCommandRepository;
+    this.tickQueueControlService = tickQueueControlService;
   }
 
   @EventListener(ApplicationReadyEvent.class)
@@ -38,27 +42,42 @@ public class DatabaseGameplayCommandRecoveryService implements GameplayCommandRe
     int recovered = convergeAcceptedButUnstagedCommands(Instant.now());
     if (recovered > 0) {
       logger.warn(
-          "Converged {} accepted gameplay command(s) that were never staged before startup",
+          "Re-drove {} accepted gameplay command(s) that were not staged before startup",
           recovered);
     }
   }
 
   @Override
-  @Transactional
   public int convergeAcceptedButUnstagedCommands(Instant acceptedBefore) {
     var commands =
         gameplayCommandRepository.findByExecutionOutcomeAndStagedAtIsNullAndAcceptedAtBefore(
             "ACCEPTED", acceptedBefore);
-    Instant now = Instant.now();
+    int recovered = 0;
     for (GameplayCommand command : commands) {
-      command.setExecutionOutcome("LOST_BEFORE_STAGING");
-      command.setGameplayResult("NOT_APPLIED");
-      command.setCompletedAt(now);
-      command.setLastAttemptAt(now);
-      command.setFailureCode("LOST_BEFORE_STAGING");
-      command.setFailureMessage("Command was accepted durably but not staged before recovery");
+      try {
+        // TickQueueControlService acquires the queue/tick mutation fences before asking the
+        // repository to lock and re-check this exact ACCEPTED row. A concurrent staging or
+        // terminal transition therefore wins before Redis is touched, or observes the staged
+        // result after this attempt commits.
+        tickQueueControlService.enqueueCommand(
+            command.getTenantId(),
+            command.getGameInstanceId(),
+            command.getCommandId(),
+            command.getCommandText(),
+            command.isRequiresSoloTick());
+        recovered++;
+      } catch (RuntimeException ex) {
+        // Redis loss, an identity/payload conflict, or a raced terminal transition is not proof
+        // that this durable command was never materialized. Leave ACCEPTED untouched so the same
+        // command identity can be retried on the next startup/recovery pass.
+        logger.warn(
+            "Unable to re-drive accepted gameplay command commandId={} tenantId={} gameInstanceId={}; leaving it retryable",
+            command.getCommandId(),
+            command.getTenantId(),
+            command.getGameInstanceId(),
+            ex);
+      }
     }
-    gameplayCommandRepository.saveAll(commands);
-    return commands.size();
+    return recovered;
   }
 }
