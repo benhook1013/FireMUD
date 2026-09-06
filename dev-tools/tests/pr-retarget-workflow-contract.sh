@@ -360,6 +360,7 @@ require_contains "$preview_path" 'validate-preview-artifact.py'
 require_contains "$preview_path" 'sanitize "$rendered" "$sanitized"'
 require_contains "$preview_path" 'actions/upload-artifact@'
 require_contains "$preview_path" 'PR_LABELS_JSON:'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 require_contains "$preview_path" '--labels-json "$PR_LABELS_JSON"'
 if grep -Eq 'PREVIEW_(RUNTIME|KUBECONFIG)|HOSTED_IDENTITY_REQUESTER_KUBECONFIG|ensure-grpc-tls-secret|delete-hosted-namespace' "$preview_path"; then
   echo "PR-controlled preview render must not receive hosted credentials or lifecycle helpers" >&2
