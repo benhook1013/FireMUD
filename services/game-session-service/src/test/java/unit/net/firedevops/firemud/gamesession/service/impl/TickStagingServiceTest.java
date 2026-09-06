@@ -55,6 +55,7 @@ class TickStagingServiceTest {
   private RemoteFollowupDrainService remoteFollowupDrainService;
   private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private TickQueueControlService tickQueueControlService;
+  private TickQueueControlService.QueueLockLease activeLease;
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private TickBatchExecutionService tickBatchExecutionService;
   private TickStagingService service;
@@ -129,6 +130,9 @@ class TickStagingServiceTest {
                 null),
             mock(net.firedevops.firemud.gamesession.service.SessionAuthenticationService.class),
             mock(java.util.concurrent.ScheduledExecutorService.class));
+    activeLease = mock(TickQueueControlService.QueueLockLease.class);
+    when(activeLease.key()).thenReturn("gamesession:tick:lock:1:2");
+    when(activeLease.token()).thenReturn("lease-token");
     tickBatchExecutionService =
         new TickBatchExecutionService(
             new SimpleMeterRegistry(),
@@ -625,7 +629,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(staleQueueEntry),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     assertFalse(staleQueueEntry.requiresSoloTick());
     assertTrue(command.isRequiresSoloTick());
@@ -1203,7 +1208,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(new TickQueuedCommandEnvelope(false, "cmd-legacy-automation", "look")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     assertEquals("ABANDONED", replayBatch.getStatus());
     assertEquals("INCOMPATIBLE_SEALED_REPLAY", replayBatch.getFailureCode());
@@ -1242,7 +1248,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(new TickQueuedCommandEnvelope(false, "cmd-legacy-player", "look")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
     assertEquals(1, replayBatch.getCommandCount());
@@ -1283,7 +1290,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look changed")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     org.junit.jupiter.api.Assertions.assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
     org.junit.jupiter.api.Assertions.assertTrue(
@@ -1491,7 +1499,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             List.of(new TickQueuedCommandEnvelope(false, "cmd-1", "look")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     org.junit.jupiter.api.Assertions.assertTrue(
         replayBatch.getSelectedWorkManifestJson().contains("\"sourceKind\":\"GAMEPLAY_RETRY\""));
@@ -1570,7 +1579,8 @@ class TickStagingServiceTest {
             1L,
             2L,
             parseEntries(service, pendingRawEntries),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
     TickBatch replayBatch = replayResolution.batch();
 
     org.junit.jupiter.api.Assertions.assertEquals("PENDING_REPLAY", replayBatch.getBatchSource());
@@ -1635,7 +1645,8 @@ class TickStagingServiceTest {
             List.of(
                 new TickQueuedCommandEnvelope(false, "cmd-1", "look"),
                 new TickQueuedCommandEnvelope(false, "cmd-2", "wave")),
-            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L));
+            new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
+            activeLease);
 
     assertEquals("tb-replacement", resolution.batch().getTickBatchId());
     assertTrue(resolution.replacementCommitted());

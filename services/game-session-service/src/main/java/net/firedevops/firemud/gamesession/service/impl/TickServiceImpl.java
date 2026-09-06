@@ -346,7 +346,11 @@ public class TickServiceImpl implements TickService {
               try {
                 replayResolution =
                     tickStagingService.resolveReplayBatchForTick(
-                        normalizedTenantId, normalizedQueueTargetId, replayEntries, ownership);
+                        normalizedTenantId,
+                        normalizedQueueTargetId,
+                        replayEntries,
+                        ownership,
+                        lease);
                 durableReplayDecisionCommitted = replayResolution.replacementCommitted();
               } catch (TickStagingService.ReplayReconciliationFailure ex) {
                 replayResolution = ex.resolution();
@@ -535,10 +539,10 @@ public class TickServiceImpl implements TickService {
 
   private Object[] rollbackArguments(List<TickQueuedCommandEnvelope> terminalizedEntries) {
     if (terminalizedEntries.isEmpty()) {
-      return new Object[] {0};
+      return new Object[] {"0"};
     }
     Object[] arguments = new Object[terminalizedEntries.size() + 1];
-    arguments[0] = terminalizedEntries.size();
+    arguments[0] = String.valueOf(terminalizedEntries.size());
     for (int index = 0; index < terminalizedEntries.size(); index++) {
       arguments[index + 1] = terminalizedEntries.get(index).commandId();
     }

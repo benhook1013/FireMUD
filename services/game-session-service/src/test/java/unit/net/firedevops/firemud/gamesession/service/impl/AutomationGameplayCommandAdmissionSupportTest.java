@@ -24,7 +24,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
-import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
@@ -60,7 +59,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private TickService tickService;
   private RemoteFollowupRuntimeService remoteFollowupRuntimeService;
-  private AutomationScriptingClient automationScriptingClient;
   private GameplayAdmissionPointerAuthorityService pointerAuthority;
   private DurableRemoteFollowupExecutionService service;
 
@@ -73,7 +71,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     tickService = mock(TickService.class);
     remoteFollowupRuntimeService = mock(RemoteFollowupRuntimeService.class);
-    automationScriptingClient = mock(AutomationScriptingClient.class);
     pointerAuthority = mock(GameplayAdmissionPointerAuthorityService.class);
     when(remoteFollowupRuntimeService.recordResult(org.mockito.ArgumentMatchers.any()))
         .thenReturn(
@@ -90,8 +87,7 @@ class AutomationGameplayCommandAdmissionSupportTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             tickService,
-            remoteFollowupRuntimeService,
-            automationScriptingClient);
+            remoteFollowupRuntimeService);
   }
 
   @Test
@@ -1883,7 +1879,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
             runtimeRegionStatusRepository,
             tickService,
             remoteFollowupRuntimeService,
-            automationScriptingClient,
             pointerAuthority);
   }
 
@@ -2106,7 +2101,6 @@ class AutomationGameplayCommandAdmissionSupportTest {
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", first.failureCode());
     assertEquals("ABANDONED", replay.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", replay.failureCode());
-    verify(automationScriptingClient, never()).triggerScriptEvent(any());
     verify(pointerAuthority, never()).listByRuntimeTarget(1L, 9L);
     org.mockito.ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> resultRequestCaptor =
         org.mockito.ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);

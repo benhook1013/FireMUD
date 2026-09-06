@@ -151,6 +151,23 @@ class GameInstanceServiceImplTest {
     assertNull(dto.scriptPatchVersion());
     assertNull(dto.scriptPinEpoch());
     assertNull(store.get(dto.id()).getScriptPinEpoch());
+    ArgumentCaptor<String> scriptPatchVersion = ArgumentCaptor.forClass(String.class);
+    verify(worldManagementClient)
+        .prepareWorldInstance(
+            eq(1L),
+            eq(dto.id()),
+            eq(3L),
+            eq("cp-pinned"),
+            eq("ld-pinned"),
+            eq(11L),
+            scriptPatchVersion.capture(),
+            eq("{}"),
+            eq("genrev-11"),
+            eq(77L),
+            eq("prb:1:11:77"),
+            eq(77L),
+            org.mockito.ArgumentMatchers.isNull());
+    assertNull(scriptPatchVersion.getValue());
   }
 
   @Test

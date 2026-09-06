@@ -717,7 +717,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               request.controlPlaneRequestId(),
               resolvedLaunchDescriptor.launchDescriptorId(),
               resolvedLaunchDescriptor.versionId(),
-              resolvedLaunchDescriptor.scriptPatchVersion(),
+              startingState.scriptPatchVersion(),
               resolvedLaunchDescriptor.runtimeFlagsJson(),
               resolvedLaunchDescriptor.generationConfigRevision(),
               resolvedLaunchDescriptor.releaseBundleId(),

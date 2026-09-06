@@ -54,6 +54,7 @@ class TickBatchExecutionServiceTest {
   private DurableRemoteFollowupExecutionService durableRemoteFollowupExecutionService;
   private GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private TickBatchExecutionService service;
+  private TickQueueControlService.QueueLockLease activeLease;
 
   @BeforeEach
   @SuppressWarnings("unchecked")
@@ -92,6 +93,9 @@ class TickBatchExecutionServiceTest {
     durableRemoteFollowupExecutionService = mock(DurableRemoteFollowupExecutionService.class);
     gameplayCommandExecutionFenceService = mock(GameplayCommandExecutionFenceService.class);
     when(gameplayCommandExecutionFenceService.validate(any(), any())).thenReturn(Optional.empty());
+    activeLease = mock(TickQueueControlService.QueueLockLease.class);
+    when(activeLease.key()).thenReturn("gamesession:tick:lock:1:2");
+    when(activeLease.token()).thenReturn("lease-token");
     service = newService(new ImmediateTransactionOperations());
 
     RuntimeRegionStatus currentOwnership = runtimeOwnership(1L, 2L, 1L, "fence-a", false);
@@ -853,7 +857,8 @@ class TickBatchExecutionServiceTest {
 
     service.preparePendingProjectionReconciliation(
         1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
-    service.restorePendingProjection(1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
+    service.restorePendingProjection(
+        activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed));
 
     verify(redisTemplate).execute(any(), any(), any(Object[].class));
     verify(redisTemplate, never()).delete(anyString());
@@ -929,7 +934,7 @@ class TickBatchExecutionServiceTest {
             List.of("cmd-player", "cmd-automation", "cmd-remote", "cmd-unrecognized")))
         .thenReturn(List.of(player, automation, remoteFollowup, unrecognized));
 
-    service.restorePendingProjection(1L, 2L, pendingEntries, List.of());
+    service.restorePendingProjection(activeLease, 1L, 2L, pendingEntries, List.of());
 
     assertEquals(
         1.0,
@@ -971,7 +976,8 @@ class TickBatchExecutionServiceTest {
     IllegalStateException exception =
         assertThrows(
             IllegalStateException.class,
-            () -> service.restorePendingProjection(1L, 2L, List.of(), List.of(sealed)));
+            () ->
+                service.restorePendingProjection(activeLease, 1L, 2L, List.of(), List.of(sealed)));
 
     assertTrue(exception.getMessage().contains("durable command id"));
     verify(redisTemplate, never()).delete(anyString());
@@ -988,7 +994,8 @@ class TickBatchExecutionServiceTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                service.restorePendingProjection(1L, 2L, List.of(sealed, unsafe), List.of(sealed)));
+                service.restorePendingProjection(
+                    activeLease, 1L, 2L, List.of(sealed, unsafe), List.of(sealed)));
 
     assertTrue(exception.getMessage().contains("unsafe command id"));
     verify(redisTemplate, never()).delete(anyString());
@@ -1008,7 +1015,7 @@ class TickBatchExecutionServiceTest {
             IllegalStateException.class,
             () ->
                 service.restorePendingProjection(
-                    1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
+                    activeLease, 1L, 2L, List.of(sealed, redisOnly), List.of(sealed)));
 
     assertEquals("Redis unavailable", exception.getMessage());
     verify(gameplayCommandRepository, never()).saveAll(any());

@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
-import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.TickEffect;
@@ -43,7 +42,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final TickService tickService;
   private final RemoteFollowupRuntimeService remoteFollowupRuntimeService;
-  private final AutomationScriptingClient automationScriptingClient;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public DefaultDurableRemoteFollowupExecutionService(
@@ -53,8 +51,7 @@ public final class DefaultDurableRemoteFollowupExecutionService
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       @Lazy TickService tickService,
-      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
-      AutomationScriptingClient automationScriptingClient) {
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService) {
     this(
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
@@ -63,7 +60,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
         runtimeRegionStatusRepository,
         tickService,
         remoteFollowupRuntimeService,
-        automationScriptingClient,
         null);
   }
 
@@ -76,7 +72,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
       @Lazy TickService tickService,
       RemoteFollowupRuntimeService remoteFollowupRuntimeService,
-      AutomationScriptingClient automationScriptingClient,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.remoteFollowupRepository = remoteFollowupRepository;
     this.remoteCommandCoordinatorRepository = remoteCommandCoordinatorRepository;
@@ -86,7 +81,6 @@ public final class DefaultDurableRemoteFollowupExecutionService
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
     this.tickService = tickService;
     this.remoteFollowupRuntimeService = remoteFollowupRuntimeService;
-    this.automationScriptingClient = automationScriptingClient;
   }
 
   @Override

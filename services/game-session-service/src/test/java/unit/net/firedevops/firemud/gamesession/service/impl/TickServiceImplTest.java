@@ -614,9 +614,24 @@ class TickServiceImplTest {
             "gamesession:tick:lock:1:2"),
         rollbackKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
-        new Object[] {leaseTokens.get(0), 0}, rollbackArguments.get(0));
+        new Object[] {leaseTokens.get(0), "0"}, rollbackArguments.get(0));
     org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
     verify(listOps, never()).leftPush(any(), any());
+  }
+
+  @Test
+  void rollbackArgumentsUseStringSerializerCompatibleCounts() throws Exception {
+    var method = TickServiceImpl.class.getDeclaredMethod("rollbackArguments", List.class);
+    method.setAccessible(true);
+
+    Object[] emptyArguments = (Object[]) method.invoke(service, List.of());
+    Object[] terminalizedArguments =
+        (Object[])
+            method.invoke(
+                service, List.of(new TickQueuedCommandEnvelope(false, "cmd-terminalized", "look")));
+
+    assertThat(emptyArguments).containsExactly("0");
+    assertThat(terminalizedArguments).containsExactly("1", "cmd-terminalized");
   }
 
   @Test
@@ -2307,7 +2322,10 @@ class TickServiceImplTest {
     }
     assertThat(restoreInvocation).isGreaterThanOrEqualTo(0);
     assertThat(keyCaptor.getAllValues().get(restoreInvocation))
-        .containsExactly("gamesession:tick:pending:1:2", "gamesession:tick:queue:1:2");
+        .containsExactly(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:lock:1:2");
   }
 
   private static void setField(Object target, String fieldName, Object value) {
@@ -2573,17 +2591,16 @@ class TickStageScriptTest {
     redisTemplate.opsForList().rightPush(PENDING_KEY, eligible);
 
     Long result =
-        redisTemplate.execute(
-            RESTORE_PENDING_PROJECTION_SCRIPT,
-            List.of(PENDING_KEY, QUEUE_KEY),
+        executeRestore(
+            LEASE_TOKEN,
             "2",
-            terminalized,
-            eligible,
+            payload(terminalized),
+            payload(eligible),
             "1",
-            eligible,
+            payload(eligible),
             "0",
             "1",
-            terminalized);
+            payload(terminalized));
 
     assertThat(result).isEqualTo(1L);
     assertThat(values(PENDING_KEY)).containsExactly(eligible);
@@ -2607,16 +2624,24 @@ class TickStageScriptTest {
     List<String> pendingBefore = values(PENDING_KEY);
 
     Long result =
-        redisTemplate.execute(
-            RESTORE_PENDING_PROJECTION_SCRIPT,
-            List.of(PENDING_KEY, QUEUE_KEY),
-            "1",
-            "N|pending|wave",
-            "0",
-            "0",
-            "unexpected-extra-argument");
+        executeRestore(
+            LEASE_TOKEN, "1", payload("N|pending|wave"), "0", "0", "unexpected-extra-argument");
 
     assertThat(result).isEqualTo(0L);
+    assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+    assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
+  }
+
+  @Test
+  void restoreRejectsStaleLeaseWithoutMutatingPendingOrQueue() {
+    enqueue("N|queued|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|pending|wave");
+    List<String> queueBefore = values(QUEUE_KEY);
+    List<String> pendingBefore = values(PENDING_KEY);
+
+    Long result = executeRestore("stale-token", "1", payload("N|pending|wave"), "0", "0", "0");
+
+    assertThat(result).isEqualTo(-1L);
     assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
     assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
   }
@@ -2726,6 +2751,22 @@ class TickStageScriptTest {
             List.of(PENDING_KEY, QUEUE_KEY, LEASE_KEY),
             arguments.toArray());
     return result == null ? Long.MIN_VALUE : result;
+  }
+
+  private long executeRestore(Object... arguments) {
+    Long result =
+        scriptRedisTemplate.execute(
+            RESTORE_PENDING_PROJECTION_SCRIPT,
+            TickBatchExecutionService.restorePendingProjectionScriptArgumentSerializer(
+                redisTemplate.getValueSerializer()),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY, LEASE_KEY),
+            arguments);
+    return result == null ? Long.MIN_VALUE : result;
+  }
+
+  private Object payload(String value) {
+    return TickBatchExecutionService.restoreQueuePayloadArgument(value);
   }
 
   private static final class ProductionScriptKeySerializer implements RedisSerializer<Object> {

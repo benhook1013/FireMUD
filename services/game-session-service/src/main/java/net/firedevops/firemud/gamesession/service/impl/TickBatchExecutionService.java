@@ -23,6 +23,9 @@ import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
+import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionOperations;
@@ -46,6 +49,7 @@ final class TickBatchExecutionService {
   private final TickQueueControlService tickQueueControlService;
   private final GameplayCommandExecutionFenceService gameplayCommandExecutionFenceService;
   private final TransactionOperations transactionOperations;
+  private final RedisTemplate<String, Object> fencedScriptRedisTemplate;
 
   @Autowired
   TickBatchExecutionService(
@@ -97,22 +101,29 @@ final class TickBatchExecutionService {
     this.tickQueueControlService = tickQueueControlService;
     this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
     this.transactionOperations = transactionOperations;
+    this.fencedScriptRedisTemplate = createFencedScriptRedisTemplate();
   }
 
   void restorePendingProjection(
+      TickQueueControlService.QueueLockLease lease,
       Long tenantId,
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries) {
-    restorePendingProjection(tenantId, gameInstanceId, pendingEntries, sealedEntries, List.of());
+    restorePendingProjection(
+        lease, tenantId, gameInstanceId, pendingEntries, sealedEntries, List.of());
   }
 
   void restorePendingProjection(
+      TickQueueControlService.QueueLockLease lease,
       Long tenantId,
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> pendingEntries,
       List<TickQueuedCommandEnvelope> sealedEntries,
       List<TickQueuedCommandEnvelope> terminalizedEntries) {
+    if (lease == null) {
+      throw new IllegalArgumentException("Active tick lease is required for pending projection");
+    }
     requireRestorableCommandIdentifiers(pendingEntries);
     requireRestorableCommandIdentifiers(sealedEntries);
     requireRestorableCommandIdentifiers(terminalizedEntries);
@@ -121,19 +132,27 @@ final class TickBatchExecutionService {
     String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
     String queueKey = tickQueueControlService.queueKey(tenantId, gameInstanceId);
     List<Object> scriptArguments = new ArrayList<>();
-    scriptArguments.add(pendingEntries.size());
-    pendingEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
-    scriptArguments.add(sealedEntries.size());
-    sealedEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
-    scriptArguments.add(redisOnlyEntries.size());
-    redisOnlyEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
-    scriptArguments.add(terminalizedEntries.size());
-    terminalizedEntries.forEach(entry -> scriptArguments.add(queuePayload(entry)));
+    scriptArguments.add(lease.token());
+    scriptArguments.add(String.valueOf(pendingEntries.size()));
+    pendingEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(sealedEntries.size()));
+    sealedEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(redisOnlyEntries.size()));
+    redisOnlyEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
+    scriptArguments.add(String.valueOf(terminalizedEntries.size()));
+    terminalizedEntries.forEach(
+        entry -> scriptArguments.add(restoreQueuePayloadArgument(queuePayload(entry))));
     Long restored =
-        redisTemplate.execute(
-            RESTORE_PENDING_PROJECTION_SCRIPT,
-            List.of(pendingKey, queueKey),
-            scriptArguments.toArray());
+        executeRestorePendingProjectionScript(
+            List.of(pendingKey, queueKey, lease.key()), scriptArguments.toArray());
+    if (Long.valueOf(-1L).equals(restored)) {
+      lease.markLost();
+      throw new TickQueueControlService.QueueUnavailableException(
+          "Lost tick lock " + lease.key() + " during Redis pending projection reconciliation");
+    }
     if (!Long.valueOf(1L).equals(restored)) {
       throw new IllegalStateException(
           "Redis pending projection reconciliation did not commit for gameInstanceId="
@@ -141,6 +160,113 @@ final class TickBatchExecutionService {
     }
     if (!redisOnlyEntries.isEmpty()) {
       recordRequeuedActions(redisOnlyEntries);
+    }
+  }
+
+  private Long executeRestorePendingProjectionScript(List<String> keys, Object... arguments) {
+    if (fencedScriptRedisTemplate == null) {
+      return redisTemplate.execute(
+          RESTORE_PENDING_PROJECTION_SCRIPT, keys, unwrapRestoreScriptArguments(arguments));
+    }
+    RedisSerializer<?> valueSerializer = fencedScriptRedisTemplate.getValueSerializer();
+    if (valueSerializer == null) {
+      return redisTemplate.execute(
+          RESTORE_PENDING_PROJECTION_SCRIPT, keys, unwrapRestoreScriptArguments(arguments));
+    }
+    return fencedScriptRedisTemplate.execute(
+        RESTORE_PENDING_PROJECTION_SCRIPT,
+        restorePendingProjectionScriptArgumentSerializer(valueSerializer),
+        new GenericToStringSerializer<>(Long.class),
+        keys,
+        arguments);
+  }
+
+  private Object[] unwrapRestoreScriptArguments(Object[] arguments) {
+    return java.util.Arrays.stream(arguments)
+        .map(
+            argument ->
+                argument instanceof RestoreQueuePayloadArgument payload
+                    ? payload.value()
+                    : argument)
+        .toArray();
+  }
+
+  private RedisTemplate<String, Object> createFencedScriptRedisTemplate() {
+    if (redisTemplate.getConnectionFactory() == null || redisTemplate.getKeySerializer() == null) {
+      return null;
+    }
+    RedisTemplate<String, Object> template = new RedisTemplate<>();
+    template.setConnectionFactory(redisTemplate.getConnectionFactory());
+    template.setKeySerializer(new FencedScriptKeySerializer(redisTemplate.getKeySerializer()));
+    if (redisTemplate.getValueSerializer() != null) {
+      template.setValueSerializer(redisTemplate.getValueSerializer());
+    }
+    template.afterPropertiesSet();
+    return template;
+  }
+
+  private static final class FencedScriptKeySerializer implements RedisSerializer<Object> {
+    private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
+    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
+
+    @SuppressWarnings("unchecked")
+    private FencedScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
+      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
+    }
+
+    private final RedisSerializer<Object> queueKeySerializer;
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
+        return RAW_STRING_SERIALIZER.serialize(key);
+      }
+      return queueKeySerializer.serialize(value);
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return queueKeySerializer.deserialize(bytes);
+    }
+  }
+
+  static Object restoreQueuePayloadArgument(String value) {
+    return new RestoreQueuePayloadArgument(value);
+  }
+
+  static RedisSerializer<Object> restorePendingProjectionScriptArgumentSerializer(
+      RedisSerializer<?> valueSerializer) {
+    return new RestorePendingProjectionScriptArgumentSerializer(valueSerializer);
+  }
+
+  private record RestoreQueuePayloadArgument(String value) {}
+
+  private static final class RestorePendingProjectionScriptArgumentSerializer
+      implements RedisSerializer<Object> {
+    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
+
+    @SuppressWarnings("unchecked")
+    private RestorePendingProjectionScriptArgumentSerializer(RedisSerializer<?> valueSerializer) {
+      this.valueSerializer = (RedisSerializer<Object>) valueSerializer;
+    }
+
+    private final RedisSerializer<Object> valueSerializer;
+
+    @Override
+    public byte[] serialize(Object value) {
+      if (value instanceof RestoreQueuePayloadArgument payload) {
+        return valueSerializer.serialize(payload.value());
+      }
+      if (value instanceof String string) {
+        return RAW_STRING_SERIALIZER.serialize(string);
+      }
+      throw new IllegalArgumentException(
+          "Restore script arguments must be strings or explicit queue payloads");
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes) {
+      return RAW_STRING_SERIALIZER.deserialize(bytes);
     }
   }
 
@@ -211,15 +337,20 @@ final class TickBatchExecutionService {
         """
         local pending = KEYS[1]
         local queue = KEYS[2]
+        local lease = KEYS[3]
         local argumentCount = #ARGV
-        local pendingCount = tonumber(ARGV[1])
+        if redis.call('GET', lease) ~= ARGV[1] then
+          return -1
+        end
+
+        local pendingCount = tonumber(ARGV[2])
         if not pendingCount
             or pendingCount < 0
             or pendingCount ~= math.floor(pendingCount) then
           return 0
         end
 
-        local pendingPayloadStartIndex = 2
+        local pendingPayloadStartIndex = 3
         local sealedCountIndex = pendingPayloadStartIndex + pendingCount
         if sealedCountIndex > argumentCount then
           return 0

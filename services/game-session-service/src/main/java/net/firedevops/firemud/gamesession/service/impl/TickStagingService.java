@@ -293,7 +293,18 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
-    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership).batch();
+    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership, null)
+        .batch();
+  }
+
+  TickBatch resolveReplayBatch(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      TickQueueControlService.OwnershipSnapshot ownership,
+      TickQueueControlService.QueueLockLease lease) {
+    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership, lease)
+        .batch();
   }
 
   ReplayResolution resolveReplayBatchForTick(
@@ -301,6 +312,15 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
+    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership, null);
+  }
+
+  ReplayResolution resolveReplayBatchForTick(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      TickQueueControlService.OwnershipSnapshot ownership,
+      TickQueueControlService.QueueLockLease lease) {
     ReplayResolution resolution =
         Objects.requireNonNull(
             transactionOperations.execute(
@@ -312,8 +332,13 @@ final class TickStagingService {
       ReplayRedisReconciliation reconciliation = resolution.redisReconciliation();
       // The durable replay decision is authoritative. Redis is only reconciled after the SQL
       // transaction commits, so a Redis failure cannot roll back or hold the GameInstance lock.
+      if (lease == null) {
+        throw new IllegalStateException(
+            "Active tick lease is required for pending replay projection reconciliation");
+      }
       try {
         tickBatchExecutionService.restorePendingProjection(
+            lease,
             reconciliation.tenantId(),
             reconciliation.gameInstanceId(),
             reconciliation.pendingEntries(),

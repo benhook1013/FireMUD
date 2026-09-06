@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
-import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
@@ -45,7 +44,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
   private RuntimeRegionStatusRepository runtimeRegionStatusRepository;
   private TickService tickService;
   private RemoteFollowupRuntimeService remoteFollowupRuntimeService;
-  private AutomationScriptingClient automationScriptingClient;
   private DurableRemoteFollowupExecutionService service;
 
   @BeforeEach
@@ -57,7 +55,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     runtimeRegionStatusRepository = mock(RuntimeRegionStatusRepository.class);
     tickService = mock(TickService.class);
     remoteFollowupRuntimeService = mock(RemoteFollowupRuntimeService.class);
-    automationScriptingClient = mock(AutomationScriptingClient.class);
     when(remoteFollowupRuntimeService.recordResult(org.mockito.ArgumentMatchers.any()))
         .thenReturn(
             new RemoteFollowupRuntimeService.ResultOutcome(
@@ -73,8 +70,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             gameplayCommandRepository,
             runtimeRegionStatusRepository,
             tickService,
-            remoteFollowupRuntimeService,
-            automationScriptingClient);
+            remoteFollowupRuntimeService);
   }
 
   @Test
@@ -156,8 +152,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         gameplayCommandRepository,
         gameInstanceRepository,
         runtimeRegionStatusRepository,
-        tickService,
-        automationScriptingClient);
+        tickService);
   }
 
   @Test
@@ -339,8 +334,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         gameplayCommandRepository,
         gameInstanceRepository,
         runtimeRegionStatusRepository,
-        tickService,
-        automationScriptingClient);
+        tickService);
   }
 
   private static Stream<Arguments> divergentScopeMutations() {
@@ -399,8 +393,7 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
         gameplayCommandRepository,
         gameInstanceRepository,
         runtimeRegionStatusRepository,
-        tickService,
-        automationScriptingClient);
+        tickService);
   }
 
   private static Stream<Arguments> incompleteScopeMutations() {
@@ -750,7 +743,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
 
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
-    org.mockito.Mockito.verifyNoInteractions(automationScriptingClient);
     ArgumentCaptor<RemoteFollowupRuntimeService.ResultRequest> requestCaptor =
         ArgumentCaptor.forClass(RemoteFollowupRuntimeService.ResultRequest.class);
     org.mockito.Mockito.verify(remoteFollowupRuntimeService).recordResult(requestCaptor.capture());
@@ -831,7 +823,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
             runtimeRegionStatusRepository,
             tickService,
             remoteFollowupRuntimeService,
-            automationScriptingClient,
             pointerAuthority);
 
     DurableRemoteFollowupExecutionService.DurableRemoteFollowupExecutionResult result =
@@ -859,7 +850,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("REMOTE_SCRIPT_EVENT_PIN_TUPLE_UNAVAILABLE", result.failureCode());
     verify(remoteFollowupRuntimeService).recordResult(org.mockito.ArgumentMatchers.any());
     verify(remoteFollowupRepository, never()).save(followup);
-    verifyNoInteractions(automationScriptingClient);
   }
 
   @Test
@@ -877,7 +867,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_FOLLOWUP_PAYLOAD_INVALID", result.failureCode());
     assertEquals("Target-side remote followup payload is not valid JSON", result.failureMessage());
-    verifyNoInteractions(automationScriptingClient);
   }
 
   @Test
@@ -896,7 +885,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
     assertEquals("isDryRun must be boolean", result.failureMessage());
-    verifyNoInteractions(automationScriptingClient);
   }
 
   @ParameterizedTest
@@ -919,7 +907,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
     assertEquals(
         "playableStateScope must be explicitly SHARED or ISOLATED", result.failureMessage());
-    verifyNoInteractions(automationScriptingClient);
   }
 
   @Test
@@ -1098,7 +1085,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals(
         "worldSlug, realmSlug, pointerVersion, and playableStateScope must be provided together",
         result.failureMessage());
-    verifyNoInteractions(automationScriptingClient);
   }
 
   @Test
@@ -1150,8 +1136,6 @@ class DefaultDurableRemoteFollowupExecutionServiceTest {
     assertEquals("ABANDONED", result.effectStatus());
     assertEquals("REMOTE_SCRIPT_EVENT_PAYLOAD_INVALID", result.failureCode());
     assertEquals("worldSlug conflicts with durable followup value", result.failureMessage());
-    verify(automationScriptingClient, never())
-        .triggerScriptEvent(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
