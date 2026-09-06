@@ -142,35 +142,6 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
-  void concurrentPreInstanceNullEpochClaimsHaveOnePostgresWinnerAndOneLoser() throws Exception {
-    CountDownLatch ready = new CountDownLatch(2);
-    CountDownLatch start = new CountDownLatch(1);
-    List<Future<ScriptEventIngressAuditRepository.IdempotentInsertResult>> futures =
-        new ArrayList<>();
-    for (int i = 0; i < 2; i++) {
-      futures.add(
-          executor.submit(
-              () -> {
-                ready.countDown();
-                await(start);
-                return new ScriptEventIngressAuditRepository(dsl)
-                    .insertIfAbsentByIdentity(preInstanceIngressClaim());
-              }));
-    }
-
-    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-    start.countDown();
-    var first = get(futures.get(0));
-    var second = get(futures.get(1));
-
-    assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
-    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
-    assertThat(first.audit().getGameInstanceId()).isNull();
-    assertThat(first.audit().getScriptPinEpoch()).isNull();
-    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
-  }
-
-  @Test
   void concurrentPreInstanceOnLoadClaimsWithNullableScopeHaveOnePostgresWinnerAndOneLoser()
       throws Exception {
     CountDownLatch ready = new CountDownLatch(2);
@@ -195,7 +166,9 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     assertThat(List.of(first.inserted(), second.inserted())).containsExactlyInAnyOrder(true, false);
     assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
-    assertThat(first.audit().getScriptId()).isEqualTo("script-1");
+    assertThat(first.audit().getGameInstanceId()).isNull();
+    assertThat(first.audit().getScriptPinEpoch()).isNull();
+    assertThat(first.audit().getScriptId()).isEqualTo("script-on-load");
     assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
   }
 
@@ -627,7 +600,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private DSLContext newDsl(String applicationName) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl() + "?ApplicationName=" + applicationName);
+    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
+    dataSource.setUrl(postgres.getJdbcUrl() + separator + "ApplicationName=" + applicationName);
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return DSL.using(dataSource, SQLDialect.POSTGRES);

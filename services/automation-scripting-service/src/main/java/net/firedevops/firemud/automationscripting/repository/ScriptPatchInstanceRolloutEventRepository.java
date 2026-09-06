@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
@@ -114,7 +115,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
       return findById(record.getId()).orElseThrow();
     }
     int nextRowVersion = entity.getRowVersion() + 1;
-    String normalizedRequestId = storedRequestId(entity.getLastObservedControlPlaneRequestId());
+    String normalizedRequestId = blankToEmpty(entity.getLastObservedControlPlaneRequestId());
     Condition ownerTupleMatches =
         SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS
             .SCRIPT_PATCH_VERSION
@@ -180,7 +181,7 @@ public class ScriptPatchInstanceRolloutEventRepository {
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setLastObservedControlPlaneRequestId(
-        storedRequestId(entity.getLastObservedControlPlaneRequestId()));
+        blankToEmpty(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setObservedAt(toLocalDateTime(entity.getObservedAt()));
@@ -226,10 +227,6 @@ public class ScriptPatchInstanceRolloutEventRepository {
       throw new IllegalArgumentException(
           "script_pin_control_plane_request_id must be present exactly when script_pin_epoch is positive");
     }
-  }
-
-  private static String storedRequestId(String requestId) {
-    return requestId == null || requestId.isBlank() ? "" : requestId;
   }
 
   private static boolean ownerTupleMatches(

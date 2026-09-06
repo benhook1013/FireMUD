@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
@@ -117,7 +118,7 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
                 entity.getScriptPinEpoch())
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
-                storageValue(entity.getLastObservedControlPlaneRequestId()))
+                blankToEmpty(entity.getLastObservedControlPlaneRequestId()))
             .set(
                 SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROLLOUT_STATUS, entity.getRolloutStatus())
             .set(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.STATUS_REASON, entity.getStatusReason())
@@ -167,7 +168,7 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
     record.setScriptPinEpoch(entity.getScriptPinEpoch());
     record.setLastObservedControlPlaneRequestId(
-        storageValue(entity.getLastObservedControlPlaneRequestId()));
+        blankToEmpty(entity.getLastObservedControlPlaneRequestId()));
     record.setRolloutStatus(entity.getRolloutStatus());
     record.setStatusReason(entity.getStatusReason());
     record.setLastChangedAt(toLocalDateTime(entity.getLastChangedAt()));
@@ -198,9 +199,5 @@ public class ScriptPatchInstanceRolloutProjectionRepository {
     Integer rowVersion = record.get(SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
-  }
-
-  private static String storageValue(String value) {
-    return value == null || value.isBlank() ? "" : value;
   }
 }

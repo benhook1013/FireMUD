@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
+import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToEmpty;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.blankToNull;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.limitOrDefault;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.offsetOrZero;
@@ -249,11 +250,10 @@ public class ScriptHandoffEventRepository {
         && Objects.equals(existing.getScriptId(), incoming.getScriptId())
         && Objects.equals(existing.getBindingId(), incoming.getBindingId())
         && Objects.equals(
-            normalizePluginIdentity(existing.getPluginId()),
-            normalizePluginIdentity(incoming.getPluginId()))
+            blankToEmpty(existing.getPluginId()), blankToEmpty(incoming.getPluginId()))
         && Objects.equals(
-            normalizePluginIdentity(existing.getPluginVersionId()),
-            normalizePluginIdentity(incoming.getPluginVersionId()))
+            blankToEmpty(existing.getPluginVersionId()),
+            blankToEmpty(incoming.getPluginVersionId()))
         && Objects.equals(existing.getWorkItemId(), incoming.getWorkItemId())
         && existing.getCommandOrdinal() == incoming.getCommandOrdinal()
         && Objects.equals(existing.getAutomationDispatchId(), incoming.getAutomationDispatchId())
@@ -289,12 +289,10 @@ public class ScriptHandoffEventRepository {
                 normalizedRequestId))
         .and(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID.isNotDistinctFrom(entity.getScriptId()))
         .and(SCRIPT_HANDOFF_EVENTS.BINDING_ID.isNotDistinctFrom(entity.getBindingId()))
-        .and(
-            SCRIPT_HANDOFF_EVENTS.PLUGIN_ID.isNotDistinctFrom(
-                normalizePluginIdentity(entity.getPluginId())))
+        .and(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID.isNotDistinctFrom(blankToEmpty(entity.getPluginId())))
         .and(
             SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID.isNotDistinctFrom(
-                normalizePluginIdentity(entity.getPluginVersionId())))
+                blankToEmpty(entity.getPluginVersionId())))
         .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(entity.getWorkItemId()))
         .and(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL.eq(entity.getCommandOrdinal()))
         .and(
@@ -334,8 +332,8 @@ public class ScriptHandoffEventRepository {
         blankToNull(entity.getScriptPinControlPlaneRequestId()));
     record.setScriptId(entity.getScriptId());
     record.setBindingId(entity.getBindingId());
-    record.setPluginId(normalizePluginIdentity(entity.getPluginId()));
-    record.setPluginVersionId(normalizePluginIdentity(entity.getPluginVersionId()));
+    record.setPluginId(blankToEmpty(entity.getPluginId()));
+    record.setPluginVersionId(blankToEmpty(entity.getPluginVersionId()));
     record.setWorkItemId(entity.getWorkItemId());
     record.setCommandOrdinal(entity.getCommandOrdinal());
     record.setAutomationDispatchId(entity.getAutomationDispatchId());
@@ -386,9 +384,8 @@ public class ScriptHandoffEventRepository {
         blankToNull(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID)));
     entity.setScriptId(record.get(SCRIPT_HANDOFF_EVENTS.SCRIPT_ID));
     entity.setBindingId(record.get(SCRIPT_HANDOFF_EVENTS.BINDING_ID));
-    entity.setPluginId(normalizePluginIdentity(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID)));
-    entity.setPluginVersionId(
-        normalizePluginIdentity(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID)));
+    entity.setPluginId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_ID)));
+    entity.setPluginVersionId(blankToEmpty(record.get(SCRIPT_HANDOFF_EVENTS.PLUGIN_VERSION_ID)));
     entity.setWorkItemId(record.get(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID));
     Integer commandOrdinal = record.get(SCRIPT_HANDOFF_EVENTS.COMMAND_ORDINAL);
     entity.setCommandOrdinal(commandOrdinal == null ? 0 : commandOrdinal);
@@ -417,9 +414,5 @@ public class ScriptHandoffEventRepository {
     Integer rowVersion = record.get(SCRIPT_HANDOFF_EVENTS.ROW_VERSION);
     entity.setRowVersion(rowVersion == null ? 0 : rowVersion);
     return entity;
-  }
-
-  private static String normalizePluginIdentity(String value) {
-    return value == null ? "" : value;
   }
 }

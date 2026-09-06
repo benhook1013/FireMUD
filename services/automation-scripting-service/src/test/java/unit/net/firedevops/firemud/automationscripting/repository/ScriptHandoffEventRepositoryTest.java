@@ -64,6 +64,8 @@ class ScriptHandoffEventRepositoryTest {
           row.setScriptPinControlPlaneRequestId("pin-request-1");
           row.setScriptId("script-1");
           row.setBindingId("binding-1");
+          row.setPluginId(" ");
+          row.setPluginVersionId("\t");
           row.setWorkItemId(99L);
           row.setCommandOrdinal(0);
           row.setAutomationDispatchId("workItem:99#0");
