@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
@@ -50,12 +49,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification =
-        "Injected repository/services and config properties are internal Spring collaborators")
 public final class GameSessionCommandControlPlaneService {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -72,6 +70,7 @@ public final class GameSessionCommandControlPlaneService {
   private final TickService tickService;
   private final BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver;
   private final MeterRegistry meterRegistry;
+  private final TransactionOperations transactionOperations;
 
   @Autowired
   public GameSessionCommandControlPlaneService(
@@ -85,7 +84,36 @@ public final class GameSessionCommandControlPlaneService {
       GameDesignClient gameDesignClient,
       BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       TickService tickService,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      PlatformTransactionManager transactionManager) {
+    this(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayAdmissionPointerAuthorityService,
+        gameDesignClient,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        new TransactionTemplate(transactionManager));
+  }
+
+  GameSessionCommandControlPlaneService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      GameDesignClient gameDesignClient,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      TransactionOperations transactionOperations) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayCommandRepository = gameplayCommandRepository;
     this.runtimeRegionStatusRepository = runtimeRegionStatusRepository;
@@ -97,6 +125,7 @@ public final class GameSessionCommandControlPlaneService {
     this.builtInTextCommandAliasResolver = builtInTextCommandAliasResolver;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
+    this.transactionOperations = transactionOperations;
   }
 
   private long parseTenantId(String tenantId) {
@@ -163,40 +192,62 @@ public final class GameSessionCommandControlPlaneService {
 
   private EnqueueAutomationCommandIfAbsentResponse enqueueAutomationCommand(
       EnqueueAutomationCommandIfAbsentRequest request) {
+    AutomationGameplayCommandAdmissionSupport.AdmissionRequest admissionRequest =
+        toAutomationAdmissionRequest(request);
+    AutomationGameplayCommandAdmissionSupport.DurableAdmission durableAdmission =
+        transactionOperations.execute(
+            status ->
+                AutomationGameplayCommandAdmissionSupport.admitIfAbsentDurably(
+                    admissionRequest,
+                    gameInstanceRepository,
+                    gameplayCommandRepository,
+                    runtimeRegionStatusRepository,
+                    gameplayAdmissionPointerAuthorityService));
+    if (durableAdmission == null) {
+      throw new IllegalStateException(
+          "Gameplay command admission transaction returned no admission result");
+    }
     AutomationGameplayCommandAdmissionSupport.AdmissionResult result =
-        AutomationGameplayCommandAdmissionSupport.admitIfAbsent(
-            new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
-                parseTenantId(request.getTenantId()),
-                parseGameInstanceId(request.getGameInstanceId()),
-                request.getRegionId(),
-                request.getRegionEpoch(),
-                "AUTOMATION",
-                request.getAutomationDispatchId(),
-                request.getAutomationWorkItemId(),
-                request.getScriptId(),
-                request.getScriptPatchVersion(),
-                normalizeBlank(request.getPluginId()),
-                normalizeBlank(request.getPluginVersionId()),
-                normalizePlayableStateScope(request.getPlayableStateScope()),
-                normalizeBlank(request.getWorldSlug()),
-                normalizeBlank(request.getRealmSlug()),
-                parsePointerVersionClaim(request.getPointerVersion()),
-                normalizeBlank(request.getOriginSourceKind()),
-                normalizeBlank(request.getOriginSourceState()),
-                request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null,
-                request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null,
-                request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
-                request.getTargetEntityId(),
-                null,
-                null,
-                request.getCommand(),
-                request.getRequiresSoloTick(),
-                request.getDueTickId() > 0 ? request.getDueTickId() : null),
-            gameInstanceRepository,
-            gameplayCommandRepository,
-            runtimeRegionStatusRepository,
-            gameplayAdmissionPointerAuthorityService,
-            tickService);
+        AutomationGameplayCommandAdmissionSupport.materializeAcceptedCommand(
+            durableAdmission, admissionRequest, gameplayCommandRepository, tickService);
+    return enqueueAutomationCommandResponse(result);
+  }
+
+  private AutomationGameplayCommandAdmissionSupport.AdmissionRequest toAutomationAdmissionRequest(
+      EnqueueAutomationCommandIfAbsentRequest request) {
+    return new AutomationGameplayCommandAdmissionSupport.AdmissionRequest(
+        parseTenantId(request.getTenantId()),
+        parseGameInstanceId(request.getGameInstanceId()),
+        request.getRegionId(),
+        request.getRegionEpoch(),
+        "AUTOMATION",
+        request.getAutomationDispatchId(),
+        request.getAutomationWorkItemId(),
+        request.getScriptId(),
+        request.getScriptPatchVersion(),
+        normalizeBlank(request.getPluginId()),
+        normalizeBlank(request.getPluginVersionId()),
+        normalizePlayableStateScope(request.getPlayableStateScope()),
+        normalizeBlank(request.getWorldSlug()),
+        normalizeBlank(request.getRealmSlug()),
+        parsePointerVersionClaim(request.getPointerVersion()),
+        normalizeBlank(request.getOriginSourceKind()),
+        normalizeBlank(request.getOriginSourceState()),
+        request.getOriginSourceOrdinal() > 0 ? request.getOriginSourceOrdinal() : null,
+        request.getOriginSourceDueTickId() > 0 ? request.getOriginSourceDueTickId() : null,
+        request.getOriginSourceDueAtMs() > 0 ? request.getOriginSourceDueAtMs() : null,
+        request.getTargetEntityId(),
+        null,
+        null,
+        request.getCommand(),
+        request.getRequiresSoloTick(),
+        request.getDueTickId() > 0 ? request.getDueTickId() : null,
+        request.getScriptPinEpoch() > 0 ? request.getScriptPinEpoch() : null,
+        normalizeBlank(request.getScriptPinControlPlaneRequestId()));
+  }
+
+  private EnqueueAutomationCommandIfAbsentResponse enqueueAutomationCommandResponse(
+      AutomationGameplayCommandAdmissionSupport.AdmissionResult result) {
     EnqueueAutomationCommandIfAbsentResponse.Builder builder =
         EnqueueAutomationCommandIfAbsentResponse.newBuilder()
             .setAccepted(result.accepted())

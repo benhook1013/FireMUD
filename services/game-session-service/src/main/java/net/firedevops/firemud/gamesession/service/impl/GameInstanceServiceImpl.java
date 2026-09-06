@@ -22,6 +22,13 @@ import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
@@ -41,6 +48,18 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private static final String STATUS_STOPPING = "STOPPING";
   private static final String STATUS_STOPPED = "STOPPED";
   private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
+  private static final String WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE =
+      "world activation authority unavailable";
+  private static final String WORLD_FAIL_PREPARED_AUTHORITY_UNAVAILABLE =
+      "world fail-prepared authority unavailable";
+  private static final String WORLD_PREPARATION_AUTHORITY_UNAVAILABLE =
+      "world preparation authority unavailable";
+  private static final String WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE =
+      "world lifecycle authority unavailable";
+  private static final String WORLD_TERMINATION_AUTHORITY_UNAVAILABLE =
+      "world termination authority unavailable";
+  private static final String WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL =
+      "WORLD_AUTHORITY_MALFORMED: response was null";
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
@@ -151,14 +170,30 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameInstanceDto existingRunningState = stage.existingRunningState();
       if (existingRunningState != null) {
         sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
-        long existingWorldLifecycleEpoch = readWorldInstanceLifecycleEpoch(existingRunningState);
-        oldWorldTerminationRequested = true;
-        terminateWorldInstance(
-            existingRunningState,
-            existingWorldLifecycleEpoch,
-            "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID(),
-            "session replacement requested");
-        oldWorldTerminationCompleted = true;
+        WorldInstanceLifecycleSnapshot existingLifecycle =
+            readWorldInstanceLifecycle(existingRunningState);
+        if (existingLifecycle.getStatus()
+            == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
+          oldWorldTerminationRequested = true;
+          throw new LifecycleOutcomeException(
+              "WORLD_TERMINATION_IN_PROGRESS", "replaced session is already terminating");
+        }
+        if (existingLifecycle.getStatus()
+            == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
+          oldWorldTerminationRequested = true;
+          oldWorldTerminationCompleted = true;
+        } else {
+          requireLifecycleStatus(
+              existingLifecycle,
+              WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
+          oldWorldTerminationRequested = true;
+          terminateWorldInstance(
+              existingRunningState,
+              existingLifecycle.getLifecycleEpoch(),
+              "session-replace-" + stage.startingState().id() + "-" + UUID.randomUUID(),
+              "session replacement requested");
+          oldWorldTerminationCompleted = true;
+        }
         inTransaction(
             () -> {
               markSessionStopped(existingRunningState.id());
@@ -200,14 +235,27 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     boolean worldTerminationCompleted = false;
     try {
       sessionStateService.deleteState(runningState.tenantId(), runningState.id());
-      long worldLifecycleEpoch = readWorldInstanceLifecycleEpoch(runningState);
-      worldTerminationRequested = true;
-      terminateWorldInstance(
-          runningState,
-          worldLifecycleEpoch,
-          "session-stop-" + UUID.randomUUID(),
-          "session stop requested");
-      worldTerminationCompleted = true;
+      WorldInstanceLifecycleSnapshot lifecycle = readWorldInstanceLifecycle(runningState);
+      if (lifecycle.getStatus()
+          == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
+        worldTerminationRequested = true;
+        worldTerminationCompleted = true;
+      } else if (lifecycle.getStatus()
+          == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
+        worldTerminationRequested = true;
+        throw new LifecycleOutcomeException(
+            "WORLD_TERMINATION_IN_PROGRESS", "session termination is already in progress");
+      } else {
+        requireLifecycleStatus(
+            lifecycle, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
+        worldTerminationRequested = true;
+        terminateWorldInstance(
+            runningState,
+            lifecycle.getLifecycleEpoch(),
+            "session-stop-" + UUID.randomUUID(),
+            "session stop requested");
+        worldTerminationCompleted = true;
+      }
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
       compensateStopFailure(runningState, worldTerminationRequested, worldTerminationCompleted);
@@ -256,7 +304,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
     instance.setRuntimeVersion(Long.toString(resolvedLaunchDescriptor.versionId()));
-    instance.setScriptPatchVersion(resolvedLaunchDescriptor.scriptPatchVersion());
+    // The launch descriptor carries only a candidate patch.  The authoritative pin tuple is
+    // allocated by the owner pin transition, so a new instance must remain semantically
+    // UNPINNED until that transition commits all owner fields together.
     instance.setGameTemplateId(request.gameTemplateId());
     instance.setLaunchDescriptorId(resolvedLaunchDescriptor.launchDescriptorId());
     instance.setVersionId(resolvedLaunchDescriptor.versionId());
@@ -506,6 +556,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getTenantId(),
         instance.getRuntimeVersion(),
         instance.getScriptPatchVersion(),
+        instance.getScriptPinEpoch(),
+        instance.getScriptPatchPinnedControlPlaneRequestId(),
         instance.getGameTemplateId(),
         instance.getLaunchDescriptorId(),
         instance.getVersionId(),
@@ -521,6 +573,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
     instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
+    instance.setScriptPinEpoch(snapshot.scriptPinEpoch());
+    instance.setScriptPatchPinnedControlPlaneRequestId(snapshot.scriptPinControlPlaneRequestId());
     instance.setGameTemplateId(snapshot.gameTemplateId());
     instance.setLaunchDescriptorId(snapshot.launchDescriptorId());
     instance.setVersionId(snapshot.versionId());
@@ -539,6 +593,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         snapshot.tenantId(),
         snapshot.runtimeVersion(),
         snapshot.scriptPatchVersion(),
+        snapshot.scriptPinEpoch(),
+        snapshot.scriptPinControlPlaneRequestId(),
         snapshot.gameTemplateId(),
         snapshot.launchDescriptorId(),
         snapshot.versionId(),
@@ -578,7 +634,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         || !releaseBundleRef(request.tenantId(), descriptor.getVersionId(), bundle.getId())
             .equals(descriptor.getPublishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
-          "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published release bundle");
+          "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published"
+              + " release bundle");
     }
     validatePublishedAssetProof(request.tenantId(), descriptor.getVersionId(), bundle);
     var versionStateResponse =
@@ -597,7 +654,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
     if (versionState.getVersionStateEpoch() != descriptor.getVersionStateEpoch()) {
       throw new IllegalArgumentException(
-          "VERSION_STATE_EPOCH_STALE: resolved launch descriptor epoch does not match current version state");
+          "VERSION_STATE_EPOCH_STALE: resolved launch descriptor epoch does not match current"
+              + " version state");
     }
     return new ResolvedLaunchDescriptor(
         descriptor.getLaunchDescriptorId(),
@@ -630,12 +688,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             != net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED
         || !artifactState.getManifestHash().equals(bundle.getManifestHash())) {
       throw new IllegalArgumentException(
-          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release bundle");
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state does not match the release"
+              + " bundle");
     }
     var exportedKeys = new HashSet<>(artifactState.getExportedManifestAssetKeysList());
     if (!exportedKeys.containsAll(bundle.getRequiredManifestAssetKeysList())) {
       throw new IllegalArgumentException(
-          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required manifest asset keys");
+          "RELEASE_ATTESTATION_MISMATCH: published asset artifact state is missing required"
+              + " manifest asset keys");
     }
   }
 
@@ -652,32 +712,44 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       ResolvedLaunchDescriptor resolvedLaunchDescriptor,
       StartSessionRequest request) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world activation authority unavailable");
+      throw new IllegalStateException(WORLD_PREPARATION_AUTHORITY_UNAVAILABLE);
     }
-    var response =
-        worldManagementClient.prepareWorldInstance(
-            request.tenantId(),
-            startingState.id(),
-            request.gameTemplateId(),
-            request.controlPlaneRequestId(),
-            resolvedLaunchDescriptor.launchDescriptorId(),
-            resolvedLaunchDescriptor.versionId(),
-            resolvedLaunchDescriptor.scriptPatchVersion(),
-            resolvedLaunchDescriptor.runtimeFlagsJson(),
-            resolvedLaunchDescriptor.generationConfigRevision(),
-            resolvedLaunchDescriptor.releaseBundleId(),
-            resolvedLaunchDescriptor.publishedReleaseBundleRef(),
-            resolvedLaunchDescriptor.versionStateEpoch(),
-            resolvedLaunchDescriptor.remapSetId());
+    final PrepareWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.prepareWorldInstance(
+              request.tenantId(),
+              startingState.id(),
+              request.gameTemplateId(),
+              request.controlPlaneRequestId(),
+              resolvedLaunchDescriptor.launchDescriptorId(),
+              resolvedLaunchDescriptor.versionId(),
+              startingState.scriptPatchVersion(),
+              resolvedLaunchDescriptor.runtimeFlagsJson(),
+              resolvedLaunchDescriptor.generationConfigRevision(),
+              resolvedLaunchDescriptor.releaseBundleId(),
+              resolvedLaunchDescriptor.publishedReleaseBundleRef(),
+              resolvedLaunchDescriptor.versionStateEpoch(),
+              resolvedLaunchDescriptor.remapSetId());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(WORLD_PREPARATION_AUTHORITY_UNAVAILABLE, ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            response.hasWorldInstance(),
+            response.getWorldInstance(),
+            request.tenantId(),
+            startingState.id(),
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING);
     return new PreparedWorldInstance(
-        requirePositiveExternalId(response.getWorldInstance().getTenantId(), "tenantId"),
-        requirePositiveExternalId(
-            response.getWorldInstance().getGameInstanceId(), "gameInstanceId"),
-        response.getWorldInstance().getLifecycleEpoch());
+        request.tenantId(), startingState.id(), snapshot.getLifecycleEpoch());
   }
 
   private long requirePositiveExternalId(String value, String fieldName) {
@@ -686,46 +758,106 @@ public class GameInstanceServiceImpl implements GameInstanceService {
 
   private void activatePreparedWorldInstance(PreparedWorldInstance preparedWorldInstance) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world activation authority unavailable");
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE);
     }
-    var response =
-        worldManagementClient.activatePreparedWorldInstance(
-            preparedWorldInstance.tenantId(),
-            preparedWorldInstance.gameInstanceId(),
-            preparedWorldInstance.lifecycleEpoch());
+    final ActivatePreparedWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.activatePreparedWorldInstance(
+              preparedWorldInstance.tenantId(),
+              preparedWorldInstance.gameInstanceId(),
+              preparedWorldInstance.lifecycleEpoch());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    requireWorldSnapshot(
+        response.hasWorldInstance(),
+        response.getWorldInstance(),
+        preparedWorldInstance.tenantId(),
+        preparedWorldInstance.gameInstanceId(),
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
   }
 
   private void failPreparedWorldInstance(
       PreparedWorldInstance preparedWorldInstance, String reason) {
-    var response =
-        worldManagementClient.failPreparedWorldInstance(
-            preparedWorldInstance.tenantId(),
-            preparedWorldInstance.gameInstanceId(),
-            preparedWorldInstance.lifecycleEpoch(),
-            reason);
+    final FailPreparedWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.failPreparedWorldInstance(
+              preparedWorldInstance.tenantId(),
+              preparedWorldInstance.gameInstanceId(),
+              preparedWorldInstance.lifecycleEpoch(),
+              reason);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(WORLD_FAIL_PREPARED_AUTHORITY_UNAVAILABLE, ex);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     if (response.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           response.getError().getCode() + ": " + response.getError().getMessage());
     }
+    requireWorldSnapshot(
+        response.hasWorldInstance(),
+        response.getWorldInstance(),
+        preparedWorldInstance.tenantId(),
+        preparedWorldInstance.gameInstanceId(),
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION);
   }
 
-  private long readWorldInstanceLifecycleEpoch(GameInstanceDto runningState) {
+  private WorldInstanceLifecycleSnapshot readWorldInstanceLifecycle(GameInstanceDto runningState) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world termination authority unavailable");
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE);
     }
-    var lifecycleResponse =
-        worldManagementClient.getWorldInstanceLifecycle(runningState.tenantId(), runningState.id());
+    final GetWorldInstanceLifecycleResponse lifecycleResponse;
+    try {
+      lifecycleResponse =
+          worldManagementClient.getWorldInstanceLifecycle(
+              runningState.tenantId(), runningState.id());
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE, ex);
+    }
+    if (lifecycleResponse == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     if (lifecycleResponse.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           lifecycleResponse.getError().getCode()
               + ": "
               + lifecycleResponse.getError().getMessage());
     }
-    return lifecycleResponse.getWorldInstance().getLifecycleEpoch();
+    return requireWorldSnapshot(
+        lifecycleResponse.hasWorldInstance(),
+        lifecycleResponse.getWorldInstance(),
+        runningState.tenantId(),
+        runningState.id(),
+        null);
+  }
+
+  private void requireLifecycleStatus(
+      WorldInstanceLifecycleSnapshot lifecycle, WorldInstanceLifecycleStatus expectedStatus) {
+    WorldInstanceLifecycleStatus actualStatus = lifecycle.getStatus();
+    if (actualStatus == expectedStatus) {
+      return;
+    }
+    if (expectedStatus == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE
+        && (actualStatus == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING
+            || actualStatus
+                == WorldInstanceLifecycleStatus
+                    .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)) {
+      throw new LifecycleOutcomeException(
+          "WORLD_INSTANCE_LIFECYCLE_NOT_ACTIVE", "instance is not ACTIVE");
+    }
+    throw new IllegalStateException(
+        "WORLD_AUTHORITY_MALFORMED: lifecycle response has unexpected status");
   }
 
   private void terminateWorldInstance(
@@ -734,21 +866,80 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       String terminationRequestId,
       String terminationReason) {
     if (worldManagementClient == null) {
-      throw new IllegalStateException("world termination authority unavailable");
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE);
     }
-    var terminateResponse =
-        worldManagementClient.terminateWorldInstance(
-            runningState.tenantId(),
-            runningState.id(),
-            lifecycleEpoch,
-            terminationRequestId,
-            terminationReason);
+    final TerminateWorldInstanceResponse terminateResponse;
+    try {
+      terminateResponse =
+          worldManagementClient.terminateWorldInstance(
+              runningState.tenantId(),
+              runningState.id(),
+              lifecycleEpoch,
+              terminationRequestId,
+              terminationReason);
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException(WORLD_TERMINATION_AUTHORITY_UNAVAILABLE, ex);
+    }
+    if (terminateResponse == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
     if (terminateResponse.hasError()) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           terminateResponse.getError().getCode()
               + ": "
               + terminateResponse.getError().getMessage());
     }
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            terminateResponse.hasWorldInstance(),
+            terminateResponse.getWorldInstance(),
+            runningState.tenantId(),
+            runningState.id(),
+            null);
+    if (snapshot.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
+      throw new LifecycleOutcomeException(
+          "WORLD_TERMINATION_IN_PROGRESS", "session termination is already in progress");
+    }
+    requireLifecycleStatus(
+        snapshot, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED);
+  }
+
+  private WorldInstanceLifecycleSnapshot requireWorldSnapshot(
+      boolean present,
+      WorldInstanceLifecycleSnapshot snapshot,
+      long expectedTenantId,
+      long expectedGameInstanceId,
+      WorldInstanceLifecycleStatus expectedStatus) {
+    if (!present) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: response omitted lifecycle snapshot");
+    }
+    if (snapshot == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
+    final long responseTenantId;
+    final long responseGameInstanceId;
+    try {
+      responseTenantId = requirePositiveExternalId(snapshot.getTenantId(), "tenantId");
+      responseGameInstanceId =
+          requirePositiveExternalId(snapshot.getGameInstanceId(), "gameInstanceId");
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: " + ex.getMessage(), ex);
+    }
+    if (responseTenantId != expectedTenantId || responseGameInstanceId != expectedGameInstanceId) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_SCOPE_MISMATCH: lifecycle response does not match the requested"
+              + " instance");
+    }
+    if (snapshot.getLifecycleEpoch() <= 0L) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive");
+    }
+    if (expectedStatus != null) {
+      requireLifecycleStatus(snapshot, expectedStatus);
+    }
+    return snapshot;
   }
 
   private void runRollbackSafely(String actionName, Runnable rollbackAction) {

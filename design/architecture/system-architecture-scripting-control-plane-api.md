@@ -558,7 +558,7 @@ Inputs:
 - Optional `changedAfter` / `changedBefore`
 - Optional bounded `limit`
 
-The persisted source owner tuple (`scriptPatchVersion`, `scriptPinEpoch`, `scriptPinControlPlaneRequestId`) is response data only; `ListScriptHandoffEvents` does not accept a source-pin epoch or request-ID filter.
+`scriptPatchVersion` remains an input filter. The persisted source owner fields `scriptPinEpoch` and `scriptPinControlPlaneRequestId` are response-only; `ListScriptHandoffEvents` does not accept a source-pin epoch or request-ID filter.
 
 Outputs:
 

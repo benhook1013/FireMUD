@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.entity.TickBatch;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.GameplayCommandSourceCoherence;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -40,21 +41,76 @@ final class GameplayCommandExecutionFenceService {
           "Gameplay command game instance is unavailable for execution fencing");
     }
 
-    String commandPatch = normalize(command.getScriptPatchVersion());
-    if ("AUTOMATION".equals(normalize(command.getSourceType())) && commandPatch.isEmpty()) {
+    boolean localAutomationCommand = GameplayCommandSourceCoherence.isLocalAutomation(command);
+    String commandPatch =
+        GameplayCommandSourceCoherence.normalizeText(command.getScriptPatchVersion());
+    if (localAutomationCommand && commandPatch.isEmpty()) {
       return failure(
           "INCOMPLETE_SCRIPT_PATCH_FENCE",
           "Automation gameplay command must include its admitted script patch");
     }
+    if (localAutomationCommand
+        && (command.getScriptPinEpoch() == null
+            || command.getScriptPinEpoch() <= 0
+            || GameplayCommandSourceCoherence.normalizeText(
+                    command.getScriptPinControlPlaneRequestId())
+                .isEmpty())) {
+      return failure(
+          "INCOMPLETE_SCRIPT_PIN_FENCE",
+          "Automation gameplay command must include its complete script pin tuple");
+    }
+
+    if (localAutomationCommand) {
+      String currentPatch =
+          GameplayCommandSourceCoherence.normalizeText(instance.getScriptPatchVersion());
+      Long currentEpoch = instance.getScriptPinEpoch();
+      String currentRequestId =
+          GameplayCommandSourceCoherence.normalizeText(
+              instance.getScriptPatchPinnedControlPlaneRequestId());
+      boolean semanticUnpinned =
+          currentPatch.isEmpty() && currentEpoch == null && currentRequestId.isEmpty();
+      if (semanticUnpinned) {
+        return failure(
+            "STALE_SCRIPT_PIN_EPOCH",
+            "Automation gameplay command cannot execute against an unpinned game instance");
+      }
+      if (currentPatch.isEmpty()
+          || currentEpoch == null
+          || currentEpoch <= 0
+          || currentRequestId.isEmpty()) {
+        return failure(
+            "INCOMPLETE_SCRIPT_PIN_FENCE",
+            "Game instance does not have a complete current script pin tuple");
+      }
+      if (!commandPatch.equals(currentPatch)) {
+        return failure(
+            "STALE_SCRIPT_PATCH_VERSION",
+            "Gameplay command script patch no longer matches the pinned instance patch");
+      }
+      if (!command.getScriptPinEpoch().equals(currentEpoch)) {
+        return failure(
+            "STALE_SCRIPT_PIN_EPOCH",
+            "Gameplay command script pin epoch no longer matches the pinned instance epoch");
+      }
+      if (!GameplayCommandSourceCoherence.normalizeText(command.getScriptPinControlPlaneRequestId())
+          .equals(currentRequestId)) {
+        return failure(
+            "STALE_SCRIPT_PIN_REQUEST_ID",
+            "Gameplay command script pin request identity no longer matches the pinned instance");
+      }
+    }
+
     if (!commandPatch.isEmpty()
-        && !commandPatch.equals(normalize(instance.getScriptPatchVersion()))) {
+        && !commandPatch.equals(
+            GameplayCommandSourceCoherence.normalizeText(instance.getScriptPatchVersion()))) {
       return failure(
           "STALE_SCRIPT_PATCH_VERSION",
           "Gameplay command script patch no longer matches the pinned instance patch");
     }
 
-    String pluginId = normalize(command.getPluginId());
-    String pluginVersionId = normalize(command.getPluginVersionId());
+    String pluginId = GameplayCommandSourceCoherence.normalizeText(command.getPluginId());
+    String pluginVersionId =
+        GameplayCommandSourceCoherence.normalizeText(command.getPluginVersionId());
     if (pluginId.isEmpty() != pluginVersionId.isEmpty()) {
       return failure(
           "INCOMPLETE_PLUGIN_VERSION_FENCE",
@@ -78,7 +134,9 @@ final class GameplayCommandExecutionFenceService {
     }
     if (status.getPluginState() != PluginState.PLUGIN_STATE_ENABLED
         || !pluginVersionId.equals(status.getActivePluginVersionId())
-        || !Objects.equals(normalize(status.getRuntimeRegionId()), normalize(batch.getRegionId()))
+        || !Objects.equals(
+            GameplayCommandSourceCoherence.normalizeText(status.getRuntimeRegionId()),
+            GameplayCommandSourceCoherence.normalizeText(batch.getRegionId()))
         || status.getRuntimeRegionEpoch() != batch.getRegionEpoch()) {
       return failure(
           "STALE_PLUGIN_VERSION",
@@ -89,10 +147,6 @@ final class GameplayCommandExecutionFenceService {
 
   private static Optional<FenceFailure> failure(String code, String message) {
     return Optional.of(new FenceFailure(code, message));
-  }
-
-  private static String normalize(String value) {
-    return value == null ? "" : value.trim();
   }
 
   record FenceFailure(String code, String message) {}

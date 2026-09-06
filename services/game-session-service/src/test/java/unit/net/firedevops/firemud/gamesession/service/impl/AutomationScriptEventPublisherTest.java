@@ -5,6 +5,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
@@ -35,13 +36,15 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class AutomationScriptEventPublisherTest {
   @Test
-  void publishesCommandEventWithRuntimeFenceAndPinnedPatch() {
+  void publishesCommandEventWithValidOwnerAndPositiveEpoch() {
     AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
     RuntimeRegionStatusRepository statusRepository =
         Mockito.mock(RuntimeRegionStatusRepository.class);
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -85,6 +88,8 @@ class AutomationScriptEventPublisherTest {
     assertThat(request.getPointerVersion()).isEqualTo("7");
     assertThat(request.getEventType()).isEqualTo("onCommand");
     assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getScriptEventId()).isEqualTo("cmd-1");
     assertThat(request.getIsDryRun()).isFalse();
     assertThat(request.getReadSnapshotToken()).contains("cmd-1");
@@ -103,8 +108,180 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.empty());
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
+  @Test
+  void skipsCommandEventWhenPositiveEpochHasNoPinOwnerRequestId(CapturedOutput output) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run,
+            meterRegistry);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(output.getOut() + output.getErr())
+        .contains("Skipping script event publish because the script pin tuple is partial")
+        .contains("tenantId=9")
+        .contains("gameInstanceId=99");
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "partial_tuple")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void skipsCommandEventWhenPatchIsPresentButBothPinFieldsAreAbsent() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run,
+            meterRegistry);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "partial_tuple")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void skipsCommandEventWhenPinIsAbsentAndCountsUnpinnedReason() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run,
+            meterRegistry);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+    assertThat(
+            meterRegistry
+                .get("game_session_script_event_publish_skips_total")
+                .tag("reason", "unpinned")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
+  void skipsCommandEventWhenPinOwnerRequestIdHasNoPositiveEpoch() {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
+    ScriptEventPublisher publisher =
+        new AutomationScriptEventPublisher(
+            client,
+            statusRepository,
+            gameInstanceRepository,
+            commandToken -> Optional.empty(),
+            builtInAliasResolver(),
+            Runnable::run);
+
+    publisher.publishCommandEvent(sharedGameplayContext("R-1"), command("cmd-1", "LOOK"));
+
+    verify(client, never()).triggerScriptEvent(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {0L, -1L})
+  void skipsCommandEventWhenScriptPinEpochIsNotPositive(long invalidEpoch) {
+    AutomationScriptingClient client = Mockito.mock(AutomationScriptingClient.class);
+    RuntimeRegionStatusRepository statusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(invalidEpoch);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    RuntimeRegionStatus status = new RuntimeRegionStatus();
+    status.setRegionId("region-99");
+    status.setRegionEpoch(7L);
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+    when(statusRepository.findByTenantIdAndGameInstanceId(9L, 99L)).thenReturn(Optional.of(status));
     ScriptEventPublisher publisher =
         new AutomationScriptEventPublisher(
             client,
@@ -129,6 +306,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -157,6 +336,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
     when(client.triggerScriptEvent(Mockito.any()))
         .thenReturn(TriggerScriptEventResponse.newBuilder().setAdmitted(true).build());
@@ -207,6 +388,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -232,6 +415,9 @@ class AutomationScriptEventPublisherTest {
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getEventType()).isEqualTo("onSpawn");
     assertThat(request.getScriptEventId()).isEqualTo("play-spawn:17:99:44:7");
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getPlayableStateScope())
         .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(request.getWorldSlug()).isEqualTo("demo");
@@ -250,6 +436,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -279,6 +467,15 @@ class AutomationScriptEventPublisherTest {
         .extracting(TriggerScriptEventRequest::getScriptEventId)
         .containsExactly("effect-1:leave", "effect-1:enter");
     assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPatchVersion)
+        .containsOnly("patch-1");
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPinEpoch)
+        .containsOnly(1L);
+    assertThat(captor.getAllValues())
+        .extracting(TriggerScriptEventRequest::getScriptPinControlPlaneRequestId)
+        .containsOnly("req-1");
+    assertThat(captor.getAllValues())
         .extracting(TriggerScriptEventRequest::getPlayableStateScope)
         .containsOnly(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(captor.getAllValues())
@@ -307,6 +504,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -338,6 +537,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -363,6 +564,9 @@ class AutomationScriptEventPublisherTest {
     TriggerScriptEventRequest request = captor.getValue();
     assertThat(request.getEventType()).isEqualTo("onLeaveRegion");
     assertThat(request.getScriptEventId()).isEqualTo("disconnect:transport_loss:17:99:44");
+    assertThat(request.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(request.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(request.getScriptPinControlPlaneRequestId()).isEqualTo("req-1");
     assertThat(request.getReadSnapshotToken())
         .isEqualTo("game-session:onLeaveRegion:99:7:disconnect:transport_loss:17:99:44");
     assertThat(request.getPayloadJson()).contains("\"fromRegionId\":\"R-101\"");
@@ -378,6 +582,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);
@@ -414,6 +620,8 @@ class AutomationScriptEventPublisherTest {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameInstance instance = new GameInstance();
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     RuntimeRegionStatus status = new RuntimeRegionStatus();
     status.setRegionId("region-99");
     status.setRegionEpoch(7L);

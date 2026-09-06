@@ -116,12 +116,15 @@ class GameInstanceServiceLifecycleIntegrationTest {
                   entity.getTenantId(),
                   entity.getRuntimeVersion(),
                   entity.getScriptPatchVersion(),
+                  entity.getScriptPinEpoch(),
+                  entity.getScriptPatchPinnedControlPlaneRequestId(),
                   entity.getGameTemplateId(),
                   entity.getLaunchDescriptorId(),
                   entity.getVersionId(),
                   entity.getReleaseBundleId(),
                   entity.getVersionStateEpoch(),
                   entity.getGenerationConfigRevision(),
+                  entity.getRemapSetId(),
                   entity.getOwnerAccountId(),
                   entity.getStatus());
             });
@@ -259,56 +262,64 @@ class GameInstanceServiceLifecycleIntegrationTest {
             anyString(),
             anyLong(),
             any()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("42")
-                        .setGameInstanceId("1")
-                        .setGameTemplateId("7")
-                        .setControlPlaneRequestId("cp")
-                        .setLaunchDescriptorId("ld-cp")
-                        .setVersionId("11")
-                        .setReleaseBundleId("77")
-                        .setGenerationConfigRevision("genrev-11")
-                        .setPublishedReleaseBundleRef("prb:42:11:77")
-                        .setVersionStateEpoch(77L)
-                        .setLifecycleEpoch(1L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse.newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setGameTemplateId(Long.toString(invocation.getArgument(2, Long.class)))
+                            .setControlPlaneRequestId(invocation.getArgument(3, String.class))
+                            .setLaunchDescriptorId(invocation.getArgument(4, String.class))
+                            .setVersionId(Long.toString(invocation.getArgument(5, Long.class)))
+                            .setReleaseBundleId(
+                                Long.toString(invocation.getArgument(9, Long.class)))
+                            .setGenerationConfigRevision(invocation.getArgument(8, String.class))
+                            .setPublishedReleaseBundleRef(invocation.getArgument(10, String.class))
+                            .setVersionStateEpoch(invocation.getArgument(11, Long.class))
+                            .setLifecycleEpoch(1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING)
+                            .build())
+                    .build());
     when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
-                .newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("42")
-                        .setGameInstanceId("1")
-                        .setLifecycleEpoch(2L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(invocation.getArgument(2, Long.class) + 1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
+                            .build())
+                    .build());
     when(worldManagementClient.failPreparedWorldInstance(anyLong(), anyLong(), anyLong(), any()))
-        .thenReturn(
-            net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse.newBuilder()
-                .setWorldInstance(
-                    net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
-                        .newBuilder()
-                        .setTenantId("42")
-                        .setGameInstanceId("1")
-                        .setLifecycleEpoch(2L)
-                        .setStatus(
-                            net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                                .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse
+                    .newBuilder()
+                    .setWorldInstance(
+                        net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot
+                            .newBuilder()
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setGameInstanceId(Long.toString(invocation.getArgument(1, Long.class)))
+                            .setLifecycleEpoch(invocation.getArgument(2, Long.class) + 1L)
+                            .setStatus(
+                                net.firedevops.firemud.worldmanagement.v1
+                                    .WorldInstanceLifecycleStatus
+                                    .WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION)
+                            .build())
+                    .build());
     when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
         .thenAnswer(
             invocation ->
@@ -366,6 +377,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
     instance.setOwnerAccountId(100L);
     instance.setStatus("RUNNING");
     instance = repository.saveAndFlush(instance);
@@ -390,6 +403,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
     instance.setOwnerAccountId(100L);
     instance.setStatus("STOPPED");
     instance = repository.saveAndFlush(instance);
@@ -414,6 +429,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing.setTenantId(42L);
     existing.setRuntimeVersion("1.0.0");
     existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
+    existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
     existing.setOwnerAccountId(100L);
     existing.setStatus("RUNNING");
     existing = repository.saveAndFlush(existing);
@@ -433,6 +450,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(restored.getStatus()).isEqualTo("RUNNING");
     assertThat(restored.getRuntimeVersion()).isEqualTo("1.0.0");
     assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(restored.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(restored.getScriptPatchPinnedControlPlaneRequestId()).isEqualTo("pin-request-1");
     assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
   }
 
@@ -442,6 +461,8 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing.setTenantId(42L);
     existing.setRuntimeVersion("1.0.0");
     existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
+    existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
     existing.setOwnerAccountId(100L);
     existing.setStatus("RUNNING");
     existing = repository.saveAndFlush(existing);

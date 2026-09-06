@@ -37,9 +37,9 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
-import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -107,6 +107,13 @@ class TickServiceImplTest {
               return command;
             });
     when(gameplayCommandRepository.markAcceptedCommandStaged(any(), any())).thenReturn(true);
+    when(gameplayCommandRepository.lockAcceptedCommandForStaging(
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class),
+            org.mockito.ArgumentMatchers.anyBoolean()))
+        .thenReturn(true);
     runtimeIdentity =
         new net.firedevops.firemud.common.runtime.RuntimeIdentity(
             "game-session-service",
@@ -166,6 +173,7 @@ class TickServiceImplTest {
     tickStagingService =
         new TickStagingService(
             redisTemplate,
+            repository,
             gameplayCommandRepository,
             remoteFollowupRepository,
             tickBatchRepository,
@@ -199,7 +207,12 @@ class TickServiceImplTest {
     setField(tickRuntimeProgressService, "maxRemoteFollowupsPerTick", 16);
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
     when(repository.findById(anyLong())).thenReturn(java.util.Optional.of(instance));
+    when(repository.findByTenantIdAndGameInstanceIdForUpdate(anyLong(), anyLong()))
+        .thenReturn(java.util.Optional.of(instance));
     when(gameplayCommandRepository.findByCommandIdIn(any())).thenReturn(List.of());
     when(runtimeRegionStatusRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -323,7 +336,11 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
     org.junit.jupiter.api.Assertions.assertEquals(
-        List.of("gamesession:tick:pending:1:2", "gamesession:tick:lock:1:2"), commitKeys.get(0));
+        List.of(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:command-index:1:2",
+            "gamesession:tick:lock:1:2"),
+        commitKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
         new Object[] {leaseTokens.get(0)}, commitArguments.get(0));
   }
@@ -604,12 +621,24 @@ class TickServiceImplTest {
         List.of(
             "gamesession:tick:pending:1:2",
             "gamesession:tick:queue:1:2",
+            "gamesession:tick:command-index:1:2",
             "gamesession:tick:lock:1:2"),
         rollbackKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
-        new Object[] {leaseTokens.get(0)}, rollbackArguments.get(0));
+        new Object[] {leaseTokens.get(0), "0"}, rollbackArguments.get(0));
     org.junit.jupiter.api.Assertions.assertFalse(savedBatchStatuses.contains("ABANDONED"));
     verify(listOps, never()).leftPush(any(), any());
+  }
+
+  @Test
+  void rollbackArgumentsUseStringSerializerCompatibleCounts() {
+    Object[] emptyArguments = TickServiceImpl.rollbackArguments(List.of());
+    Object[] terminalizedArguments =
+        TickServiceImpl.rollbackArguments(
+            List.of(new TickQueuedCommandEnvelope(false, "cmd-terminalized", "look")));
+
+    assertThat(emptyArguments).containsExactly("0");
+    assertThat(terminalizedArguments).containsExactly("1", "cmd-terminalized");
   }
 
   @Test
@@ -1306,7 +1335,7 @@ class TickServiceImplTest {
               return null;
             })
         .when(tickBatchExecutionService)
-        .executeDurableEffects(1L, 2L);
+        .executeDurableEffects(eq(1L), eq(2L), any());
     List<String> savedBatchStatuses = new ArrayList<>();
     doAnswer(
             invocation -> {
@@ -1373,7 +1402,7 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals("DRAINED", existingBatch.getStatus());
     verify(tickBatchExecutionService, never())
-        .markBatchAbandoned(any(), any(), any(String.class), any(String.class));
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class), any());
   }
 
   @Test
@@ -1635,6 +1664,8 @@ class TickServiceImplTest {
     command.setAutomationWorkItemId("work-1");
     command.setScriptId("script-1");
     command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
     command.setPluginId("plugin-1");
     command.setPluginVersionId("plugin-v1");
     command.setTargetEntityId("entity-1");
@@ -1783,6 +1814,15 @@ class TickServiceImplTest {
     command.setSourceType("AUTOMATION");
     command.setAutomationDispatchId("dispatch-2");
     command.setScriptPatchVersion("patch-2");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
+    var patch2Instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
+    patch2Instance.setTenantId(1L);
+    patch2Instance.setScriptPatchVersion("patch-2");
+    patch2Instance.setScriptPinEpoch(1L);
+    patch2Instance.setScriptPatchPinnedControlPlaneRequestId("req-1");
+    when(repository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
+        .thenReturn(java.util.Optional.of(patch2Instance));
     command.setTargetEntityId("entity-2");
     command.setDueTickId(21L);
     command.setEnqueueSeq(78L);
@@ -1850,6 +1890,9 @@ class TickServiceImplTest {
         .thenReturn(List.of("N|cmd-1|say hello"));
     net.firedevops.firemud.gamesession.entity.GameplayCommand command = gameplayCommand("cmd-1");
     command.setSourceType("AUTOMATION");
+    command.setScriptPatchVersion("patch-1");
+    command.setScriptPinEpoch(1L);
+    command.setScriptPinControlPlaneRequestId("req-1");
     command.setCharacterId(44L);
     command.setTargetEntityId("44");
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1")))
@@ -1901,10 +1944,156 @@ class TickServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
     org.junit.jupiter.api.Assertions.assertEquals(
         "MANIFEST_MISMATCH", existingBatch.getFailureCode());
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
+    ArgumentCaptor<List<String>> keyCaptor = redisKeyCaptor();
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(scriptCaptor.capture(), keyCaptor.capture(), any(Object[].class));
+    assertPendingProjectionRestoreInvocation(scriptCaptor, keyCaptor);
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("tick_manifest_mismatch_total").counter().count(), 0.001);
+  }
+
+  @Test
+  void processTickPreservesReplacementWhenFailureOccursAfterReconciliationBeforeDrain() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|look", "N|cmd-2|wave"));
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replacement-before-drain");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
+    first.setEnqueueSeq(4L);
+    net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
+    second.setCommandText("wave");
+    second.setSanitizedCommandText("wave");
+    second.setEnqueueSeq(5L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(first, second));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId("tb-replacement-before-drain"))
+        .thenReturn(List.of());
+    List<net.firedevops.firemud.gamesession.entity.TickBatch> savedBatches = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch saved = invocation.getArgument(0);
+              savedBatches.add(saved);
+              return saved;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    org.mockito.Mockito.doThrow(new IllegalStateException("ownership changed"))
+        .when(tickBatchExecutionService)
+        .requireCurrentOwnership(any(), eq(false));
+
+    service.processTick(1L, 2L);
+
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", existingBatch.getStatus());
+    net.firedevops.firemud.gamesession.entity.TickBatch replacement =
+        savedBatches.stream()
+            .filter(batch -> "PENDING_REPLAY".equals(batch.getBatchSource()))
+            .findFirst()
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals("STAGED", replacement.getStatus());
+    org.junit.jupiter.api.Assertions.assertEquals(1, replacement.getCommandCount());
+    org.junit.jupiter.api.Assertions.assertFalse(
+        replacement.getSelectedWorkManifestJson().contains("cmd-2"));
+    verify(tickBatchExecutionService, never())
+        .markBatchAbandoned(any(), any(), any(String.class), any(String.class), any());
+    verify(redisTemplate, never()).execute(eq(rollbackMarker), any(), any(Object[].class));
+  }
+
+  @Test
+  void processTickRollsBackAndAbandonsFreshStageAfterReplayReplacement() {
+    when(lockValueOps.setIfAbsent(any(String.class), any(String.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size("gamesession:tick:pending:1:2")).thenReturn(2L);
+    when(listOps.range("gamesession:tick:pending:1:2", 0, -1))
+        .thenReturn(List.of("N|cmd-1|look", "N|cmd-2|wave"), List.of("N|cmd-2|wave"));
+    when(listOps.index("gamesession:tick:queue:1:2", 0)).thenReturn("N|cmd-2|wave");
+    net.firedevops.firemud.gamesession.entity.TickBatch existingBatch =
+        new net.firedevops.firemud.gamesession.entity.TickBatch();
+    existingBatch.setTickBatchId("tb-replacement-before-fresh-stage");
+    existingBatch.setTenantId(1L);
+    existingBatch.setGameInstanceId(2L);
+    existingBatch.setRegionId("2");
+    existingBatch.setRegionEpoch(1L);
+    existingBatch.setExecutorFence("fence-a");
+    existingBatch.setStatus("STAGED");
+    existingBatch.setBatchSource("FRESH_STAGE");
+    net.firedevops.firemud.gamesession.entity.GameplayCommand first = gameplayCommand("cmd-1");
+    first.setEnqueueSeq(4L);
+    net.firedevops.firemud.gamesession.entity.GameplayCommand second = gameplayCommand("cmd-2");
+    second.setCommandText("wave");
+    second.setSanitizedCommandText("wave");
+    second.setEnqueueSeq(5L);
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1", "cmd-2")))
+        .thenReturn(List.of(first, second));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-1"))).thenReturn(List.of(first));
+    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-2"))).thenReturn(List.of(second));
+    String sealedManifest = replayManifestJson(tickStagingService, List.of("N|cmd-1|look"));
+    existingBatch.setSelectedWorkManifestJson(sealedManifest);
+    existingBatch.setSelectedWorkManifestDigest(
+        replayManifestDigest(tickStagingService, List.of("N|cmd-1|look")));
+    existingBatch.setStagedAt(Instant.parse("2026-04-19T00:00:00Z"));
+    when(tickBatchRepository.findFirstByTenantIdAndGameInstanceIdAndStatusOrderByStagedAtDesc(
+            1L, 2L, "STAGED"))
+        .thenReturn(Optional.of(existingBatch));
+    when(tickEffectRepository.findByTickBatchId(any())).thenReturn(List.of());
+    List<net.firedevops.firemud.gamesession.entity.TickBatch> savedBatches = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch saved = invocation.getArgument(0);
+              savedBatches.add(saved);
+              return saved;
+            })
+        .when(tickBatchRepository)
+        .save(any());
+
+    RedisScript<Long> rollbackMarker = mock(RedisScript.class);
+    setField(service, "rollbackScript", rollbackMarker);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              net.firedevops.firemud.gamesession.entity.TickBatch batch = invocation.getArgument(0);
+              if ("FRESH_STAGE".equals(batch.getBatchSource())) {
+                throw new IllegalStateException("fresh stage ownership changed");
+              }
+              return null;
+            })
+        .when(tickBatchExecutionService)
+        .markBatchDrained(any(), any());
+
+    service.processTick(1L, 2L);
+
+    net.firedevops.firemud.gamesession.entity.TickBatch freshStage =
+        savedBatches.stream()
+            .filter(batch -> "FRESH_STAGE".equals(batch.getBatchSource()))
+            .reduce((leftBatch, rightBatch) -> rightBatch)
+            .orElseThrow();
+    org.junit.jupiter.api.Assertions.assertEquals("ABANDONED", freshStage.getStatus());
+    verify(tickBatchExecutionService)
+        .markBatchAbandoned(eq(freshStage), any(), any(String.class), any(String.class), any());
+    verify(redisTemplate).execute(eq(rollbackMarker), any(), any(Object[].class));
   }
 
   @Test
@@ -1931,6 +2120,9 @@ class TickServiceImplTest {
     second.setSanitizedCommandText("wave");
     second.setEnqueueSeq(6L);
     second.setSourceType("AUTOMATION");
+    second.setScriptPatchVersion("patch-1");
+    second.setScriptPinEpoch(1L);
+    second.setScriptPinControlPlaneRequestId("req-1");
     List<net.firedevops.firemud.gamesession.entity.GameplayCommand> savedSnapshots =
         new ArrayList<>();
     doAnswer(
@@ -1961,9 +2153,11 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
-    verify(redisTemplate).delete("gamesession:tick:pending:1:2");
-    verify(listOps).rightPush("gamesession:tick:pending:1:2", "N|cmd-1|look");
-    verify(listOps).leftPush("gamesession:tick:queue:1:2", "N|cmd-2|wave");
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
+    ArgumentCaptor<List<String>> keyCaptor = redisKeyCaptor();
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(scriptCaptor.capture(), keyCaptor.capture(), any(Object[].class));
+    assertPendingProjectionRestoreInvocation(scriptCaptor, keyCaptor);
     org.junit.jupiter.api.Assertions.assertTrue(
         savedSnapshots.stream()
             .anyMatch(
@@ -1972,6 +2166,12 @@ class TickServiceImplTest {
                         && "RETRY_QUEUED".equals(saved.getExecutionOutcome())
                         && "GAMEPLAY_RETRY".equals(saved.getQueueSourceKind())
                         && "REDIS_RETRY_QUEUED".equals(saved.getQueueSourceState())));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        savedSnapshots.stream()
+            .anyMatch(
+                saved ->
+                    "cmd-2".equals(saved.getCommandId())
+                        && "DRAINED".equals(saved.getExecutionOutcome())));
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0,
         meterRegistry
@@ -2112,6 +2312,30 @@ class TickServiceImplTest {
         (ArgumentCaptor<?>) ArgumentCaptor.forClass(RedisScript.class);
   }
 
+  @SuppressWarnings("unchecked")
+  private static ArgumentCaptor<List<String>> redisKeyCaptor() {
+    return (ArgumentCaptor<List<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(List.class);
+  }
+
+  private static void assertPendingProjectionRestoreInvocation(
+      ArgumentCaptor<RedisScript<?>> scriptCaptor, ArgumentCaptor<List<String>> keyCaptor) {
+    int restoreInvocation = -1;
+    for (int index = 0; index < scriptCaptor.getAllValues().size(); index++) {
+      if (TickBatchExecutionService.restorePendingProjectionScriptText()
+          .equals(scriptCaptor.getAllValues().get(index).getScriptAsString())) {
+        restoreInvocation = index;
+        break;
+      }
+    }
+    assertThat(restoreInvocation).isGreaterThanOrEqualTo(0);
+    assertThat(keyCaptor.getAllValues().get(restoreInvocation))
+        .containsExactly(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:queue:1:2",
+            "gamesession:tick:command-index:1:2",
+            "gamesession:tick:lock:1:2");
+  }
+
   private static void setField(Object target, String fieldName, Object value) {
     try {
       Field field = target.getClass().getDeclaredField(fieldName);
@@ -2166,11 +2390,16 @@ class TickServiceImplTest {
 class TickStageScriptTest {
   private static final String QUEUE_KEY = "gamesession:tick:queue:42:9001";
   private static final String PENDING_KEY = "gamesession:tick:pending:42:9001";
+  private static final String COMMAND_INDEX_KEY = "gamesession:tick:command-index:42:9001";
   private static final String LEASE_KEY = "gamesession:tick:lock:42:9001";
-  private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
   private static final String LEASE_TOKEN = "lease-token";
   private static final RedisScript<Long> TICK_STAGE_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_stage.lua"), Long.class);
+  private static final RedisScript<Long> TICK_ROLLBACK_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_rollback.lua"), Long.class);
+  private static final RedisScript<Long> RESTORE_PENDING_PROJECTION_SCRIPT =
+      new DefaultRedisScript<>(
+          TickBatchExecutionService.restorePendingProjectionScriptText(), Long.class);
 
   @Container
   static GenericContainer<?> redis =
@@ -2178,6 +2407,7 @@ class TickStageScriptTest {
 
   private LettuceConnectionFactory connectionFactory;
   private RedisTemplate<String, Object> redisTemplate;
+  private RedisScriptTestSupport redisScriptTestSupport;
   private StringRedisTemplate lockRedisTemplate;
   private RedisTemplate<String, Object> scriptRedisTemplate;
 
@@ -2190,15 +2420,16 @@ class TickStageScriptTest {
     redisTemplate = new RedisTemplate<>();
     redisTemplate.setConnectionFactory(connectionFactory);
     redisTemplate.afterPropertiesSet();
+    redisScriptTestSupport = new RedisScriptTestSupport(redisTemplate);
     lockRedisTemplate = new StringRedisTemplate(connectionFactory);
     lockRedisTemplate.afterPropertiesSet();
     scriptRedisTemplate = new RedisTemplate<>();
     scriptRedisTemplate.setConnectionFactory(connectionFactory);
     scriptRedisTemplate.setKeySerializer(
-        new ProductionScriptKeySerializer(redisTemplate.getKeySerializer()));
+        RedisScriptTestSupport.productionScriptKeySerializer(redisTemplate.getKeySerializer()));
     scriptRedisTemplate.setValueSerializer(redisTemplate.getValueSerializer());
     scriptRedisTemplate.afterPropertiesSet();
-    redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, LEASE_KEY));
+    redisTemplate.delete(List.of(QUEUE_KEY, PENDING_KEY, COMMAND_INDEX_KEY, LEASE_KEY));
     lockRedisTemplate.delete(LEASE_KEY);
     lockRedisTemplate.opsForValue().set(LEASE_KEY, LEASE_TOKEN);
   }
@@ -2344,12 +2575,87 @@ class TickStageScriptTest {
   }
 
   @Test
+  void rollbackExcludesTerminalizedCommandAndRequeuesEligibleWork() {
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|terminalized-id|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|eligible-id|wave");
+
+    assertThat(executeRollback(LEASE_TOKEN, "1", "terminalized-id")).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).isEmpty();
+    assertThat(values(QUEUE_KEY)).containsExactly("N|eligible-id|wave");
+  }
+
+  @Test
+  void rollbackWithZeroTerminalizedCommandsRequeuesAllPendingWork() {
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|eligible-id|wave");
+
+    assertThat(executeRollback(LEASE_TOKEN, "0")).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).isEmpty();
+    assertThat(values(QUEUE_KEY)).containsExactly("N|eligible-id|wave");
+  }
+
+  @Test
+  void restoreRemovesTerminalizedPayloadAndPreservesEligiblePendingPayload() {
+    String terminalized = "N|terminalized-id|look";
+    String eligible = "N|eligible-id|wave";
+    redisTemplate.opsForList().rightPush(PENDING_KEY, terminalized);
+    redisTemplate.opsForList().rightPush(PENDING_KEY, eligible);
+
+    Long result =
+        executeRestore(
+            // lease token; pending count/payloads; sealed count/payloads; Redis-only
+            // count/payloads; terminalized count/payloads
+            LEASE_TOKEN,
+            "2",
+            payload(terminalized),
+            payload(eligible),
+            "1",
+            payload(eligible),
+            "0",
+            "1",
+            payload(terminalized));
+
+    assertThat(result).isEqualTo(1L);
+    assertThat(values(PENDING_KEY)).containsExactly(eligible);
+    assertThat(values(QUEUE_KEY)).isEmpty();
+  }
+
+  @Test
   void returnsZeroForEmptyQueueWithoutMutatingPendingEntries() {
     redisTemplate.opsForList().rightPush(PENDING_KEY, "already-pending");
 
     assertThat(execute(LEASE_TOKEN, "50", "N")).isEqualTo(0L);
     assertThat(values(QUEUE_KEY)).isEmpty();
     assertThat(values(PENDING_KEY)).containsExactly("already-pending");
+  }
+
+  @Test
+  void restoreRejectsMismatchedArgumentCountWithoutMutatingPendingOrQueue() {
+    enqueue("N|queued|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|pending|wave");
+    List<String> queueBefore = values(QUEUE_KEY);
+    List<String> pendingBefore = values(PENDING_KEY);
+
+    Long result =
+        executeRestore(
+            LEASE_TOKEN, "1", payload("N|pending|wave"), "0", "0", "unexpected-extra-argument");
+
+    assertThat(result).isEqualTo(0L);
+    assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+    assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
+  }
+
+  @Test
+  void restoreRejectsStaleLeaseWithoutMutatingPendingOrQueue() {
+    enqueue("N|queued|look");
+    redisTemplate.opsForList().rightPush(PENDING_KEY, "N|pending|wave");
+    List<String> queueBefore = values(QUEUE_KEY);
+    List<String> pendingBefore = values(PENDING_KEY);
+
+    Long result = executeRestore("stale-token", "1", payload("N|pending|wave"), "0", "0", "0");
+
+    assertThat(result).isEqualTo(-1L);
+    assertThat(values(QUEUE_KEY)).containsExactlyElementsOf(queueBefore);
+    assertThat(values(PENDING_KEY)).containsExactlyElementsOf(pendingBefore);
   }
 
   private void assertRejectedWithoutMutation(String entry) {
@@ -2373,38 +2679,15 @@ class TickStageScriptTest {
   }
 
   private List<byte[]> rawValues(String key) {
-    List<byte[]> values =
-        redisTemplate.execute(
-            (RedisCallback<List<byte[]>>)
-                connection -> connection.lRange(serializedKey(key), 0, -1));
-    return values == null ? List.of() : values;
+    return redisScriptTestSupport.rawValues(key);
   }
 
-  @SuppressWarnings("unchecked")
   private byte[] serializedKey(String key) {
-    RedisSerializer<Object> serializer = (RedisSerializer<Object>) redisTemplate.getKeySerializer();
-    if (serializer == null) {
-      throw new IllegalStateException("Redis key serializer is not configured");
-    }
-    byte[] serialized = serializer.serialize(key);
-    if (serialized == null) {
-      throw new IllegalStateException("Redis key serializer returned null");
-    }
-    return serialized;
+    return redisScriptTestSupport.serializedKey(key);
   }
 
-  @SuppressWarnings("unchecked")
   private byte[] serializeValue(Object value) {
-    RedisSerializer<Object> serializer =
-        (RedisSerializer<Object>) redisTemplate.getValueSerializer();
-    if (serializer == null) {
-      throw new IllegalStateException("Redis value serializer is not configured");
-    }
-    byte[] serialized = serializer.serialize(value);
-    if (serialized == null) {
-      throw new IllegalStateException("Redis value serializer returned null");
-    }
-    return serialized;
+    return redisScriptTestSupport.serializeValue(value);
   }
 
   private static byte[] serializedEnvelope(int typeCode, long payloadLength, byte[] payload) {
@@ -2427,8 +2710,7 @@ class TickStageScriptTest {
   }
 
   private List<String> values(String key) {
-    List<Object> values = redisTemplate.opsForList().range(key, 0, -1);
-    return values == null ? List.of() : values.stream().map(Object::toString).toList();
+    return redisScriptTestSupport.values(key);
   }
 
   private long execute(String leaseToken, String max, String mode) {
@@ -2444,25 +2726,34 @@ class TickStageScriptTest {
     return result == null ? Long.MIN_VALUE : result;
   }
 
-  private static final class ProductionScriptKeySerializer implements RedisSerializer<Object> {
-    private final RedisSerializer<Object> queueKeySerializer;
+  private long executeRollback(String leaseToken, String terminalizedCount, String... commandIds) {
+    List<Object> arguments = new ArrayList<>();
+    arguments.add(leaseToken);
+    arguments.add(terminalizedCount);
+    arguments.addAll(List.of(commandIds));
+    Long result =
+        scriptRedisTemplate.execute(
+            TICK_ROLLBACK_SCRIPT,
+            new StringRedisSerializer(),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY, COMMAND_INDEX_KEY, LEASE_KEY),
+            arguments.toArray());
+    return result == null ? Long.MIN_VALUE : result;
+  }
 
-    @SuppressWarnings("unchecked")
-    private ProductionScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
-      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
-    }
+  private long executeRestore(Object... arguments) {
+    Long result =
+        scriptRedisTemplate.execute(
+            RESTORE_PENDING_PROJECTION_SCRIPT,
+            TickBatchExecutionService.restorePendingProjectionScriptArgumentSerializer(
+                redisTemplate.getValueSerializer()),
+            new GenericToStringSerializer<>(Long.class),
+            List.of(PENDING_KEY, QUEUE_KEY, COMMAND_INDEX_KEY, LEASE_KEY),
+            arguments);
+    return result == null ? Long.MIN_VALUE : result;
+  }
 
-    @Override
-    public byte[] serialize(Object value) {
-      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
-        return new StringRedisSerializer().serialize((String) value);
-      }
-      return queueKeySerializer.serialize(value);
-    }
-
-    @Override
-    public Object deserialize(byte[] bytes) {
-      return queueKeySerializer.deserialize(bytes);
-    }
+  private Object payload(String value) {
+    return TickBatchExecutionService.restoreQueuePayloadArgument(value);
   }
 }

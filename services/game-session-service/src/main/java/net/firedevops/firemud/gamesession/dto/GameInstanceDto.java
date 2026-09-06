@@ -9,6 +9,8 @@ public record GameInstanceDto(
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String runtimeVersion,
     String scriptPatchVersion,
+    Long scriptPinEpoch,
+    String scriptPinControlPlaneRequestId,
     Long gameTemplateId,
     String launchDescriptorId,
     Long versionId,
@@ -21,6 +23,13 @@ public record GameInstanceDto(
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
+  /**
+   * Legacy constructor for callers that do not provide a complete script-pin tuple.
+   *
+   * <p>A nonblank script patch is rejected because this constructor cannot carry the complete
+   * pinned tuple. Callers with pinned state must use the canonical record constructor.
+   */
+  @Deprecated
   public GameInstanceDto(
       Long id,
       @NotNull Long tenantId,
@@ -38,7 +47,9 @@ public record GameInstanceDto(
         id,
         tenantId,
         runtimeVersion,
-        scriptPatchVersion,
+        rejectLegacyScriptPatch(scriptPatchVersion),
+        null,
+        null,
         gameTemplateId,
         launchDescriptorId,
         versionId,
@@ -48,5 +59,13 @@ public record GameInstanceDto(
         null,
         ownerAccountId,
         status);
+  }
+
+  private static String rejectLegacyScriptPatch(String scriptPatchVersion) {
+    if (scriptPatchVersion != null && !scriptPatchVersion.isBlank()) {
+      throw new IllegalArgumentException(
+          "scriptPatchVersion requires scriptPinEpoch and script pin owner request id");
+    }
+    return null;
   }
 }

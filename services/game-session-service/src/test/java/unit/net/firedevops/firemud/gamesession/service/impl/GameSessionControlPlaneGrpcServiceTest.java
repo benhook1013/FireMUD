@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -15,13 +16,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusResponse;
+import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedPluginVersion;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.client.AutomationScriptingControlPlaneClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
+import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolver;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -36,6 +41,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRep
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
+import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -48,6 +54,7 @@ import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentReq
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
+import net.firedevops.firemud.gamesession.v1.ExpectedCurrentPin;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest;
@@ -98,27 +105,47 @@ import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateBuiltInCommandAliasResponse;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityRequest;
 import net.firedevops.firemud.gamesession.v1.ValidateInstanceCutoverCompatibilityResponse;
+import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
 
 class GameSessionControlPlaneGrpcServiceTest {
+  private static AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient() {
+    AutomationScriptingControlPlaneClient client =
+        Mockito.mock(AutomationScriptingControlPlaneClient.class);
+    Mockito.when(client.getScriptPatchStatus(Mockito.anyLong(), Mockito.anyString()))
+        .thenReturn(
+            GetScriptPatchStatusResponse.newBuilder()
+                .setStatus(ScriptPatchStatus.SCRIPT_PATCH_STATUS_READY)
+                .setBaseVersionId(7L)
+                .build());
+    return client;
+  }
+
   private static GameDesignClient gameDesignClient() {
     GameDesignClient client = Mockito.mock(GameDesignClient.class);
     Mockito.when(client.getPublishedScriptPatchVersion(Mockito.anyLong(), Mockito.anyString()))
-        .thenReturn(
-            GetPublishedScriptPatchVersionResponse.newBuilder()
-                .setScriptPatch(
-                    PublishedScriptPatchVersion.newBuilder()
-                        .setScriptPatchVersion("patch-2")
-                        .setVersionId(17L)
-                        .setBaseVersionId(7L)
-                        .setPublicationState(
-                            net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
-                                .VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setLastChangedAtMs(150L)
-                        .build())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetPublishedScriptPatchVersionResponse.newBuilder()
+                    .setScriptPatch(
+                        PublishedScriptPatchVersion.newBuilder()
+                            .setTenantId("1")
+                            .setScriptPatchVersion(invocation.getArgument(1, String.class))
+                            .setVersionId(17L)
+                            .setBaseVersionId(7L)
+                            .setPublicationState(
+                                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
+                            .setLastChangedAtMs(150L)
+                            .build())
+                    .build());
     Mockito.when(
             client.getPublishedPluginVersion(
                 Mockito.anyLong(), Mockito.anyString(), Mockito.anyString()))
@@ -180,11 +207,13 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void setPinnedScriptPatchVersionAllowsAdminCaller() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("1.0.0");
+    instance.setVersionId(7L);
     instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-01-01T00:00:00Z"));
     instance.setScriptPatchPinnedBy("old-user");
     instance.setScriptPatchPinnedReason("old-reason");
@@ -192,9 +221,15 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setOwnerAccountId(99L);
     instance.setStatus("RUNNING");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    GameDesignClient gameDesign = gameDesignClient();
+    AutomationScriptingControlPlaneClient automation = automationScriptingControlPlaneClient();
+    Mockito.when(
+            repository.applyScriptPin(
+                1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L))
+        .thenReturn(new ScriptPinMutationResult("patch-1", 1L, "patch-2", 2L, "req-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    GameSessionControlPlaneGrpcService service = newService(repository);
+    GameSessionControlPlaneGrpcService service = newService(repository, gameDesign, automation);
 
     AtomicReference<SetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
     service.setPinnedScriptPatchVersion(
@@ -205,6 +240,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setActorPrincipal("tester")
             .setReason("test")
             .setControlPlaneRequestId("req-1")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
+                    .setScriptPinEpoch(1L)
+                    .build())
             .build(),
         new NoopObserver<>() {
           @Override
@@ -213,24 +253,47 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
+    assertNotNull(responseRef.get());
+    assertFalse(responseRef.get().hasError());
     assertEquals("patch-1", responseRef.get().getPreviousScriptPatchVersion());
+    assertEquals(1L, responseRef.get().getPreviousScriptPinEpoch());
     assertEquals("patch-2", responseRef.get().getPinnedScriptPatchVersion());
-    assertEquals("req-1", instance.getScriptPatchPinnedControlPlaneRequestId());
-    Mockito.verify(repository).save(Mockito.any(GameInstance.class));
+    assertEquals(2L, responseRef.get().getScriptPinEpoch());
+    assertEquals("req-1", responseRef.get().getControlPlaneRequestId());
+    Mockito.verify(repository)
+        .applyScriptPin(1L, 7L, "SET", "patch-2", "req-1", "tester", "test", "EXPECT_EPOCH", 1L);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any(GameInstance.class));
   }
 
   @Test
   void rollbackScriptPatchVersionAllowsAdminCaller() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
+    instance.setVersionId(7L);
     instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-0");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    GameDesignClient gameDesign = gameDesignClient();
+    AutomationScriptingControlPlaneClient automation = automationScriptingControlPlaneClient();
+    Mockito.when(
+            repository.applyScriptPin(
+                1L,
+                7L,
+                "ROLLBACK",
+                "patch-1",
+                "req-rollback-1",
+                "tester",
+                "rollback",
+                "EXPECT_EPOCH",
+                1L))
+        .thenReturn(
+            new ScriptPinMutationResult("patch-2", 1L, "patch-1", 2L, "req-rollback-1", null));
 
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    GameSessionControlPlaneGrpcService service = newService(repository);
+    GameSessionControlPlaneGrpcService service = newService(repository, gameDesign, automation);
 
     AtomicReference<RollbackScriptPatchVersionResponse> responseRef = new AtomicReference<>();
     service.rollbackScriptPatchVersion(
@@ -241,6 +304,11 @@ class GameSessionControlPlaneGrpcServiceTest {
             .setActorPrincipal("tester")
             .setReason("rollback")
             .setControlPlaneRequestId("req-rollback-1")
+            .setExpectedCurrentPin(
+                ExpectedCurrentPin.newBuilder()
+                    .setKind(ExpectedCurrentPin.Kind.EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH)
+                    .setScriptPinEpoch(1L)
+                    .build())
             .build(),
         new NoopObserver<>() {
           @Override
@@ -249,10 +317,25 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
+    assertNotNull(responseRef.get());
+    assertFalse(responseRef.get().hasError());
     assertEquals("patch-2", responseRef.get().getPreviousScriptPatchVersion());
+    assertEquals(1L, responseRef.get().getPreviousScriptPinEpoch());
     assertEquals("patch-1", responseRef.get().getPinnedScriptPatchVersion());
-    assertEquals("req-rollback-1", instance.getScriptPatchPinnedControlPlaneRequestId());
-    Mockito.verify(repository).save(Mockito.any(GameInstance.class));
+    assertEquals(2L, responseRef.get().getScriptPinEpoch());
+    assertEquals("req-rollback-1", responseRef.get().getControlPlaneRequestId());
+    Mockito.verify(repository)
+        .applyScriptPin(
+            1L,
+            7L,
+            "ROLLBACK",
+            "patch-1",
+            "req-rollback-1",
+            "tester",
+            "rollback",
+            "EXPECT_EPOCH",
+            1L);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any(GameInstance.class));
   }
 
   @Test
@@ -286,11 +369,12 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void getPinnedScriptPatchVersionReturnsPersistedRequestId() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("1.0.0");
     instance.setScriptPatchVersion("patch-9");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
     instance.setScriptPatchPinnedBy("operator-1");
     instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
@@ -321,15 +405,49 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getPinnedScriptPatchVersionMapsMalformedPersistedPinState() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-99");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.getPinnedScriptPatchVersion(
+        GetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("SCRIPT_PIN_STATE_INVALID", responseRef.get().getError().getCode());
+    assertEquals(
+        "patch, positive epoch, and request id must be present together",
+        responseRef.get().getError().getMessage());
+  }
+
+  @Test
   void getGameInstanceRuntimeStateReturnsCanonicalVersionAndPinMetadata() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
     instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPinEpoch(1L);
     instance.setLaunchDescriptorId("ld-9");
     instance.setStatus("RUNNING");
     instance.setVersionId(11L);
@@ -395,6 +513,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("11", responseRef.get().getRuntimeState().getVersionId());
     assertEquals("19", responseRef.get().getRuntimeState().getReleaseBundleId());
     assertEquals(77L, responseRef.get().getRuntimeState().getVersionStateEpoch());
+    assertEquals(1L, responseRef.get().getRuntimeState().getScriptPinEpoch());
     assertEquals(
         Instant.parse("2026-04-22T00:00:00Z").toEpochMilli(),
         responseRef.get().getRuntimeState().getScriptPatchPinnedAtMs());
@@ -417,15 +536,89 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void getGameInstanceRuntimeStateClearsSingularRoutingBundleWhenRuntimeHasMultiplePointers() {
+  void getGameInstanceRuntimeStateFailsClosedForMismatchedWorldSnapshotIdentity() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameplayAdmissionPointerAuthorityService authorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
+    instance.setStatus("RUNNING");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    RuntimeRegionStatus runtimeStatus = runtimeStatus(false, 22L);
+    WorldManagementClient world =
+        worldManagementClient(
+            "2", "7", WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
+    GameSessionControlPlaneGrpcService service =
+        runtimeStateService(repository, runtimeStatus, world);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+    service.getGameInstanceRuntimeState(
+        GetGameInstanceRuntimeStateRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameInstanceRuntimeStateResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("WORLD_INSTANCE_SCOPE_MISMATCH", responseRef.get().getError().getCode());
+    assertFalse(responseRef.get().hasRuntimeState());
+  }
+
+  @Test
+  void getGameInstanceRuntimeStateFailsClosedForNonActiveWorldLifecycle() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("runtime-v7");
+    instance.setStatus("RUNNING");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+    RuntimeRegionStatus runtimeStatus = runtimeStatus(false, 22L);
+    WorldManagementClient world =
+        worldManagementClient(
+            "1", "7", WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING);
+    GameSessionControlPlaneGrpcService service =
+        runtimeStateService(repository, runtimeStatus, world);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+
+    AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+    service.getGameInstanceRuntimeState(
+        GetGameInstanceRuntimeStateRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setRegionId("region-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameInstanceRuntimeStateResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("WORLD_INSTANCE_LIFECYCLE_INVALID", responseRef.get().getError().getCode());
+    assertFalse(responseRef.get().hasRuntimeState());
+  }
+
+  @Test
+  void getGameInstanceRuntimeStateClearsSingularRoutingBundleWhenRuntimeHasMultiplePointers() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setRuntimeVersion("runtime-v7");
     instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
     instance.setStatus("RUNNING");
     RuntimeRegionStatus runtimeStatus = new RuntimeRegionStatus();
     runtimeStatus.setTenantId(1L);
@@ -511,7 +704,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
@@ -586,7 +779,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setRuntimeVersion("runtime-v7");
@@ -793,11 +986,12 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void getGameSessionPinConvergenceReturnsPersistedPinObservation() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-2");
     instance.setScriptPatchPinnedAt(Instant.parse("2026-04-22T00:00:00Z"));
+    instance.setScriptPinEpoch(2L);
     instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
 
@@ -831,10 +1025,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void getGameSessionPinConvergenceCanReportFreshObservation() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     instance.setScriptPatchVersion("patch-2");
+    instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedAt(Instant.now());
     instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
     Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
@@ -859,13 +1054,47 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertNotNull(responseRef.get());
+    assertFalse(responseRef.get().hasError());
     assertEquals(false, responseRef.get().getIsStale());
+  }
+
+  @Test
+  void getGameSessionPinConvergenceMapsMalformedPersistedPinState() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("req-77");
+    Mockito.when(repository.findById(7L)).thenReturn(Optional.of(instance));
+
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service = newService(repository);
+
+    AtomicReference<GetGameSessionPinConvergenceResponse> responseRef = new AtomicReference<>();
+    service.getGameSessionPinConvergence(
+        GetGameSessionPinConvergenceRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetGameSessionPinConvergenceResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals("SCRIPT_PIN_STATE_INVALID", responseRef.get().getError().getCode());
+    assertEquals(
+        "patch, positive epoch, and request id must be present together",
+        responseRef.get().getError().getMessage());
   }
 
   @Test
   void setAdmissionPointerAllowsAdminCaller() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = new GameInstance();
+    GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
     targetInstance.setTenantId(1L);
     targetInstance.setVersionId(9L);
@@ -985,7 +1214,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void setAdmissionPointerRejectsTargetChangeWithoutPreparedUpgrade() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = new GameInstance();
+    GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
     targetInstance.setTenantId(1L);
     targetInstance.setVersionId(9L);
@@ -1053,7 +1282,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void setAdmissionPointerRejectsStaleExpectedVersion() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = new GameInstance();
+    GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
     targetInstance.setTenantId(1L);
     targetInstance.setVersionId(9L);
@@ -1199,7 +1428,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void executePreparedVersionCutoverSwapsPointerUsingPreparedProof() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance targetInstance = new GameInstance();
+    GameInstance targetInstance = runningGameInstance();
     targetInstance.setId(7L);
     targetInstance.setTenantId(1L);
     targetInstance.setVersionId(9L);
@@ -1884,7 +2113,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -2245,7 +2474,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.of(currentOwnership));
 
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -2364,7 +2593,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.of(currentOwnership));
 
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -2462,7 +2691,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.of(currentOwnership));
 
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -2743,7 +2972,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3072,7 +3301,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeRegionStatusRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(currentOwnership));
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3162,10 +3391,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandPersistsDispatchAndStagesTickCommand() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3207,6 +3437,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("work-1", accepted.getAutomationWorkItemId());
     assertEquals("script-1", accepted.getScriptId());
     assertEquals("patch-1", accepted.getScriptPatchVersion());
+    assertEquals(1L, accepted.getScriptPinEpoch());
+    assertEquals("request-1", accepted.getScriptPinControlPlaneRequestId());
     assertEquals("plugin-1", accepted.getPluginId());
     assertEquals("plugin-v1", accepted.getPluginVersionId());
     assertEquals("SHARED", accepted.getPlayableStateScope());
@@ -3229,13 +3461,53 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void enqueueAutomationCommandRejectsSamePatchWithStalePinEpochBeforeReplayLookup() {
+    setAutomationScriptingInternalContext();
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    GameInstance instance = runningPinnedGameInstance();
+    instance.setId(7L);
+    instance.setTenantId(1L);
+    instance.setScriptPinEpoch(2L);
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            automationPointerAuthority(),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        automationRequest(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("STALE_TIMELINE", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(commandRepository, tickService);
+  }
+
+  @Test
   void enqueueAutomationCommandAllowsImmediateHandoffWithoutDueTick() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3276,10 +3548,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandDerivesCharacterIdFromNumericTargetEntity() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3320,10 +3593,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsUnreadable() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3371,10 +3645,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandReturnsRetryQueuedWhenPointerAuthorityIsAmbiguous() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3448,10 +3723,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsMovedPointerAuthorityTarget() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3512,10 +3788,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsStaleRuntimeEpochBeforeTickQueue() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3556,10 +3833,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsMismatchedRuntimeRegionBeforeTickQueue() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3602,10 +3880,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsPausedRuntimeOwnershipBeforeTickQueue() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3646,7 +3925,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsPartialRoutingBundle() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3697,7 +3976,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsMalformedPointerVersion() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3740,7 +4019,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsNonPositivePointerVersion() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3783,10 +4062,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandRejectsMissingRegionOwnershipEvenWhenInstanceRowExists() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     Mockito.when(
             commandRepository
@@ -3836,10 +4116,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandPrefersRegionScopedOwnershipAuthority() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = commandRepositorySavingArgument();
     Mockito.when(
             commandRepository
@@ -3889,7 +4170,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void purgeQueuedTickCommandsForScriptPatchDelegatesToTickService() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3935,7 +4216,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void purgeQueuedTickCommandsForPluginVersionDelegatesToTickService() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -3982,7 +4263,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void pauseTicksForScopeDelegatesToTickService() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -4065,7 +4346,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void resumeTicksForScopeDelegatesToTickService() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
@@ -4149,10 +4430,11 @@ class GameSessionControlPlaneGrpcServiceTest {
   void enqueueAutomationCommandReturnsDuplicateNoopForExistingDispatch() {
     setAutomationScriptingInternalContext();
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
-    GameInstance instance = new GameInstance();
+    GameInstance instance = runningPinnedGameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
     Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(Optional.of(instance));
+    stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommand existing = new GameplayCommand();
     existing.setCommandId("auto-existing");
     existing.setTenantId(1L);
@@ -4167,6 +4449,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     existing.setAutomationWorkItemId("work-1");
     existing.setScriptId("script-1");
     existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
+    existing.setScriptPinControlPlaneRequestId("request-1");
     existing.setPluginId("plugin-1");
     existing.setPluginVersionId("plugin-v1");
     existing.setPlayableStateScope("SHARED");
@@ -7571,6 +7855,30 @@ class GameSessionControlPlaneGrpcServiceTest {
     return newService(repository, new SimpleMeterRegistry());
   }
 
+  private static GameSessionControlPlaneGrpcService runtimeStateService(
+      GameInstanceRepository repository,
+      RuntimeRegionStatus runtimeStatus,
+      WorldManagementClient worldManagementClient) {
+    return controlPlaneService(
+        repository,
+        Mockito.mock(GameplayCommandRepository.class),
+        runtimeRepository(runtimeStatus),
+        Mockito.mock(RemoteFollowupRepository.class),
+        Mockito.mock(RemoteCommandCoordinatorRepository.class),
+        Mockito.mock(RemoteFollowupResultRepository.class),
+        Mockito.mock(RemoteFollowupRuntimeService.class),
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        Mockito.mock(InstanceCutoverCompatibilityService.class),
+        Mockito.mock(VersionUpgradePreparationService.class),
+        gameDesignClient(),
+        BuiltInTextCommandAliasResolver.unsupported(),
+        Mockito.mock(TickService.class),
+        new SimpleMeterRegistry(),
+        new GameSessionProperties(),
+        null,
+        worldManagementClient);
+  }
+
   private static GameSessionControlPlaneGrpcService newService(
       GameInstanceRepository repository, SimpleMeterRegistry meterRegistry) {
     return newService(repository, meterRegistry, new GameSessionProperties());
@@ -7594,6 +7902,30 @@ class GameSessionControlPlaneGrpcServiceTest {
         gameSessionProperties);
   }
 
+  private static GameSessionControlPlaneGrpcService newService(
+      GameInstanceRepository repository,
+      GameDesignClient gameDesignClient,
+      AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient) {
+    return controlPlaneService(
+        repository,
+        Mockito.mock(GameplayCommandRepository.class),
+        Mockito.mock(RuntimeRegionStatusRepository.class),
+        Mockito.mock(RemoteFollowupRepository.class),
+        Mockito.mock(RemoteCommandCoordinatorRepository.class),
+        Mockito.mock(RemoteFollowupResultRepository.class),
+        Mockito.mock(RemoteFollowupRuntimeService.class),
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+        Mockito.mock(InstanceCutoverCompatibilityService.class),
+        Mockito.mock(VersionUpgradePreparationService.class),
+        gameDesignClient,
+        BuiltInTextCommandAliasResolver.unsupported(),
+        Mockito.mock(TickService.class),
+        new SimpleMeterRegistry(),
+        new GameSessionProperties(),
+        automationScriptingControlPlaneClient,
+        worldManagementClient());
+  }
+
   private static GameSessionControlPlaneGrpcService controlPlaneService(
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
@@ -7610,6 +7942,80 @@ class GameSessionControlPlaneGrpcServiceTest {
       TickService tickService,
       MeterRegistry meterRegistry,
       GameSessionProperties gameSessionProperties) {
+    return controlPlaneService(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        gameDesignClient,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        gameSessionProperties,
+        null);
+  }
+
+  private static GameSessionControlPlaneGrpcService controlPlaneService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      GameDesignClient gameDesignClient,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties,
+      AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient) {
+    return controlPlaneService(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        gameDesignClient,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        gameSessionProperties,
+        automationScriptingControlPlaneClient,
+        worldManagementClient());
+  }
+
+  private static GameSessionControlPlaneGrpcService controlPlaneService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      GameDesignClient gameDesignClient,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties,
+      AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient,
+      WorldManagementClient worldManagementClient) {
     GameSessionRuntimeControlPlaneReadService runtimeControlPlaneReadService =
         new GameSessionRuntimeControlPlaneReadService(
             gameInstanceRepository,
@@ -7617,7 +8023,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             remoteFollowupRepository,
             runtimeRegionStatusRepository,
             gameplayAdmissionPointerAuthorityService,
-            gameDesignClient);
+            gameDesignClient,
+            worldManagementClient);
     GameSessionRemoteControlPlaneService remoteControlPlaneService =
         new GameSessionRemoteControlPlaneService(
             gameInstanceRepository,
@@ -7646,10 +8053,18 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameDesignClient,
             builtInTextCommandAliasResolver,
             tickService,
-            meterRegistry);
+            meterRegistry,
+            immediateTransactionOperations());
     GameSessionOperatorControlPlaneService operatorControlPlaneService =
-        new GameSessionOperatorControlPlaneService(
-            gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties);
+        automationScriptingControlPlaneClient == null
+            ? new GameSessionOperatorControlPlaneService(
+                gameInstanceRepository, tickService, gameDesignClient, gameSessionProperties)
+            : new GameSessionOperatorControlPlaneService(
+                gameInstanceRepository,
+                tickService,
+                gameDesignClient,
+                automationScriptingControlPlaneClient,
+                gameSessionProperties);
     GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService =
         new GameSessionVersionUpgradeControlPlaneService(
             instanceCutoverCompatibilityService, versionUpgradePreparationService);
@@ -7661,6 +8076,15 @@ class GameSessionControlPlaneGrpcServiceTest {
         operatorControlPlaneService,
         versionUpgradeControlPlaneService,
         meterRegistry);
+  }
+
+  private static TransactionOperations immediateTransactionOperations() {
+    return new TransactionOperations() {
+      @Override
+      public <T> T execute(TransactionCallback<T> action) {
+        return action.doInTransaction(new SimpleTransactionStatus());
+      }
+    };
   }
 
   private static GameSessionControlPlaneGrpcService controlPlaneService(
@@ -7852,6 +8276,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .setAutomationWorkItemId("work-1")
         .setScriptId("script-1")
         .setScriptPatchVersion("patch-1")
+        .setScriptPinEpoch(1L)
+        .setScriptPinControlPlaneRequestId("request-1")
         .setPluginId("plugin-1")
         .setPluginVersionId("plugin-v1")
         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -8192,6 +8618,35 @@ class GameSessionControlPlaneGrpcServiceTest {
     return repository;
   }
 
+  private static WorldManagementClient worldManagementClient() {
+    return worldManagementClient(
+        null, null, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
+  }
+
+  private static WorldManagementClient worldManagementClient(
+      String responseTenantId, String responseGameInstanceId, WorldInstanceLifecycleStatus status) {
+    WorldManagementClient client = Mockito.mock(WorldManagementClient.class);
+    Mockito.when(client.getWorldInstanceLifecycle(Mockito.anyLong(), Mockito.anyLong()))
+        .thenAnswer(
+            invocation ->
+                GetWorldInstanceLifecycleResponse.newBuilder()
+                    .setWorldInstance(
+                        WorldInstanceLifecycleSnapshot.newBuilder()
+                            .setTenantId(
+                                responseTenantId == null
+                                    ? Long.toString(invocation.getArgument(0))
+                                    : responseTenantId)
+                            .setGameInstanceId(
+                                responseGameInstanceId == null
+                                    ? Long.toString(invocation.getArgument(1))
+                                    : responseGameInstanceId)
+                            .setLifecycleEpoch(1L)
+                            .setStatus(status)
+                            .build())
+                    .build());
+    return client;
+  }
+
   private static GameplayAdmissionPointerAuthorityService automationPointerAuthority() {
     GameplayAdmissionPointerAuthorityService authority =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -8327,7 +8782,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenAnswer(
             invocation -> {
               Long gameInstanceId = invocation.getArgument(0, Long.class);
-              GameInstance instance = new GameInstance();
+              GameInstance instance = runningGameInstance();
               instance.setId(gameInstanceId);
               instance.setTenantId(1L);
               return Optional.of(instance);
@@ -8358,6 +8813,26 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(TickService.class),
         meterRegistry,
         new GameSessionProperties());
+  }
+
+  private static GameInstance runningGameInstance() {
+    GameInstance instance = new GameInstance();
+    instance.setStatus("RUNNING");
+    return instance;
+  }
+
+  private static GameInstance runningPinnedGameInstance() {
+    GameInstance instance = runningGameInstance();
+    instance.setScriptPatchVersion("patch-1");
+    instance.setScriptPinEpoch(1L);
+    instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
+    return instance;
+  }
+
+  private static void stubLockedGameInstance(
+      GameInstanceRepository repository, GameInstance instance) {
+    Mockito.when(repository.findByTenantIdAndGameInstanceIdForUpdate(1L, 7L))
+        .thenReturn(Optional.of(instance));
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {
