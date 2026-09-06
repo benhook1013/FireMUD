@@ -640,18 +640,22 @@ class TickStagingServiceTest {
   }
 
   @Test
-  void equalReplayDigestTerminalizesStaleLocalAutomationAndReconcilesPendingProjection() {
+  void equalReplayDigestClassifiesStaleAndIncompleteAutomationIndependently() {
     GameplayCommand automation = gameplayCommand("cmd-stale-automation");
     automation.setSourceType("AUTOMATION");
     automation.setScriptPatchVersion("patch-1");
     automation.setScriptPinEpoch(1L);
     automation.setScriptPinControlPlaneRequestId("request-1");
+    GameplayCommand incompleteAutomation = gameplayCommand("cmd-incomplete-automation");
+    incompleteAutomation.setSourceType("AUTOMATION");
+    incompleteAutomation.setScriptPatchVersion("patch-1");
     GameplayCommand player = gameplayCommand("cmd-player");
     player.setSourceType("PLAYER");
     player.setCommandText("wave");
     player.setSanitizedCommandText("wave");
-    when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-stale-automation", "cmd-player")))
-        .thenReturn(List.of(automation, player));
+    when(gameplayCommandRepository.findByCommandIdIn(
+            List.of("cmd-stale-automation", "cmd-incomplete-automation", "cmd-player")))
+        .thenReturn(List.of(automation, incompleteAutomation, player));
     when(gameplayCommandRepository.findByCommandIdIn(List.of("cmd-player")))
         .thenReturn(List.of(player));
     GameInstance currentOwner = new GameInstance();
@@ -663,7 +667,9 @@ class TickStagingServiceTest {
     when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
         .thenReturn(Optional.of(currentOwner), Optional.of(currentOwner));
 
-    List<Object> replayRawEntries = List.of("N|cmd-stale-automation|look", "N|cmd-player|wave");
+    List<Object> replayRawEntries =
+        List.of(
+            "N|cmd-stale-automation|look", "N|cmd-incomplete-automation|look", "N|cmd-player|wave");
     String sealedManifest = replayManifestJson(service, replayRawEntries);
     TickBatch existingBatch = new TickBatch();
     existingBatch.setTickBatchId("tb-stale-pin");
@@ -693,6 +699,8 @@ class TickStagingServiceTest {
     assertEquals("INCOMPATIBLE_SEALED_REPLAY", existingBatch.getFailureCode());
     assertEquals("FAILED", automation.getExecutionOutcome());
     assertEquals("INCOMPATIBLE_SEALED_REPLAY", automation.getFailureCode());
+    assertEquals("FAILED", incompleteAutomation.getExecutionOutcome());
+    assertEquals("INCOMPLETE_SCRIPT_PIN_FENCE", incompleteAutomation.getFailureCode());
     assertEquals("RETRY_QUEUED", player.getExecutionOutcome());
     verify(tickBatchRepository).save(existingBatch);
     verify(gameplayCommandRepository, org.mockito.Mockito.atLeastOnce()).saveAll(any());

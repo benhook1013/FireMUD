@@ -645,22 +645,29 @@ final class TickStagingService {
           tenantId,
           gameInstanceId);
     }
+    java.util.Set<String> incompleteCommandIds =
+        java.util.Set.copyOf(sealedManifest.incompleteLocalAutomationPinEvidenceCommandIds());
     java.util.Set<String> mismatchedCommandIds =
         localAutomationCommands(sealedSelections).stream()
+            .filter(command -> !incompleteCommandIds.contains(command.getCommandId()))
             .filter(command -> !matchesScriptPinTuple(command, lockedInstance))
             .map(GameplayCommand::getCommandId)
             .collect(java.util.stream.Collectors.toSet());
-    if (mismatchedCommandIds.isEmpty()) {
+    java.util.Set<String> terminalCommandIds = new java.util.LinkedHashSet<>(incompleteCommandIds);
+    terminalCommandIds.addAll(mismatchedCommandIds);
+    if (terminalCommandIds.isEmpty()) {
       throw mismatch;
     }
-    return terminalizeIncompatibleAutomationReplay(
+    return terminalizeAutomationReplay(
         batch,
         replayEntries,
         sealedEntries,
         sealedSelections,
-        mismatchedCommandIds,
+        java.util.Set.copyOf(terminalCommandIds),
         tenantId,
         gameInstanceId,
+        incompleteCommandIds,
+        "INCOMPATIBLE_SEALED_REPLAY",
         "Staged local Automation replay pin tuple no longer matches the authoritative game instance");
   }
 
@@ -701,6 +708,7 @@ final class TickStagingService {
         incompatibleCommandIds,
         tenantId,
         gameInstanceId,
+        java.util.Set.of(),
         "INCOMPATIBLE_SEALED_REPLAY",
         message);
   }
@@ -722,6 +730,7 @@ final class TickStagingService {
         incompleteCommandIds,
         tenantId,
         gameInstanceId,
+        incompleteCommandIds,
         INCOMPLETE_SCRIPT_PIN_FENCE,
         message);
   }
@@ -734,6 +743,7 @@ final class TickStagingService {
       java.util.Set<String> terminalCommandIds,
       Long tenantId,
       Long gameInstanceId,
+      java.util.Set<String> incompleteCommandIds,
       String terminalFailureCode,
       String message) {
     List<TickQueuedCommandEnvelope> eligibleEntries =
@@ -751,7 +761,7 @@ final class TickStagingService {
             .filter(command -> terminalCommandIds.contains(command.getCommandId()))
             .toList();
     for (GameplayCommand command : localAutomation) {
-      if (INCOMPLETE_SCRIPT_PIN_FENCE.equals(terminalFailureCode)) {
+      if (incompleteCommandIds.contains(command.getCommandId())) {
         terminalizeIncompleteScriptPinCommand(command, now);
       } else {
         command.setExecutionOutcome("FAILED");
