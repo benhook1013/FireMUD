@@ -124,6 +124,7 @@ CREATE INDEX idx_script_event_ingress_audit_tenant_created
 CREATE INDEX idx_script_event_ingress_audit_event_type
     ON script_event_ingress_audit(event_type, event_schema_version);
 
+/* [jooq ignore start] */
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_event_ingress_audit (
     tenant_id,
     game_instance_id,
@@ -138,7 +139,8 @@ CREATE UNIQUE INDEX uq_script_event_ingress_audit_runtime_identity ON script_eve
     script_event_id,
     dry_run,
     source_service
-) WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;
+) NULLS NOT DISTINCT WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL;
+/* [jooq ignore stop] */
 
 /* [jooq ignore start] */
 CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity ON script_event_ingress_audit (
@@ -340,6 +342,7 @@ CREATE TABLE script_event_audit (
     )
 );
 
+/* [jooq ignore start] */
 CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit (
     tenant_id,
     game_instance_id,
@@ -360,8 +363,10 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit
     script_pin_epoch,
     script_event_id,
     dry_run
-) WHERE script_pin_epoch > 0;
+) NULLS NOT DISTINCT WHERE script_pin_epoch > 0;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_event_audit (
     tenant_id,
     game_instance_id,
@@ -381,7 +386,8 @@ CREATE UNIQUE INDEX uq_script_event_audit_handler_identity_unpinned ON script_ev
     script_patch_version,
     script_event_id,
     dry_run
-) WHERE script_pin_epoch IS NULL;
+) NULLS NOT DISTINCT WHERE script_pin_epoch IS NULL;
+/* [jooq ignore stop] */
 
 CREATE INDEX idx_script_event_audit_script_created
     ON script_event_audit(tenant_id, script_id, created_at);

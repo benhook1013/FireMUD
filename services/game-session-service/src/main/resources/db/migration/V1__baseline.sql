@@ -244,7 +244,7 @@ CREATE TABLE player_command_history (
 ALTER SEQUENCE player_command_history_id_seq OWNED BY player_command_history.id;
 
 CREATE TABLE player_command_history_retention_sweep_state (
-    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     cursor_tenant_id BIGINT,
     cursor_game_instance_id BIGINT,
     cursor_character_id BIGINT,
@@ -614,18 +614,10 @@ ALTER TABLE game_instances
 
 ALTER TABLE game_instances
     ADD CONSTRAINT game_instances_unpinned_script_pin_metadata_coherent CHECK (
-        (
-            NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL
-            AND script_pin_epoch IS NOT NULL
-            AND script_pin_epoch > 0
-            AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NOT NULL
-        )
+        NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL
         OR
         (
-            NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NULL
-            AND script_pin_epoch IS NULL
-            AND NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '') IS NULL
-            AND script_patch_pinned_at IS NULL
+            script_patch_pinned_at IS NULL
             AND script_patch_pinned_by IS NULL
             AND script_patch_pinned_reason IS NULL
         )

@@ -26,3 +26,9 @@ CREATE TABLE log_events (
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     account_id BIGINT
 );
+
+CREATE INDEX idx_moderation_actions_tenant_account_created_at
+    ON moderation_actions (tenant_id, account_id, created_at DESC);
+
+CREATE INDEX idx_log_events_tenant_timestamp
+    ON log_events (tenant_id, timestamp DESC);

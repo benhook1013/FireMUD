@@ -82,7 +82,8 @@ class V1__baselineTest {
         "dry_run",
         "source_service");
     assertThat(indexStatement(normalized, "uq_script_event_ingress_audit_runtime_identity"))
-        .endsWith(") WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL");
+        .endsWith(
+            ") NULLS NOT DISTINCT WHERE game_instance_id IS NOT NULL AND script_pin_epoch IS NOT NULL");
     assertIndexColumns(
         normalized,
         "uq_script_event_ingress_audit_onload_identity",
@@ -187,9 +188,9 @@ class V1__baselineTest {
             "CONSTRAINT ck_script_event_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity"))
         .doesNotContain("script_pin_control_plane_request_id")
-        .endsWith(") WHERE script_pin_epoch > 0");
+        .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch > 0");
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity_unpinned"))
-        .endsWith(") WHERE script_pin_epoch IS NULL");
+        .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch IS NULL");
 
     String pinProjection = tableBlock(normalized, "script_patch_pin_projections");
     assertThat(pinProjection)
@@ -254,7 +255,7 @@ class V1__baselineTest {
   }
 
   private static String indexStatement(String normalized, String indexName) {
-    int index = normalized.indexOf(indexName);
+    int index = normalized.indexOf(indexName + " ON ");
     assertThat(index).isGreaterThanOrEqualTo(0);
     int start = normalized.lastIndexOf("CREATE ", index);
     int end = normalized.indexOf(';', index);

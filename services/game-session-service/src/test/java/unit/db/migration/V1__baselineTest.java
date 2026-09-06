@@ -39,7 +39,7 @@ class V1__baselineTest {
             "CONSTRAINT player_command_history_pkey PRIMARY KEY (id)",
             "CREATE INDEX idx_player_command_history_scope_order ON player_command_history USING btree (tenant_id, game_instance_id, character_id, accepted_at, id)",
             "CREATE TABLE player_command_history_retention_sweep_state",
-            "singleton BOOLEAN PRIMARY KEY DEFAULT TRUE",
+            "singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton)",
             "cursor_tenant_id BIGINT",
             "cursor_game_instance_id BIGINT",
             "cursor_character_id BIGINT",
@@ -77,20 +77,31 @@ class V1__baselineTest {
             "outcome = 'COMMITTED' AND error_code IS NULL",
             "outcome = 'FAILED' AND error_code IS NOT NULL AND BTRIM(error_code) <> ''");
 
-    String gameInstanceConstraints =
+    String gameInstanceTupleConstraint =
         normalized.substring(
             normalized.indexOf("ADD CONSTRAINT game_instances_script_pin_tuple_coherent"),
-            normalized.indexOf("ALTER TABLE game_manifest ADD CONSTRAINT game_manifest_pkey"));
-    assertThat(gameInstanceConstraints)
+            normalized.indexOf(
+                "ADD CONSTRAINT game_instances_unpinned_script_pin_metadata_coherent"));
+    assertThat(gameInstanceTupleConstraint)
         .contains(
             "script_pin_epoch IS NULL",
             "script_pin_epoch IS NOT NULL",
             "script_pin_epoch > 0",
             "NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '')",
-            "NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '')",
+            "NULLIF(regexp_replace(script_patch_pinned_control_plane_request_id, '[[:space:]]', '', 'g'), '')");
+
+    String unpinnedMetadataConstraint =
+        normalized.substring(
+            normalized.indexOf(
+                "ADD CONSTRAINT game_instances_unpinned_script_pin_metadata_coherent"),
+            normalized.indexOf("ALTER TABLE game_manifest ADD CONSTRAINT game_manifest_pkey"));
+    assertThat(unpinnedMetadataConstraint)
+        .contains(
+            "NULLIF(regexp_replace(script_patch_version, '[[:space:]]', '', 'g'), '') IS NOT NULL",
             "script_patch_pinned_at IS NULL",
             "script_patch_pinned_by IS NULL",
-            "script_patch_pinned_reason IS NULL");
+            "script_patch_pinned_reason IS NULL")
+        .doesNotContain("script_pin_epoch", "script_patch_pinned_control_plane_request_id");
 
     String gameplayCommandConstraint =
         normalized.substring(
