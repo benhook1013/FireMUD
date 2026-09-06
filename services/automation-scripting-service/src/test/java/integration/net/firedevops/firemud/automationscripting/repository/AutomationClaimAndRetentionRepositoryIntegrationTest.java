@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.repository;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptScheduleInstances.SCRIPT_SCHEDULE_INSTANCES;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
+import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -60,6 +62,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private ScriptEventAuditRepository eventAuditRepository;
   private ScriptHandoffEventRepository handoffRepository;
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
+  private ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private ExecutorService executor;
 
   @BeforeAll
@@ -78,12 +81,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     eventAuditRepository = new ScriptEventAuditRepository(dsl);
     handoffRepository = new ScriptHandoffEventRepository(dsl);
     pinProjectionRepository = new ScriptPatchPinProjectionRepository(dsl);
+    scheduleInstanceRepository = new ScriptScheduleInstanceRepository(dsl);
   }
 
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE script_patch_pin_projections, script_event_audit, script_handoff_events,"
+        "TRUNCATE TABLE script_patch_pin_projections, script_schedule_instances, script_event_audit, script_handoff_events,"
             + " script_work_items,"
             + " script_event_ingress_audit RESTART IDENTITY CASCADE");
     executor = Executors.newFixedThreadPool(3);
@@ -284,6 +288,34 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
               assertThat(found.getScriptPinEpoch()).isEqualTo(2L);
               assertThat(found.getObservedPinnedScriptPatchVersion()).isEqualTo("patch-1");
             });
+  }
+
+  @Test
+  void scheduleBindingIdNormalizesBlankValuesAndPreservesNonBlankValues() {
+    ScriptScheduleInstance schedule = scheduleInstance();
+    schedule.setBindingId(null);
+
+    ScriptScheduleInstance saved = scheduleInstanceRepository.save(schedule);
+
+    assertThat(saved.getBindingId()).isEmpty();
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_SCHEDULE_INSTANCES.BINDING_ID,
+                SCRIPT_SCHEDULE_INSTANCES.ID.eq(saved.getId())))
+        .isEmpty();
+
+    saved.setBindingId("   ");
+    saved = scheduleInstanceRepository.save(saved);
+    assertThat(saved.getBindingId()).isEmpty();
+
+    saved.setBindingId("binding-1");
+    saved = scheduleInstanceRepository.save(saved);
+    assertThat(saved.getBindingId()).isEqualTo("binding-1");
+    assertThat(
+            dsl.fetchValue(
+                SCRIPT_SCHEDULE_INSTANCES.BINDING_ID,
+                SCRIPT_SCHEDULE_INSTANCES.ID.eq(saved.getId())))
+        .isEqualTo("binding-1");
   }
 
   @Test
@@ -559,6 +591,23 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     audit.setCreatedAt(OLD);
     audit.setUpdatedAt(OLD);
     return audit;
+  }
+
+  private ScriptScheduleInstance scheduleInstance() {
+    ScriptScheduleInstance schedule = new ScriptScheduleInstance();
+    schedule.setTenantId("tenant-schedule-binding");
+    schedule.setGameInstanceId("instance-schedule-binding");
+    schedule.setScriptPatchVersion("patch-schedule-binding");
+    schedule.setScriptId("script-schedule-binding");
+    schedule.setEventType("onEnterRegion");
+    schedule.setScheduleDefinitionId("schedule-binding");
+    schedule.setScheduleKind("RECURRING");
+    schedule.setCadenceValue(1);
+    schedule.setCadenceUnit("TICKS");
+    schedule.setMaterializationStatus("READY");
+    schedule.setScheduleMetadataJson("{}");
+    schedule.setScheduleSemanticsHash("hash-schedule-binding");
+    return schedule;
   }
 
   private ScriptHandoffEvent retainedHandoff(Long workItemId) {

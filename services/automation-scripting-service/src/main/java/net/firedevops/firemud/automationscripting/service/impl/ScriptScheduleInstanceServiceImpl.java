@@ -563,11 +563,11 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
     }
     Set<String> selectedIdentities =
         selectedCandidates.stream()
-            .map(TimerFiringCandidate::durableIdentity)
+            .map(TimerFiringCandidate::identity)
             .collect(java.util.stream.Collectors.toSet());
     List<TimerFiringCandidate> truncatedCandidates =
         candidates.stream()
-            .filter(candidate -> !selectedIdentities.contains(candidate.durableIdentity()))
+            .filter(candidate -> !selectedIdentities.contains(candidate.identity()))
             .toList();
     recordSkippedCandidates(suppressedCandidates, REASON_RUNTIME_SCOPE_CHANGED, now);
     boolean authorityUnavailable = false;
@@ -1729,7 +1729,7 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
   }
 
   private static String timerScriptEventId(TimerFiringCandidate candidate) {
-    return "timer-" + shortHash(candidate.eventIdentity());
+    return "timer-" + shortHash(candidate.identity());
   }
 
   private TimerAuditEventSummary withPublication(String tenantId, TimerAuditEventSummary summary) {
@@ -2227,14 +2227,6 @@ public class ScriptScheduleInstanceServiceImpl implements ScriptScheduleInstance
 
     private long dueOrderValue() {
       return wallClock ? dueAt.toEpochMilli() : dueTickId;
-    }
-
-    private String durableIdentity() {
-      return identity();
-    }
-
-    private String eventIdentity() {
-      return identity();
     }
 
     private String identity() {
