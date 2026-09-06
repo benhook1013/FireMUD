@@ -60,7 +60,9 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def _bootstrap_manifest_fixture(self) -> str:
         workflow = self.validator._load_workflow(ROOT)
-        deploy_job = workflow["jobs"]["dev-demo-deploy"]
+        deploy_job = workflow["jobs"].get(
+            "dev-demo-bootstrap", workflow["jobs"]["dev-demo-deploy"]
+        )
         return self.validator._find_step(
             deploy_job, "Create dev-demo smoke account"
         )["run"]

@@ -31,11 +31,14 @@ jobs:
 
       - name: Write preview kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+          PREVIEW_RUNTIME_KUBECONFIG: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          set -euo pipefail
+          umask 077
+          KUBECONFIG_PATH="$RUNNER_TEMP/preview-runtime.kubeconfig"
+          test -n "$PREVIEW_RUNTIME_KUBECONFIG"
+          printf '%s\n' "$PREVIEW_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
+          chmod 600 "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -65,7 +68,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
-          preview_workflow_name="PR Preview Environment"
+          preview_workflow_name="Trusted Hosted Identity Request"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
           max_active="${PREVIEW_MAX_ACTIVE:-1}"
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
@@ -117,7 +120,7 @@ jobs:
             active_preview_run_id="$(
               gh run list \
                 --workflow "${preview_workflow_name}" \
-                --branch "${head_ref}" \
+              --branch "${GITHUB_DEFAULT_BRANCH:-main}" \
                 --limit 20 \
                 --json databaseId,status \
                 --jq '.[] | select(.status == "queued" or .status == "in_progress") | .databaseId' \
@@ -132,12 +135,10 @@ jobs:
             echo "Dispatching preview deploy for PR #${pr_number} (${head_sha}) on ref ${head_ref}"
             gh api \
               --method POST \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/dispatches" \
-              -f ref="${head_ref}" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/hosted-identity-request.yml/dispatches" \
+              -f ref="${GITHUB_DEFAULT_BRANCH:-main}" \
               -f 'inputs[action]=deploy' \
               -f "inputs[pr_number]=${pr_number}" \
-              -f "inputs[image_tag]=${desired_image_tag}" \
-              -f "inputs[head_sha]=${head_sha}" \
-              -f 'inputs[preview_domain]=preview.firedevops.net'
+              -f "inputs[head_sha]=${head_sha}"
             dispatch_sent=true
           done

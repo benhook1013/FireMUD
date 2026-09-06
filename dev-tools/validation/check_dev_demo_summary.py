@@ -733,7 +733,14 @@ def validate_workflow(root: Path) -> None:
         deploy_job.get("steps"), list
     ):
         raise AssertionError("dev-demo-deploy job missing its required steps list")
-    bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
+    bootstrap_job = jobs.get("dev-demo-bootstrap", deploy_job)
+    if not isinstance(bootstrap_job, dict) or not isinstance(
+        bootstrap_job.get("steps"), list
+    ):
+        raise AssertionError(
+            "dev-demo-bootstrap job missing its required steps list"
+        )
+    bootstrap_step = _find_step(bootstrap_job, "Create dev-demo smoke account")
     smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
     smoke_condition = smoke_step.get("if")
     if not isinstance(smoke_condition, str) or "!cancelled()" not in smoke_condition:

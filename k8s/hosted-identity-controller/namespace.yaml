@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: firemud-system
+  labels:
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller-bootstrap
+    firemud.dev/control-plane: "true"

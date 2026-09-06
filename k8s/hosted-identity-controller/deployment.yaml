@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firemud-hosted-identity-controller
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 300
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hosted-environment-identity-controller
+      app.kubernetes.io/component: controller
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hosted-environment-identity-controller
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: firemud
+        firemud.dev/managed-by: hosted-identity-controller
+    spec:
+      serviceAccountName: firemud-hosted-identity-controller
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          # The trusted bootstrap helper must replace this fail-closed marker
+          # with an operator-supplied ghcr.io/...@sha256:<64 hex> reference.
+          image: ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FIREMUD_HOSTED_IDENTITY_CONTROL_NAMESPACE
+              value: firemud-system
+            - name: FIREMUD_HOSTED_IDENTITY_PREVIEW_DOMAIN
+              value: preview.firedevops.net
+            - name: FIREMUD_HOSTED_IDENTITY_DEV_DEMO_HOSTNAME
+              value: dev.preview.firedevops.net
+            - name: FIREMUD_HOSTED_IDENTITY_INGRESS_ISSUER
+              value: letsencrypt-prod
+            - name: FIREMUD_HOSTED_IDENTITY_TELNET_ISSUER
+              value: letsencrypt-prod
+            - name: FIREMUD_HOSTED_IDENTITY_GRPC_ISSUER
+              value: firemud-ca-issuer
+            - name: FIREMUD_HOSTED_IDENTITY_CA_SECRET_NAME
+              value: firemud-grpc-ca
+            - name: FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256
+              value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__
+            - name: FIREMUD_HOSTED_IDENTITY_RECONCILE_INTERVAL
+              value: 30s
+            - name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
+              value: __ACTIVATION_MODE_REQUIRED__
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: management
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: management
+              scheme: HTTP
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+              scheme: HTTP
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory

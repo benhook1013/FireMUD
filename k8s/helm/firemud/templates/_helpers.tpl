@@ -34,3 +34,15 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.grpcSecretName" -}}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
+
+{{- define "firemud.hostedControllerMode" -}}
+{{- eq (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller" -}}
+{{- end -}}
+
+{{- define "firemud.ingressTlsSecretName" -}}
+{{- default (printf "%s-tls" .Release.Name) .Values.previewStack.ingress.tlsSecretName -}}
+{{- end -}}
+
+{{- define "firemud.telnetTlsSecretName" -}}
+{{- default (printf "%s-telnet-tls" .Release.Name) .Values.previewStack.telnetTls.secretName -}}
+{{- end -}}

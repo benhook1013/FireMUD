@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+delete_runtime_namespace() {
+  local runtime_namespace="$1"
+  if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
+    echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
+    return 2
+  fi
+
+  if ! kubectl get namespace "$runtime_namespace" >/dev/null 2>&1; then
+    echo "Runtime namespace ${runtime_namespace} is already absent."
+    return 0
+  fi
+
+  kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false
+  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${PREVIEW_DELETE_TIMEOUT:-10m}"
+  echo "Runtime namespace ${runtime_namespace} is absent."
+}
+
+if [[ "${1:-}" == "--delete-runtime" ]]; then
+  if [[ $# -ne 2 ]]; then
+    echo "usage: $0 --delete-runtime <runtime_namespace>" >&2
+    exit 1
+  fi
+  delete_runtime_namespace "$2"
+  exit $?
+fi
+
 apply=false
 for arg in "$@"; do
   case "$arg" in
@@ -55,23 +81,19 @@ for row in "${namespace_rows[@]}"; do
   )"; then
     IFS=$'\t' read -r pr_state pr_base_ref pr_author <<<"$pr_metadata"
   else
-    pr_state="missing"
+    echo "Refusing to prune ${namespace}: GitHub API metadata is unavailable for PR #${pr_number}" >&2
+    exit 1
   fi
 
-  if [[ "$pr_state" != "missing" ]]; then
-    eligibility_output="$(
-      python3 "$eligibility_script" \
-        --operation retain \
-        --state "$pr_state" \
-        --base-ref "$pr_base_ref" \
-        --author "$pr_author"
-    )"
-    eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-    reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
-  else
-    eligible="false"
-    reason="missing"
-  fi
+  eligibility_output="$(
+    python3 "$eligibility_script" \
+      --operation retain \
+      --state "$pr_state" \
+      --base-ref "$pr_base_ref" \
+      --author "$pr_author"
+  )"
+  eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
+  reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
 
   if [[ "$eligible" == "true" ]]; then
     echo "Keeping ${namespace}: PR #${pr_number} remains preview-eligible"
@@ -80,6 +102,10 @@ for row in "${namespace_rows[@]}"; do
 
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
-    bash "$(dirname "$0")/../shared/delete-hosted-namespace.sh" "$namespace" "$release_name"
+    if [[ -n "${PREVIEW_DELETE_SCRIPT:-}" ]]; then
+      bash "$PREVIEW_DELETE_SCRIPT" "$namespace"
+    else
+      delete_runtime_namespace "$namespace"
+    fi
   fi
 done

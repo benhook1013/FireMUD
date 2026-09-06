@@ -1,4 +1,8 @@
 previewStack:
   enabled: false
+  # Hosted environments use the HostedEnvironmentIdentity controller for
+  # certificate identity. Local installs retain standalone cert-manager mode.
+  certificateIdentity:
+    mode: standalone
   networkPolicies:
     enabled: true

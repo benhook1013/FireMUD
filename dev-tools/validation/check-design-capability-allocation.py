@@ -681,6 +681,9 @@ ADR_ALLOCATION_EXPECTATIONS = {
     "design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md": adr_allocation(
         "PO-1", "Accepted", "AA-1", "AR-1", "EA-3", "SF-2"
     ),
+    "design/architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md": adr_allocation(
+        "PO-3", "Accepted", "PO-1", "PO-4", "SF-1"
+    ),
 }
 MICROSERVICE_STANDARD_CLASSIFICATIONS = {
     "README.md": "Service overview",

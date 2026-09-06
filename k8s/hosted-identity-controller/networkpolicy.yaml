@@ -1,0 +1,56 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firemud-hosted-identity-controller-egress
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hosted-environment-identity-controller
+      app.kubernetes.io/component: controller
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS is the only in-cluster name-resolution dependency.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # A NetworkPolicy cannot select the apiserver or a public hostname.  The
+    # controller therefore needs TCP/443 to the cluster's API endpoint and to
+    # the fixed, derived public HTTPS identity endpoint.  The application must
+    # still enforce its exact SNI/SAN/issuer allowlist; this is intentionally not
+    # presented as unrestricted destination trust.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
+      ports:
+        - protocol: TCP
+          port: 443
+    # Hosted Telnet is exposed through the allocator's fixed NodePort range.
+    # The controller probes only the port derived from the canonical identity;
+    # this range is the smallest cluster-independent NetworkPolicy allowance.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: ::/0
+      ports:
+        - protocol: TCP
+          port: 32000
+          endPort: 32016

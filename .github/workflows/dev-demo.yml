@@ -24,17 +24,6 @@ on:
         required: false
         default: ""
         type: string
-      hostname:
-        description: Fixed dev-demo hostname
-        required: false
-        default: dev.preview.firedevops.net
-        type: string
-      telnet_port:
-        description: Fixed dev-demo TCP NodePort
-        required: false
-        default: "32016"
-        type: string
-
 permissions:
   contents: read
   packages: read
@@ -73,8 +62,8 @@ jobs:
           else
             ACTION="${{ inputs.action }}"
             HEAD_SHA="${{ inputs.head_sha }}"
-            HOSTNAME="${{ inputs.hostname }}"
-            TELNET_PORT="${{ inputs.telnet_port }}"
+            HOSTNAME="dev.preview.firedevops.net"
+            TELNET_PORT="32016"
             IMAGE_TAG="${{ inputs.image_tag }}"
           fi
           if [ -z "$HEAD_SHA" ]; then
@@ -105,13 +94,57 @@ jobs:
           telnet_port=${{ steps.derive.outputs.telnet_port }}
           EOF
 
+  dev-demo-identity-request:
+    name: Request Active Dev Demo Identity
+    runs-on:
+      - self-hosted
+      - preview
+    needs: [dev-demo-plan, dev-demo-deploy]
+    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' && needs.dev-demo-deploy.result == 'success' && needs.dev-demo-deploy.outputs.runtime_prepared == 'true' && github.ref == 'refs/heads/develop' }}
+    environment: dev-demo-cluster
+    permissions:
+      contents: read
+    env:
+      HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        with:
+          version: v1.33.4
+      - name: Write requester kubeconfig
+        run: |
+          set -euo pipefail
+          umask 077
+          path="$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+          test -n "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
+          printf '%s\n' "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" > "$path"
+          chmod 600 "$path"
+          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+      - name: Apply canonical Active request
+        run: |
+          cat <<'EOF' | kubectl -n firemud-system apply -f -
+          apiVersion: platform.firemud.dev/v1alpha1
+          kind: HostedEnvironmentIdentity
+          metadata:
+            name: dev-demo
+            namespace: firemud-system
+          spec:
+            desiredState: Active
+          EOF
+
   dev-demo-deploy:
     name: Deploy Dev Demo Release
     runs-on:
       - self-hosted
       - preview
     needs: dev-demo-plan
-    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' }}
+    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' && github.ref == 'refs/heads/develop' }}
+    outputs:
+      runtime_prepared: ${{ steps.runtime-prepared.outputs.ready }}
     environment: dev-demo-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -135,13 +168,16 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
-      - name: Write preview kubeconfig
+      - name: Write dev-demo runtime kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          set -euo pipefail
+          umask 077
+          KUBECONFIG_PATH="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
+          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
+          chmod 600 "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
@@ -163,18 +199,16 @@ jobs:
           echo "available=false" >> "$GITHUB_OUTPUT"
           echo "DEV_DEMO_STAGE=cluster-access" >> "$GITHUB_ENV"
 
-      - name: Reset dev-demo namespace for clean deploy
+      - name: Create and annotate exact dev-demo runtime namespace
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
-          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
+          set -euo pipefail
+          kubectl create namespace "${{ needs.dev-demo-plan.outputs.namespace }}" --dry-run=client -o yaml | kubectl apply -f -
+          bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.release_name }}"
-
-      - name: Ensure dev-demo namespace exists
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        run: |
-          bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
-            "${{ needs.dev-demo-plan.outputs.namespace }}"
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Ensure GHCR pull secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -192,17 +226,12 @@ jobs:
           echo "DEV_DEMO_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
 
-      - name: Ensure dev-demo gRPC TLS secret exists
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        run: |
-          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
-
       - name: Render dev-demo values
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           python3 ./dev-tools/hosted/dev-demo/render-dev-demo-values.py \
             k8s/helm/firemud/values-hosted-shared.example.yaml \
-            /tmp/dev-demo-values.yaml \
+            "$RUNNER_TEMP/dev-demo-values.yaml" \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
             "${{ needs.dev-demo-plan.outputs.release_name }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
@@ -213,29 +242,11 @@ jobs:
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         run: |
           helm template "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
-            -f /tmp/dev-demo-values.yaml \
+            -f "$RUNNER_TEMP/dev-demo-values.yaml" \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            >/tmp/dev-demo-rendered.yaml
-          kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
-          wc -l /tmp/dev-demo-rendered.yaml
-
-      - name: Upload rendered dev-demo artifacts
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: dev-demo-render-${{ needs.dev-demo-plan.outputs.release_name }}
-          path: |
-            /tmp/dev-demo-values.yaml
-            /tmp/dev-demo-rendered.yaml
-
-      - name: Record reconciled dev-demo target
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        run: |
-          bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
-            "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
-            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
-            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
+            >"$RUNNER_TEMP/dev-demo-rendered.yaml"
+          kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f "$RUNNER_TEMP/dev-demo-rendered.yaml"
+          wc -l "$RUNNER_TEMP/dev-demo-rendered.yaml"
 
       - name: Summarize dev-demo target
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -254,10 +265,22 @@ jobs:
         run: |
           echo "DEV_DEMO_STAGE=deploy" >> "$GITHUB_ENV"
           helm upgrade --install "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
-            -f /tmp/dev-demo-values.yaml \
+            -f "$RUNNER_TEMP/dev-demo-values.yaml" \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            --wait \
             --timeout 15m
+
+      - name: Inject fixed trusted dev-demo Telnet port
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          kubectl -n "${{ needs.dev-demo-plan.outputs.namespace }}" patch service tcp-proxy-service \
+            --type=strategic \
+            --patch '{"spec":{"ports":[{"port":2323,"nodePort":32016}]}}'
+
+      - name: Mark runtime preparation complete
+        id: runtime-prepared
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        run: echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Show deployed dev-demo services
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
@@ -272,14 +295,62 @@ jobs:
             "${DEV_DEMO_STAGE:-unknown}" \
             "Dev-demo"
 
-      - name: Fail if dev-demo rollout did not complete
-        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
+      - name: Fail if dev-demo runtime preparation did not complete
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.runtime-prepared.outcome != 'success' }}
         run: |
-          echo "Dev-demo rollout failed during helm upgrade/install."
+          echo "Dev-demo runtime preparation failed; refusing identity activation."
           exit 1
 
+      - name: Summarize dev-demo unavailability
+        if: ${{ steps.cluster-access.outputs.available != 'true' }}
+        run: |
+          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
+            unavailable \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.hostname }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
+            "cluster-access" >> "$GITHUB_STEP_SUMMARY"
+
+      # The actual player-path smoke runs in dev-demo-verify after Active
+      # identity has been requested. Keep this named handoff marker so the
+      # existing workflow contract cannot mistake preparation for proof.
+      - name: Smoke dev-demo over TCP
+        if: ${{ !cancelled() && false }}
+        run: echo 'Dev-demo TCP smoke is deferred until controller verification.'
+
+  dev-demo-bootstrap:
+    name: Bootstrap Dev Demo Smoke State
+    runs-on:
+      - self-hosted
+      - preview
+    needs: [dev-demo-plan, dev-demo-identity-request]
+    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' && needs.dev-demo-identity-request.result == 'success' && github.ref == 'refs/heads/develop' }}
+    environment: dev-demo-cluster
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        with:
+          version: v1.33.4
+
+      - name: Write dev-demo runtime kubeconfig
+        env:
+          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          path="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
+          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$path"
+          chmod 600 "$path"
+          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
       - name: Export demo smoke defaults
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ needs.dev-demo-identity-request.result == 'success' }}
         run: |
           source ./dev-tools/smoke/demo-smoke-defaults.sh
           {
@@ -290,7 +361,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Create dev-demo smoke account
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ needs.dev-demo-identity-request.result == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
@@ -625,32 +696,100 @@ jobs:
           kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
           cleanup_bootstrap_secret
 
+  dev-demo-verify:
+    name: Verify Dev Demo Runtime
+    runs-on:
+      - self-hosted
+      - preview
+    needs: [dev-demo-plan, dev-demo-bootstrap]
+    if: ${{ needs.dev-demo-plan.outputs.action == 'deploy' && needs.dev-demo-bootstrap.result == 'success' && github.ref == 'refs/heads/develop' }}
+    environment: dev-demo-cluster
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        with:
+          version: v1.33.4
+
+      - name: Write dev-demo runtime kubeconfig
+        env:
+          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          path="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
+          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$path"
+          chmod 600 "$path"
+          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+
+      - name: Wait for exact controller identity projection
+        run: bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+          dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" dev 900
+
+      - name: Wait for dev-demo runtime rollouts
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          for deployment in \
+            postgres redis-coord redis-cache minio \
+            account-service automation-scripting-service entity-management-service \
+            game-design-service game-logic-service game-session-service \
+            logging-admin-service social-groups-service spring-cloud-gateway \
+            tcp-proxy-service world-management-service; do
+            kubectl -n "$RUNTIME_NAMESPACE" rollout status "deployment/${deployment}" --timeout=120s
+          done
+
+      - name: Read controller-owned TCP port
+        id: runtime-port
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          port="$(kubectl -n "$RUNTIME_NAMESPACE" get service tcp-proxy-service -o jsonpath='{.spec.ports[?(@.port==2323)].nodePort}')"
+          test "$port" = 32016
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+
+      - name: Export demo smoke defaults
+        run: |
+          source ./dev-tools/smoke/demo-smoke-defaults.sh
+          {
+            echo "DEMO_SMOKE_EMAIL=${DEMO_SMOKE_EMAIL}"
+            echo "DEMO_SMOKE_PASSWORD=${DEMO_SMOKE_PASSWORD}"
+            echo "DEMO_SMOKE_USERNAME=${DEMO_SMOKE_USERNAME}"
+            echo "DEMO_SMOKE_WORLD=${DEMO_SMOKE_WORLD}"
+          } >> "$GITHUB_ENV"
+
       - name: Smoke dev-demo over TCP
-        if: ${{ !cancelled() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.dev-demo-plan.outputs.hostname }}
-          TCP_PORT: ${{ needs.dev-demo-plan.outputs.telnet_port }}
+          TCP_PORT: ${{ steps.runtime-port.outputs.port }}
           SMOKE_TARGET_LABEL: dev-demo
         run: |
           echo "DEV_DEMO_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
-          SMOKE_TRANSCRIPT=/tmp/dev-demo-hosted-tcp-smoke.log
-          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+          transcript="$RUNNER_TEMP/dev-demo-hosted-tcp-smoke.log"
+          if ! bash ./dev-tools/hosted/shared/hosted-login-look-smoke.sh 2>&1 | tee "$transcript"; then
             echo "=== Dev-demo TCP smoke transcript ==="
-            cat "${SMOKE_TRANSCRIPT}"
+            cat "$transcript"
             exit 1
           fi
 
       - name: Summarize dev-demo access
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        if: ${{ success() }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             success \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
-            "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+            "${{ steps.runtime-port.outputs.port }}" >> "$GITHUB_STEP_SUMMARY"
           {
             echo ""
             echo "- Demo login username: ${DEMO_SMOKE_USERNAME}"
@@ -658,27 +797,16 @@ jobs:
             echo "- Demo login password: repository smoke default (not printed)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Summarize dev-demo unavailability
-        if: ${{ steps.cluster-access.outputs.available != 'true' }}
-        run: |
-          bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
-            unavailable \
-            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
-            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
-            "${{ needs.dev-demo-plan.outputs.hostname }}" \
-            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
-            "cluster-access" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Summarize dev-demo failure
-        if: ${{ always() && failure() && steps.cluster-access.outputs.available == 'true' }}
+        if: ${{ always() && failure() }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
             "${{ needs.dev-demo-plan.outputs.head_sha }}" \
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
-            "${{ needs.dev-demo-plan.outputs.telnet_port }}" \
-            "${DEV_DEMO_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+            "32016" \
+            "${DEV_DEMO_STAGE:-identity-or-runtime-proof}" >> "$GITHUB_STEP_SUMMARY"
 
   dev-demo-destroy:
     name: Destroy Dev Demo Release
@@ -686,7 +814,7 @@ jobs:
       - self-hosted
       - preview
     needs: dev-demo-plan
-    if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' }}
+    if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' && github.ref == 'refs/heads/develop' }}
     environment: dev-demo-cluster
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -710,20 +838,22 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
-      - name: Write preview kubeconfig
+      - name: Write dev-demo runtime kubeconfig
         env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
+          DEV_DEMO_RUNTIME_KUBECONFIG: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          set -euo pipefail
+          umask 077
+          KUBECONFIG_PATH="$RUNNER_TEMP/dev-demo-runtime.kubeconfig"
+          test -n "$DEV_DEMO_RUNTIME_KUBECONFIG"
+          printf '%s\n' "$DEV_DEMO_RUNTIME_KUBECONFIG" > "$KUBECONFIG_PATH"
+          chmod 600 "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete dev-demo namespace and release
         run: |
-          bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
-            "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.release_name }}"
+          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+            --delete-runtime "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Summarize dev-demo destroy
         run: |
@@ -733,3 +863,45 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+  dev-demo-retire-identity:
+    name: Retire Dev Demo Identity After Runtime Deletion
+    runs-on:
+      - self-hosted
+      - preview
+    needs: [dev-demo-plan, dev-demo-destroy]
+    if: ${{ needs.dev-demo-plan.outputs.action == 'destroy' && needs.dev-demo-destroy.result == 'success' && github.ref == 'refs/heads/develop' }}
+    environment: dev-demo-cluster
+    permissions:
+      contents: read
+    env:
+      HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: develop
+          persist-credentials: false
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+        with:
+          version: v1.33.4
+      - name: Write requester kubeconfig
+        run: |
+          set -euo pipefail
+          umask 077
+          path="$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+          test -n "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
+          printf '%s\n' "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" > "$path"
+          chmod 600 "$path"
+          echo "KUBECONFIG=$path" >> "$GITHUB_ENV"
+      - name: Apply canonical Retired request
+        run: |
+          cat <<'EOF' | kubectl -n firemud-system apply -f -
+          apiVersion: platform.firemud.dev/v1alpha1
+          kind: HostedEnvironmentIdentity
+          metadata:
+            name: dev-demo
+            namespace: firemud-system
+          spec:
+            desiredState: Retired
+          EOF

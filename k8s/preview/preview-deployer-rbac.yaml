@@ -3,11 +3,21 @@ kind: ServiceAccount
 metadata:
   name: preview-deployer
   namespace: kube-system
+  labels:
+    app.kubernetes.io/part-of: firemud
+    app.kubernetes.io/component: runtime-deployer
+    firemud.dev/managed-by: hosted-runtime-lifecycle
+    firemud.dev/controller-authority: excluded
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: preview-deployer
+  labels:
+    app.kubernetes.io/part-of: firemud
+    app.kubernetes.io/component: runtime-deployer
+    firemud.dev/managed-by: hosted-runtime-lifecycle
+    firemud.dev/controller-authority: excluded
 rules:
   - apiGroups: [""]
     resources:
@@ -19,9 +29,15 @@ rules:
       - persistentvolumeclaims
       - pods
       - pods/log
-      - pods/portforward
       - events
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The dev-demo account bootstrap uses a loopback-only Gateway port-forward.
+  # Keep that subresource grant explicit and limited to its create operation;
+  # the runtime deployer has no retained identity or certificate authority.
+  - apiGroups: [""]
+    resources:
+      - pods/portforward
+    verbs: ["create"]
   - apiGroups: ["apps"]
     resources:
       - deployments
@@ -57,23 +73,21 @@ rules:
     resources:
       - storageclasses
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["cert-manager.io"]
-    resources:
-      - certificates
-      - certificaterequests
-      - issuers
-      - clusterissuers
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["acme.cert-manager.io"]
-    resources:
-      - orders
-      - challenges
-    verbs: ["get", "list", "watch"]
+  # The runtime deployer deliberately has no certificate API authority.  The
+  # hosted identity controller owns Certificate lifecycles, and the
+  # fail-closed admission policy rejects its managed Secret names from this
+  # ServiceAccount even though ordinary application Secret access remains for
+  # legacy runtime bootstrap.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: preview-deployer
+  labels:
+    app.kubernetes.io/part-of: firemud
+    app.kubernetes.io/component: runtime-deployer
+    firemud.dev/managed-by: hosted-runtime-lifecycle
+    firemud.dev/controller-authority: excluded
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

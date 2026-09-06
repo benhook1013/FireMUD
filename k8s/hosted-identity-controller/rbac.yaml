@@ -1,0 +1,227 @@
+# Identity and runtime Secret/Certificate/deployment access is installed as an
+# exact per-environment Role by the controller during reconcile.  The operator
+# helper can establish one named scope for bootstrap/debug, but is not a
+# workflow permission and cannot enumerate environments.  The controller has
+# no wildcard data-plane grant over every preview's private material.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-hosted-identity-requester
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: lifecycle-requester
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+rules:
+  - apiGroups:
+      - platform.firemud.dev
+    resources:
+      - hostedenvironmentidentities
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-hosted-identity-controller
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+rules:
+  - apiGroups:
+      - platform.firemud.dev
+    resources:
+      - hostedenvironmentidentities
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - platform.firemud.dev
+    resources:
+      - hostedenvironmentidentities/status
+      - hostedenvironmentidentities/finalizers
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  # The shared gRPC CA bundle is a fixed source input.  The controller can read
+  # this one object but cannot create, update, list, or delete it.
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    resourceNames:
+      - firemud-grpc-ca
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-hosted-identity-requester
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: lifecycle-requester
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-hosted-identity-requester
+subjects:
+  - kind: ServiceAccount
+    name: firemud-hosted-identity-requester
+    namespace: firemud-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-hosted-identity-controller
+  namespace: firemud-system
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-hosted-identity-controller
+subjects:
+  - kind: ServiceAccount
+    name: firemud-hosted-identity-controller
+    namespace: firemud-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-hosted-identity-controller-namespace-lifecycle
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: firemud-hosted-identity-controller-namespace-lifecycle
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: firemud-hosted-identity-controller-namespace-lifecycle
+subjects:
+  - kind: ServiceAccount
+    name: firemud-hosted-identity-controller
+    namespace: firemud-system
+---
+# Kubernetes cannot use resourceNames to constrain CREATE and cannot inspect a
+# Role's rules during RBAC authorization.  The controller therefore has the
+# narrowly named scope-writer verbs below, while the fail-closed admission
+# policies enforce the exact derived Role/RoleBinding shape and namespace.  If
+# those policies are unavailable, the controller must remain paused.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: firemud-hosted-identity-scope-writer
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+rules:
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+    resourceNames:
+      - firemud-hosted-identity-scope
+      - firemud-hosted-runtime-scope
+    verbs:
+      - get
+      - update
+      - patch
+      - delete
+      - bind
+      - escalate
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+    # Role CREATE and its CREATE-time escalate check cannot be narrowed by
+    # resourceNames.  Named updates/bind checks are narrowed above; VAP
+    # validation is the remaining field/namespace boundary.
+    verbs:
+      - create
+      - escalate
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+    resourceNames:
+      - firemud-hosted-identity-scope
+      - firemud-hosted-runtime-scope
+    verbs:
+      - get
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: firemud-hosted-identity-scope-writer
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: firemud-hosted-identity-scope-writer
+subjects:
+  - kind: ServiceAccount
+    name: firemud-hosted-identity-controller
+    namespace: firemud-system

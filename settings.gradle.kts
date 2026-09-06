@@ -58,6 +58,10 @@ project(":tcp-proxy-service").projectDir = File("services/tcp-proxy-service")
 include("world-management-service")
 project(":world-management-service").projectDir = File("services/world-management-service")
 
+include("hosted-environment-identity-controller")
+project(":hosted-environment-identity-controller").projectDir =
+    File("services/hosted-environment-identity-controller")
+
 val includeLoadTesting = providers.gradleProperty("includeLoadTesting")
     .map(String::toBooleanStrictOrNull)
     .orElse(true)

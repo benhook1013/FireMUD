@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is partially implemented. Telnet preview proof exists, but the deployed browser path, shared semantic assertions, head-bound lease handling, isolation proof, and transport-complete acceptance remain gaps.
+This decision is partially implemented. Telnet preview proof exists, but the deployed browser path, shared semantic assertions, head-bound lease handling, isolation proof, and transport-complete acceptance remain gaps. The in-cluster hosted identity controller and runtime-first workflow contracts are implemented only as local/static integration evidence; no controller-backed hosted proof is claimed.
 
 ## Decision Record
 
@@ -30,6 +30,8 @@ The current hosted cluster reliably supports roughly one full-stack preview. Kee
 ## Decision
 
 PR previews remain disposable and reproducible. Eligibility is a prerequisite for allocation, not evidence that allocation succeeded. Each successfully allocated preview for an eligible new PR head receives a clean namespace and deterministic seed state; state persists only within that deployed head and is not backed up. The namespace is deleted when the PR closes, the preview is explicitly released, or its bounded renewable lease expires. Expiry is visible to the PR and never silently evicts an actively leased review session. The exact `preview:priority` label is the bounded operator-visible exception: while capacity is full, a currently labelled request may reclaim the oldest ordinary allocation but never another currently labelled allocation. Reclaim waits in the durable bounded non-cancelling lifecycle queue for any active deploy/proof lifecycle to finish, revalidates both label states immediately before deletion, and makes the displaced status and prior result visible on its pull request. Priority is an allocation decision at that serialized boundary, not a guarantee about GitHub's raw job-scheduling order.
+
+The disposable namespace is the runtime boundary. When the hosted identity controller is active, its separate retained identity namespace survives runtime redeploy, reclaim, explicit release, and lease expiry; identity retirement is requested separately and is performed only after runtime cleanup observes exact `NotFound`. The trusted workflow prepares and validates the runtime before requesting controller `Active`, while PR-controlled rendering remains credential-free. This lifecycle amendment is defined in [ADR 0182](./adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md).
 
 Eligible same-repository pull requests request allocation automatically; ordinary allocation remains first-come. A request that passes eligibility but is not allocated, including because capacity is exhausted or every allocation is priority-protected, reports `preview_unavailable`, never success. A slice that claims hosted preview proof must retain a successful result bound to its current head SHA.
 

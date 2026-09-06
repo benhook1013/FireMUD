@@ -159,7 +159,7 @@ spec:
         {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
         - name: telnet-tls
           secret:
-            secretName: {{ $.Values.previewStack.telnetTls.secretName }}
+            secretName: {{ include "firemud.telnetTlsSecretName" $ }}
         {{- end }}
       {{- end }}
 ---
@@ -179,7 +179,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and $port.nodePort (ne (default "standalone" $.Values.previewStack.certificateIdentity.mode) "hosted-controller") }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

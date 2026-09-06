@@ -5,14 +5,16 @@ metadata:
   name: firemud-preview
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
+  {{- if ne (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller" }}
   annotations:
     cert-manager.io/cluster-issuer: {{ .Values.previewStack.ingress.clusterIssuer | quote }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.previewStack.ingress.className | quote }}
   tls:
     - hosts:
         - {{ .Values.preview.hostname | quote }}
-      secretName: {{ .Values.previewStack.ingress.tlsSecretName | quote }}
+      secretName: {{ include "firemud.ingressTlsSecretName" . | quote }}
   rules:
     - host: {{ .Values.preview.hostname | quote }}
       http:

@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: hosted-environment-identity-controller
+
+server:
+  port: 8080
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+firemud:
+  hosted-identity:
+    activation-mode: paused
+    control-namespace: firemud-system
+    preview-domain: preview.firedevops.net
+    ingress-issuer: letsencrypt-prod
+    telnet-issuer: letsencrypt-prod
+    grpc-issuer: firemud-ca-issuer
+    ca-secret-name: firemud-grpc-ca
+    ingress-trust-anchor-sha256: ""
+    telnet-trust-anchor-sha256: ""
+    grpc-trust-anchor-sha256: ""
+    ingress-leaf-sha256: ""
+    telnet-leaf-sha256: ""
+    preview-head-annotation: firemud.dev/last-preview-head-sha
+    dev-demo-head-annotation: firemud.dev/last-dev-demo-head-sha
+    preview-telnet-port-annotation: firemud.dev/last-preview-telnet-port
+    dev-demo-telnet-port-annotation: firemud.dev/last-dev-demo-telnet-port
+    preview-telnet-port-base: 32000
+    dev-demo-telnet-port: 32016
+    reconcile-interval: 30s
+    grpc-renew-before: 7d

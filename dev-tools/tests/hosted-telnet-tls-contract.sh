@@ -11,11 +11,15 @@ python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --namespace pr-42 >"$TMP_DIR/rendered.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
+  --namespace pr-42 >"$TMP_DIR/rendered-standalone.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" STANDALONE_RENDERED="$TMP_DIR/rendered-standalone.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -27,7 +31,14 @@ root = Path(os.environ["ROOT_DIR"])
 sys.path.insert(0, str(root / "dev-tools" / "deploy"))
 import preflight
 
-documents = list(yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8")))
+hosted_documents = list(yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8")))
+assert not any(d.get("kind") == "Certificate" for d in hosted_documents), "hosted-controller mode still renders a Certificate"
+hosted_ingress = next(d for d in hosted_documents if d.get("kind") == "Ingress")
+assert "annotations" not in hosted_ingress.get("metadata", {}), "hosted-controller mode still renders a cert-manager ingress shim"
+hosted_service = next(d for d in hosted_documents if d.get("kind") == "Service" and d["metadata"]["name"] == "tcp-proxy-service")
+assert all("nodePort" not in port for port in hosted_service["spec"]["ports"]), "hosted-controller mode carries a workflow-selected NodePort"
+
+documents = list(yaml.safe_load_all(Path(os.environ["STANDALONE_RENDERED"]).read_text(encoding="utf-8")))
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
 

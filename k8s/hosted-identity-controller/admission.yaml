@@ -1,0 +1,529 @@
+# Admission is deliberately fail-closed.  RBAC limits what the controller and
+# requester can call; these policies also stop a different service account with
+# broad legacy runtime permissions from writing an identity object by name.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-main
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - platform.firemud.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - hostedenvironmentidentities
+        scope: Namespaced
+  validations:
+    - expression: "request.subResource == '' && request.namespace == 'firemud-system' && (request.operation == 'DELETE' || object.metadata.namespace == 'firemud-system')"
+      message: HostedEnvironmentIdentity is accepted only in firemud-system
+      reason: Forbidden
+    - expression: "(request.operation == 'DELETE' ? request.name : object.metadata.name).matches('^(dev-demo|pr-[1-9][0-9]*)$')"
+      message: HostedEnvironmentIdentity name must be dev-demo or pr-N
+      reason: Invalid
+    - expression: "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester'"
+      message: only the fixed hosted-identity requester may change the desired state
+      reason: Forbidden
+    - expression: "request.operation == 'DELETE' || object.spec.desiredState in ['Active', 'Retired']"
+      message: spec contains only desiredState Active or Retired
+      reason: Invalid
+    - expression: "request.operation != 'UPDATE' || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
+      message: desiredState is monotonic; Active may transition only to Retired
+      reason: Invalid
+    - expression: "request.operation != 'DELETE' || (oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
+      message: an identity may be deleted only after the controller reports Retired
+      reason: Forbidden
+    - expression: "request.operation == 'DELETE' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && ((request.operation == 'UPDATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.all(f, f == 'platform.firemud.dev/hosted-environment-identity'))) || (request.operation != 'UPDATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
+      message: requester metadata may not claim controller ownership or reserved firemud labels
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-subresources
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - platform.firemud.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - UPDATE
+        resources:
+          - hostedenvironmentidentities/status
+          - hostedenvironmentidentities/finalizers
+        scope: Namespaced
+  validations:
+    - expression: "request.namespace == 'firemud-system' && request.name.matches('^(dev-demo|pr-[1-9][0-9]*)$') && request.subResource in ['status', 'finalizers']"
+      message: controller subresource updates are limited to a canonical firemud-system identity
+      reason: Forbidden
+    - expression: "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
+      message: only the hosted-identity controller may write status or finalizers
+      reason: Forbidden
+    - expression: "request.subResource != 'status' || object.spec.desiredState == oldObject.spec.desiredState"
+      message: status updates may not change spec
+      reason: Forbidden
+    - expression: "request.subResource != 'finalizers' || (!has(object.metadata.finalizers) || object.metadata.finalizers.all(f, f == 'platform.firemud.dev/hosted-environment-identity'))"
+      message: only the controller finalizer is permitted
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-secret-boundary
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - secrets
+        scope: Namespaced
+  matchConditions:
+    - name: hosted-identity-secret-boundary
+      expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && (request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$'))) || ((request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && ((request.operation == 'DELETE' && (request.name == 'firemud-grpc-tls' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || request.name == 'firemud-grpc-tls-previous' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))) || (request.operation != 'DELETE' && (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls-previous' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$')))))"
+  validations:
+    - expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && ((request.operation == 'DELETE' && (request.name == 'firemud-grpc-tls' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && (request.name == 'firemud-grpc-tls-previous' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))) || (request.operation != 'DELETE' && has(object.metadata.labels) && object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' && object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] && object.metadata.labels['firemud.dev/retention'] == 'retained' && (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || ((request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && (object.metadata.name == 'firemud-grpc-tls-previous' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)-previous$'))))))) || (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && request.operation in ['CREATE', 'UPDATE'] && request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'cert-manager.io/v1' && ref.kind == 'Certificate' && ref.name == object.metadata.name))"
+      message: managed identity and runtime TLS Secrets are writable only by the controller or cert-manager for its owned identity Secret
+      reason: Forbidden
+    - expression: "request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' || (request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') && object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'cert-manager.io/v1' && ref.kind == 'Certificate' && ref.name == object.metadata.name))"
+      message: cert-manager may not write a TLS Secret outside its exact Certificate ownership boundary
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-certificate-boundary
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - cert-manager.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - certificates
+          - certificates/status
+        scope: Namespaced
+  matchConditions:
+    - name: hosted-identity-certificate-namespace
+      expression: "request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')"
+  validations:
+    - expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && request.subResource == '' && (request.operation == 'DELETE' || (has(object.metadata.labels) && object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' && object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'grpc'] && (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls') && object.spec.secretName == object.metadata.name && object.spec.privateKey.rotationPolicy == 'Always' && has(object.spec.usages) && object.spec.usages.size() > 0 && object.spec.usages.all(usage, usage in ['digital signature', 'key encipherment', 'server auth', 'client auth']))))) || (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' && request.subResource == 'status' && request.operation == 'UPDATE' && (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls)$') || object.metadata.name == 'firemud-grpc-tls') && object.spec == oldObject.spec)"
+      message: only the controller may manage exact hosted Certificate specs; cert-manager may update status without changing spec
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-scope-roles
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - rbac.authorization.k8s.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - roles
+        scope: Namespaced
+  # The controller is checked even for a wrong namespace/name so a broad RBAC
+  # grant cannot turn this policy into an optional convention.  For all other
+  # callers, only the exact derived scope names are guarded.
+  matchConditions:
+    - name: hosted-identity-scope-role-boundary
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        ((request.namespace == 'dev' || request.namespace == 'dev-identity' ||
+          request.namespace.matches('^pr-[1-9][0-9]*$') ||
+          request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+         ((request.operation == 'DELETE' &&
+           request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
+          (request.operation != 'DELETE' &&
+           object.metadata.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope'])))
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+        ((request.operation == 'DELETE' &&
+          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]*|pr-[1-9][0-9]*-identity)$') &&
+          request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
+         (request.operation != 'DELETE' &&
+          request.namespace == object.metadata.namespace &&
+          (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+          (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
+          (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+          has(object.metadata.labels) && object.metadata.labels.size() == 6 &&
+          object.metadata.labels['app.kubernetes.io/name'] == 'hosted-environment-identity-controller' &&
+          object.metadata.labels['app.kubernetes.io/component'] == 'controller-scope' &&
+          object.metadata.labels['app.kubernetes.io/part-of'] == 'firemud' &&
+          object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+          ((object.metadata.namespace == 'dev-identity' &&
+            object.metadata.name == 'firemud-hosted-identity-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
+            object.metadata.labels['firemud.dev/environment-class'] == 'dev-demo-cluster') ||
+           (object.metadata.namespace.matches('^pr-[1-9][0-9]*-identity$') &&
+            object.metadata.name == 'firemud-hosted-identity-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace.substring(0, object.metadata.namespace.size() - 9) &&
+            object.metadata.labels['firemud.dev/environment-class'] == 'pr-preview') ||
+           (object.metadata.namespace == 'dev' &&
+            object.metadata.name == 'firemud-hosted-runtime-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
+            object.metadata.labels['firemud.dev/environment-class'] == 'dev-demo-cluster') ||
+           (object.metadata.namespace.matches('^pr-[1-9][0-9]*$') &&
+            object.metadata.name == 'firemud-hosted-runtime-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace &&
+            object.metadata.labels['firemud.dev/environment-class'] == 'pr-preview')) &&
+          object.rules.size() == 6 &&
+          object.rules.all(r,
+            r.apiGroups.all(group, group != '*') &&
+            r.resources.all(resource, resource != '*') &&
+            r.verbs.all(verb, verb != '*') &&
+            (!has(r.nonResourceURLs) || r.nonResourceURLs.size() == 0)) &&
+          ((object.metadata.name == 'firemud-hosted-identity-scope' &&
+            object.metadata.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
+            object.rules.exists(r,
+              r.apiGroups == ['cert-manager.io'] &&
+              r.resources == ['certificates'] &&
+              r.verbs == ['list', 'watch'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
+            object.rules.exists(r,
+              r.apiGroups == ['cert-manager.io'] &&
+              r.resources == ['certificates'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), 'firemud-grpc-tls'] &&
+              r.verbs == ['get', 'update', 'patch', 'delete']) &&
+            object.rules.exists(r,
+              r.apiGroups == ['cert-manager.io'] &&
+              r.resources == ['certificates'] &&
+              r.verbs == ['create'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['secrets'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), 'firemud-grpc-tls-previous', 'firemud-grpc-ca'] &&
+              r.verbs == ['get']) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['secrets'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), 'firemud-grpc-tls', (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls-previous'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls-previous'), 'firemud-grpc-tls-previous'] &&
+              r.verbs == ['update', 'patch', 'delete']) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['secrets'] &&
+              r.verbs == ['create'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0))) ||
+           (object.metadata.name == 'firemud-hosted-runtime-scope' &&
+            object.metadata.namespace.matches('^(dev|pr-[1-9][0-9]*)$') &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['secrets'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), 'firemud-grpc-tls'] &&
+              r.verbs == ['get', 'update', 'patch', 'delete']) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['secrets'] &&
+              r.verbs == ['create'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
+            object.rules.exists(r,
+              r.apiGroups == ['apps'] &&
+              r.resources == ['deployments'] &&
+              r.verbs == ['list', 'watch'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
+            object.rules.exists(r,
+              r.apiGroups == ['apps'] &&
+              r.resources == ['deployments'] &&
+              r.resourceNames == ['account-service', 'automation-scripting-service', 'entity-management-service', 'game-design-service', 'game-logic-service', 'game-session-service', 'logging-admin-service', 'social-groups-service', 'spring-cloud-gateway', 'tcp-proxy-service', 'world-management-service'] &&
+              r.verbs == ['get', 'update', 'patch']) &&
+            object.rules.exists(r,
+              r.apiGroups == [''] &&
+              r.resources == ['services', 'pods'] &&
+              r.verbs == ['get', 'list', 'watch']) &&
+            object.rules.exists(r,
+              r.apiGroups == ['networking.k8s.io'] &&
+              r.resources == ['ingresses'] &&
+              r.verbs == ['get', 'list', 'watch']))))
+      message: only the controller may establish the exact derived identity/runtime scope Role; wildcards, extra rules, namespaces, and resource names are forbidden
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-identity-scope-rolebindings
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - rbac.authorization.k8s.io
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - rolebindings
+        scope: Namespaced
+  matchConditions:
+    - name: hosted-identity-scope-rolebinding-boundary
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        ((request.namespace == 'dev' || request.namespace == 'dev-identity' ||
+          request.namespace.matches('^pr-[1-9][0-9]*$') ||
+          request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+         ((request.operation == 'DELETE' &&
+           request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
+          (request.operation != 'DELETE' &&
+           object.metadata.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope'])))
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+        ((request.operation == 'DELETE' &&
+          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]*|pr-[1-9][0-9]*-identity)$') &&
+          request.name in ['firemud-hosted-identity-scope', 'firemud-hosted-runtime-scope']) ||
+         (request.operation != 'DELETE' &&
+          request.namespace == object.metadata.namespace &&
+          (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+          (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
+          (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+          has(object.metadata.labels) && object.metadata.labels.size() == 5 &&
+          object.metadata.labels['app.kubernetes.io/name'] == 'hosted-environment-identity-controller' &&
+          object.metadata.labels['app.kubernetes.io/component'] == 'controller-scope' &&
+          object.metadata.labels['app.kubernetes.io/part-of'] == 'firemud' &&
+          object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+          ((object.metadata.namespace == 'dev-identity' &&
+            object.metadata.name == 'firemud-hosted-identity-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
+            object.roleRef.name == 'firemud-hosted-identity-scope') ||
+           (object.metadata.namespace.matches('^pr-[1-9][0-9]*-identity$') &&
+            object.metadata.name == 'firemud-hosted-identity-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace.substring(0, object.metadata.namespace.size() - 9) &&
+            object.roleRef.name == 'firemud-hosted-identity-scope') ||
+           (object.metadata.namespace == 'dev' &&
+            object.metadata.name == 'firemud-hosted-runtime-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
+            object.roleRef.name == 'firemud-hosted-runtime-scope') ||
+           (object.metadata.namespace.matches('^pr-[1-9][0-9]*$') &&
+            object.metadata.name == 'firemud-hosted-runtime-scope' &&
+            object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace &&
+            object.roleRef.name == 'firemud-hosted-runtime-scope')) &&
+          object.roleRef.apiGroup == 'rbac.authorization.k8s.io' &&
+          object.roleRef.kind == 'Role' &&
+          object.subjects.size() == 1 &&
+          object.subjects[0].kind == 'ServiceAccount' &&
+          object.subjects[0].name == 'firemud-hosted-identity-controller' &&
+          object.subjects[0].namespace == 'firemud-system' &&
+          (!has(object.subjects[0].apiGroup) || object.subjects[0].apiGroup == ''))
+      message: only the fixed controller ServiceAccount may bind the exact derived scope Role in its matching namespace
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-system-namespace-guard
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups:
+          - ""
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - namespaces
+        scope: Cluster
+  matchConditions:
+    - name: hosted-system-namespace-only
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        (request.operation == 'DELETE' &&
+         (request.name == 'firemud-system' || request.name == 'dev-identity' || request.name.matches('^pr-[1-9][0-9]*-identity$'))) ||
+        (request.operation != 'DELETE' &&
+         (object.metadata.name == 'firemud-system' || object.metadata.name == 'dev-identity' || object.metadata.name.matches('^pr-[1-9][0-9]*-identity$')))
+  validations:
+    - expression: >-
+        (request.userInfo.groups.exists(group, group == 'system:masters') &&
+         ((request.operation == 'DELETE' && request.name == 'firemud-system') ||
+          (request.operation != 'DELETE' && object.metadata.name == 'firemud-system'))) ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         ((request.operation == 'DELETE' && request.name.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
+           (!has(oldObject.metadata.ownerReferences) || oldObject.metadata.ownerReferences.size() == 0) &&
+           (!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0) &&
+           (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.size() == 0) &&
+           has(oldObject.metadata.labels) &&
+           (oldObject.metadata.labels.size() == 4 ||
+            (oldObject.metadata.labels.size() == 5 &&
+             oldObject.metadata.labels['kubernetes.io/metadata.name'] == request.name)) &&
+           oldObject.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           oldObject.metadata.labels['firemud.dev/identity-name'] == (request.name == 'dev-identity' ? 'dev-demo' : request.name.substring(0, request.name.size() - 9)) &&
+           oldObject.metadata.labels['firemud.dev/environment-class'] == (request.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
+           oldObject.metadata.labels['firemud.dev/retention'] == 'retained') ||
+          (request.operation != 'DELETE' &&
+           object.metadata.name.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
+           (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+           (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
+           (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+           has(object.metadata.labels) &&
+           (object.metadata.labels.size() == 4 ||
+            (object.metadata.labels.size() == 5 &&
+             object.metadata.labels['kubernetes.io/metadata.name'] == object.metadata.name)) &&
+           object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/identity-name'] == (object.metadata.name == 'dev-identity' ? 'dev-demo' : object.metadata.name.substring(0, object.metadata.name.size() - 9)) &&
+           object.metadata.labels['firemud.dev/environment-class'] == (object.metadata.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
+           object.metadata.labels['firemud.dev/retention'] == 'retained')))
+      message: firemud-system requires system:masters; only the controller may manage exact retained identity Namespaces
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-main
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-main
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-subresources
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-subresources
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-secret-boundary
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-secret-boundary
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-certificate-boundary
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-certificate-boundary
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-system-namespace-guard
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-system-namespace-guard
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-scope-roles
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-scope-roles
+  validationActions:
+    - Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-identity-scope-rolebindings
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  policyName: firemud-hosted-identity-scope-rolebindings
+  validationActions:
+    - Deny

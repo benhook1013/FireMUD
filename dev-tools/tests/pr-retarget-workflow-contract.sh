@@ -256,6 +256,7 @@ image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 preview_janitor_path="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+hosted_identity_workflow_path="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
 preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
 
@@ -337,18 +338,8 @@ require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying w
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
-if grep -Eq '^concurrency:' "$preview_path"; then
-  echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
-  exit 1
-fi
-assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
+assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event.pull_request.number }}'
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
-  assert_job_contains preview.yml "$job" 'cancel-in-progress: false'
-  assert_job_contains preview.yml "$job" 'queue: max'
-  assert_job_contains preview.yml "$job" 'persist-credentials: false'
-done
 require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
 require_contains "$preview_janitor_path" 'cancel-in-progress: false'
 require_contains "$preview_janitor_path" 'queue: max'
@@ -356,22 +347,15 @@ if grep -Eq '^concurrency:' "$preview_janitor_path"; then
   echo "Preview janitor must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
-assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
-assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'
-assert_job_excludes preview.yml preview-plan 'write-preview-summary.sh'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'publish-preview-comment.js'
-  assert_job_contains preview.yml "$job" 'publishPreviewComment({'
-done
-assert_job_contains preview.yml preview-deploy 'mode: "deploying"'
-assert_job_contains preview.yml preview-deploy 'markerPolicy: "preserve-reclaimed"'
-assert_job_contains preview.yml preview-deploy 'statePolicy: "expected-open"'
-assert_job_contains preview.yml preview-destroy 'mode: "cleanup"'
-assert_job_contains preview.yml preview-destroy 'markerPolicy: "replace"'
-assert_job_contains preview.yml preview-destroy 'statePolicy ='
-assert_job_contains preview.yml preview-destroy '"expected-closed"'
-assert_job_contains preview.yml preview-destroy '"manual-any"'
+assert_job_excludes preview.yml preview-plan 'secrets.'
+assert_job_excludes preview.yml preview-deploy 'secrets.'
+require_contains "$preview_path" 'validate-preview-artifact.py'
+require_contains "$preview_path" 'sanitize "$rendered" "$sanitized"'
+require_contains "$preview_path" 'actions/upload-artifact@'
+if grep -Eq 'PREVIEW_(RUNTIME|KUBECONFIG)|HOSTED_IDENTITY_REQUESTER_KUBECONFIG|ensure-grpc-tls-secret|delete-hosted-namespace' "$preview_path"; then
+  echo "PR-controlled preview render must not receive hosted credentials or lifecycle helpers" >&2
+  exit 1
+fi
 for duplicate in \
   'const isBotAuthored' \
   'const isWorkflowComment' \
@@ -395,35 +379,32 @@ for helper in \
   'module.exports = { publishPreviewComment };'; do
   require_contains "$preview_comment_publisher_path" "$helper"
 done
-if [[ "$(grep -Fc 'publish-preview-comment.js' "$preview_path")" -ne 4 ]]; then
-  echo "Preview workflow must load the canonical publisher from all four comment steps" >&2
-  exit 1
-fi
-assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
-assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
-assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
-assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
-assert_job_contains preview.yml preview-destroy 'currentPullRequest.head?.sha !== expectedHeadSha'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal JavaScript template syntax.
-assert_job_contains preview.yml preview-destroy 'expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}'
-assert_job_contains preview.yml preview-destroy 'core.setFailed('
-require_ordered_sequence "$preview_path" \
-  'Revalidate preview cleanup target before deletion' \
-  'context.eventName === "pull_request" && context.payload.action === "closed"' \
-  '(requiresClosedState && currentPullRequest.state !== "closed") ||' \
-  'currentPullRequest.head?.sha !== expectedHeadSha' \
-  'Delete preview namespace and release'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'always() && !cancelled()'
+require_contains "$hosted_identity_workflow_path" 'workflow_run:'
+require_contains "$hosted_identity_workflow_path" 'pull_request_target:'
+require_contains "$hosted_identity_workflow_path" 'ref: ${{ github.event.repository.default_branch }}'
+require_contains "$hosted_identity_workflow_path" 'apiVersion: platform.firemud.dev/v1alpha1'
+require_contains "$hosted_identity_workflow_path" 'kind: HostedEnvironmentIdentity'
+require_contains "$hosted_identity_workflow_path" 'namespace: firemud-system'
+require_contains "$hosted_identity_workflow_path" 'desiredState: Active'
+require_contains "$hosted_identity_workflow_path" 'desiredState: Retired'
+require_contains "$hosted_identity_workflow_path" 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG'
+require_contains "$hosted_identity_workflow_path" 'PREVIEW_RUNTIME_KUBECONFIG'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.observedGeneration'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.ingress.revision'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.telnet.revision'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.grpc.revision'
+require_contains "$hosted_identity_workflow_path" 'validate-preview-artifact.py'
+require_contains "$hosted_identity_workflow_path" 'inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml"'
+require_contains "$hosted_identity_workflow_path" 'prune-stale-preview-namespaces.sh'
+for forbidden in 'ensure-grpc-tls-secret' 'ensure-preview-namespace' 'ensure-dev-demo-identity' 'mint-token'; do
+  if grep -Fq "$forbidden" "$hosted_identity_workflow_path"; then
+    echo "trusted hosted workflow must not call shell identity lifecycle helper: $forbidden" >&2
+    exit 1
+  fi
 done
-if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
-  echo "Preview workflow must update the canonical summary instead of clearing it" >&2
-  exit 1
-fi
-require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
-require_contains "$preview_path" '? "removed"'
-require_contains "$preview_path" 'mode: "deploying"'
-require_contains "$preview_path" 'mode: "cleanup"'
+for job in request-active deploy-runtime destroy-runtime retire-identity; do
+  assert_job_contains hosted-identity-request.yml "$job" 'persist-credentials: false'
+done
 for mode in deploying target unavailable success cleanup removed reclaimed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done
@@ -433,7 +414,7 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
+require_contains "$preview_reconciler_path" '--branch "${GITHUB_DEFAULT_BRANCH:-main}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"

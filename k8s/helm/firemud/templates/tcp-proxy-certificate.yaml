@@ -1,4 +1,4 @@
-{{- if and .Values.previewStack.enabled .Values.previewStack.telnetTls.enabled }}
+{{- if and .Values.previewStack.enabled .Values.previewStack.telnetTls.enabled (ne (default "standalone" .Values.previewStack.certificateIdentity.mode) "hosted-controller") }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
