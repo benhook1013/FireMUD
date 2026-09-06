@@ -160,16 +160,26 @@ jobs:
       - name: Resolve preview eligibility
         id: eligibility
         env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
           DERIVED_ACTION: ${{ steps.derive.outputs.action }}
           TARGET_STATE: ${{ steps.target-metadata.outputs.state }}
           TARGET_BASE_REF: ${{ steps.target-metadata.outputs.base_ref }}
           TARGET_AUTHOR: ${{ steps.target-metadata.outputs.author }}
+          DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            LABELS_JSON="$EVENT_LABELS_JSON"
+          else
+            LABELS_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.labels // null')"
+          fi
           python3 ./dev-tools/hosted/preview/preview-eligibility.py \
             --operation "$DERIVED_ACTION" \
             --state "$TARGET_STATE" \
             --base-ref "$TARGET_BASE_REF" \
-            --author "$TARGET_AUTHOR" >> "$GITHUB_OUTPUT"
+            --author "$TARGET_AUTHOR" \
+            --labels-json "$LABELS_JSON" >> "$GITHUB_OUTPUT"
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
@@ -197,6 +207,17 @@ jobs:
                 'Preview orchestration is skipped because the PR is not open.' \
                 '' \
                 'Deploy and retain operations only run for open preview-eligible PRs.'
+              ;;
+            preview-paused)
+              printf '%s\n' \
+                'Preview orchestration is paused by the preview:paused label.' \
+                '' \
+                'The label does not deploy a preview; scheduled reconciliation and' \
+                'retention also treat the preview as ineligible until the label is removed.'
+              ;;
+            malformed-label-metadata)
+              printf '%s\n' \
+                'Preview orchestration is skipped because trusted label metadata is missing or malformed.'
               ;;
             *)
               echo "Preview orchestration is skipped for this target."
@@ -235,6 +256,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Revalidate preview target labels before deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.state' <<<"$pull_request_json")" = open
+          labels_valid="$(jq -r '
+            if ((.labels? | type) == "array")
+              and all(.labels[]?; (type == "object") and ((.name? | type) == "string"))
+            then "true" else "false" end
+          ' <<<"$pull_request_json")"
+          [[ "$labels_valid" == true ]]
+          [[ "$(jq -r 'any(.labels[]?; .name == "preview:paused")' <<<"$pull_request_json")" == false ]]
 
       - name: Publish preview lifecycle state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -497,6 +534,23 @@ jobs:
             fi
             exit "$status"
           fi
+
+      - name: Revalidate preview target labels immediately before helm deploy
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.state' <<<"$pull_request_json")" = open
+          labels_valid="$(jq -r '
+            if ((.labels? | type) == "array")
+              and all(.labels[]?; (type == "object") and ((.name? | type) == "string"))
+            then "true" else "false" end
+          ' <<<"$pull_request_json")"
+          [[ "$labels_valid" == true ]]
+          [[ "$(jq -r 'any(.labels[]?; .name == "preview:paused")' <<<"$pull_request_json")" == false ]]
 
       - name: Deploy preview release
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}

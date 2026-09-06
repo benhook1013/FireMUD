@@ -343,6 +343,13 @@ if grep -Eq '^concurrency:' "$preview_path"; then
 fi
 assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+require_contains "$preview_path" 'preview:paused'
+require_contains "$preview_path" 'EVENT_LABELS_JSON:'
+require_contains "$preview_path" '--labels-json "$LABELS_JSON"'
+assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy'
+assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels immediately before helm deploy'
+require_contains "$preview_reconciler_path" 'preview:paused'
+require_contains "$preview_reconciler_path" 'malformed label metadata'
 for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
   assert_job_contains preview.yml "$job" 'cancel-in-progress: false'

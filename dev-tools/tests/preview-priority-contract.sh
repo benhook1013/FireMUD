@@ -89,10 +89,12 @@ case "$resource" in
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_TARGET_CALLS"
     priority="${FAKE_TARGET_PRIORITY:-true}"
+    paused="${FAKE_TARGET_PAUSED:-false}"
+    labels_valid="${FAKE_TARGET_LABELS_VALID:-valid}"
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
-    printf 'open\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority"
+    printf 'open\t%s\t%s\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority" "$paused" "$labels_valid"
     ;;
   */pulls/101)
     count=0
@@ -102,12 +104,14 @@ case "$resource" in
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_PR_101_CALLS"
     priority="${FAKE_PR_101_PRIORITY:-false}"
+    paused="${FAKE_PR_101_PAUSED:-false}"
+    labels_valid="${FAKE_PR_101_LABELS_VALID:-valid}"
     if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=true
     fi
-    printf 'open\thead-101\t%s\n' "$priority"
-    ;;
-  */pulls/102) printf 'open\thead-102\t%s\n' "${FAKE_PR_102_PRIORITY:-true}" ;;
+    printf 'open\thead-101\t%s\t%s\t%s\n' "$priority" "$paused" "$labels_valid"
+  ;;
+  */pulls/102) printf 'open\thead-102\t%s\t%s\tvalid\n' "${FAKE_PR_102_PRIORITY:-true}" "${FAKE_PR_102_PAUSED:-false}" ;;
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
@@ -214,14 +218,19 @@ reset_case() {
   rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
+  export FAKE_TARGET_PAUSED=false
+  export FAKE_TARGET_LABELS_VALID=valid
   export FAKE_TARGET_LOSES_PRIORITY=false
   export FAKE_PR_101_PRIORITY=false
+  export FAKE_PR_101_PAUSED=false
+  export FAKE_PR_101_LABELS_VALID=valid
   export FAKE_PR_101_GAINS_PRIORITY=false
   export FAKE_PR_101_OWNER=101
   export FAKE_PR_101_IMAGE='image-101'
   export FAKE_NAMESPACE_JSON_QUERY_FAIL=false
   export FAKE_NAMESPACE_JSON_PARSE_FAIL=false
   export FAKE_PR_102_PRIORITY=true
+  export FAKE_PR_102_PAUSED=false
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_QUERY_FAIL=false
   export FAKE_PR_901_OWNER=''
@@ -481,7 +490,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
@@ -577,7 +586,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -585,9 +594,9 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
-  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\n' \
-  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\n' \
-  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\n'
+  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n' \
+  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\n' \
+  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\n'
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -605,8 +614,30 @@ if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
 fi
 
 reset_case
+export FAKE_TARGET_PAUSED=true
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "paused target was allowed to enter preview allocation" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_LABELS_VALID=invalid
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "malformed target labels were treated as eligible" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\n'
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
@@ -628,7 +659,17 @@ test ! -e "$FAKE_DELETE_LOG"
 preview_workflow="$ROOT_DIR/.github/workflows/preview.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
+grep -q 'preview:paused' "$preview_workflow"
+grep -q 'PR_LABELS_JSON\|EVENT_LABELS_JSON' "$preview_workflow"
+grep -q 'preview:paused' "$eligibility_script"
+grep -q 'malformed-label-metadata' "$eligibility_script"
+grep -q 'labels_valid' "$reconciler_workflow"
+grep -q 'preview:paused' "$reconciler_workflow"
+grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -q 'preview:paused' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"

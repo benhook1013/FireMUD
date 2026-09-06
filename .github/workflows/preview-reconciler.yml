@@ -72,15 +72,41 @@ jobs:
           available_slots=$((max_active - active_count))
           dispatch_sent=false
           gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map(.name) | any(. == "preview:priority"))] | @tsv' \
+            --jq '
+              def labels_valid:
+                ((.labels? | type) == "array")
+                and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
+              .[]
+              | [
+                  (if (labels_valid and any(.labels[]?; .name == "preview:priority")) then 0 else 1 end),
+                  .number,
+                  .head.ref,
+                  .head.sha,
+                  .user.login,
+                  .base.ref,
+                  .state,
+                  (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
+                  (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
+                  (if labels_valid then "valid" else "invalid" end)
+                ]
+              | @tsv' \
             | sort -t $'\t' -k1,1n -k2,2n |
-          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority; do
+          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority is_paused labels_valid; do
+            if [[ "$labels_valid" != valid ]]; then
+              echo "Skipping preview reconcile for PR #${pr_number}: malformed label metadata"
+              continue
+            fi
+            labels_json='[]'
+            if [[ "$is_paused" == true ]]; then
+              labels_json='[{"name":"preview:paused"}]'
+            fi
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \
                 --state "$pr_state" \
                 --base-ref "$pr_base_ref" \
-                --author "$pr_author"
+                --author "$pr_author" \
+                --labels-json "$labels_json"
             )"
             eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
             reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
