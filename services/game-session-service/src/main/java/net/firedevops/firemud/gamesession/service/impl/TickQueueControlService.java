@@ -37,6 +37,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Service
 public class TickQueueControlService {
   private static final Logger classLogger = LoggingUtil.getLogger(TickQueueControlService.class);
+  static final String TICK_LOCK_KEY_PREFIX = "gamesession:tick:lock:";
   static final String PURGED_FAILURE_CODE = "ROLLBACK_PURGED";
   private static final Duration QUEUE_LOCK_TTL = Duration.ofSeconds(30);
   private static final Duration QUEUE_LOCK_WAIT = Duration.ofSeconds(5);
@@ -358,7 +359,7 @@ public class TickQueueControlService {
   }
 
   String lockKey(Long tenantId, Long sessionId) {
-    return "gamesession:tick:lock:" + tenantId + ":" + sessionId;
+    return TICK_LOCK_KEY_PREFIX + tenantId + ":" + sessionId;
   }
 
   String mutationLockKey(Long tenantId, Long sessionId) {

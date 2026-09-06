@@ -293,7 +293,8 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
-    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership, null)
+    return resolveReplayBatchForTickWithoutRedisReconciliation(
+            tenantId, gameInstanceId, replayEntries, ownership)
         .batch();
   }
 
@@ -312,7 +313,8 @@ final class TickStagingService {
       Long gameInstanceId,
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership) {
-    return resolveReplayBatchForTick(tenantId, gameInstanceId, replayEntries, ownership, null);
+    return resolveReplayBatchForTickWithoutRedisReconciliation(
+        tenantId, gameInstanceId, replayEntries, ownership);
   }
 
   ReplayResolution resolveReplayBatchForTick(
@@ -321,6 +323,10 @@ final class TickStagingService {
       List<TickQueuedCommandEnvelope> replayEntries,
       TickQueueControlService.OwnershipSnapshot ownership,
       TickQueueControlService.QueueLockLease lease) {
+    if (lease == null) {
+      throw new IllegalStateException(
+          "Active tick lease is required for pending replay projection reconciliation");
+    }
     ReplayResolution resolution =
         Objects.requireNonNull(
             transactionOperations.execute(
@@ -347,6 +353,30 @@ final class TickStagingService {
       } catch (RuntimeException ex) {
         throw new ReplayReconciliationFailure(resolution, ex);
       }
+    }
+    return resolution;
+  }
+
+  /**
+   * Compatibility overload for durable-only replay resolution. Callers that may need Redis
+   * reconciliation must use the lease-bearing overload so the lease is checked before the SQL
+   * transaction begins.
+   */
+  private ReplayResolution resolveReplayBatchForTickWithoutRedisReconciliation(
+      Long tenantId,
+      Long gameInstanceId,
+      List<TickQueuedCommandEnvelope> replayEntries,
+      TickQueueControlService.OwnershipSnapshot ownership) {
+    ReplayResolution resolution =
+        Objects.requireNonNull(
+            transactionOperations.execute(
+                status ->
+                    resolveReplayBatchInTransaction(
+                        tenantId, gameInstanceId, replayEntries, ownership)),
+            "Replay resolution transaction returned no result");
+    if (resolution.redisReconciliation() != null) {
+      throw new IllegalStateException(
+          "Lease-bearing replay resolution is required for Redis reconciliation");
     }
     return resolution;
   }
@@ -397,6 +427,8 @@ final class TickStagingService {
     boolean replaySolo = uniformMode(replayEntries, "pending replay");
     String replayManifest = selectedWorkManifest(ownership.regionId(), replaySelections);
     String replayDigest = shortHash(replayManifest);
+    // The digest comparison confirms pending projection identity before trusting the sealed
+    // manifest.
     if (replayDigest.equals(batch.getSelectedWorkManifestDigest())) {
       requireCurrentLocalAutomationPinTuple(tenantId, gameInstanceId, replaySelections);
       if (batch.isRequiresSoloTick() != replaySolo) {

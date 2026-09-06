@@ -25,7 +25,6 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
-import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
@@ -144,45 +143,6 @@ public class TickServiceImpl implements TickService {
     return result;
   }
 
-  private RedisTemplate<String, Object> createFencedScriptRedisTemplate() {
-    if (redisTemplate.getConnectionFactory() == null || redisTemplate.getKeySerializer() == null) {
-      return null;
-    }
-    RedisTemplate<String, Object> template = new RedisTemplate<>();
-    template.setConnectionFactory(redisTemplate.getConnectionFactory());
-    template.setKeySerializer(new FencedScriptKeySerializer(redisTemplate.getKeySerializer()));
-    if (redisTemplate.getValueSerializer() != null) {
-      template.setValueSerializer(redisTemplate.getValueSerializer());
-    }
-    template.afterPropertiesSet();
-    return template;
-  }
-
-  private static final class FencedScriptKeySerializer implements RedisSerializer<Object> {
-    private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
-    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
-
-    @SuppressWarnings("unchecked")
-    private FencedScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
-      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
-    }
-
-    private final RedisSerializer<Object> queueKeySerializer;
-
-    @Override
-    public byte[] serialize(Object value) {
-      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
-        return RAW_STRING_SERIALIZER.serialize(key);
-      }
-      return queueKeySerializer.serialize(value);
-    }
-
-    @Override
-    public Object deserialize(byte[] bytes) {
-      return queueKeySerializer.deserialize(bytes);
-    }
-  }
-
   @PostConstruct
   void init() {
     this.enqueueCounter = meterRegistry.counter("game_session_commands_enqueued_total");
@@ -201,7 +161,7 @@ public class TickServiceImpl implements TickService {
     this.stageScript = RedisScript.of(stageSrc.getResource(), Long.class);
     this.commitScript = RedisScript.of(commitSrc.getResource(), Long.class);
     this.rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
-    this.fencedScriptRedisTemplate = createFencedScriptRedisTemplate();
+    this.fencedScriptRedisTemplate = FencedRedisScriptSupport.createTemplate(redisTemplate);
   }
 
   private void awaitReplication() {

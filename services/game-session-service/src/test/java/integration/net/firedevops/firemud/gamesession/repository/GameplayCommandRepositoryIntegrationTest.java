@@ -239,6 +239,33 @@ class GameplayCommandRepositoryIntegrationTest {
   }
 
   @Test
+  void saveRejectsEveryIncompleteLocalAutomationScriptPinTupleAtDatabaseFence() {
+    List<GameplayCommand> invalidCommands =
+        List.of(
+            commandWithPinTuple("automation-missing-epoch", "patch-1", null, "request-1"),
+            commandWithPinTuple("automation-missing-owner", "patch-1", 7L, null),
+            commandWithPinTuple("automation-blank-owner", "patch-1", 7L, " "),
+            commandWithPinTuple("automation-zero-epoch", "patch-1", 0L, "request-1"),
+            commandWithPinTuple("automation-negative-epoch", "patch-1", -1L, "request-1"));
+
+    for (GameplayCommand command : invalidCommands) {
+      assertThatThrownBy(() -> repository.save(command))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("gameplay_command_script_pin_tuple_coherent");
+    }
+    assertThat(dsl.fetchCount(GAMEPLAY_COMMAND)).isZero();
+  }
+
+  private static GameplayCommand commandWithPinTuple(
+      String commandId, String patchVersion, Long pinEpoch, String ownerRequestId) {
+    GameplayCommand command = repositoryCommand(commandId, "AUTOMATION");
+    command.setScriptPatchVersion(patchVersion);
+    command.setScriptPinEpoch(pinEpoch);
+    command.setScriptPinControlPlaneRequestId(ownerRequestId);
+    return command;
+  }
+
+  @Test
   void routedIdempotencyConflictRemainsDistinctFromStalePointer() {
     insertAdmissionPointer("demo", "production", 17L, "SHARED", 7L);
     GameplayCommand first = automationCommand("routed-existing", "dispatch-routed-existing");

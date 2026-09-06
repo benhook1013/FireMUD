@@ -352,16 +352,22 @@ class TickStagingServiceTest {
     when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
         .thenReturn(Optional.empty());
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createBatch(
-                "FRESH_STAGE",
-                1L,
-                2L,
-                false,
-                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
-                List.of(new TickQueuedCommandEnvelope(false, "cmd-missing-instance", "look"))));
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-missing-instance", "look"))));
+
+    assertEquals(
+        "Authoritative game instance is unavailable for local Automation staging",
+        exception.getMessage());
 
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());
@@ -386,16 +392,21 @@ class TickStagingServiceTest {
     when(gameInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(1L, 2L))
         .thenReturn(Optional.of(incompleteInstance));
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createBatch(
-                "FRESH_STAGE",
-                1L,
-                2L,
-                false,
-                new TickQueueControlService.OwnershipSnapshot("region-a", 1L, "fence-a", false, 0L),
-                List.of(new TickQueuedCommandEnvelope(false, "cmd-incomplete-owner", "look"))));
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createBatch(
+                    "FRESH_STAGE",
+                    1L,
+                    2L,
+                    false,
+                    new TickQueueControlService.OwnershipSnapshot(
+                        "region-a", 1L, "fence-a", false, 0L),
+                    List.of(new TickQueuedCommandEnvelope(false, "cmd-incomplete-owner", "look"))));
+
+    assertEquals(
+        "authoritative game instance has an incoherent script pin tuple", exception.getMessage());
 
     verify(tickBatchRepository, never()).save(any());
     verify(tickEffectRepository, never()).saveAll(any());

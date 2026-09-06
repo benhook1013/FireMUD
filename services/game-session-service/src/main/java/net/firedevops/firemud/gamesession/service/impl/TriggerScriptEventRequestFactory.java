@@ -81,6 +81,7 @@ final class TriggerScriptEventRequestFactory {
       String eventType,
       String eventSchemaVersion,
       String scriptPatchVersion,
+      /** Zero represents an absent script pin epoch. */
       long scriptPinEpoch,
       String scriptPinControlPlaneRequestId,
       String scriptEventId,

@@ -119,4 +119,32 @@ class TriggerScriptEventRequestFactoryTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
   }
+
+  @Test
+  void rejectsNullOrBlankOwnerRequestIdWhenEpochAndPatchArePresent() {
+    for (String ownerRequestId : new String[] {null, "", " "}) {
+      TriggerScriptEventRequestFactory.CommonFields fields =
+          new TriggerScriptEventRequestFactory.CommonFields(
+              "tenant",
+              "instance",
+              "region",
+              1L,
+              "entity",
+              "onCommand",
+              "v1",
+              "patch-1",
+              1L,
+              ownerRequestId,
+              "event-1",
+              false,
+              TriggerMode.TRIGGER_MODE_NORMAL,
+              PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+              "snapshot",
+              "{}");
+
+      assertThatThrownBy(() -> TriggerScriptEventRequestFactory.builder(fields, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("SCRIPT_PIN_STATE_INVALID");
+    }
+  }
 }

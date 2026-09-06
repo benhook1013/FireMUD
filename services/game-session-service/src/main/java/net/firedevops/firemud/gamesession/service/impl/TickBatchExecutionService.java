@@ -101,7 +101,7 @@ final class TickBatchExecutionService {
     this.tickQueueControlService = tickQueueControlService;
     this.gameplayCommandExecutionFenceService = gameplayCommandExecutionFenceService;
     this.transactionOperations = transactionOperations;
-    this.fencedScriptRedisTemplate = createFencedScriptRedisTemplate();
+    this.fencedScriptRedisTemplate = FencedRedisScriptSupport.createTemplate(redisTemplate);
   }
 
   void restorePendingProjection(
@@ -189,45 +189,6 @@ final class TickBatchExecutionService {
                     ? payload.value()
                     : argument)
         .toArray();
-  }
-
-  private RedisTemplate<String, Object> createFencedScriptRedisTemplate() {
-    if (redisTemplate.getConnectionFactory() == null || redisTemplate.getKeySerializer() == null) {
-      return null;
-    }
-    RedisTemplate<String, Object> template = new RedisTemplate<>();
-    template.setConnectionFactory(redisTemplate.getConnectionFactory());
-    template.setKeySerializer(new FencedScriptKeySerializer(redisTemplate.getKeySerializer()));
-    if (redisTemplate.getValueSerializer() != null) {
-      template.setValueSerializer(redisTemplate.getValueSerializer());
-    }
-    template.afterPropertiesSet();
-    return template;
-  }
-
-  private static final class FencedScriptKeySerializer implements RedisSerializer<Object> {
-    private static final String TICK_LOCK_PREFIX = "gamesession:tick:lock:";
-    private static final StringRedisSerializer RAW_STRING_SERIALIZER = new StringRedisSerializer();
-
-    @SuppressWarnings("unchecked")
-    private FencedScriptKeySerializer(RedisSerializer<?> queueKeySerializer) {
-      this.queueKeySerializer = (RedisSerializer<Object>) queueKeySerializer;
-    }
-
-    private final RedisSerializer<Object> queueKeySerializer;
-
-    @Override
-    public byte[] serialize(Object value) {
-      if (value instanceof String key && key.startsWith(TICK_LOCK_PREFIX)) {
-        return RAW_STRING_SERIALIZER.serialize(key);
-      }
-      return queueKeySerializer.serialize(value);
-    }
-
-    @Override
-    public Object deserialize(byte[] bytes) {
-      return queueKeySerializer.deserialize(bytes);
-    }
   }
 
   static Object restoreQueuePayloadArgument(String value) {
@@ -480,6 +441,8 @@ final class TickBatchExecutionService {
         message,
         false);
     recordRequeuedActions(entries);
+    // One abandoned batch produces one metric even when its sealed entries are replayed together.
+    meterRegistry.counter("tick_incompatible_sealed_replay_total").increment();
   }
 
   void markBatchDrained(TickBatch batch, List<TickQueuedCommandEnvelope> entries) {

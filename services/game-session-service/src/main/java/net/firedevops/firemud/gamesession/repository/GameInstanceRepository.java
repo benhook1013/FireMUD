@@ -196,6 +196,7 @@ public class GameInstanceRepository {
       String reason,
       String expectedPinKind,
       Long expectedScriptPinEpoch) {
+    validateOperationKind(operationKind);
     if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
       throw new IllegalArgumentException("control_plane_request_id is required");
     }
@@ -400,6 +401,7 @@ public class GameInstanceRepository {
       String expectedPinKind,
       Long expectedScriptPinEpoch,
       String errorCode) {
+    validateOperationKind(operationKind);
     if (controlPlaneRequestId == null || controlPlaneRequestId.isBlank()) {
       throw new IllegalArgumentException("control_plane_request_id is required");
     }
@@ -608,6 +610,17 @@ public class GameInstanceRepository {
 
   private boolean canDeriveRepin(String operationKind) {
     return "SET".equals(operationKind);
+  }
+
+  private void validateOperationKind(String operationKind) {
+    if (operationKind == null || operationKind.isBlank()) {
+      throw new IllegalArgumentException("operation_kind is required");
+    }
+    if (!"SET".equals(operationKind)
+        && !"ROLLBACK".equals(operationKind)
+        && !"REPIN".equals(operationKind)) {
+      throw new IllegalArgumentException("operation_kind is not supported");
+    }
   }
 
   private boolean expectedPinMatches(

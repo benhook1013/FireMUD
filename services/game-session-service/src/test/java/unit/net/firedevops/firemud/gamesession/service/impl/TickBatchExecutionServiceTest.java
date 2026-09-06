@@ -357,6 +357,22 @@ class TickBatchExecutionServiceTest {
   }
 
   @Test
+  void markBatchIncompatibleReplayAbandonsBatchAndIncrementsOneMetric() {
+    TickBatch batch = new TickBatch();
+    batch.setTickBatchId("tb-incompatible");
+    batch.setTenantId(1L);
+    batch.setGameInstanceId(2L);
+    batch.setRegionId("2");
+    batch.setRegionEpoch(1L);
+
+    service.markBatchIncompatibleReplay(batch, List.of(), "sealed replay evidence is incompatible");
+
+    assertEquals("ABANDONED", batch.getStatus());
+    assertEquals("INCOMPATIBLE_SEALED_REPLAY", batch.getFailureCode());
+    assertEquals(1.0, meterRegistry.get("tick_incompatible_sealed_replay_total").counter().count());
+  }
+
+  @Test
   void executeDurableEffectsPreservesClaimedDueTupleWhenStaleFenceRequeues() {
     TickBatch batch = new TickBatch();
     batch.setTickBatchId("tb-stale");

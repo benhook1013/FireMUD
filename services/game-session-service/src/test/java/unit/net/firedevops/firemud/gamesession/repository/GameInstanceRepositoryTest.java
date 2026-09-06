@@ -10,16 +10,20 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import org.assertj.core.api.Assertions;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.RecordMapper;
+import org.jooq.SQLDialect;
 import org.jooq.SelectConditionStep;
 import org.jooq.SelectFieldOrAsterisk;
 import org.jooq.SelectForUpdateOfStep;
 import org.jooq.SelectJoinStep;
 import org.jooq.SelectSelectStep;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class GameInstanceRepositoryTest {
   @Test
@@ -39,6 +43,11 @@ class GameInstanceRepositoryTest {
 
     assertEquals(Optional.empty(), repository.findByTenantIdAndGameInstanceIdForUpdate(3L, 7L));
 
+    ArgumentCaptor<Condition> conditionCaptor = ArgumentCaptor.forClass(Condition.class);
+    verify(from).where(conditionCaptor.capture());
+    String renderedCondition =
+        DSL.using(SQLDialect.POSTGRES).renderInlined(conditionCaptor.getValue());
+    Assertions.assertThat(renderedCondition).contains("\"tenant_id\" = 3").contains("\"id\" = 7");
     verify(where).forUpdate();
   }
 
