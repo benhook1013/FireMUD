@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 
 class ScriptEventIngressAuditRepositoryTest {
   private static final String REQUEST_DIGEST = "a".repeat(64);
+  private static final Instant FIXED_NOW = Instant.parse("2026-08-01T00:01:00Z");
 
   @Test
   void rejectsMismatchedPinTupleBeforeSelectingConflictTarget() {
@@ -210,7 +211,9 @@ class ScriptEventIngressAuditRepositoryTest {
           Collections.addAll(fields, SCRIPT_EVENT_INGRESS_AUDIT.fields());
           Record returned = resultDsl.newRecord(fields.toArray(new Field<?>[0]));
           returned.from(row);
-          returned.set(SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT, OffsetDateTime.now());
+          returned.set(
+              SCRIPT_EVENT_INGRESS_AUDIT.CLAIM_STARTED_AT,
+              OffsetDateTime.ofInstant(FIXED_NOW, java.time.ZoneOffset.UTC));
           Result<Record> result = resultDsl.newResult(fields.toArray(new Field<?>[0]));
           result.add(returned);
           return new MockResult[] {new MockResult(1, result)};
@@ -222,10 +225,10 @@ class ScriptEventIngressAuditRepositoryTest {
     claim.setId(12L);
     claim.setRowVersion(4);
     claim.setSourceState("IN_PROGRESS");
-    claim.setClaimStartedAt(Instant.now().minusSeconds(60));
+    claim.setClaimStartedAt(FIXED_NOW.minusSeconds(60));
 
     Instant staleBefore = Instant.parse("2026-08-01T00:00:30Z");
-    Instant now = Instant.parse("2026-08-01T00:01:00Z");
+    Instant now = FIXED_NOW;
     Optional<ScriptEventIngressAudit> reclaimed =
         repository.reclaimStaleInProgress(claim, staleBefore, now);
 
@@ -254,7 +257,7 @@ class ScriptEventIngressAuditRepositoryTest {
     claim.setId(12L);
     claim.setRowVersion(4);
     claim.setSourceState("IN_PROGRESS");
-    claim.setClaimStartedAt(Instant.now());
+    claim.setClaimStartedAt(FIXED_NOW);
 
     assertThat(repository.renewClaimIfCurrent(claim, now)).isTrue();
     assertThat(sqlRef.get()).contains("update", "claim_started_at", "row_version", "source_state");

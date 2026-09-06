@@ -17,6 +17,20 @@ class ScriptEventIngressRequestDigestTest {
   }
 
   @Test
+  void treatsAbsentBlankAndJsonNullPayloadsAsTheSameSemanticPayload() {
+    TriggerScriptEventRequest absent = request("").toBuilder().clearPayloadJson().build();
+    TriggerScriptEventRequest blank = request("   ");
+    TriggerScriptEventRequest jsonNull = request("null");
+
+    String absentDigest =
+        ScriptEventIngressRequestDigest.compute(absent, "v1", "game-session-service");
+    assertThat(ScriptEventIngressRequestDigest.compute(blank, "v1", "game-session-service"))
+        .isEqualTo(absentDigest);
+    assertThat(ScriptEventIngressRequestDigest.compute(jsonNull, "v1", "game-session-service"))
+        .isEqualTo(absentDigest);
+  }
+
+  @Test
   void bindsOwnerRequestEvidenceSoChangedIdCannotReplayTheClaim() {
     TriggerScriptEventRequest original = request("{\"a\":1}");
     TriggerScriptEventRequest changedOwner =

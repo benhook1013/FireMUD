@@ -122,6 +122,70 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(conflictTarget(insertSql.get()))
         .contains("event_id")
         .doesNotContain("script_pin_epoch", "script_pin_control_plane_request_id");
+    assertThat(insertSql)
+        .hasValueSatisfying(
+            sql -> {
+              int updateStart = sql.indexOf(" do update");
+              int whereStart = sql.indexOf(" where ", updateStart);
+              assertThat(updateStart).isGreaterThanOrEqualTo(0);
+              assertThat(whereStart).isGreaterThan(updateStart);
+              assertThat(sql.substring(updateStart, whereStart))
+                  .doesNotContain(
+                      "tenant_id",
+                      "game_instance_id",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "script_id",
+                      "binding_id",
+                      "plugin_id",
+                      "plugin_version_id",
+                      "work_item_id",
+                      "command_ordinal",
+                      "automation_dispatch_id",
+                      "target_game_instance_id",
+                      "target_region_id",
+                      "target_region_epoch",
+                      "target_entity_id",
+                      "playable_state_scope",
+                      "world_slug",
+                      "realm_slug",
+                      "pointer_version",
+                      "source_kind",
+                      "source_state",
+                      "source_ordinal",
+                      "source_due_tick_id",
+                      "source_due_at_ms",
+                      "emitted_command_text");
+              assertThat(sql.substring(whereStart))
+                  .contains(
+                      "event_id",
+                      "tenant_id",
+                      "game_instance_id",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "script_pin_control_plane_request_id",
+                      "script_id",
+                      "binding_id",
+                      "plugin_id",
+                      "plugin_version_id",
+                      "work_item_id",
+                      "command_ordinal",
+                      "automation_dispatch_id",
+                      "target_game_instance_id",
+                      "target_region_id",
+                      "target_region_epoch",
+                      "target_entity_id",
+                      "playable_state_scope",
+                      "world_slug",
+                      "realm_slug",
+                      "pointer_version",
+                      "source_kind",
+                      "source_state",
+                      "source_ordinal",
+                      "source_due_tick_id",
+                      "source_due_at_ms",
+                      "emitted_command_text");
+            });
   }
 
   @Test
@@ -263,12 +327,118 @@ class ScriptHandoffEventRepositoryTest {
             sql -> {
               int whereStart = sql.indexOf(" where ");
               assertThat(whereStart).isGreaterThanOrEqualTo(0);
+              assertThat(sql.substring(0, whereStart))
+                  .doesNotContain(
+                      "event_id",
+                      "tenant_id",
+                      "game_instance_id",
+                      "script_patch_version",
+                      "script_pin_epoch",
+                      "script_id",
+                      "binding_id",
+                      "plugin_id",
+                      "plugin_version_id",
+                      "work_item_id",
+                      "command_ordinal",
+                      "automation_dispatch_id",
+                      "target_game_instance_id",
+                      "target_region_id",
+                      "target_region_epoch",
+                      "target_entity_id",
+                      "playable_state_scope",
+                      "world_slug",
+                      "realm_slug",
+                      "pointer_version",
+                      "source_kind",
+                      "source_state",
+                      "source_ordinal",
+                      "source_due_tick_id",
+                      "source_due_at_ms",
+                      "emitted_command_text");
               assertThat(sql.substring(whereStart))
                   .contains(
+                      "event_id",
+                      "tenant_id",
+                      "game_instance_id",
                       "row_version",
                       "script_patch_version",
                       "script_pin_epoch",
-                      "script_pin_control_plane_request_id");
+                      "script_pin_control_plane_request_id",
+                      "script_id",
+                      "binding_id",
+                      "plugin_id",
+                      "plugin_version_id",
+                      "work_item_id",
+                      "command_ordinal",
+                      "automation_dispatch_id",
+                      "target_game_instance_id",
+                      "target_region_id",
+                      "target_region_epoch",
+                      "target_entity_id",
+                      "playable_state_scope",
+                      "world_slug",
+                      "realm_slug",
+                      "pointer_version",
+                      "source_kind",
+                      "source_state",
+                      "source_ordinal",
+                      "source_due_tick_id",
+                      "source_due_at_ms",
+                      "emitted_command_text");
+            });
+  }
+
+  @Test
+  void treatsEventIdAsImmutableOnExistingIdUpdate() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("update")) {
+            updateSql.set(sql);
+            return new MockResult[] {new MockResult(0)};
+          }
+          ScriptHandoffEventsRecord row = new ScriptHandoffEventsRecord();
+          row.setId(9L);
+          row.setEventId("event-original");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-1");
+          row.setScriptPinEpoch(2L);
+          row.setScriptPinControlPlaneRequestId("owner-1");
+          row.setHandoffOutcome("enqueued");
+          row.setRowVersion(0);
+          Record returned = resultDsl.newRecord(SCRIPT_HANDOFF_EVENTS.fields());
+          returned.from(row);
+          Result<Record> result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent changed = new ScriptHandoffEvent();
+    changed.setId(9L);
+    changed.setEventId("event-replacement");
+    changed.setTenantId("tenant-1");
+    changed.setGameInstanceId("game-1");
+    changed.setScriptPatchVersion("patch-1");
+    changed.setScriptPinEpoch(2L);
+    changed.setScriptPinControlPlaneRequestId("owner-1");
+    changed.setHandoffOutcome("enqueued");
+
+    assertThatThrownBy(() -> repository.save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Handoff event immutable identity conflict");
+    assertThat(updateSql)
+        .hasValueSatisfying(
+            sql -> {
+              int whereStart = sql.indexOf(" where ");
+              assertThat(whereStart).isGreaterThanOrEqualTo(0);
+              assertThat(sql.substring(0, whereStart)).doesNotContain("event_id =");
+              assertThat(sql.substring(whereStart)).contains("event_id", "row_version");
             });
   }
 

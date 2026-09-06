@@ -700,7 +700,7 @@ Inputs:
 
 Outputs:
 
-- **Target-state output:** newest-first dead-letter entries contain `workItemId`, the Automation-owned `failureGeneration`, the exact stored owner tuple (`scriptPatchVersion`, `scriptPinEpoch`, `scriptPinControlPlaneRequestId`), Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, `updatedAt`, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted dead-letter row scope.
+- **Target-state output:** newest-first dead-letter entries contain `workItemId`, the Automation-owned `failureGeneration`, the exact stored owner tuple (`scriptPatchVersion`, `scriptPinEpoch`, `scriptPinControlPlaneRequestId`), Trigger Identity fields, resolved `playableStateScope`, script/event identity, `status`, bounded failure/cancel reason, `createdAt`, `updatedAt`, and the current owned runtime scope (`currentRuntimeGameInstanceId`, `currentRuntimeRegionId`, `currentRuntimeRegionEpoch`) plus the current owned routing bundle (`currentRuntimePlayableStateScope`, `currentRuntimeWorldSlug`, `currentRuntimeRealmSlug`, `currentRuntimePointerVersion`) and stale-scope/routing signaling beside the persisted dead-letter row scope. Tenant-readiness `onLoad` rows are the explicit pre-instance exception: `gameInstanceId`, `scriptPinEpoch`, and `scriptPinControlPlaneRequestId` are absent/null rather than empty, zero, or fabricated instance-owner evidence.
 
 Boundary rule:
 

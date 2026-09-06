@@ -367,6 +367,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   @Override
+  @Transactional(readOnly = true)
   public List<PatchInstanceRolloutEventSummary> listPatchInstanceRolloutEvents(
       String tenantId,
       String gameInstanceId,

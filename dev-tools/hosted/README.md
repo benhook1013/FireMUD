@@ -10,7 +10,7 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 
 - `preview/`
   - PR-preview-only helpers
-  - capacity checks, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
+  - capacity allocation and bounded priority reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
 
 - `dev-demo/`
   - fixed `develop` environment helpers
