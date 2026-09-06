@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamelogic.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -105,7 +106,7 @@ class MoveAggregationServiceTest {
     assertThat(result.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.getError().getMessage())
         .contains("room_instance.room_instance_id must be a runtime room id like R-1021");
-    verify(worldStub, org.mockito.Mockito.never()).getRoomSnapshot(any());
+    verify(worldStub, never()).getRoomSnapshot(any());
   }
 
   @Test
@@ -147,6 +148,42 @@ class MoveAggregationServiceTest {
     assertThat(result.getDestinationRoomInstance().getGameInstanceId())
         .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
     assertThat(result.getDestinationRoomInstance().getRoomInstanceId()).isEqualTo("R-3042");
+  }
+
+  @Test
+  void resolvePrefersNonBlankSnapshotTenantOverRequestTenant() {
+    RoomSnapshot snapshot =
+        RoomSnapshot.newBuilder()
+            .setTenantId("snapshot-tenant")
+            .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+            .addExits(
+                RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
+                    .setLabel("NORTH")
+                    .setTargetRoomInstanceId("R-3042")
+                    .build())
+            .build();
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId("request-tenant")
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId("request-tenant")
+                        .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                        .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                        .build())
+                .setDirection("north")
+                .build());
+
+    assertThat(result.getSuccess()).isTrue();
+    assertThat(result.getDestinationRoomInstance().getTenantId()).isEqualTo("snapshot-tenant");
   }
 
   @Test

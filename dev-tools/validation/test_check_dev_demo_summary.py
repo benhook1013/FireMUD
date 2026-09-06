@@ -151,12 +151,23 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_rejects_bootstrap_credential_secret_creation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest + "\nkubectl -n \"${PREVIEW_NAMESPACE}\" create secret generic dev-demo-bootstrap-env"
+        invalid_manifest = bootstrap_manifest + "\nkubectl -n \"${PREVIEW_NAMESPACE}\" create secret generic unrelated-resource"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(AssertionError, "must not create or mount credential Secret"):
                 self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_image_pull_secret_reference(self):
+        bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"].update(
+                imagePullSecrets=[{"name": "ghcr-preview-pull"}]
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_legacy_player_bootstrap_payload(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -367,11 +378,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_bootstrap_manifest_with_credential_env_from(self):
-        bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = bootstrap_manifest.replace(
-            "      volumeMounts:",
-            "      envFrom:\n        - secretRef:\n            name: dev-demo-bootstrap-env\n      volumeMounts:",
-            1,
+        invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
+            lambda pod: pod["spec"]["containers"][0].update(
+                envFrom=[{"secretRef": {"name": "dev-demo-bootstrap-env"}}]
+            )
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

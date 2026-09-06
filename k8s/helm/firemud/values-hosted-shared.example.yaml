@@ -401,7 +401,6 @@ previewStack:
       healthPort: 8080
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
-        TCP_PROXY_TELNET_MODE: "DIRECT_TLS"
         # __TCP_PROXY_GATEWAY_BASE_URL_LINE__
         TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
         TCP_PROXY_DEFAULT_REALM_SLUG: "production"

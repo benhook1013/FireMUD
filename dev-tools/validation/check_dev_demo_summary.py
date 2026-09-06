@@ -97,6 +97,11 @@ BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-
 BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
     "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
 )
+NON_CREDENTIAL_SECRET_KEYS = frozenset({"imagepullsecrets"})
+BOOTSTRAP_SECRET_CREATE_COMMAND = re.compile(
+    r"\bkubectl\b[^;&|]*\bcreate\s+secret\s+generic\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -550,9 +555,14 @@ def _contains_mapping_key(value: object, key: str) -> bool:
 
 
 def _find_secret_mapping_key(value: object) -> str | None:
+    """Find a credential-bearing Secret key while allowing image pull references."""
     if isinstance(value, dict):
         for key, nested in value.items():
-            if isinstance(key, str) and "secret" in key.casefold():
+            if (
+                isinstance(key, str)
+                and "secret" in key.casefold()
+                and key.casefold() not in NON_CREDENTIAL_SECRET_KEYS
+            ):
                 return key
             found = _find_secret_mapping_key(nested)
             if found is not None:
@@ -669,7 +679,7 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo account bootstrap must reject empty credentials"
         )
-    if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or "create secret generic dev-demo-bootstrap-env" in bootstrap_manifest:
+    if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or BOOTSTRAP_SECRET_CREATE_COMMAND.search(normalized):
         raise AssertionError("dev-demo session pod must not create or mount credential Secret material")
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:

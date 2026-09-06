@@ -61,7 +61,8 @@ These manifests prepare the preview cluster itself. The repository now also cont
 
 The dev-demo credential-bearing account bootstrap runs on the self-hosted runner
 through the Kubernetes API: it first fail-closes on
-`kubectl auth can-i create pods/portforward`, then uses a loopback-only
+the namespace-scoped
+`kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}"`, then uses a loopback-only
 `kubectl port-forward --address 127.0.0.1 service/spring-cloud-gateway <port>:80`.
 Only the non-credential session/world bootstrap remains in the short-lived
 in-cluster pod; that pod receives the account-id ConfigMap only and never a

@@ -195,6 +195,7 @@ assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "dis
 disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
+assert "TCP_PROXY_TELNET_MODE" not in disabled_env, "disabled TLS still renders DIRECT_TLS mode"
 empty_pull_secret_documents = list(yaml.safe_load_all(Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"]).read_text(encoding="utf-8")))
 assert sum(d.get("kind") == "Deployment" for d in empty_pull_secret_documents) > 0, "empty imagePullSecrets omitted Deployments"
 spring_profile_documents = list(yaml.safe_load_all(Path(os.environ["SPRING_PROFILE_RENDERED"]).read_text(encoding="utf-8")))
@@ -209,5 +210,6 @@ spring_profile_env = {
 assert spring_profile_env["TCP_PROXY_TLS_ENABLED"] == "true", "spring-profile Telnet TLS env was omitted"
 assert spring_profile_env["TCP_PROXY_TLS_CERT"] == "/telnet-tls/tls.crt"
 assert spring_profile_env["TCP_PROXY_TLS_KEY"] == "/telnet-tls/tls.key"
+assert spring_profile_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS"
 print("hosted Telnet direct-TLS chart contract passed")
 PY
