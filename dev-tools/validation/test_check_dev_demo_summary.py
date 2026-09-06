@@ -183,6 +183,13 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_accepts_account_id_file_plumbing_for_session_handoff(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
+        account_id_markers = (
+            '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
+            "account_file.write(str(account_id))",
+        )
+        for marker in account_id_markers:
+            self.assertIn(marker, self.validator.BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS)
+            self.assertIn(marker, bootstrap_manifest)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, bootstrap_manifest)
@@ -190,7 +197,11 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_validate_workflow_requires_text_account_id_handoff(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        conversion = "account_file.write(str(account_id))"
+        conversion = next(
+            marker
+            for marker in self.validator.BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS
+            if marker == "account_file.write(str(account_id))"
+        )
         self.assertIn(conversion, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
             conversion, "account_file.write(account_id)", 1

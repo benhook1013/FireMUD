@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
 import java.util.Objects;
@@ -116,7 +117,25 @@ public class MoveCommandHandler {
           return new PreparedMoveCommandResult(
               CommandEnqueueResult.success(), null, updatedContext);
         }
-        LookResult destinationLook = lookCommandHandler.resolveLook(updatedContext);
+        LookResult destinationLook;
+        try {
+          destinationLook = lookCommandHandler.resolveLook(updatedContext);
+        } catch (StatusRuntimeException ex) {
+          String code = LookCommandHandler.mapStatusToError(ex);
+          String message =
+              StringUtils.hasText(ex.getStatus().getDescription())
+                  ? ex.getStatus().getDescription()
+                  : "Move destination unavailable";
+          return failureResult(
+              code,
+              message,
+              moveErrorMessageKey(code),
+              Map.of(),
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              ex);
+        }
         if (destinationLook.hasError()) {
           ErrorDetail error = destinationLook.getError();
           String code = StringUtils.hasText(error.getCode()) ? error.getCode() : "MOVE_UNAVAILABLE";
@@ -255,6 +274,7 @@ public class MoveCommandHandler {
       case "WORLD_UNAVAILABLE" -> "error.move.world-unavailable";
       case "ENTITY_UNAVAILABLE" -> "error.move.entity-unavailable";
       case "NOT_AUTHORIZED" -> "error.move.not-authorized";
+      case "ROOM_NOT_FOUND", "LOOK_UNAVAILABLE" -> "error.move.destination-unavailable";
       case "MOVE_UNAVAILABLE" -> "error.move.unavailable";
       default -> null;
     };

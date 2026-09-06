@@ -59,8 +59,6 @@ PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
     re.DOTALL,
 )
 BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
-    "cleanup_bootstrap_secret() {",
-    'kubectl -n "${PREVIEW_NAMESPACE}" delete secret dev-demo-bootstrap-env --ignore-not-found',
     "cleanup_bootstrap_resources() {",
     "trap cleanup_bootstrap_resources EXIT",
     "trap 'exit 130' INT",
@@ -95,8 +93,7 @@ BOOTSTRAP_CREDENTIAL_VALIDATION = """for credential in DEMO_SMOKE_EMAIL DEMO_SMO
 done"""
 BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
   kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
-  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
-  cleanup_bootstrap_secret"""
+  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true"""
 BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
     "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
 )
@@ -677,7 +674,7 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(
-            "dev-demo bootstrap must remove its credential secret after successful pod logging"
+            "dev-demo bootstrap must remove its temporary resources after successful pod logging"
         )
 
     player_bootstrap_requests = list(

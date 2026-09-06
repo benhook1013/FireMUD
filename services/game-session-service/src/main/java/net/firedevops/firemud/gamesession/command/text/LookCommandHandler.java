@@ -171,7 +171,7 @@ public final class LookCommandHandler {
         context, roomId, StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
   }
 
-  private String mapStatusToError(StatusRuntimeException ex) {
+  static String mapStatusToError(StatusRuntimeException ex) {
     Status.Code code = ex.getStatus().getCode();
     String description = ex.getStatus().getDescription();
     return switch (code) {

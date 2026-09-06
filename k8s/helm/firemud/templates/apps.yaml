@@ -49,6 +49,14 @@ spec:
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
             {{- end }}
+            {{- if and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+            - name: TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: TCP_PROXY_TLS_CERT
+              value: /telnet-tls/tls.crt
+            - name: TCP_PROXY_TLS_KEY
+              value: /telnet-tls/tls.key
+            {{- end }}
             {{- range $key, $value := $service.extraEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}

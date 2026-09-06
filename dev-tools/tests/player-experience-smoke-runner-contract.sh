@@ -132,7 +132,7 @@ for option in ("telnet_server_hostname", "telnet_ca_file"):
             invalid_plaintext, {"telnet"}, simulate=False
         )
     except ValueError as exc:
-        assert "rejects plaintext" in str(exc)
+        assert "only valid for TLS Telnet connections" in str(exc)
     else:
         raise AssertionError(f"plaintext Telnet accepted {option}")
 

@@ -611,6 +611,12 @@ def validate_telnet_transport_config(
             "--telnet-server-hostname (or the corresponding "
             "PLAYER_EXPERIENCE_TELNET_* settings)"
         )
+    if config.telnet_transport == "plaintext" and (
+        config.telnet_server_hostname is not None or config.telnet_ca_file is not None
+    ):
+        raise ValueError(
+            "TLS server hostname and CA file are only valid for TLS Telnet connections"
+        )
     if config.telnet_transport != "tls":
         raise ValueError(
             "live public Telnet evidence rejects plaintext; "

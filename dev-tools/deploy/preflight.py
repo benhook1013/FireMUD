@@ -4107,21 +4107,22 @@ def validate_hosted_telnet_tls_values(
         )
     }
     ingress_secrets = {
-        ((document.get("spec") or {}).get("tls") or [{}])[0].get("secretName")
+        tls_entry.get("secretName")
         for document in documents
         if document.get("kind") == "Ingress"
         and rendered_namespace_matches(
             document, tcp_namespace, default_namespace="firemud"
         )
+        for tls_entry in ((document.get("spec") or {}).get("tls") or [])
+        if isinstance(tls_entry, dict)
     }
     tcp_certificate_names = {
         name for name in certificates if name and name.endswith("-telnet-tls")
     }
     if len(tcp_certificate_names) != 1:
         issues.append("hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate")
-    telnet_secret = next(iter(tcp_certificate_names), None)
-    if not telnet_secret:
         return issues
+    telnet_secret = next(iter(tcp_certificate_names), None)
     certificate = certificates[telnet_secret]
     certificate_secret = (certificate.get("spec") or {}).get("secretName")
     if certificate_secret != telnet_secret:
@@ -4146,13 +4147,23 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires one primary tcp-proxy-service container")
         return issues
     container = containers[0]
-    env = {
-        entry.get("name"): entry.get("value")
-        for entry in container.get("env") or []
-        if isinstance(entry, dict) and entry.get("name")
-    }
+    env, env_issues = effective_container_env(
+        documents,
+        deployments[0],
+        container,
+        relevant_names={
+            "TCP_PROXY_TLS_ENABLED",
+            "TCP_PROXY_TLS_CERT",
+            "TCP_PROXY_TLS_KEY",
+            "TCP_PROXY_TELNET_MODE",
+            *GRPC_TLS_PATH_NAMES,
+        },
+    )
+    issues.extend(env_issues)
     if env.get("TCP_PROXY_TLS_ENABLED") != "true":
         issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TLS_ENABLED=true")
+    if env.get("TCP_PROXY_TELNET_MODE") != "DIRECT_TLS":
+        issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TELNET_MODE=DIRECT_TLS")
     if env.get("TCP_PROXY_TLS_CERT") != "/telnet-tls/tls.crt":
         issues.append("TCP_PROXY_TLS_CERT must be /telnet-tls/tls.crt")
     if env.get("TCP_PROXY_TLS_KEY") != "/telnet-tls/tls.key":
@@ -4174,11 +4185,29 @@ def validate_hosted_telnet_tls_values(
         secret_name = ((volume.get("secret") or {}).get("secretName"))
         if secret_name != certificate_secret:
             issues.append("/telnet-tls must reference the dedicated Telnet TLS Secret")
-    grpc_secret_names = {
-        (volume.get("secret") or {}).get("secretName")
-        for volume_name, volume in volumes.items()
-        if volume_name == "grpc-tls" and isinstance(volume, dict)
+    grpc_paths = {
+        path
+        for path in (env.get(name) for name in GRPC_TLS_PATH_NAMES)
+        if isinstance(path, str) and path.startswith("/")
     }
+
+    def path_is_under(path: str, mount_path: str) -> bool:
+        return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+    grpc_secret_names: set[str] = set()
+    for mount in container.get("volumeMounts") or []:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("readOnly") is not True
+            or not isinstance(mount.get("mountPath"), str)
+            or not any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+        ):
+            continue
+        volume = volumes.get(mount.get("name"))
+        secret = volume.get("secret") if isinstance(volume, dict) else None
+        secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        if isinstance(secret_name, str) and secret_name:
+            grpc_secret_names.add(secret_name)
     if certificate_secret == "firemud-grpc-tls" or certificate_secret in grpc_secret_names:
         issues.append("TCP Proxy Telnet TLS Secret must not reuse the gRPC TLS Secret")
     return issues

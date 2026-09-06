@@ -112,7 +112,7 @@ class MoveAggregationServiceTest {
   void resolveFallsBackToRequestGameInstanceIdWhenSnapshotOmitsIt() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
-            .setTenantId(LookTestFixtures.TENANT)
+            .setTenantId("")
             .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
             .setRoomName(LookTestFixtures.ROOM_NAME)
             .addExits(
@@ -142,9 +142,47 @@ class MoveAggregationServiceTest {
                 .build());
 
     assertThat(result.getSuccess()).isTrue();
+    assertThat(result.getDestinationRoomInstance().getTenantId())
+        .isEqualTo(LookTestFixtures.TENANT);
     assertThat(result.getDestinationRoomInstance().getGameInstanceId())
         .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
     assertThat(result.getDestinationRoomInstance().getRoomInstanceId()).isEqualTo("R-3042");
+  }
+
+  @Test
+  void resolveRejectsNoncanonicalWorldDestinationAsWorldFailure() {
+    RoomSnapshot snapshot =
+        RoomSnapshot.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+            .addExits(
+                RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
+                    .setLabel("NORTH")
+                    .setTargetRoomInstanceId("room-3042")
+                    .build())
+            .build();
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId(LookTestFixtures.TENANT)
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId(LookTestFixtures.TENANT)
+                        .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                        .build())
+                .setDirection("north")
+                .build());
+
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("WORLD_UNAVAILABLE");
+    assertThat(result.getError().getMessage()).contains("WorldManagementService");
   }
 
   @Test

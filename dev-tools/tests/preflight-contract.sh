@@ -3097,6 +3097,7 @@ telnet_documents = [
                                 {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
                                 {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
                                 {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+                                {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
                             ],
                             "volumeMounts": [
                                 {"name": "telnet-tls", "mountPath": "/telnet-tls", "readOnly": True}
