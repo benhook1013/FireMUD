@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Focused tests for the maintained gameplay Telnet session helper."""
 
+import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import socket
 import stat
@@ -11,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +69,23 @@ def wait_for(store, predicate, timeout=2):
 
 
 class TelnetSessionDriverTest(unittest.TestCase):
+    def test_read_skips_malformed_records_and_preserves_later_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            transcript.write_text(
+                '{"event":"malformed"\n'
+                '{"event":"missing cursor"}\n'
+                '[]\n'
+                '{"cursor":7,"event":"received","text":"later"}\n',
+                encoding="utf-8",
+            )
+            store = telnet_session.EvidenceStore(transcript)
+
+            self.assertEqual(
+                store.read(after=6),
+                [{"cursor": 7, "event": "received", "text": "later"}],
+            )
+
     def test_async_unsolicited_output_cursor_and_explicit_close(self):
         def handler(connection):
             connection.sendall(b"WELCOME\r\n")
@@ -151,7 +172,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             server.close_and_check()
             self.assertTrue(any(r["event"] == "telnet_negotiation" and r["direction"] == "inbound" for r in records))
             self.assertTrue(any(r["event"] == "telnet_negotiation" and r["command"] == "DONT" for r in records))
-            self.assertTrue(all("READY" in line or "TELNET" in line or line.startswith("[") for line in output))
+            self.assertTrue(any("INBOUND TELNET" in line and "option=42" in line for line in output))
             self.assertFalse(any("\xff" in r.get("text", "") for r in records))
 
     def test_login_echo_redacts_password_in_output_and_transcript(self):
@@ -186,6 +207,18 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
+    def test_login_redaction_handles_leading_whitespace_and_extra_tail(self):
+        command = "\t LOGIN demo@example.com secret extra-token"
+        redaction = telnet_session._login_redaction(command)
+
+        self.assertIsNotNone(redaction)
+        safe, raw, replacement = redaction
+        self.assertEqual(safe, "LOGIN demo@example.com [REDACTED]")
+        self.assertEqual(raw, command.encode("iso-8859-1"))
+        self.assertEqual(replacement, safe.encode("iso-8859-1"))
+        self.assertNotIn(b"secret", replacement)
+        self.assertIsNone(telnet_session._login_redaction("LOGIN demo@example.com"))
+
     def test_read_subcommand_returns_events_after_cursor(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"
@@ -201,6 +234,44 @@ class TelnetSessionDriverTest(unittest.TestCase):
             lines = completed.stdout.strip().splitlines()
             self.assertEqual(json.loads(lines[0])["text"], "hello")
             self.assertEqual(lines[-1], "next_cursor=2")
+
+            empty = subprocess.run(
+                [sys.executable, str(TOOL_PATH), "read", "--transcript", str(transcript), "--after", "2"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(empty.stdout.strip(), "next_cursor=2")
+
+    def test_interactive_read_rejects_invalid_cursor_and_preserves_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            transcript.write_text(
+                json.dumps({"cursor": 1, "event": "connect"}) + "\n", encoding="utf-8"
+            )
+
+            class StubSession:
+                def __init__(self, host, port, transcript_path, timeout):
+                    self.store = telnet_session.EvidenceStore(transcript_path)
+                    self.closed = False
+
+                def connect(self):
+                    return None
+
+                def close(self, reason):
+                    self.closed = True
+
+            args = argparse.Namespace(
+                host="localhost", port=32000, transcript=transcript, timeout=0.25
+            )
+            output = io.StringIO()
+            with patch.object(telnet_session, "TelnetSession", StubSession):
+                with patch("sys.stdin", io.StringIO(":read nope\n:read 1\n:close done\n")):
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(telnet_session.run_connect(args), 0)
+
+            self.assertIn("Invalid cursor: 'nope'", output.getvalue())
+            self.assertIn("next_cursor=1", output.getvalue())
 
 
 if __name__ == "__main__":

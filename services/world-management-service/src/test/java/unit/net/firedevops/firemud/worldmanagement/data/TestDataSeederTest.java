@@ -409,6 +409,20 @@ class TestDataSeederTest {
     verify(worldInstanceRepository).findByTenantIdAndGameInstanceId(2L, 55L);
     verify(zoneInstanceRepository).findByTenantIdAndGameInstanceIdAndZoneInstanceId(2L, 55L, 20L);
     verify(roomInstanceRepository, times(2)).save(any());
+    ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
+    verify(roomInstanceExitRepository, times(2)).save(exitCaptor.capture());
+    List<RoomInstanceExit> savedExits = exitCaptor.getAllValues();
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        savedExits.stream().map(RoomInstanceExit::getDirection).toList());
+    assertEquals(2L, savedExits.get(0).getTenantId());
+    assertEquals(55L, savedExits.get(0).getGameInstanceId());
+    assertEquals(1021L, savedExits.get(0).getFromRoomInstance().getRoomInstanceRowId());
+    assertEquals(2045L, savedExits.get(0).getToRoomInstance().getRoomInstanceRowId());
+    assertEquals(2L, savedExits.get(1).getTenantId());
+    assertEquals(55L, savedExits.get(1).getGameInstanceId());
+    assertEquals(2045L, savedExits.get(1).getFromRoomInstance().getRoomInstanceRowId());
+    assertEquals(1021L, savedExits.get(1).getToRoomInstance().getRoomInstanceRowId());
   }
 
   private WorldInstance withWorldInstanceId(WorldInstance worldInstance) {

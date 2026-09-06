@@ -53,7 +53,7 @@ class EvidenceStore:
             for line in stream:
                 try:
                     last = max(last, int(json.loads(line)["seq"]))
-                except (ValueError, KeyError, json.JSONDecodeError):
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
                     continue
         return last + 1
 
@@ -86,8 +86,12 @@ class EvidenceStore:
         records = []
         with self.path.open(encoding="utf-8") as stream:
             for line in stream:
-                record = json.loads(line)
-                if after is None or int(record["cursor"]) > after:
+                try:
+                    record = json.loads(line)
+                    cursor = int(record["cursor"])
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                    continue
+                if after is None or cursor > after:
                     records.append(record)
         return records
 
@@ -96,10 +100,10 @@ class EvidenceStore:
 
 
 def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:
-    match = re.match(r"(?i)^LOGIN([ \t]+)(\S+)([ \t]+)(\S+)([ \t]*)$", command)
-    if not match:
+    match = re.match(r"(?i)^[ \t]*LOGIN[ \t]+(\S+)(?:[ \t]+(\S.*))?$", command)
+    if not match or match.group(2) is None:
         return None
-    safe = f"LOGIN {match.group(2)} [REDACTED]"
+    safe = f"LOGIN {match.group(1)} [REDACTED]"
     raw = command.encode("iso-8859-1", errors="replace")
     replacement = safe.encode("iso-8859-1")
     return safe, raw, replacement
@@ -328,8 +332,8 @@ class TelnetSession:
             self.receiver.join(timeout=max(1.0, self.read_timeout * 4))
 
 
-def print_records(records: Iterable[dict]) -> int:
-    latest = 0
+def print_records(records: Iterable[dict], after: int | None = None) -> int:
+    latest = after if after is not None else 0
     for record in records:
         print(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
         latest = max(latest, int(record["cursor"]))
@@ -338,7 +342,7 @@ def print_records(records: Iterable[dict]) -> int:
 
 
 def run_read(args: argparse.Namespace) -> int:
-    print_records(EvidenceStore(args.transcript).read(args.after))
+    print_records(EvidenceStore(args.transcript).read(args.after), args.after)
     return 0
 
 
@@ -353,8 +357,12 @@ def run_connect(args: argparse.Namespace) -> int:
                 print(f"next_cursor={session.store.latest_cursor()}")
             elif line.startswith(":read") and (line == ":read" or line.startswith(":read ")):
                 value = line[5:].strip()
-                after = int(value) if value else None
-                print_records(session.store.read(after))
+                try:
+                    after = int(value) if value else None
+                except ValueError:
+                    print(f"Invalid cursor: {value!r}")
+                    continue
+                print_records(session.store.read(after), after)
             elif line.startswith(":close") and (line == ":close" or line.startswith(":close ")):
                 session.close(line[6:].strip() or "local_close")
                 break
