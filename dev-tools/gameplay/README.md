@@ -22,7 +22,10 @@ python3 dev-tools/gameplay/telnet-session.py connect \
 
 Use `--ca-file /path/to/ca.pem` when the environment requires an additional CA
 bundle, or `--server-hostname name` to override the TLS SNI and hostname-check
-name. For local/private/test-only plaintext proof, pass
+name. TCP connection establishment and the TLS handshake use the bounded
+`--connect-timeout` (10 seconds by default), independently of the short
+`--timeout` used to poll for received data. Both values must be positive finite
+numbers. For local/private/test-only plaintext proof, pass
 `--allow-insecure`; this flag is intentionally explicit and must never be used
 for a public or hosted endpoint.
 

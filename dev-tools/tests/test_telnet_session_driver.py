@@ -183,9 +183,10 @@ class TelnetSessionDriverTest(unittest.TestCase):
         class FakeSocket:
             def __init__(self):
                 self.closed = False
+                self.timeouts = []
 
-            def settimeout(self, _timeout):
-                return None
+            def settimeout(self, timeout):
+                self.timeouts.append(timeout)
 
             def recv(self, _size):
                 return b""
@@ -205,15 +206,24 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 "preview.example",
                 32016,
                 Path(directory) / "session.jsonl",
+                read_timeout=0.125,
                 output=lambda _line: None,
                 ca_file=Path(directory) / "extra-ca.pem",
                 server_hostname="public.example",
+                connect_timeout=3.5,
             )
             with (
-                patch.object(telnet_session.socket, "create_connection", return_value=raw_socket),
+                patch.object(
+                    telnet_session.socket,
+                    "create_connection",
+                    return_value=raw_socket,
+                ) as create_connection,
                 patch.object(telnet_session.ssl, "create_default_context", return_value=context),
             ):
                 session.connect()
+            create_connection.assert_called_once_with(
+                ("preview.example", 32016), timeout=3.5
+            )
             context.load_verify_locations.assert_called_once_with(
                 cafile=str(Path(directory) / "extra-ca.pem")
             )
@@ -221,6 +231,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 raw_socket, server_hostname="public.example"
             )
             self.assertIs(session.socket, tls_socket)
+            self.assertEqual(tls_socket.timeouts, [0.125])
             session.close("tls_test_complete")
 
     def test_tls_failure_closes_raw_socket_without_fallback(self):
@@ -266,6 +277,67 @@ class TelnetSessionDriverTest(unittest.TestCase):
             ]
         )
         self.assertTrue(args.allow_insecure)
+
+    def test_connect_and_receive_timeouts_are_distinct_positive_cli_values(self):
+        parser = telnet_session.build_parser()
+        base_args = [
+            "connect",
+            "--host",
+            "localhost",
+            "--port",
+            "32000",
+            "--transcript",
+            "/tmp/session.jsonl",
+        ]
+
+        args = parser.parse_args(
+            [*base_args, "--connect-timeout", "7.5", "--timeout", "0.125"]
+        )
+        self.assertEqual(args.connect_timeout, 7.5)
+        self.assertEqual(args.timeout, 0.125)
+
+        for option in ("--connect-timeout", "--timeout"):
+            for invalid in ("0", "-1", "nan", "inf", "not-a-number"):
+                with (
+                    self.subTest(option=option, invalid=invalid),
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit),
+                ):
+                    parser.parse_args([*base_args, option, invalid])
+
+    def test_run_connect_passes_cli_connect_timeout_to_session(self):
+        observed = {}
+
+        class StubSession:
+            def __init__(self, _host, _port, _transcript, timeout, **kwargs):
+                observed["read_timeout"] = timeout
+                observed["connect_timeout"] = kwargs["connect_timeout"]
+                self.closed = False
+
+            def connect(self):
+                return None
+
+            def close(self, _reason):
+                self.closed = True
+
+        args = argparse.Namespace(
+            host="localhost",
+            port=32000,
+            transcript=Path("/tmp/session.jsonl"),
+            timeout=0.125,
+            connect_timeout=7.5,
+            allow_insecure=False,
+            ca_file=None,
+            server_hostname=None,
+        )
+        with (
+            patch.object(telnet_session, "TelnetSession", StubSession),
+            patch("sys.stdin", io.StringIO(":close done\n")),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(telnet_session.run_connect(args), 0)
+
+        self.assertEqual(observed, {"read_timeout": 0.125, "connect_timeout": 7.5})
 
     def test_raw_mode_does_not_create_tls_context(self):
         raw_socket = unittest.mock.Mock()

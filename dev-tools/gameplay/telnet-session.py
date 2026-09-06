@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import math
 import os
 import re
 import socket
@@ -30,6 +31,7 @@ SB = 250
 SE = 240
 
 COMMAND_NAMES = {WILL: "WILL", WONT: "WONT", DO: "DO", DONT: "DONT"}
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 def _iso88591_bytes(text: str) -> bytes:
@@ -41,6 +43,17 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
         "+00:00", "Z"
     )
+
+
+def positive_timeout(value: str | float, name: str = "timeout") -> float:
+    """Parse a finite positive timeout for CLI and direct callers."""
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"{name} must be a positive finite number") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError(f"{name} must be a positive finite number")
+    return timeout
 
 
 class EvidenceStore:
@@ -212,11 +225,13 @@ class TelnetSession:
         tls_enabled: bool = True,
         ca_file: os.PathLike[str] | str | None = None,
         server_hostname: str | None = None,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     ):
         self.host = host
         self.port = port
         self.store = EvidenceStore(transcript)
-        self.read_timeout = read_timeout
+        self.read_timeout = positive_timeout(read_timeout, "read timeout")
+        self.connect_timeout = positive_timeout(connect_timeout, "connect timeout")
         self.output = output or print
         self.tls_enabled = tls_enabled
         self.ca_file = Path(ca_file) if ca_file is not None else None
@@ -254,7 +269,11 @@ class TelnetSession:
 
     def connect(self) -> None:
         try:
-            raw_socket = socket.create_connection((self.host, self.port))
+            # create_connection leaves this timeout on the raw socket, so it
+            # bounds both TCP establishment and wrap_socket's TLS handshake.
+            raw_socket = socket.create_connection(
+                (self.host, self.port), timeout=self.connect_timeout
+            )
             if self.tls_enabled:
                 try:
                     context = ssl.create_default_context()
@@ -488,6 +507,9 @@ def run_connect(args: argparse.Namespace) -> int:
         tls_enabled=not allow_insecure,
         ca_file=getattr(args, "ca_file", None),
         server_hostname=getattr(args, "server_hostname", None),
+        connect_timeout=getattr(
+            args, "connect_timeout", DEFAULT_CONNECT_TIMEOUT_SECONDS
+        ),
     )
     try:
         session.connect()
@@ -529,7 +551,18 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument("--host", required=True)
     connect.add_argument("--port", required=True, type=int)
     connect.add_argument("--transcript", required=True, type=Path)
-    connect.add_argument("--timeout", type=float, default=0.25)
+    connect.add_argument(
+        "--timeout",
+        type=lambda value: positive_timeout(value, "receive timeout"),
+        default=0.25,
+        help="receive-idle polling timeout in seconds (default: 0.25)",
+    )
+    connect.add_argument(
+        "--connect-timeout",
+        type=lambda value: positive_timeout(value, "connect timeout"),
+        default=DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        help="TCP connect and TLS handshake timeout in seconds (default: 10)",
+    )
     connect.add_argument(
         "--allow-insecure",
         action="store_true",
