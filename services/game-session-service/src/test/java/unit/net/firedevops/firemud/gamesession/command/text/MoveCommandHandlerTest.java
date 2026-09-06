@@ -149,8 +149,7 @@ class MoveCommandHandlerTest {
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.responseOutput(), "fr"))
         .isEqualTo("ERROR INVALID_EXIT Aucune sortie WEST depuis la salle R-1021.");
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -177,8 +176,7 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
     assertThat(result.updatedContext()).isNull();
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -243,8 +241,7 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
     assertThat(result.updatedContext()).isNull();
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -285,8 +282,7 @@ class MoveCommandHandlerTest {
     assertThat(result.responseOutput()).isNull();
     assertThat(result.updatedContext()).isNotNull();
     assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
     verify(lookCommandHandler, never()).resolveLook(any(SessionContext.class));
   }
 
@@ -305,7 +301,8 @@ class MoveCommandHandlerTest {
                 .setDestinationRoomInstance(destinationRoom)
                 .build());
     when(lookCommandHandler.resolveLook(any(SessionContext.class)))
-        .thenThrow(Status.UNAVAILABLE.withDescription("WorldManagement: down").asRuntimeException());
+        .thenThrow(
+            Status.UNAVAILABLE.withDescription("WorldManagement: down").asRuntimeException());
 
     PreparedMoveCommandResult result =
         handler.prepare(
@@ -315,8 +312,7 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_UNAVAILABLE");
     assertThat(result.commandResult().errorMessage()).isEqualTo("WorldManagement: down");
     assertThat(result.updatedContext()).isNull();
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   @ParameterizedTest
@@ -355,8 +351,7 @@ class MoveCommandHandlerTest {
     assertThat(result.responseOutput().payload()).isInstanceOf(ErrorOutput.class);
     assertThat(((ErrorOutput) result.responseOutput().payload()).messageKey())
         .isEqualTo("error.move.destination-unavailable");
-    verify(lookCommandHandler, never())
-        .toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   private void assertDestinationIdentityRejected(RoomInstanceRef destinationRoom) {
