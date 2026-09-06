@@ -51,6 +51,10 @@ public class TickQueueControlService {
       RedisScript.of(new ClassPathResource("redis/tick_renew_if_owned.lua"), Long.class);
   private static final RedisScript<Long> ENQUEUE_IF_ABSENT_SCRIPT =
       RedisScript.of(new ClassPathResource("redis/tick_enqueue_if_absent.lua"), Long.class);
+  private static final RedisScript<Long> ENSURE_COMMAND_INDEX_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_ensure_command_index.lua"), Long.class);
+  private static final RedisScript<Long> REMOVE_PAYLOAD_IF_OWNED_SCRIPT =
+      RedisScript.of(new ClassPathResource("redis/tick_remove_payload_if_owned.lua"), Long.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final StringRedisTemplate lockRedisTemplate;
@@ -130,7 +134,7 @@ public class TickQueueControlService {
       }
     } catch (RuntimeException ex) {
       if (!completionRegistered && pushed.get()) {
-        removeLatestQueuePayload(tenantId, queueTargetId, payload);
+        removeLatestQueuePayload(tenantId, queueTargetId, payload, leases.tickLease());
       }
       throw ex;
     } finally {
@@ -384,6 +388,14 @@ public class TickQueueControlService {
     return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
   }
 
+  String commandIndexKey(Long tenantId, Long sessionId) {
+    return "gamesession:tick:command-index:" + tenantId + ":" + sessionId;
+  }
+
+  String commandIndexMarkerKey(Long tenantId, Long sessionId) {
+    return "gamesession:tick:command-index-ready:" + tenantId + ":" + sessionId;
+  }
+
   /**
    * Materializes one command into the queue exactly once across the queue and pending projections.
    * The production path is one fenced Redis script; the direct-list fallback exists only for unit
@@ -391,9 +403,69 @@ public class TickQueueControlService {
    */
   private boolean materializeQueuePayload(
       Long tenantId, Long queueTargetId, String payload, QueueLockLease lease) {
+    return materializeQueuePayload(tenantId, queueTargetId, payload, lease, false);
+  }
+
+  void requeueCommand(
+      QueueLockLease lease,
+      Long tenantId,
+      Long queueTargetId,
+      String commandId,
+      String command,
+      boolean requiresSoloTick) {
+    if (lease == null) {
+      throw new IllegalArgumentException("Active tick lease is required for queue recovery");
+    }
+    String payload = queuePayload(requiresSoloTick, commandId, command);
+    lease.requireOwned();
+    materializeQueuePayload(tenantId, queueTargetId, payload, lease, true);
+    lease.requireOwned();
+  }
+
+  void ensureCommandIndex(QueueLockLease lease, Long tenantId, Long queueTargetId) {
+    if (lease == null) {
+      throw new IllegalArgumentException("Active tick lease is required for command index setup");
+    }
     RedisTemplate<String, Object> scriptTemplate = fencedScriptTemplate();
     if (scriptTemplate == null || scriptTemplate.getValueSerializer() == null) {
-      return materializeQueuePayloadWithoutScript(tenantId, queueTargetId, payload);
+      return;
+    }
+    lease.requireOwned();
+    Long result =
+        scriptTemplate.execute(
+            ENSURE_COMMAND_INDEX_SCRIPT,
+            new EnqueueScriptArgumentSerializer(scriptTemplate.getValueSerializer()),
+            new org.springframework.data.redis.serializer.GenericToStringSerializer<>(Long.class),
+            List.of(
+                queueKey(tenantId, queueTargetId),
+                pendingKey(tenantId, queueTargetId),
+                commandIndexKey(tenantId, queueTargetId),
+                commandIndexMarkerKey(tenantId, queueTargetId),
+                lease.key()),
+            lease.token());
+    if (result == null || result == -1L) {
+      lease.markLost();
+      throw new QueueUnavailableException(
+          "Lost tick lock " + lease.key() + " during Redis command index setup");
+    }
+    if (result == -2L) {
+      throw new IllegalArgumentException(
+          "Conflicting gameplay command identities prevent Redis command index setup");
+    }
+    if (result == -3L) {
+      throw new IllegalArgumentException(
+          "Malformed gameplay command queue data prevents Redis command index setup");
+    }
+    if (result != 1L) {
+      throw new QueueUnavailableException("Invalid Redis command index setup result");
+    }
+  }
+
+  private boolean materializeQueuePayload(
+      Long tenantId, Long queueTargetId, String payload, QueueLockLease lease, boolean pushLeft) {
+    RedisTemplate<String, Object> scriptTemplate = fencedScriptTemplate();
+    if (scriptTemplate == null || scriptTemplate.getValueSerializer() == null) {
+      return materializeQueuePayloadWithoutScript(tenantId, queueTargetId, payload, pushLeft);
     }
     Long result =
         scriptTemplate.execute(
@@ -403,9 +475,12 @@ public class TickQueueControlService {
             List.of(
                 queueKey(tenantId, queueTargetId),
                 pendingKey(tenantId, queueTargetId),
+                commandIndexKey(tenantId, queueTargetId),
+                commandIndexMarkerKey(tenantId, queueTargetId),
                 lease.key()),
             lease.token(),
-            new QueuePayloadArgument(payload));
+            new QueuePayloadArgument(payload),
+            pushLeft ? "LEFT" : "RIGHT");
     if (result == null || result == -1L) {
       lease.markLost();
       throw new QueueUnavailableException(
@@ -417,6 +492,9 @@ public class TickQueueControlService {
     }
     if (result == -3L) {
       throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    if (result == -4L) {
+      throw new IllegalArgumentException("Invalid gameplay command queue direction");
     }
     if (result == 0L) {
       return false;
@@ -442,7 +520,7 @@ public class TickQueueControlService {
   }
 
   private boolean materializeQueuePayloadWithoutScript(
-      Long tenantId, Long queueTargetId, String payload) {
+      Long tenantId, Long queueTargetId, String payload, boolean pushLeft) {
     String commandId = commandIdFromQueuePayload(payload);
     String queueKey = queueKey(tenantId, queueTargetId);
     String pendingKey = pendingKey(tenantId, queueTargetId);
@@ -468,7 +546,11 @@ public class TickQueueControlService {
     if (foundExact) {
       return false;
     }
-    redisTemplate.opsForList().rightPush(queueKey, payload);
+    if (pushLeft) {
+      redisTemplate.opsForList().leftPush(queueKey, payload);
+    } else {
+      redisTemplate.opsForList().rightPush(queueKey, payload);
+    }
     return true;
   }
 
@@ -583,6 +665,7 @@ public class TickQueueControlService {
     QueueMutationLease leases = acquireQueueMutationLease(tenantId, gameInstanceId, "purge");
     boolean completionRegistered = false;
     try {
+      ensureCommandIndex(leases.tickLease(), tenantId, gameInstanceId);
       List<PurgeCandidate> candidates =
           commandSupplier.get().stream()
               .map(this::purgeCandidate)
@@ -609,7 +692,7 @@ public class TickQueueControlService {
       gameplayCommandRepository.saveAll(commands);
       leases.requireOwned();
       if (!completionRegistered) {
-        removePurgedPayloads(tenantId, gameInstanceId, commands, logger);
+        removePurgedPayloads(tenantId, gameInstanceId, commands, logger, leases.tickLease());
       }
       logger.info(
           "Purged {} queued automation commands tenantId={} gameInstanceId={}",
@@ -650,7 +733,7 @@ public class TickQueueControlService {
 
           @Override
           public void afterCommit() {
-            removePurgedPayloads(tenantId, gameInstanceId, commands, logger);
+            removePurgedPayloads(tenantId, gameInstanceId, commands, logger, leases.tickLease());
           }
 
           @Override
@@ -662,14 +745,17 @@ public class TickQueueControlService {
   }
 
   private void removePurgedPayloads(
-      Long tenantId, Long gameInstanceId, List<GameplayCommand> commands, Logger logger) {
+      Long tenantId,
+      Long gameInstanceId,
+      List<GameplayCommand> commands,
+      Logger logger,
+      QueueLockLease lease) {
     for (GameplayCommand command : commands) {
       try {
         String payload =
             queuePayload(
                 command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText());
-        redisTemplate.opsForList().remove(queueKey(tenantId, gameInstanceId), 0, payload);
-        redisTemplate.opsForList().remove(pendingKey(tenantId, gameInstanceId), 0, payload);
+        removePayloadIfOwned(tenantId, gameInstanceId, payload, lease);
       } catch (RuntimeException cleanupFailure) {
         logger.warn(
             "Durable purge committed but Redis cleanup failed tenantId={} gameInstanceId={} commandId={}",
@@ -700,7 +786,7 @@ public class TickQueueControlService {
           @Override
           public void afterCompletion(int status) {
             if (status != STATUS_COMMITTED && pushed.get()) {
-              removeLatestQueuePayload(tenantId, queueTargetId, payload);
+              removeLatestQueuePayload(tenantId, queueTargetId, payload, leases.tickLease());
             }
             leases.close();
           }
@@ -708,9 +794,15 @@ public class TickQueueControlService {
     return true;
   }
 
-  private void removeLatestQueuePayload(Long tenantId, Long queueTargetId, String payload) {
+  private void removeLatestQueuePayload(
+      Long tenantId, Long queueTargetId, String payload, QueueLockLease lease) {
     try {
-      redisTemplate.opsForList().remove(queueKey(tenantId, queueTargetId), -1, payload);
+      RedisTemplate<String, Object> scriptTemplate = fencedScriptTemplate();
+      if (scriptTemplate == null || scriptTemplate.getValueSerializer() == null) {
+        redisTemplate.opsForList().remove(queueKey(tenantId, queueTargetId), -1, payload);
+        return;
+      }
+      removePayloadIfOwned(tenantId, queueTargetId, payload, lease);
     } catch (RuntimeException cleanupFailure) {
       // An ACCEPTED durable row is not executable, so a stale payload is safe to discard later.
       classLogger.warn(
@@ -718,6 +810,43 @@ public class TickQueueControlService {
           tenantId,
           queueTargetId,
           cleanupFailure);
+    }
+  }
+
+  private void removePayloadIfOwned(
+      Long tenantId, Long queueTargetId, String payload, QueueLockLease lease) {
+    if (lease == null) {
+      throw new IllegalArgumentException("Active tick lease is required for queue cleanup");
+    }
+    RedisTemplate<String, Object> scriptTemplate = fencedScriptTemplate();
+    if (scriptTemplate == null || scriptTemplate.getValueSerializer() == null) {
+      redisTemplate.opsForList().remove(queueKey(tenantId, queueTargetId), 0, payload);
+      redisTemplate.opsForList().remove(pendingKey(tenantId, queueTargetId), 0, payload);
+      return;
+    }
+    Long result =
+        scriptTemplate.execute(
+            REMOVE_PAYLOAD_IF_OWNED_SCRIPT,
+            new EnqueueScriptArgumentSerializer(scriptTemplate.getValueSerializer()),
+            new org.springframework.data.redis.serializer.GenericToStringSerializer<>(Long.class),
+            List.of(
+                queueKey(tenantId, queueTargetId),
+                pendingKey(tenantId, queueTargetId),
+                commandIndexKey(tenantId, queueTargetId),
+                lease.key()),
+            lease.token(),
+            new QueuePayloadArgument(payload));
+    if (result == null || result == -1L) {
+      lease.markLost();
+      throw new QueueUnavailableException(
+          "Lost cleanup lock " + lease.key() + " during Redis materialization cleanup");
+    }
+    if (result == -2L) {
+      throw new IllegalArgumentException("Invalid gameplay command queue payload");
+    }
+    if (result == -3L) {
+      throw new IllegalArgumentException(
+          "Gameplay command identity was reused with a conflicting queue payload");
     }
   }
 

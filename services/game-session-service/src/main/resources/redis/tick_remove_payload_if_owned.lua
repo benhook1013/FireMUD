@@ -1,20 +1,10 @@
-local pending = KEYS[1]
-local queue = KEYS[2]
+local queue = KEYS[1]
+local pending = KEYS[2]
 local commandIndex = KEYS[3]
 local lease = KEYS[4]
+
 if redis.call('GET', lease) ~= ARGV[1] then
   return -1
-end
-
-local terminalizedCount = tonumber(ARGV[2]) or -1
-if terminalizedCount < 0
-    or terminalizedCount ~= math.floor(terminalizedCount)
-    or #ARGV ~= terminalizedCount + 2 then
-  return -3
-end
-local terminalized = {}
-for index = 1, terminalizedCount do
-  terminalized[ARGV[index + 2]] = true
 end
 
 local function unwrapSerializedString(raw)
@@ -53,7 +43,7 @@ local function unwrapSerializedString(raw)
   return string.sub(raw, payloadStart)
 end
 
-local function parseCommandId(raw)
+local function parsePayload(raw)
   local value = unwrapSerializedString(raw)
   if not value then
     return nil
@@ -71,32 +61,25 @@ local function parseCommandId(raw)
   if string.match(string.sub(value, idEnd + 1), '%S') == nil then
     return nil
   end
-  return commandId
+  return value, commandId
 end
 
-local processed = {}
-while true do
-  local cmd = redis.call('RPOP', pending)
-  if not cmd then
-    break
-  end
-  local commandId = parseCommandId(cmd)
-  if not commandId then
-    table.insert(processed, {raw = cmd, commandId = nil})
-    for index = #processed, 1, -1 do
-      redis.call('RPUSH', pending, processed[index].raw)
-    end
+local candidate, candidateId = parsePayload(ARGV[2])
+if not candidate then
+  return -2
+end
+local indexedRaw = redis.call('HGET', commandIndex, candidateId)
+if indexedRaw then
+  local indexedValue, indexedId = parsePayload(indexedRaw)
+  if not indexedValue or indexedId ~= candidateId then
     return -2
   end
-  table.insert(processed, {raw = cmd, commandId = commandId})
-end
-
-for index = 1, #processed do
-  local entry = processed[index]
-  if terminalized[entry.commandId] then
-    redis.call('HDEL', commandIndex, entry.commandId)
-  else
-    redis.call('LPUSH', queue, entry.raw)
+  if indexedValue ~= candidate then
+    return -3
   end
 end
+
+redis.call('LREM', queue, 0, ARGV[2])
+redis.call('LREM', pending, 0, ARGV[2])
+redis.call('HDEL', commandIndex, candidateId)
 return 1

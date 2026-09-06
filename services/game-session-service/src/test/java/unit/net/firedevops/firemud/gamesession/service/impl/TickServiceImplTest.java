@@ -337,7 +337,11 @@ class TickServiceImplTest {
 
     org.junit.jupiter.api.Assertions.assertEquals(1, leaseTokens.size());
     org.junit.jupiter.api.Assertions.assertEquals(
-        List.of("gamesession:tick:pending:1:2", "gamesession:tick:lock:1:2"), commitKeys.get(0));
+        List.of(
+            "gamesession:tick:pending:1:2",
+            "gamesession:tick:command-index:1:2",
+            "gamesession:tick:lock:1:2"),
+        commitKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
         new Object[] {leaseTokens.get(0)}, commitArguments.get(0));
   }
@@ -618,6 +622,7 @@ class TickServiceImplTest {
         List.of(
             "gamesession:tick:pending:1:2",
             "gamesession:tick:queue:1:2",
+            "gamesession:tick:command-index:1:2",
             "gamesession:tick:lock:1:2"),
         rollbackKeys.get(0));
     org.junit.jupiter.api.Assertions.assertArrayEquals(
@@ -2328,6 +2333,7 @@ class TickServiceImplTest {
         .containsExactly(
             "gamesession:tick:pending:1:2",
             "gamesession:tick:queue:1:2",
+            "gamesession:tick:command-index:1:2",
             "gamesession:tick:lock:1:2");
   }
 

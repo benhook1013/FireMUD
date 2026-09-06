@@ -149,6 +149,7 @@ final class TickBatchExecutionService {
     if (lease == null) {
       throw new IllegalArgumentException("Active tick lease is required for pending projection");
     }
+    tickQueueControlService.ensureCommandIndex(lease, tenantId, gameInstanceId);
     requireRestorableCommandIdentifiers(pendingEntries);
     requireRestorableCommandIdentifiers(sealedEntries);
     requireRestorableCommandIdentifiers(terminalizedEntries);
@@ -156,6 +157,7 @@ final class TickBatchExecutionService {
         redisOnlyEntries(pendingEntries, sealedEntries, terminalizedEntries);
     String pendingKey = tickQueueControlService.pendingKey(tenantId, gameInstanceId);
     String queueKey = tickQueueControlService.queueKey(tenantId, gameInstanceId);
+    String commandIndexKey = tickQueueControlService.commandIndexKey(tenantId, gameInstanceId);
     List<Object> scriptArguments = new ArrayList<>();
     scriptArguments.add(lease.token());
     scriptArguments.add(String.valueOf(pendingEntries.size()));
@@ -174,7 +176,8 @@ final class TickBatchExecutionService {
     try {
       restored =
           executeRestorePendingProjectionScript(
-              List.of(pendingKey, queueKey, lease.key()), scriptArguments.toArray());
+              List.of(pendingKey, queueKey, commandIndexKey, lease.key()),
+              scriptArguments.toArray());
     } catch (RuntimeException ex) {
       recordPendingReplayRestoreFailure(tenantId, gameInstanceId, "exception");
       throw ex;
@@ -544,7 +547,7 @@ final class TickBatchExecutionService {
     batch.setFailureMessage(truncate(failureMessage, 500));
     tickBatchRepository.save(batch);
     if (wasDrained) {
-      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage);
+      requeueRemainingDrainedEffects(batch, now, failureCode, failureMessage, null);
     } else {
       updateEffectStatuses(batch.getTickBatchId(), "ABANDONED", now, failureCode, failureMessage);
       updateGameplayCommands(
@@ -608,6 +611,11 @@ final class TickBatchExecutionService {
   }
 
   void executeDurableEffects(Long tenantId, Long gameInstanceId) {
+    executeDurableEffects(tenantId, gameInstanceId, null);
+  }
+
+  void executeDurableEffects(
+      Long tenantId, Long gameInstanceId, TickQueueControlService.QueueLockLease tickLease) {
     List<TickBatch> drainedBatches =
         tickBatchRepository.findByTenantIdAndGameInstanceIdAndStatusOrderByCompletedAtAsc(
             tenantId, gameInstanceId, "DRAINED");
@@ -619,7 +627,7 @@ final class TickBatchExecutionService {
         if (isRemoteFollowupBatch(batch)) {
           markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
         } else {
-          abandonStaleDrainedBatch(batch, ex.getMessage());
+          abandonStaleDrainedBatch(batch, ex.getMessage(), tickLease);
         }
         continue;
       }
@@ -640,7 +648,7 @@ final class TickBatchExecutionService {
           if (isRemoteFollowupBatch(batch)) {
             markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", ex.getMessage());
           } else {
-            abandonStaleDrainedBatch(batch, ex.getMessage());
+            abandonStaleDrainedBatch(batch, ex.getMessage(), tickLease);
           }
           continue batchLoop;
         }
@@ -674,14 +682,16 @@ final class TickBatchExecutionService {
     return Optional.of(status);
   }
 
-  private void abandonStaleDrainedBatch(TickBatch batch, String failureMessage) {
+  private void abandonStaleDrainedBatch(
+      TickBatch batch, String failureMessage, TickQueueControlService.QueueLockLease tickLease) {
     if (isRemoteFollowupBatch(batch)) {
       markRemoteFollowupBatchAbandoned(batch, "STALE_EXECUTOR_FENCE", failureMessage);
       return;
     }
     Instant now = Instant.now();
     List<GameplayCommand> commands =
-        requeueRemainingDrainedEffects(batch, now, "STALE_EXECUTOR_FENCE", failureMessage);
+        requeueRemainingDrainedEffects(
+            batch, now, "STALE_EXECUTOR_FENCE", failureMessage, tickLease);
     remoteFollowupDrainService.releaseClaimedFollowups(
         batch.getTickBatchId(), "STALE_EXECUTOR_FENCE", failureMessage);
     batch.setStatus("ABANDONED");
@@ -698,12 +708,16 @@ final class TickBatchExecutionService {
   }
 
   private List<GameplayCommand> requeueRemainingDrainedEffects(
-      TickBatch batch, Instant now, String failureCode, String failureMessage) {
+      TickBatch batch,
+      Instant now,
+      String failureCode,
+      String failureMessage,
+      TickQueueControlService.QueueLockLease tickLease) {
     List<TickEffect> drainedEffects =
         tickEffectRepository.findByTickBatchIdAndStatusOrderByIdAsc(
             batch.getTickBatchId(), "DRAINED");
     List<GameplayCommand> commands = loadCommandsForEffects(batch, drainedEffects);
-    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands);
+    requeueCommands(batch.getTenantId(), batch.getGameInstanceId(), commands, tickLease);
     for (TickEffect effect : drainedEffects) {
       effect.setStatus("ABANDONED");
       effect.setCompletedAt(now);
@@ -752,32 +766,36 @@ final class TickBatchExecutionService {
     }
   }
 
-  private void requeueCommands(Long tenantId, Long gameInstanceId, List<GameplayCommand> commands) {
+  private void requeueCommands(
+      Long tenantId,
+      Long gameInstanceId,
+      List<GameplayCommand> commands,
+      TickQueueControlService.QueueLockLease tickLease) {
     for (GameplayCommand command : commands) {
       requireRestorableCommandId(command.getCommandId());
     }
     for (int index = commands.size() - 1; index >= 0; index--) {
       GameplayCommand command = commands.get(index);
-      redisTemplate
-          .opsForList()
-          .leftPush(
-              tickQueueControlService.queueKey(tenantId, gameInstanceId),
-              tickQueueControlService.queuePayload(
-                  command.isRequiresSoloTick(), command.getCommandId(), command.getCommandText()));
-    }
-  }
-
-  private void requeueEntries(
-      Long tenantId, Long gameInstanceId, List<TickQueuedCommandEnvelope> entries) {
-    requireRestorableCommandIdentifiers(entries);
-    for (int index = entries.size() - 1; index >= 0; index--) {
-      TickQueuedCommandEnvelope entry = entries.get(index);
-      redisTemplate
-          .opsForList()
-          .leftPush(
-              tickQueueControlService.queueKey(tenantId, gameInstanceId),
-              tickQueueControlService.queuePayload(
-                  entry.requiresSoloTick(), entry.commandId(), entry.command()));
+      if (tickLease != null) {
+        tickQueueControlService.requeueCommand(
+            tickLease,
+            tenantId,
+            gameInstanceId,
+            command.getCommandId(),
+            command.getCommandText(),
+            command.isRequiresSoloTick());
+      } else {
+        // Unit tests use a serializer-free mock template; production recovery always supplies
+        // the owning tick lease and therefore uses the atomic indexed Redis script above.
+        redisTemplate
+            .opsForList()
+            .leftPush(
+                tickQueueControlService.queueKey(tenantId, gameInstanceId),
+                tickQueueControlService.queuePayload(
+                    command.isRequiresSoloTick(),
+                    command.getCommandId(),
+                    command.getCommandText()));
+      }
     }
   }
 

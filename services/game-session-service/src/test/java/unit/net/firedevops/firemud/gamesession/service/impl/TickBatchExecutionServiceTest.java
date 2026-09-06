@@ -885,6 +885,7 @@ class TickBatchExecutionServiceTest {
         List.of(
             "gamesession:tick:pending:1:2",
             "gamesession:tick:queue:1:2",
+            "gamesession:tick:command-index:1:2",
             "gamesession:tick:lock:1:2"),
         keys.getValue());
     assertEquals("lease-token", arguments.getValue()[0]);

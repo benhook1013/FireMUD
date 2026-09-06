@@ -281,10 +281,12 @@ public class TickServiceImpl implements TickService {
             logger.debug("Tick processing skipped while paused");
             return;
           }
+          tickQueueControlService.ensureCommandIndex(
+              lease, normalizedTenantId, normalizedQueueTargetId);
           tickBatchExecutionService.executeDurableEffects(
-              normalizedTenantId, normalizedQueueTargetId);
+              normalizedTenantId, normalizedQueueTargetId, lease);
           tickStagingService.drainRemoteFollowups(
-              normalizedTenantId, normalizedQueueTargetId, ownership);
+              normalizedTenantId, normalizedQueueTargetId, ownership, lease);
           lease.requireOwned();
           Long pending =
               redisTemplate
@@ -342,7 +344,7 @@ public class TickServiceImpl implements TickService {
               lease.requireOwned();
               commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
               tickBatchExecutionService.executeDurableEffects(
-                  normalizedTenantId, normalizedQueueTargetId);
+                  normalizedTenantId, normalizedQueueTargetId, lease);
               lease.requireOwned();
             } else {
               commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
@@ -407,7 +409,7 @@ public class TickServiceImpl implements TickService {
             lease.requireOwned();
             commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
             tickBatchExecutionService.executeDurableEffects(
-                normalizedTenantId, normalizedQueueTargetId);
+                normalizedTenantId, normalizedQueueTargetId, lease);
             lease.requireOwned();
           } else {
             commitPending(lease, normalizedTenantId, normalizedQueueTargetId);
@@ -448,6 +450,8 @@ public class TickServiceImpl implements TickService {
                                 tickQueueControlService.pendingKey(
                                     normalizedTenantId, normalizedQueueTargetId),
                                 tickQueueControlService.queueKey(
+                                    normalizedTenantId, normalizedQueueTargetId),
+                                tickQueueControlService.commandIndexKey(
                                     normalizedTenantId, normalizedQueueTargetId)),
                             "rollback",
                             rollbackArguments));
@@ -534,7 +538,9 @@ public class TickServiceImpl implements TickService {
             executeFencedScript(
                 commitScript,
                 lease,
-                List.of(tickQueueControlService.pendingKey(tenantId, queueTargetId)),
+                List.of(
+                    tickQueueControlService.pendingKey(tenantId, queueTargetId),
+                    tickQueueControlService.commandIndexKey(tenantId, queueTargetId)),
                 "commit"));
   }
 

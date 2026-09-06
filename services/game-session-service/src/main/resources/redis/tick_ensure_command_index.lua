@@ -1,20 +1,19 @@
-local pending = KEYS[1]
-local queue = KEYS[2]
+local queue = KEYS[1]
+local pending = KEYS[2]
 local commandIndex = KEYS[3]
-local lease = KEYS[4]
+local indexMarker = KEYS[4]
+local lease = KEYS[5]
+local INDEX_VERSION = '1'
+
 if redis.call('GET', lease) ~= ARGV[1] then
   return -1
 end
 
-local terminalizedCount = tonumber(ARGV[2]) or -1
-if terminalizedCount < 0
-    or terminalizedCount ~= math.floor(terminalizedCount)
-    or #ARGV ~= terminalizedCount + 2 then
-  return -3
-end
-local terminalized = {}
-for index = 1, terminalizedCount do
-  terminalized[ARGV[index + 2]] = true
+local markerReady = redis.call('GET', indexMarker) == INDEX_VERSION
+if markerReady
+    and (redis.call('EXISTS', commandIndex) == 1
+        or (redis.call('LLEN', queue) == 0 and redis.call('LLEN', pending) == 0)) then
+  return 1
 end
 
 local function unwrapSerializedString(raw)
@@ -53,7 +52,7 @@ local function unwrapSerializedString(raw)
   return string.sub(raw, payloadStart)
 end
 
-local function parseCommandId(raw)
+local function parsePayload(raw)
   local value = unwrapSerializedString(raw)
   if not value then
     return nil
@@ -71,32 +70,29 @@ local function parseCommandId(raw)
   if string.match(string.sub(value, idEnd + 1), '%S') == nil then
     return nil
   end
-  return commandId
+  return value, commandId
 end
 
-local processed = {}
-while true do
-  local cmd = redis.call('RPOP', pending)
-  if not cmd then
-    break
-  end
-  local commandId = parseCommandId(cmd)
-  if not commandId then
-    table.insert(processed, {raw = cmd, commandId = nil})
-    for index = #processed, 1, -1 do
-      redis.call('RPUSH', pending, processed[index].raw)
+local valuesById = {}
+local rawById = {}
+for _, list in ipairs({queue, pending}) do
+  local values = redis.call('LRANGE', list, 0, -1)
+  for index = 1, #values do
+    local value, commandId = parsePayload(values[index])
+    if not value then
+      return -3
     end
-    return -2
+    if valuesById[commandId] then
+      return -2
+    end
+    valuesById[commandId] = value
+    rawById[commandId] = rawById[commandId] or values[index]
   end
-  table.insert(processed, {raw = cmd, commandId = commandId})
 end
 
-for index = 1, #processed do
-  local entry = processed[index]
-  if terminalized[entry.commandId] then
-    redis.call('HDEL', commandIndex, entry.commandId)
-  else
-    redis.call('LPUSH', queue, entry.raw)
-  end
+redis.call('DEL', commandIndex)
+for commandId, raw in pairs(rawById) do
+  redis.call('HSET', commandIndex, commandId, raw)
 end
+redis.call('SET', indexMarker, INDEX_VERSION)
 return 1

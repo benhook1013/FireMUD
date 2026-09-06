@@ -108,6 +108,14 @@ final class TickStagingService {
 
   void drainRemoteFollowups(
       Long tenantId, Long gameInstanceId, TickQueueControlService.OwnershipSnapshot ownership) {
+    drainRemoteFollowups(tenantId, gameInstanceId, ownership, null);
+  }
+
+  void drainRemoteFollowups(
+      Long tenantId,
+      Long gameInstanceId,
+      TickQueueControlService.OwnershipSnapshot ownership,
+      TickQueueControlService.QueueLockLease tickLease) {
     String tickBatchId = "tb-" + UUID.randomUUID();
     RemoteFollowupDrainService.ClaimOutcome claimOutcome =
         remoteFollowupDrainService.claimDueFollowups(
@@ -131,7 +139,7 @@ final class TickStagingService {
       batchDurablyStaged = true;
       tickBatchExecutionService.requireCurrentOwnership(batch, false);
       tickBatchExecutionService.markRemoteFollowupBatchDrained(batch);
-      tickBatchExecutionService.executeDurableEffects(tenantId, gameInstanceId);
+      tickBatchExecutionService.executeDurableEffects(tenantId, gameInstanceId, tickLease);
     } catch (Exception ex) {
       if (!batchDurablyStaged) {
         remoteFollowupDrainService.releaseClaimedFollowups(
