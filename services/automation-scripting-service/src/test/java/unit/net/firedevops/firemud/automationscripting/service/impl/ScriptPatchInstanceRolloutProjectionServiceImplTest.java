@@ -447,6 +447,8 @@ class ScriptPatchInstanceRolloutProjectionServiceImplTest {
     verifyNoInteractions(workItemRepository);
     Mockito.verify(repository)
         .findByTenantIdAndGameInstanceIdAndScriptPatchVersion("1", "game-1", "patch-1");
+    Mockito.verify(repository, Mockito.never())
+        .save(Mockito.any(ScriptPatchInstanceRolloutProjection.class));
     verifyNoInteractions(eventRepository);
   }
 }

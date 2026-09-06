@@ -152,10 +152,11 @@ public class ScriptEventIngressAuditRepository {
    * Reclaims a stale in-progress claim under the same event identity.
    *
    * <p>The expected row version is the abandoned owner's fence. A successful compare-and-set
-   * advances that fence before the new owner can resolve or materialize handlers; owner-local lease
-   * renewals then fence the abandoned owner before quota or fan-out effects, and its later final
-   * save fails closed as a stale write. A zero-row update means a concurrent owner already
-   * reclaimed or finalized the claim.
+   * advances that fence before the new owner can resolve or materialize handlers; row-version
+   * fencing is a reclaim-only operation. Owner-local lease renewals instead extend the
+   * {@code CLAIM_STARTED_AT} staleness window without advancing the row version, and a reclaimed
+   * owner's later final save fails closed as a stale write. A zero-row update means a concurrent
+   * owner already reclaimed or finalized the claim.
    */
   public Optional<ScriptEventIngressAudit> reclaimStaleInProgress(
       ScriptEventIngressAudit claim, Instant staleBefore, Instant now) {
@@ -184,10 +185,13 @@ public class ScriptEventIngressAuditRepository {
   }
 
   /**
-   * Renews the current owner's claim lease while retaining its row-version fence.
+   * Renews the current owner's claim lease by extending {@code CLAIM_STARTED_AT} while retaining
+   * its row-version fence.
    *
-   * <p>The compare-and-set update also takes the row lock until the enclosing transaction ends,
-   * preventing a stale reclaim from interleaving with the owner's immediately following effect.
+   * <p>Renewal does not advance {@code ROW_VERSION}; row-version fencing is performed only by a
+   * stale reclaim. The compare-and-set update also takes the row lock until the enclosing
+   * transaction ends, preventing a stale reclaim from interleaving with the owner's immediately
+   * following effect.
    */
   public boolean renewClaimIfCurrent(ScriptEventIngressAudit claim, Instant now) {
     if (claim.getId() == null || claim.getRowVersion() < 0 || claim.getClaimStartedAt() == null) {

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
@@ -118,6 +119,36 @@ class PublishGateServiceImplTest {
         assertThrows(
             PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
     assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+  }
+
+  @Test
+  void fullVersionGateChecksEachParticipantAgainstItsOwnDigestSchema() {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 4, null, null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 4, null, null));
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+    assertTrue(thrown.getMessage().contains("ENTITY_MANAGEMENT"));
   }
 
   @Test

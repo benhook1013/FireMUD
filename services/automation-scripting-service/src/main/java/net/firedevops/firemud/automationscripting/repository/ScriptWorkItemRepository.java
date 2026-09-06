@@ -662,6 +662,7 @@ public class ScriptWorkItemRepository {
         .fetchOptional(this::toEntity);
   }
 
+  @Transactional
   public void deleteAll(Collection<ScriptWorkItem> entities) {
     if (entities == null || entities.isEmpty()) {
       return;
