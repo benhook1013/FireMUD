@@ -155,6 +155,10 @@ public class ScriptPatchInstanceRolloutEventRepository {
                     .and(ownerTupleMatches))
             .execute();
     if (updated != 1) {
+      java.util.Optional<ScriptPatchInstanceRolloutEvent> persisted = findById(entity.getId());
+      if (persisted.isPresent() && !ownerTupleMatches(persisted.orElseThrow(), entity)) {
+        throw new IllegalStateException("Rollout event owner tuple conflict");
+      }
       throw AutomationScriptingJooqRepositorySupport.staleWrite(
           "script_patch_instance_rollout_events", entity.getId());
     }
@@ -226,5 +230,15 @@ public class ScriptPatchInstanceRolloutEventRepository {
 
   private static String storedRequestId(String requestId) {
     return requestId == null || requestId.isBlank() ? "" : requestId;
+  }
+
+  private static boolean ownerTupleMatches(
+      ScriptPatchInstanceRolloutEvent persisted, ScriptPatchInstanceRolloutEvent incoming) {
+    return java.util.Objects.equals(
+            persisted.getScriptPatchVersion(), incoming.getScriptPatchVersion())
+        && persisted.getScriptPinEpoch() == incoming.getScriptPinEpoch()
+        && java.util.Objects.equals(
+            blankToNull(persisted.getLastObservedControlPlaneRequestId()),
+            blankToNull(incoming.getLastObservedControlPlaneRequestId()));
   }
 }

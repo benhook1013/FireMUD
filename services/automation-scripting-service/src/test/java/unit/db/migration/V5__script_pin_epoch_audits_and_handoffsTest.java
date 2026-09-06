@@ -33,6 +33,7 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "duplicate pre-instance script ingress identities require operator reconciliation",
             "duplicate retained runtime script ingress identities require operator reconciliation",
             "WHERE game_instance_id IS NULL",
+            "NULLS NOT DISTINCT",
             "CREATE UNIQUE INDEX uq_script_event_audit_handler_identity ON script_event_audit",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "ADD COLUMN target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
@@ -44,6 +45,12 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
             "ADD COLUMN script_pin_epoch BIGINT NOT NULL DEFAULT 0;",
             "ADD COLUMN script_pin_control_plane_request_id VARCHAR(256);",
             "ADD COLUMN binding_id VARCHAR(128) NOT NULL DEFAULT '';",
+            "UPDATE script_handoff_events",
+            "WHEN plugin_id IS NULL OR plugin_version_id IS NULL THEN ''",
+            "ALTER COLUMN plugin_id SET DEFAULT '';",
+            "ALTER COLUMN plugin_version_id SET DEFAULT '';",
+            "ALTER COLUMN plugin_id SET NOT NULL;",
+            "ALTER COLUMN plugin_version_id SET NOT NULL;",
             "ADD COLUMN request_digest VARCHAR(64) NOT NULL DEFAULT '';",
             "request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$'",
             "ck_script_event_ingress_audit_request_digest",
@@ -117,7 +124,6 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
     assertThat(normalized.substring(duplicateIdentityCheck, normalizedRuntimeStart))
         .contains(
             "WHERE game_instance_id IS NULL",
-            "AND script_id IS NOT NULL",
             "WHERE game_instance_id IS NOT NULL",
             "AND entity_id IS NOT NULL",
             "script_pin_epoch IS NULL",
@@ -187,7 +193,8 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
 
     int normalizedOnLoadStart =
         normalized.indexOf("CREATE UNIQUE INDEX uq_script_event_ingress_audit_onload_identity");
-    int normalizedOnLoadEnd = normalized.indexOf(") WHERE", normalizedOnLoadStart);
+    int normalizedOnLoadEnd =
+        normalized.indexOf(") NULLS NOT DISTINCT WHERE", normalizedOnLoadStart);
     assertThat(normalizedOnLoadStart).isGreaterThan(normalizedRuntimeStart);
     assertThat(normalizedOnLoadStart).isGreaterThanOrEqualTo(0);
     assertThat(normalizedOnLoadStart).isGreaterThan(duplicateIdentityCheck);
@@ -196,6 +203,9 @@ class V5__script_pin_epoch_audits_and_handoffsTest {
         .contains("script_id")
         .doesNotContain("region_id", "region_epoch", "game_instance_id");
     assertThat(migration)
-        .contains(") WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;");
+        .contains(
+            "/* [jooq ignore start] */",
+            ") NULLS NOT DISTINCT WHERE game_instance_id IS NULL AND script_pin_epoch IS NULL;",
+            "/* [jooq ignore stop] */");
   }
 }

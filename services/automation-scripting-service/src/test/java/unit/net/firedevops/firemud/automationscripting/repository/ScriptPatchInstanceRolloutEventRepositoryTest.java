@@ -218,8 +218,17 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
     AtomicReference<String> updateSql = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
-          updateSql.set(context.sql().toLowerCase(Locale.ROOT));
-          return new MockResult[] {new MockResult(0)};
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("update")) {
+            updateSql.set(sql);
+            return new MockResult[] {new MockResult(0)};
+          }
+          return new MockResult[] {
+            new MockResult(
+                0,
+                DSL.using(SQLDialect.POSTGRES)
+                    .newResult(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.fields()))
+          };
         };
     ScriptPatchInstanceRolloutEventRepository repository =
         new ScriptPatchInstanceRolloutEventRepository(
@@ -251,5 +260,57 @@ class ScriptPatchInstanceRolloutEventRepositoryTest {
                       "script_pin_epoch",
                       "last_observed_control_plane_request_id");
             });
+  }
+
+  @Test
+  void classifiesReloadedOwnerTupleMismatchSeparatelyFromStaleVersion() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> updateSql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.startsWith("update")) {
+            updateSql.set(sql);
+            return new MockResult[] {new MockResult(0)};
+          }
+          ScriptPatchInstanceRolloutEventsRecord row = new ScriptPatchInstanceRolloutEventsRecord();
+          row.setId(9L);
+          row.setEventId("rollout-event-1");
+          row.setTenantId("tenant-1");
+          row.setGameInstanceId("game-1");
+          row.setScriptPatchVersion("patch-current");
+          row.setScriptPinEpoch(3L);
+          row.setLastObservedControlPlaneRequestId("owner-current");
+          row.setRolloutStatus("ROLLED_BACK");
+          row.setStatusReason("runtime_pin_differs_from_patch");
+          row.setObservedAt(LocalDateTime.parse("2026-08-01T00:00:01"));
+          row.setProjectionRefreshedAt(LocalDateTime.parse("2026-08-01T00:00:02"));
+          row.setRowVersion(1);
+          Record returned = resultDsl.newRecord(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.fields());
+          returned.from(row);
+          Result<Record> result =
+              resultDsl.newResult(SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.fields());
+          result.add(returned);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptPatchInstanceRolloutEventRepository repository =
+        new ScriptPatchInstanceRolloutEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptPatchInstanceRolloutEvent changed = new ScriptPatchInstanceRolloutEvent();
+    changed.setId(9L);
+    changed.setEventId("rollout-event-1");
+    changed.setTenantId("tenant-1");
+    changed.setGameInstanceId("game-1");
+    changed.setScriptPatchVersion("patch-requested");
+    changed.setScriptPinEpoch(2L);
+    changed.setLastObservedControlPlaneRequestId("owner-requested");
+    changed.setRolloutStatus("ROLLED_BACK");
+    changed.setStatusReason("runtime_pin_differs_from_patch");
+
+    assertThatThrownBy(() -> repository.save(changed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Rollout event owner tuple conflict");
+    assertThat(updateSql).hasValueSatisfying(sql -> assertThat(sql).startsWith("update"));
   }
 }

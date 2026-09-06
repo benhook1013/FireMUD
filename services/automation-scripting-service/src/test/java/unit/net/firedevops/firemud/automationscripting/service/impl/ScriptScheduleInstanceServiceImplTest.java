@@ -1931,7 +1931,7 @@ class ScriptScheduleInstanceServiceImplTest {
         .containsExactly("patch-1", "patch-2", "patch-1");
     assertThat(workItems).extracting(ScriptWorkItem::getScriptPinEpoch).containsExactly(1L, 1L, 2L);
     assertThat(workItems.get(0).getReadSnapshotToken()).contains("7:patch-1");
-    assertThat(workItems.get(0).getReadSnapshotToken()).doesNotContain(":patch-1:1:req-1:");
+    assertThat(workItems.get(0).getReadSnapshotToken()).doesNotContain("req-1");
     assertThat(workItems.get(0).getReadSnapshotToken())
         .isNotEqualTo(workItems.get(1).getReadSnapshotToken());
     assertThat(workItems.get(0).getReadSnapshotToken())
