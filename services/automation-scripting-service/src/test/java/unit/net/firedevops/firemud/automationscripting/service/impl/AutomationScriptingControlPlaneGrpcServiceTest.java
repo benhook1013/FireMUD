@@ -1039,6 +1039,62 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void mapsAdmissionStateConflictToFailedPrecondition() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    Mockito.when(admissionStateService.setMode(Mockito.any()))
+        .thenThrow(new IllegalStateException("admission state conflict"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<SetAutomationAdmissionModeResponse> ref = new AtomicReference<>();
+
+    service.setAutomationAdmissionMode(
+        SetAutomationAdmissionModeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setMode(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(ref.get().getError().getMessage()).isEqualTo("admission state conflict");
+  }
+
+  @Test
+  void preservesInvalidArgumentMappingForAdmissionMode() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    Mockito.when(admissionStateService.setMode(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("invalid admission mode"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<SetAutomationAdmissionModeResponse> ref = new AtomicReference<>();
+
+    service.setAutomationAdmissionMode(
+        SetAutomationAdmissionModeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setMode(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage()).isEqualTo("invalid admission mode");
+  }
+
+  @Test
   void getsAutomationPinConvergenceFromRuntimeState() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptPatchPinProjectionService pinProjectionService =

@@ -180,6 +180,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           SetAutomationAdmissionModeResponse.newBuilder()
               .setError(AutomationControlPlaneSupport.invalidArgument(ex.getMessage()))
               .build();
+    } catch (IllegalStateException ex) {
+      response =
+          SetAutomationAdmissionModeResponse.newBuilder()
+              .setError(AutomationControlPlaneSupport.failedPrecondition(ex.getMessage()))
+              .build();
     } catch (AdminAuthorizationException ex) {
       response =
           SetAutomationAdmissionModeResponse.newBuilder()

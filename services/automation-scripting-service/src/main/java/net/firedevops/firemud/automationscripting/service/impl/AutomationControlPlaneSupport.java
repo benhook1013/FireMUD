@@ -21,6 +21,10 @@ final class AutomationControlPlaneSupport {
     return ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage(message).build();
   }
 
+  static ErrorDetail failedPrecondition(String message) {
+    return ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").setMessage(message).build();
+  }
+
   static ErrorDetail notFound(String method, String reason) {
     return ErrorDetail.newBuilder()
         .setCode("NOT_FOUND")
