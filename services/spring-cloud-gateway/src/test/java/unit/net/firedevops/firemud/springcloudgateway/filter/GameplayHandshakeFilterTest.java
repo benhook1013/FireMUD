@@ -483,6 +483,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -513,6 +514,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -564,6 +566,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -596,6 +599,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -629,6 +633,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")

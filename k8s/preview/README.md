@@ -53,7 +53,9 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - create preview namespaces
 - create/update GHCR pull secrets
 - create/update preview gRPC TLS secrets
+- require controller-projected, release-scoped Gateway WebSocket server and TCP Proxy client identity Secrets before apply
 - render preview manifests
+- run the canonical `PREFLIGHT-BRIDGE-001` hosted-render check before server-side dry-run or Helm deploy
 - validate those manifests against the live cluster API with server-side dry-run
 - deploy or upgrade a real Helm release into `pr-*` namespaces
 - seed the preview bootstrap state needed for reviewer proof
@@ -66,8 +68,7 @@ the namespace-scoped
 `kubectl port-forward --address 127.0.0.1 service/spring-cloud-gateway <port>:80`.
 Only the non-credential session/world bootstrap remains in the short-lived
 in-cluster pod; that pod receives the account-id ConfigMap only and never a
-credential Secret or credential environment variables. This bounded hop is required until an internal HTTPS/mTLS
-Gateway listener is available.
+credential Secret or credential environment variables. This bounded management hop is separate from the gameplay bridge; management-plane HTTPS/mTLS remains a separate target boundary.
 
 Current implementation limitations:
 
@@ -87,11 +88,14 @@ Current implementation limitations:
 - Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
 - Preview now follows the same Spring Boot SSL-bundle plus Spring gRPC server SSL-bundle binding contract as the other Kubernetes-backed environments.
 - The checked-in Helm values mount workload mTLS material, set `FIREMUD_GRPC_PLAINTEXT: "false"`, and keep the internal gRPC topology aligned with the non-local target state rather than carrying a separate preview-only plaintext mode.
-- The remaining transport distinction in preview is the TCP bridge's `ws://spring-cloud-gateway/ws/game` bootstrap path for reviewer-facing Telnet smoke, not an internal gRPC plaintext exception.
+- The hosted TCP bridge targets `wss://spring-cloud-gateway-mtls.<namespace>.svc.cluster.local/ws/game` and uses a dedicated client identity Secret, distinct from gRPC and public Telnet TLS. Gateway consumes its own server identity Secret, selects only `production_uri`, and has no hosted plaintext or CIDR-trust fallback.
+- The environment certificate controller, not this chart, owns issuing, projecting, rotating, and withdrawing the release-scoped `<release>-gateway-internal-ws` and `<release>-tcp-proxy-bridge` Secrets. Each projection must contain `tls.crt`, `tls.key`, and `ca.crt`; preview and dev-demo preflight fail before deploy when either projection is absent or incomplete.
+- The existing hosted Telnet transcript proves the public Telnet TLS first hop and gameplay behavior only. It does not prove that the internal Proxy -> Gateway WSS/mTLS bridge, rotation, withdrawal, or reconnect lifecycle executed successfully.
 
 ## Current network-policy stance
 
 - Hosted preview now renders checked-in baseline internal-service `NetworkPolicy` resources from the Helm chart.
+- Gateway listener ingress allows only `app=tcp-proxy-service` on TCP `8443`, and TCP Proxy egress reaches only `app=spring-cloud-gateway` on that listener port for the WebSocket bridge.
 - The player-facing Kustomize/base path and the hosted preview/dev-demo path now share one checked-in baseline policy posture, even though the actual environment classes still differ in lifecycle and operational scope.
 
 ## Current TCP bootstrap contract

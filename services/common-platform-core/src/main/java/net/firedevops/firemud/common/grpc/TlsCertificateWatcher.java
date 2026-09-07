@@ -2,16 +2,19 @@ package net.firedevops.firemud.common.grpc;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
@@ -23,6 +26,9 @@ import org.slf4j.Logger;
  */
 public class TlsCertificateWatcher implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TlsCertificateWatcher.class);
+  private static final Duration RELOAD_DEBOUNCE = Duration.ofMillis(100);
+  private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
+  private static final Path PROJECTED_DATA_LINK = Path.of("..data");
 
   private final WatchService watchService;
   private final Map<WatchKey, Path> keys = new HashMap<>();
@@ -42,7 +48,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
       value = "CT_CONSTRUCTOR_THROW",
       justification = "Thread started only via start() after constructor")
   public TlsCertificateWatcher(List<Path> files, Runnable onChange) throws IOException {
-    this.files = Set.copyOf(files.stream().map(Path::toAbsolutePath).toList());
+    this.files = Set.copyOf(files.stream().map(path -> path.toAbsolutePath().normalize()).toList());
     this.onChange = onChange;
     this.watchService = FileSystems.getDefault().newWatchService();
     for (Path file : this.files) {
@@ -54,7 +60,8 @@ public class TlsCertificateWatcher implements AutoCloseable {
           dir.register(
               watchService,
               StandardWatchEventKinds.ENTRY_MODIFY,
-              StandardWatchEventKinds.ENTRY_CREATE);
+              StandardWatchEventKinds.ENTRY_CREATE,
+              StandardWatchEventKinds.ENTRY_DELETE);
       keys.put(key, dir);
     }
     thread = new Thread(this::processEvents, "tls-cert-watcher");
@@ -70,30 +77,74 @@ public class TlsCertificateWatcher implements AutoCloseable {
       WatchKey key;
       try {
         key = watchService.take();
+      } catch (ClosedWatchServiceException e) {
+        return;
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         return;
       }
-      Path dir = keys.get(key);
-      boolean changed = false;
-      if (dir != null) {
-        for (WatchEvent<?> event : key.pollEvents()) {
-          Path changedPath = dir.resolve((Path) event.context()).toAbsolutePath();
-          if (files.contains(changedPath)) {
-            changed = true;
-            break;
-          }
+      if (processKey(key)) {
+        drainReloadBurst();
+        if (!running.get()) {
+          return;
         }
-      }
-      boolean valid = key.reset();
-      if (!valid) {
-        keys.remove(key);
-      }
-      if (changed) {
-        logger.info("TLS certificate change detected; reloading channel");
+        logger.info("TLS certificate projection or file change detected; reloading credentials");
         onChange.run();
       }
     }
+  }
+
+  private boolean processKey(WatchKey key) {
+    Path dir = keys.get(key);
+    boolean changed = false;
+    if (dir != null) {
+      for (WatchEvent<?> event : key.pollEvents()) {
+        changed |= isReloadEvent(files, dir, event);
+      }
+    }
+    if (!key.reset()) {
+      keys.remove(key);
+    }
+    return changed;
+  }
+
+  private void drainReloadBurst() {
+    long maximumDeadline = System.nanoTime() + MAX_RELOAD_DELAY.toNanos();
+    long quietDeadline = System.nanoTime() + RELOAD_DEBOUNCE.toNanos();
+    while (running.get()) {
+      long remainingNanos = Math.min(maximumDeadline, quietDeadline) - System.nanoTime();
+      if (remainingNanos <= 0) {
+        return;
+      }
+      WatchKey key;
+      try {
+        key = watchService.poll(remainingNanos, TimeUnit.NANOSECONDS);
+      } catch (ClosedWatchServiceException e) {
+        return;
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+      if (key == null) {
+        return;
+      }
+      if (processKey(key)) {
+        quietDeadline = System.nanoTime() + RELOAD_DEBOUNCE.toNanos();
+      }
+    }
+  }
+
+  static boolean isReloadEvent(Set<Path> files, Path dir, WatchEvent<?> event) {
+    if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
+      return true;
+    }
+    if (!(event.context() instanceof Path relativePath)) {
+      return false;
+    }
+    if (PROJECTED_DATA_LINK.equals(relativePath)) {
+      return true;
+    }
+    return files.contains(dir.resolve(relativePath).toAbsolutePath().normalize());
   }
 
   @Override

@@ -16,6 +16,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
   - Use this before trusting a rendered deployment, before apply/promotion, or before reopening traffic after a major environment change.
   - It renders the target manifests, validates FireMUD deployment policy, writes a JSON report, and fails when required policy checks do not pass.
   - Supports `staging`, `production`, and `hobby-self-hosted` environment classes.
+  - Its `hosted-bridge <render-path> <namespace> <release-name>` form applies the same `PREFLIGHT-BRIDGE-001` validator to preview/dev-demo Helm output; operator context additionally checks that the controller-projected server and client Secrets exist with the required keys.
   - Used by operator deployment workflows and by CI static-policy validation.
 
 - `write-traffic-open-evidence.py`

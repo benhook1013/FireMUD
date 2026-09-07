@@ -66,7 +66,8 @@ class TlsMisconfigurationIntegrationTest {
         @Value("${TCP_PROXY_MCP_ENABLED:false}") boolean advertiseMcp,
         MeterRegistry meterRegistry,
         TcpProxyEventService tcpProxyEventService,
-        GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
+        GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+        GatewayWebSocketClient gatewayWebSocketClient) {
       return new TelnetServer(
           port,
           gatewayWsUrl,
@@ -79,7 +80,13 @@ class TlsMisconfigurationIntegrationTest {
           4096,
           meterRegistry,
           tcpProxyEventService,
-          gatewayGameplayReadinessProbe);
+          gatewayGameplayReadinessProbe,
+          gatewayWebSocketClient);
+    }
+
+    @Bean
+    GatewayWebSocketClient gatewayWebSocketClient() {
+      return Mockito.mock(GatewayWebSocketClient.class);
     }
   }
 }

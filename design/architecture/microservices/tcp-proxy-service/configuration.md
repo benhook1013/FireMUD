@@ -11,7 +11,7 @@ The security policy for these settings is owned by [Security](../../system-archi
 For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so TCP Proxy authenticates the Gateway server and presents its own dedicated WebSocket client certificate.
-- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases.
+- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases. Transport-specific certificate leaves may intentionally carry the same canonical workload URI SAN, `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`; distinctness applies to the leaf/private-key material, not to inventing different principals for one workload.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
 - Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for local development and automated tests.
@@ -101,7 +101,9 @@ In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss:
 
 - Client certificate and key are loaded from `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` and `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`.
 - The Gateway’s certificate is validated against `FIREMUD_GATEWAY_WS_CA_CERT_PATH`, with hostname verification enabled using the host from `GATEWAY_WS_URL`.
-- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts.
+- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts. The watcher recognizes both ordinary watched-file changes and Kubernetes projected-Secret `..data` generation swaps, coalesces each short event burst into one reload, and treats a watch-service overflow as a reload signal so the client re-reads all configured material and fails closed if the resulting set is invalid.
+
+Ordinary renewal atomically replaces the client used for new bridges and readiness probes while already-negotiated WebSocket sessions finish naturally. This watcher behavior does not implement explicit certificate revocation, identity removal, or emergency trust withdrawal. Those events depend on the hosted identity controller enforcing disruptive termination of the old TCP Proxy pods and bridges, even when replacement credentials or replacement pods are unavailable; requesting a rollout without proving the old bridges stopped is not sufficient.
 
 The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
@@ -113,6 +115,7 @@ When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion o
 
 The local environment consequence is:
 
+- Plaintext `ws://` requires at least one explicit `local`, `dev`, or `test` Spring profile; an empty active-profile set fails closed rather than implicitly selecting local trust.
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.

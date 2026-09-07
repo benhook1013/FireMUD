@@ -216,6 +216,11 @@ jobs:
             -f /tmp/dev-demo-values.yaml \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             >/tmp/dev-demo-rendered.yaml
+          FIREMUD_PREFLIGHT_CONTEXT=operator \
+            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
+            /tmp/dev-demo-rendered.yaml \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.release_name }}"
           kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
           wc -l /tmp/dev-demo-rendered.yaml
 

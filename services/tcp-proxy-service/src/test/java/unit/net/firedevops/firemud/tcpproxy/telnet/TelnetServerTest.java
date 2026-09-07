@@ -49,7 +49,8 @@ class TelnetServerTest {
             4096,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
-            readyProbe());
+            readyProbe(),
+            Mockito.mock(GatewayWebSocketClient.class));
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
@@ -77,7 +78,8 @@ class TelnetServerTest {
                     4096,
                     registry,
                     Mockito.mock(TcpProxyEventService.class),
-                    readyProbe()));
+                    readyProbe(),
+                    Mockito.mock(GatewayWebSocketClient.class)));
 
     assertTrue(ex.getMessage().contains("TLS"));
     assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
@@ -108,7 +110,8 @@ class TelnetServerTest {
             4096,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
-            readyProbe());
+            readyProbe(),
+            Mockito.mock(GatewayWebSocketClient.class));
     server.start();
 
     KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());

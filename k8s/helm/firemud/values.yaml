@@ -2,3 +2,7 @@ previewStack:
   enabled: false
   networkPolicies:
     enabled: true
+  gatewayWsTls:
+    enabled: false
+    servicePort: 443
+    targetPort: 8443

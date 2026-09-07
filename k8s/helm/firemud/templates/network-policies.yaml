@@ -176,4 +176,85 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- if $gatewayWsTls.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-ingress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTls.targetPort }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 6565
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tcp-proxy-service-egress
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: tcp-proxy-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: {{ $gatewayWsTls.targetPort }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app: game-session-service
+      ports:
+        - protocol: TCP
+          port: 6565
+{{- end }}
 {{- end }}

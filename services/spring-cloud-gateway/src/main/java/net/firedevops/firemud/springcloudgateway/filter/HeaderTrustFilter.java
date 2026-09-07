@@ -2,23 +2,18 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateEncodingException;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
+import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -44,27 +39,27 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_PROXY_GAME_INSTANCE_ID = "X-Proxy-Game-Instance-Id";
   private static final String HDR_PROXY_TENANT_ID = "X-Proxy-Tenant-Id";
 
-  private static final HexFormat HEX = HexFormat.of();
-
-  private final GatewayHeaderTrustProperties properties;
   private final CidrSet trustedForwardedProxies;
-  private final CidrSet insecureTrustedTcpProxyCidrs;
-  private final List<String> trustedTcpProxyFingerprints;
-  private final List<String> trustedTcpProxyDnsSans;
-  private final List<String> trustedTcpProxyUriSans;
+  private final TcpProxyTrustPolicy tcpProxyTrustPolicy;
 
-  public HeaderTrustFilter(GatewayHeaderTrustProperties properties) {
-    this.properties = Objects.requireNonNull(properties);
+  @Autowired
+  public HeaderTrustFilter(
+      GatewayHeaderTrustProperties properties, TcpProxyTrustPolicy tcpProxyTrustPolicy) {
+    Objects.requireNonNull(properties);
+    this.tcpProxyTrustPolicy = Objects.requireNonNull(tcpProxyTrustPolicy);
     this.trustedForwardedProxies =
         new CidrSet(properties.getForwardedClientIp().getTrustedProxyCidrs());
-    this.insecureTrustedTcpProxyCidrs =
-        new CidrSet(properties.getTcpProxy().getInsecureTrustedCidrs());
-    this.trustedTcpProxyFingerprints =
-        normalizeFingerprints(properties.getTcpProxy().getTrustedClientCertFingerprintsSha256());
-    this.trustedTcpProxyDnsSans =
-        normalizeStrings(properties.getTcpProxy().getTrustedClientCertDnsSans());
-    this.trustedTcpProxyUriSans =
-        normalizeStrings(properties.getTcpProxy().getTrustedClientCertUriSans());
+  }
+
+  HeaderTrustFilter(GatewayHeaderTrustProperties properties) {
+    this(
+        properties,
+        new TcpProxyTrustPolicy(
+            new GatewayTcpProxyListenerProperties(),
+            properties,
+            8080,
+            java.time.Clock.systemUTC(),
+            java.util.Set.of("test")));
   }
 
   @Override
@@ -73,11 +68,13 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     boolean isSessionRoute = path.startsWith("/ws/game") || path.startsWith("/api/session/");
 
     InetAddress remoteAddress = remoteInetAddress(exchange);
-    boolean trustedTcpProxy = isTrustedTcpProxy(exchange, remoteAddress);
+    boolean trustedTcpProxy = tcpProxyTrustPolicy.isTrusted(exchange, remoteAddress);
+    boolean dedicatedTcpProxyListener = tcpProxyTrustPolicy.isDedicatedListenerRequest(exchange);
 
     if (isSessionRoute
         && !trustedTcpProxy
-        && presentsProxyHeaders(exchange.getRequest().getHeaders())) {
+        && (dedicatedTcpProxyListener
+            || presentsProxyHeaders(exchange.getRequest().getHeaders()))) {
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
     }
@@ -87,6 +84,15 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         trustedTcpProxy && isSessionRoute
             ? normalizeIpLiteral(incomingProxyClientIp)
             : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
+
+    if (trustedTcpProxy
+        && isSessionRoute
+        && (dedicatedTcpProxyListener || presentsProxyHeaders(exchange.getRequest().getHeaders()))
+        && canonicalClientIp == null) {
+      LOG.debug("Rejecting session route: missing or invalid trusted proxy client IP");
+      exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+      return exchange.getResponse().setComplete();
+    }
 
     String incomingProxyConnectionId =
         trustedTcpProxy
@@ -255,128 +261,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     return remote != null ? remote.getAddress() : null;
   }
 
-  private boolean isTrustedTcpProxy(ServerWebExchange exchange, InetAddress remoteAddress) {
-    if (isTrustedTcpProxyViaMtls(exchange.getRequest().getSslInfo())) {
-      return true;
-    }
-    return properties.getTcpProxy().isAllowInsecureHeadersFromTrustedCidrs()
-        && remoteAddress != null
-        && insecureTrustedTcpProxyCidrs.contains(remoteAddress);
-  }
-
-  private boolean isTrustedTcpProxyViaMtls(SslInfo sslInfo) {
-    if (sslInfo == null
-        || (trustedTcpProxyFingerprints.isEmpty()
-            && trustedTcpProxyDnsSans.isEmpty()
-            && trustedTcpProxyUriSans.isEmpty())) {
-      return false;
-    }
-    X509Certificate[] peerCerts;
-    try {
-      peerCerts = sslInfo.getPeerCertificates();
-    } catch (Exception ignored) {
-      return false;
-    }
-    if (peerCerts == null || peerCerts.length == 0 || peerCerts[0] == null) {
-      return false;
-    }
-    X509Certificate leaf = peerCerts[0];
-    if (!trustedTcpProxyFingerprints.isEmpty() && matchesFingerprint(leaf)) {
-      return true;
-    }
-    if (!trustedTcpProxyDnsSans.isEmpty() || !trustedTcpProxyUriSans.isEmpty()) {
-      return matchesSans(leaf);
-    }
-    return false;
-  }
-
-  private boolean matchesFingerprint(X509Certificate cert) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(cert.getEncoded());
-      String fingerprint = HEX.formatHex(hash).toLowerCase(Locale.ROOT);
-      for (String allowed : trustedTcpProxyFingerprints) {
-        if (fingerprint.equals(allowed)) {
-          return true;
-        }
-      }
-      return false;
-    } catch (CertificateEncodingException | NoSuchAlgorithmException ignored) {
-      return false;
-    }
-  }
-
-  private boolean matchesSans(X509Certificate cert) {
-    try {
-      Collection<List<?>> sans = cert.getSubjectAlternativeNames();
-      if (sans == null) {
-        return false;
-      }
-      for (List<?> san : sans) {
-        if (san == null || san.size() < 2) {
-          continue;
-        }
-        Object typeObj = san.get(0);
-        Object valueObj = san.get(1);
-        if (!(typeObj instanceof Integer type) || !(valueObj instanceof String value)) {
-          continue;
-        }
-        if (type == 2) { // DNS
-          String normalized = value.toLowerCase(Locale.ROOT);
-          for (String allowed : trustedTcpProxyDnsSans) {
-            if (normalized.equals(allowed)) {
-              return true;
-            }
-          }
-        } else if (type == 6) { // URI
-          String normalized = value.toLowerCase(Locale.ROOT);
-          for (String allowed : trustedTcpProxyUriSans) {
-            if (normalized.equals(allowed)) {
-              return true;
-            }
-          }
-        }
-      }
-      return false;
-    } catch (Exception ignored) {
-      return false;
-    }
-  }
-
-  private static List<String> normalizeFingerprints(List<String> raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) {
-      return out;
-    }
-    for (String value : raw) {
-      if (value == null) {
-        continue;
-      }
-      String normalized = value.trim().toLowerCase(Locale.ROOT).replace(":", "");
-      if (!normalized.isEmpty()) {
-        out.add(normalized);
-      }
-    }
-    return out;
-  }
-
-  private static List<String> normalizeStrings(List<String> raw) {
-    List<String> out = new ArrayList<>();
-    if (raw == null) {
-      return out;
-    }
-    for (String value : raw) {
-      if (value == null) {
-        continue;
-      }
-      String normalized = value.trim().toLowerCase(Locale.ROOT);
-      if (!normalized.isEmpty()) {
-        out.add(normalized);
-      }
-    }
-    return out;
-  }
-
   @Override
   public int getOrder() {
     return -4;
@@ -408,6 +292,10 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         }
       }
       return false;
+    }
+
+    boolean isEmpty() {
+      return blocks.isEmpty();
     }
   }
 

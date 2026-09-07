@@ -35,6 +35,14 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.gatewayWsServerSecretName" -}}
+{{- printf "%s-gateway-internal-ws" .Release.Name -}}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientSecretName" -}}
+{{- printf "%s-tcp-proxy-bridge" .Release.Name -}}
+{{- end -}}
+
 {{- define "firemud.telnetTlsSecretName" -}}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) -}}
 {{- if $telnetTls.enabled -}}
@@ -69,4 +77,37 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.telnetTlsModeEnv" -}}
 - name: TCP_PROXY_TELNET_MODE
   value: DIRECT_TLS
+{{- end -}}
+
+{{- define "firemud.gatewayWsServerEnv" -}}
+{{- $preview := .Values.preview | default (dict) -}}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+  value: "true"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+  value: "0.0.0.0"
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+  value: {{ .Values.previewStack.gatewayWsTls.targetPort | quote }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+  value: /gateway-ws-server-tls/tls.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+  value: /gateway-ws-server-tls/tls.key
+- name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+  value: /gateway-ws-server-tls/ca.crt
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $preview.prNumber) "0") }}
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+  value: production_uri
+- name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+  value: {{ printf "spiffe://firemud/ns/%s/sa/tcp-proxy-service" .Release.Namespace | quote }}
+{{- end -}}
+
+{{- define "firemud.gatewayWsClientEnv" -}}
+- name: GATEWAY_WS_URL
+  value: {{ printf "wss://spring-cloud-gateway-mtls.%s.svc.cluster.local/ws/game" .Release.Namespace | quote }}
+- name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+  value: /gateway-ws-client-tls/tls.crt
+- name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+  value: /gateway-ws-client-tls/tls.key
+- name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+  value: /gateway-ws-client-tls/ca.crt
 {{- end -}}

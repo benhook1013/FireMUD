@@ -850,8 +850,12 @@ metadata:
   name: spring-cloud-gateway-mtls
 spec:
   type: ClusterIP
+  selector:
+    app: spring-cloud-gateway
   ports:
     - port: 443
+      targetPort: 8443
+      protocol: TCP
 ---
 apiVersion: v1
 kind: Secret
@@ -884,9 +888,61 @@ metadata:
   name: hobby-tcp-proxy-bridge
 type: Opaque
 stringData:
-  client.crt: bridge-client
-  client.key: bridge-key
+  tls.crt: bridge-client
+  tls.key: bridge-key
   ca.crt: bridge-ca
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-cloud-gateway
+spec:
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: spring-cloud-gateway
+    spec:
+      containers:
+        - name: spring-cloud-gateway
+          image: ghcr.io/benhook1013/spring-cloud-gateway:latest
+          env:
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
+              value: 0.0.0.0
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
+              value: "8443"
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
+              value: /gateway-ws-server-tls/tls.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
+              value: /gateway-ws-server-tls/tls.key
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
+              value: /gateway-ws-server-tls/ca.crt
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
+              value: hobby-self-hosted
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
+              value: production_uri
+            - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
+              value: spiffe://firemud/ns/firemud/sa/tcp-proxy-service
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - name: gateway-ws-server-tls
+              mountPath: /gateway-ws-server-tls
+              readOnly: true
+      volumes:
+        - name: gateway-ws-server-tls
+          secret:
+            secretName: hobby-gateway-internal-ws
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Secret
@@ -910,7 +966,12 @@ kind: Deployment
 metadata:
   name: tcp-proxy-service
 spec:
+  strategy:
+    type: Recreate
   template:
+    metadata:
+      labels:
+        app: tcp-proxy-service
     spec:
       serviceAccountName: firemud-app
       containers:
@@ -926,11 +987,11 @@ spec:
             - name: GATEWAY_WS_URL
               value: wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local/ws/game
             - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
-              value: /tls/client.crt
+              value: /gateway-ws-client-tls/tls.crt
             - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
-              value: /tls/client.key
+              value: /gateway-ws-client-tls/tls.key
             - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /gateway-ws-client-tls/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
@@ -938,7 +999,7 @@ spec:
                 name: firemud-config
           volumeMounts:
             - name: hobby-tcp-proxy-bridge
-              mountPath: /tls
+              mountPath: /gateway-ws-client-tls
               readOnly: true
             - name: grpc-tls
               mountPath: /grpc-tls
@@ -951,10 +1012,10 @@ spec:
           secret:
             secretName: hobby-tcp-proxy-bridge
             items:
-              - key: client.crt
-                path: client.crt
-              - key: client.key
-                path: client.key
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
               - key: ca.crt
                 path: ca.crt
         - name: grpc-tls
@@ -963,6 +1024,44 @@ spec:
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spring-cloud-gateway-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: spring-cloud-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: tcp-proxy-service
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tcp-proxy-service-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: tcp-proxy-service
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: spring-cloud-gateway
+      ports:
+        - protocol: TCP
+          port: 8443
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2838,13 +2937,13 @@ account_container = next(
 account_container.setdefault("env", []).extend(
     [
         {"name": "GATEWAY_WS_URL", "value": "wss://spring-cloud-gateway-mtls.firemud.svc.cluster.local:443/ws/game"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
-        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
-        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/tls/ca.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "value": "/gateway-ws-client-tls/tls.crt"},
+        {"name": "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "value": "/gateway-ws-client-tls/tls.key"},
+        {"name": "FIREMUD_GATEWAY_WS_CA_CERT_PATH", "value": "/gateway-ws-client-tls/ca.crt"},
     ]
 )
 account_container.setdefault("volumeMounts", []).append(
-    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/tls", "readOnly": True}
+    {"name": "hobby-tcp-proxy-bridge", "mountPath": "/gateway-ws-client-tls", "readOnly": True}
 )
 account_deployment["spec"]["template"]["spec"].setdefault("volumes", []).append(
     {"name": "hobby-tcp-proxy-bridge", "secret": {"secretName": "hobby-tcp-proxy-bridge"}}
@@ -2868,9 +2967,9 @@ def set_bridge_env(documents, name, value):
 
 
 for path_name, expected_path in (
-    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/tls/client.crt"),
-    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/tls/client.key"),
-    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/tls/ca.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH", "/gateway-ws-client-tls/tls.crt"),
+    ("FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH", "/gateway-ws-client-tls/tls.key"),
+    ("FIREMUD_GATEWAY_WS_CA_CERT_PATH", "/gateway-ws-client-tls/ca.crt"),
 ):
     bridge_path_documents = copy.deepcopy(rendered_documents)
     set_bridge_url(bridge_path_documents, canonical_bridge_url)
@@ -2895,7 +2994,7 @@ bridge_mount_container["volumeMounts"] = [
 _, bridge_mount_issues = module.validate_gateway_ws_values(
     bridge_mount_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_mount_issues):
+if not any("requires exactly one /gateway-ws-client-tls mount" in issue for issue in bridge_mount_issues):
     raise SystemExit(f"missing bridge client mount was accepted: {bridge_mount_issues}")
 
 bridge_readonly_documents = copy.deepcopy(rendered_documents)
@@ -2912,7 +3011,7 @@ next(
 _, bridge_readonly_issues = module.validate_gateway_ws_values(
     bridge_readonly_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_readonly_issues):
+if not any("/gateway-ws-client-tls mount must be read-only" in issue for issue in bridge_readonly_issues):
     raise SystemExit(f"writable bridge client mount was accepted: {bridge_readonly_issues}")
 
 bridge_secret_documents = copy.deepcopy(rendered_documents)
@@ -2930,7 +3029,7 @@ next(
 _, bridge_secret_issues = module.validate_gateway_ws_values(
     bridge_secret_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("must reference Secret firemud/hobby-tcp-proxy-bridge" in issue for issue in bridge_secret_issues):
+if not any("must reference Secret hobby-tcp-proxy-bridge" in issue for issue in bridge_secret_issues):
     raise SystemExit(f"wrong bridge Secret identity was accepted: {bridge_secret_issues}")
 
 bridge_subpath_documents = copy.deepcopy(rendered_documents)
@@ -3025,7 +3124,7 @@ next(
 _, bridge_identity_issues = module.validate_gateway_ws_values(
     bridge_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_identity_issues):
+if not any("must reference Secret hobby-tcp-proxy-bridge" in issue for issue in bridge_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_identity_issues}")
 
 bridge_same_identity_documents = copy.deepcopy(rendered_documents)
@@ -3042,7 +3141,7 @@ next(
 _, bridge_same_identity_issues = module.validate_gateway_ws_values(
     bridge_same_identity_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 )
-if not any("dedicated read-only Secret-backed /tls mount" in issue for issue in bridge_same_identity_issues):
+if not any("bridge client Secret must be distinct from the gRPC TLS Secret" in issue for issue in bridge_same_identity_issues):
     raise SystemExit(f"bridge client reused the gRPC Secret identity without failing: {bridge_same_identity_issues}")
 
 bridge_missing_grpc_path_documents = copy.deepcopy(rendered_documents)

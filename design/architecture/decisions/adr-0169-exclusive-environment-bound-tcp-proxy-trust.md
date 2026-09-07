@@ -8,7 +8,7 @@ Supersedes [ADR 0010](./adr-0010-tcp-proxy-identity-canonicalization.md).
 
 ## Implementation Status
 
-This decision is not implemented. The hosted bridge still lacks the dedicated authenticated listener, exclusive environment-bound trust profiles, fail-closed validation, and end-to-end proof required here. The authoritative implementation and proof status for `EDGE-03` is [`SF-1.3` in the Shared Runtime, Service Contracts, and Persistence tracker](../../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
+This decision is partially implemented. Gateway runtime now provides the dedicated authenticated listener, exclusive environment-bound trust profiles, and fail-closed admission checks; TCP Proxy runtime provides the dedicated hostname-verifying WebSocket mTLS client; and hosted Helm plus render preflight wire the dedicated Service, Secret mounts, identities, and exact NetworkPolicy path. Controller-owned certificate issuance, projection, rotation readiness, and withdrawal remain incomplete, and no real hosted peer-handshake, rotation, or withdrawal proof has been recorded. The authoritative implementation and proof status for `EDGE-03` remains [`SF-1.3` in the Shared Runtime, Service Contracts, and Persistence tracker](../../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
 
 ## Decision Record
 

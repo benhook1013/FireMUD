@@ -483,6 +483,11 @@ jobs:
             -f /tmp/preview-values.yaml \
             --namespace "${{ needs.preview-plan.outputs.namespace }}" \
             >/tmp/preview-rendered.yaml
+          FIREMUD_PREFLIGHT_CONTEXT=operator \
+            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
+            /tmp/preview-rendered.yaml \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.release_name }}"
           kubectl apply --dry-run=server -n "${{ needs.preview-plan.outputs.namespace }}" -f /tmp/preview-rendered.yaml
           wc -l /tmp/preview-rendered.yaml
 

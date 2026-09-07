@@ -68,6 +68,7 @@ public final class TelnetServer {
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
   private final BooleanSupplier gameplayTrafficReady;
+  private final TelnetServerHandler.WebSocketConnector webSocketConnector;
   private final RuntimeIdentity runtimeIdentity;
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
       new ConcurrentHashMap<>();
@@ -102,6 +103,7 @@ public final class TelnetServer {
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient,
       RuntimeIdentity runtimeIdentity) {
     this.port = port;
     this.boundPort = port;
@@ -126,6 +128,7 @@ public final class TelnetServer {
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
+    this.webSocketConnector = gatewayWebSocketClient::connect;
     this.runtimeIdentity = runtimeIdentity;
     Gauge.builder(
             "tcpproxy.connections.active",
@@ -161,7 +164,8 @@ public final class TelnetServer {
       int maxLineBytes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
-      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient) {
     this(
         port,
         gatewayWsUrl,
@@ -180,6 +184,7 @@ public final class TelnetServer {
         meterRegistry,
         eventService,
         gatewayGameplayReadinessProbe,
+        gatewayWebSocketClient,
         new RuntimeIdentity(
             "tcp-proxy-service",
             "tcp-proxy-test",
@@ -267,7 +272,7 @@ public final class TelnetServer {
                               advertiseMcp,
                               meterRegistry,
                               gameplayTrafficReady,
-                              TelnetServerHandler::createWebSocket,
+                              webSocketConnector,
                               eventService,
                               bufferDepth,
                               defaultGameInstanceId,

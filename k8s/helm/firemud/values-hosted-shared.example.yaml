@@ -39,6 +39,15 @@ previewStack:
     clientKey: ""
     caCrt: ""
 
+  # These Secrets are projected by the environment certificate controller.
+  # The chart only consumes their exact release-scoped identities. The server
+  # certificate DNS SAN is spring-cloud-gateway-mtls.<namespace>.svc.cluster.local;
+  # the client URI SAN is spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service.
+  gatewayWsTls:
+    enabled: true
+    servicePort: 443
+    targetPort: 8443
+
   postgres:
     image: postgres:16
     database: firemud
@@ -380,10 +389,8 @@ previewStack:
       springProfile: true
       envFromShared: true
       mountGrpcTls: true
+      mountGatewayWsServerTls: true
       healthPort: 8080
-      extraEnv:
-        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
-        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 10.42.0.0/16
       ports:
         - port: 80
           targetPort: 8080
@@ -397,10 +404,10 @@ previewStack:
       springProfile: false
       envFromShared: true
       mountGrpcTls: true
+      mountGatewayWsClientTls: true
       mountTelnetTls: true
       healthPort: 8080
       extraEnv:
-        GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
         # __TCP_PROXY_GATEWAY_BASE_URL_LINE__
         TCP_PROXY_DEFAULT_WORLD_SLUG: "demo"
         TCP_PROXY_DEFAULT_REALM_SLUG: "production"
