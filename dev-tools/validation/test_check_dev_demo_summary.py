@@ -170,6 +170,45 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             )
             self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_malformed_step_with_source_label(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                "echo 'unterminated >> \"$GITHUB_STEP_SUMMARY\"",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "workflow job 'dev-demo-deploy' step 'Summarize dev-demo access' "
+                "contains invalid shell syntax",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_discovery_rejects_malformed_helper_with_source_label(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper_path = root / "dev-tools/write-summary.sh"
+            helper_path.parent.mkdir(parents=True)
+            helper_path.write_text(
+                "cat <<'SUMMARY_EOF'\nunterminated body\n", encoding="utf-8"
+            )
+            sources = [
+                validator.WorkflowRunSource(
+                    "dev-demo-deploy",
+                    "Summarize dev-demo access",
+                    'bash dev-tools/write-summary.sh >> "$GITHUB_STEP_SUMMARY"',
+                )
+            ]
+
+            expected = re.escape(
+                f"summary helper {helper_path.resolve()} contains "
+                "unterminated heredoc 'SUMMARY_EOF'"
+            )
+            with self.assertRaisesRegex(AssertionError, expected):
+                validator.discover_summary_writers(sources, root)
+
     def test_validate_workflow_accepts_credential_free_session_pod(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertNotIn("envFrom:", bootstrap_manifest)

@@ -42,13 +42,13 @@ assert_step_contains() {
   local job="$2"
   local step="$3"
   local expected="$4"
-  local path="$ROOT_DIR/.github/workflows/$workflow"
+  local path="${5:-$ROOT_DIR/.github/workflows/$workflow}"
 
   if ! awk -v job="$job" -v step="$step" -v expected="$expected" '
     $0 == "  " job ":" { in_job = 1; found_job = 1; next }
     in_job && /^  [A-Za-z0-9_-]+:/ { exit }
     in_job && $0 == "      - name: " step { in_step = 1; found_step = 1; next }
-    in_step && /^      - name:/ { exit }
+    in_step && /^      - / { exit }
     in_step && index($0, expected) { matched = 1 }
     END { exit !(found_job && found_step && matched) }
   ' "$path"; then
@@ -620,6 +620,19 @@ require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publi
 
 contract_fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$contract_fixture_dir"' EXIT
+cat >"$contract_fixture_dir/unnamed-step-boundary.yml" <<'EOF'
+jobs:
+  preview-deploy:
+    steps:
+      - name: Deploy preview release
+        run: echo "target step without Helm"
+      - run: helm upgrade --install leaked-from-following-step
+EOF
+if (assert_step_contains preview.yml preview-deploy 'Deploy preview release' \
+  'helm upgrade --install' "$contract_fixture_dir/unnamed-step-boundary.yml") 2>/dev/null; then
+  echo "preview step-content contract accepted content from an unnamed following step" >&2
+  exit 1
+fi
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third

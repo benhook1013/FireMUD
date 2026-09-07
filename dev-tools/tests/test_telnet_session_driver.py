@@ -324,14 +324,40 @@ class TelnetSessionDriverTest(unittest.TestCase):
         self.assertEqual(args.connect_timeout, 7.5)
         self.assertEqual(args.timeout, 0.125)
 
-        for option in ("--connect-timeout", "--timeout"):
+        for option, timeout_name in (
+            ("--connect-timeout", "connect timeout"),
+            ("--timeout", "receive timeout"),
+        ):
             for invalid in ("0", "-1", "nan", "inf", "not-a-number"):
+                with self.subTest(option=option, invalid=invalid):
+                    stderr = io.StringIO()
+                    with (
+                        contextlib.redirect_stderr(stderr),
+                        self.assertRaises(SystemExit),
+                    ):
+                        parser.parse_args([*base_args, option, invalid])
+                    self.assertIn(
+                        f"argument {option}: {timeout_name} must be a positive finite number",
+                        stderr.getvalue(),
+                    )
+
+    def test_direct_session_timeout_validation_raises_value_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            for timeout_name, override in (
+                ("read timeout", {"read_timeout": 0}),
+                ("connect timeout", {"connect_timeout": float("nan")}),
+            ):
                 with (
-                    self.subTest(option=option, invalid=invalid),
-                    contextlib.redirect_stderr(io.StringIO()),
-                    self.assertRaises(SystemExit),
+                    self.subTest(timeout_name=timeout_name),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        f"^{timeout_name} must be a positive finite number$",
+                    ),
                 ):
-                    parser.parse_args([*base_args, option, invalid])
+                    telnet_session.TelnetSession(
+                        "localhost", 32000, transcript, **override
+                    )
 
     def test_run_connect_passes_cli_connect_timeout_to_session(self):
         observed = {}
