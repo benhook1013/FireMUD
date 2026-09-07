@@ -450,6 +450,46 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
         self.assertEqual(observed, {"read_timeout": 0.125, "connect_timeout": 7.5})
 
+    def test_run_connect_records_connect_reason_when_connection_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            args = argparse.Namespace(
+                host="localhost",
+                port=32000,
+                transcript=transcript,
+                timeout=0.25,
+                connect_timeout=1.0,
+                allow_insecure=True,
+                ca_file=None,
+                server_hostname=None,
+            )
+            with (
+                patch.object(
+                    telnet_session.socket,
+                    "create_connection",
+                    side_effect=OSError("connection refused"),
+                ),
+                patch("sys.stdin", io.StringIO("")),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(OSError, "connection refused"),
+            ):
+                telnet_session.run_connect(args)
+
+            records = telnet_session.EvidenceStore(transcript).read()
+            termination_records = [
+                (record["event"], record.get("reason"))
+                for record in records
+                if record["event"] in {"error", "close", "disconnect"}
+            ]
+            self.assertEqual(
+                termination_records,
+                [
+                    ("error", "connect"),
+                    ("close", "connect"),
+                    ("disconnect", "connect"),
+                ],
+            )
+
     def test_raw_mode_does_not_create_tls_context(self):
         raw_socket = unittest.mock.Mock()
         raw_socket.recv.return_value = b""

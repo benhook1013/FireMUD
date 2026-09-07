@@ -135,10 +135,11 @@ Entry format:
   - Observation: passing participant mocks do not prove that a cross-service identity remains valid across a room transition.
   - Expected pattern: assert the attestation or equivalent scoped identity at destination transitions in cross-service proof, while keeping room-bound validation fail-closed.
 
-- `2026-09-06`: CI bootstrap should use an authorized in-cluster path
+- `2026-09-06`: CI bootstrap should use an authorized in-cluster path (historical; credential-bearing guidance superseded)
   - Context: the dev-demo account bootstrap used a local Gateway port-forward and failed because the deployer identity lacked `pods/portforward`, although the hosted application was reachable.
   - Observation: granting port-forward solely to CI expands cluster privilege for a setup hop that can run inside the existing namespace.
-  - Expected pattern: perform account and session bootstrap through one short-lived in-cluster pod with the minimum existing access, and require a hosted rerun before claiming deployment proof.
+  - Historical expected pattern: perform account and session bootstrap through one short-lived in-cluster pod with the minimum existing access, and require a hosted rerun before claiming deployment proof.
+  - Supersession: the all-in-cluster recommendation is superseded for credential-bearing account setup by the later credential-path split recorded below. The [current player-access proof contract](./implementation-tracking/player-access-and-session.md#validation-and-proof) requires runner-side loopback Kubernetes port-forwarding for account credentials and reserves the short-lived in-cluster pod for credential-free session/world setup; the hosted-rerun requirement remains in force.
 
 - `2026-09-06`: Assign bounded operational ownership before bulk investigation
   - Context: the gameplay implementation lane repeatedly kept substantial CI diagnosis and preview-allocation review in the main task until the human redirected it to Workers.

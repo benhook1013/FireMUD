@@ -607,8 +607,10 @@ def run_connect(args: argparse.Namespace) -> int:
             args, "connect_timeout", DEFAULT_CONNECT_TIMEOUT_SECONDS
         ),
     )
+    connected = False
     try:
         session.connect()
+        connected = True
         print("Commands are sent as entered. Meta-commands: :read [cursor], :cursor, :close [reason].")
         for line in sys.stdin:
             line = line.rstrip("\r\n")
@@ -636,7 +638,7 @@ def run_connect(args: argparse.Namespace) -> int:
                     return 1
     finally:
         if not session.closed:
-            session.close("stdin_eof")
+            session.close("stdin_eof" if connected else "connect")
     return 0
 
 
