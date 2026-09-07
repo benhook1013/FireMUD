@@ -37,6 +37,7 @@ import net.firedevops.firemud.automationscripting.service.impl.AutomationAdmissi
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -531,6 +532,69 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     assertThat(missing).isEmpty();
     assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isZero();
     assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isZero();
+  }
+
+  @Test
+  void databaseEnforcesAdmissionRequestIdentityPair() {
+    assertThatThrownBy(
+            () ->
+                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-fingerprint")
+                    .set(
+                        AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID,
+                        "instance-invalid-fingerprint")
+                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-fingerprint")
+                    .set(
+                        AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT,
+                        REQUEST_DIGEST)
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_automation_admission_state_request_identity");
+
+    assertThatThrownBy(
+            () ->
+                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-request")
+                    .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-invalid-request")
+                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-request")
+                    .set(
+                        AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID,
+                        "request-without-fingerprint")
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_automation_admission_state_request_identity");
+
+    assertThatThrownBy(
+            () ->
+                dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                    .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-invalid-blank-request")
+                    .set(
+                        AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID,
+                        "instance-invalid-blank-request")
+                    .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-invalid-blank-request")
+                    .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID, "   ")
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_automation_admission_state_request_identity");
+
+    assertThat(
+            dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-absent-identity")
+                .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-absent-identity")
+                .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-absent-identity")
+                .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT, "")
+                .execute())
+        .isEqualTo(1);
+
+    assertThat(
+            dsl.insertInto(AUTOMATION_ADMISSION_STATES)
+                .set(AUTOMATION_ADMISSION_STATES.TENANT_ID, "tenant-paired-identity")
+                .set(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID, "instance-paired-identity")
+                .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-paired-identity")
+                .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID, "request-paired")
+                .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .execute())
+        .isEqualTo(1);
   }
 
   @Test

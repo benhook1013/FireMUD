@@ -44,12 +44,14 @@ class ScriptDefinitionRepositoryTest {
   @Test
   void explicitIdIdenticalDefinitionRetryPreservesCurrentRowVersion() {
     AtomicReference<String> updateSql = new AtomicReference<>();
+    AtomicReference<Object[]> updateBindings = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           String sql = context.sql();
           if (sql.trim().toLowerCase(Locale.ROOT).startsWith("update")) {
             updateSql.set(sql);
+            updateBindings.set(context.bindings());
             return new MockResult[] {new MockResult(1)};
           }
           var result = resultDsl.newResult(SCRIPTS);
@@ -65,17 +67,20 @@ class ScriptDefinitionRepositoryTest {
     assertThat(persisted.getRowVersion()).isEqualTo(9);
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
         .contains("is distinct from", "row_version", "where");
+    assertExpectedRowVersionBinding(updateSql.get(), updateBindings.get(), 9);
   }
 
   @Test
   void explicitIdChangedDefinitionReplacementUsesExpectedCurrentRowVersion() {
     AtomicReference<String> updateSql = new AtomicReference<>();
+    AtomicReference<Object[]> updateBindings = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           String sql = context.sql();
           if (sql.trim().toLowerCase(Locale.ROOT).startsWith("update")) {
             updateSql.set(sql);
+            updateBindings.set(context.bindings());
             return new MockResult[] {new MockResult(1)};
           }
           var result = resultDsl.newResult(SCRIPTS);
@@ -91,6 +96,7 @@ class ScriptDefinitionRepositoryTest {
     assertThat(persisted.getDefinition()).isEqualTo("{\"replacement\":true}");
     assertThat(persisted.getRowVersion()).isEqualTo(10);
     assertThat(updateSql.get().toLowerCase(Locale.ROOT)).contains("row_version", "where");
+    assertExpectedRowVersionBinding(updateSql.get(), updateBindings.get(), 9);
   }
 
   @Test
@@ -171,5 +177,27 @@ class ScriptDefinitionRepositoryTest {
 
   private static String normalizeSql(String sql) {
     return sql.toLowerCase(Locale.ROOT).replace("\"", "").replaceAll("\\s+", " ").trim();
+  }
+
+  private static void assertExpectedRowVersionBinding(
+      String sql, Object[] bindings, int expectedRowVersion) {
+    String normalizedSql = sql.toLowerCase(Locale.ROOT);
+    int whereStart = normalizedSql.indexOf(" where ");
+    assertThat(whereStart).isGreaterThanOrEqualTo(0);
+    int rowVersionPredicate = normalizedSql.indexOf("row_version", whereStart);
+    assertThat(rowVersionPredicate).isGreaterThanOrEqualTo(0);
+    int placeholder = normalizedSql.indexOf('?', rowVersionPredicate);
+    assertThat(placeholder).isGreaterThan(rowVersionPredicate);
+    assertThat(normalizedSql.substring(rowVersionPredicate, placeholder)).contains("=");
+
+    int bindingIndex =
+        (int)
+            normalizedSql
+                .substring(0, placeholder)
+                .chars()
+                .filter(character -> character == '?')
+                .count();
+    assertThat(bindings).hasSizeGreaterThan(bindingIndex);
+    assertThat(bindings[bindingIndex]).isEqualTo(expectedRowVersion);
   }
 }

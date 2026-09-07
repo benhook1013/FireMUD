@@ -492,9 +492,15 @@ CREATE TABLE automation_admission_states (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
-    CONSTRAINT ck_automation_admission_state_request_fingerprint CHECK (
-        control_plane_request_fingerprint = ''
-        OR control_plane_request_fingerprint ~ '^[0-9a-f]{64}$'
+    CONSTRAINT ck_automation_admission_state_request_identity CHECK (
+        (
+            control_plane_request_id IS NULL
+            AND control_plane_request_fingerprint = ''
+        )
+        OR (
+            NULLIF(BTRIM(control_plane_request_id), '') IS NOT NULL
+            AND control_plane_request_fingerprint ~ '^[0-9a-f]{64}$'
+        )
     ),
     CONSTRAINT uq_automation_admission_scope UNIQUE (tenant_id, game_instance_id, region_id)
 );

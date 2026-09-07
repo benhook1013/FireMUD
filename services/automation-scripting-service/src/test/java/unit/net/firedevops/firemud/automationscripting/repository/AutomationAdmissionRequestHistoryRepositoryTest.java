@@ -72,16 +72,19 @@ class AutomationAdmissionRequestHistoryRepositoryTest {
     assertThat(saved.getReason()).isEqualTo("durable-winner-reason");
     assertThat(bindingsRef.get()).contains((Object) LONG_ACTOR_PRINCIPAL);
 
-    String normalizedSql = sqlRef.get().toLowerCase(Locale.ROOT);
+    String normalizedSql = normalizeSql(sqlRef.get());
     assertThat(normalizedSql)
-        .contains("on conflict", "region_id", "mode", "do update", "returning")
+        .contains(
+            "on conflict (tenant_id, game_instance_id, region_id, mode, control_plane_request_id)"
+                + " do update set",
+            "returning")
         .doesNotContain("do nothing");
     int updateStart = normalizedSql.indexOf(" do update");
     int returningStart = normalizedSql.indexOf(" returning", updateStart);
     assertThat(updateStart).isGreaterThanOrEqualTo(0);
     assertThat(returningStart).isGreaterThan(updateStart);
     assertThat(normalizedSql.substring(updateStart, returningStart))
-        .contains("\"id\" =")
+        .contains("id =")
         .doesNotContain(
             "request_fingerprint",
             "admission_epoch",
@@ -89,6 +92,10 @@ class AutomationAdmissionRequestHistoryRepositoryTest {
             "actor_principal",
             "reason",
             "created_at");
+  }
+
+  private static String normalizeSql(String sql) {
+    return sql.toLowerCase(Locale.ROOT).replace("\"", "").replaceAll("\\s+", " ").trim();
   }
 
   private static AutomationAdmissionRequestHistory history() {

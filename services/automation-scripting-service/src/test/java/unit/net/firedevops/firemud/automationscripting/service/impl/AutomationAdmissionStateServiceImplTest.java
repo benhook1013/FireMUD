@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -113,6 +114,72 @@ class AutomationAdmissionStateServiceImplTest {
   }
 
   @Test
+  void exactRetryOfEarlierPauseReturnsStoredResultAfterLaterNormalTransition() {
+    AutomationAdmissionStateRepository repository =
+        Mockito.mock(AutomationAdmissionStateRepository.class);
+    AutomationAdmissionRequestHistoryRepository historyRepository =
+        Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
+    AutomationAdmissionState state = state("tenant-1", "game-1", "region-1");
+    when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
+        .thenReturn(Optional.of(state));
+    when(repository.save(any(AutomationAdmissionState.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    AtomicReference<AutomationAdmissionRequestHistory> pausedHistory = new AtomicReference<>();
+    AtomicReference<AutomationAdmissionRequestHistory> normalHistory = new AtomicReference<>();
+    when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              String mode = invocation.getArgument(3, String.class);
+              String requestId = invocation.getArgument(4, String.class);
+              AutomationAdmissionRequestHistory history =
+                  "PAUSED_FOR_ROLLBACK".equals(mode) && "pause-request".equals(requestId)
+                      ? pausedHistory.get()
+                      : "NORMAL".equals(mode) && "normal-request".equals(requestId)
+                          ? normalHistory.get()
+                          : null;
+              return Optional.ofNullable(history);
+            });
+    when(historyRepository.insertOrGet(any(AutomationAdmissionRequestHistory.class)))
+        .thenAnswer(
+            invocation -> {
+              AutomationAdmissionRequestHistory history = invocation.getArgument(0);
+              if ("PAUSED_FOR_ROLLBACK".equals(history.getMode())) {
+                pausedHistory.set(history);
+              } else {
+                normalHistory.set(history);
+              }
+              return history;
+            });
+    AutomationAdmissionStateService service = service(repository, historyRepository);
+    AutomationAdmissionStateService.SetAdmissionModeCommand pause =
+        new AutomationAdmissionStateService.SetAdmissionModeCommand(
+            "tenant-1",
+            "game-1",
+            "region-1",
+            "PAUSED_FOR_ROLLBACK",
+            "pause-request",
+            "actor-1",
+            "pause");
+    AutomationAdmissionStateService.SetAdmissionModeCommand normal =
+        new AutomationAdmissionStateService.SetAdmissionModeCommand(
+            "tenant-1", "game-1", "region-1", "NORMAL", "normal-request", "actor-1", "resume");
+
+    AutomationAdmissionStateService.AdmissionStateSummary paused = service.setMode(pause);
+    service.setMode(normal);
+    clearInvocations(repository, historyRepository);
+
+    AutomationAdmissionStateService.AdmissionStateSummary pauseRetry = service.setMode(pause);
+
+    assertThat(pauseRetry).isEqualTo(paused);
+    assertThat(state.getMode()).isEqualTo("NORMAL");
+    assertThat(state.getAdmissionEpoch()).isEqualTo(2L);
+    verify(repository, never()).save(any());
+    verify(historyRepository, never()).insertOrGet(any());
+    verify(historyRepository)
+        .find("tenant-1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", "pause-request");
+  }
+
+  @Test
   void rejectsStateOnlyRequestEvidenceInsteadOfReconstructingAcknowledgement() {
     AutomationAdmissionStateRepository repository =
         Mockito.mock(AutomationAdmissionStateRepository.class);
@@ -190,6 +257,10 @@ class AutomationAdmissionStateServiceImplTest {
     orphanedState.setAdmissionEpoch(2L);
     orphanedState.setControlPlaneRequestId("pause-request");
     orphanedState.setControlPlaneRequestFingerprint("fingerprint-1");
+    orphanedState.setActorPrincipal("actor-1");
+    orphanedState.setReason("pause");
+    Instant expectedUpdatedAt = Instant.parse("2026-01-01T00:05:00Z");
+    orphanedState.setUpdatedAt(expectedUpdatedAt);
     when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
         .thenReturn(Optional.of(orphanedState));
     when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
@@ -199,10 +270,18 @@ class AutomationAdmissionStateServiceImplTest {
         new AutomationAdmissionStateService.SetAdmissionModeCommand(
             "tenant-1", "game-1", "region-1", "NORMAL", "resume-request", "actor-1", "resume");
 
+    clearInvocations(repository, historyRepository);
+
     assertThatThrownBy(() -> service(repository, historyRepository).setMode(resume))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("no matching durable successful acknowledgement");
     assertThat(orphanedState.getMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+    assertThat(orphanedState.getAdmissionEpoch()).isEqualTo(2L);
+    assertThat(orphanedState.getControlPlaneRequestId()).isEqualTo("pause-request");
+    assertThat(orphanedState.getControlPlaneRequestFingerprint()).isEqualTo("fingerprint-1");
+    assertThat(orphanedState.getActorPrincipal()).isEqualTo("actor-1");
+    assertThat(orphanedState.getReason()).isEqualTo("pause");
+    assertThat(orphanedState.getUpdatedAt()).isEqualTo(expectedUpdatedAt);
     verify(repository, never()).save(any());
     verify(historyRepository, never()).insertOrGet(any());
   }
