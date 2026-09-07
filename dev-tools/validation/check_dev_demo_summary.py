@@ -106,7 +106,9 @@ KUBERNETES_SECRET_KIND = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 SHELL_CONTROL_OPERATORS = frozenset({";", "&", "&&", "||"})
-SHELL_COMMAND_PREFIXES = frozenset({"!", "if", "then", "{", "("})
+SHELL_COMMAND_PREFIXES = frozenset(
+    {"!", "if", "then", "for", "while", "until", "do", "done", "{", "("}
+)
 KUBECTL_VALUE_FLAGS = frozenset(
     {
         "-n",

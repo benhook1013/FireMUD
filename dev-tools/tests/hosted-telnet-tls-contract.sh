@@ -10,6 +10,20 @@ python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
   "$TMP_DIR/values.yaml" 42 pr-42 preview-release preview-42.preview.example.test image-tag 32042
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --namespace pr-42 >"$TMP_DIR/rendered.yaml"
+cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-omitted.yaml"
+python3 - "$TMP_DIR/values-omitted.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+values["previewStack"].pop("telnetTls")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-omitted.yaml" --namespace pr-42 >"$TMP_DIR/rendered-omitted.yaml"
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-configured-mode.yaml"
 python3 - "$TMP_DIR/values-configured-mode.yaml" <<'PY'
 import sys
@@ -53,7 +67,7 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-spring-profile.yaml" --namespace pr-42 >"$TMP_DIR/rendered-spring-profile.yaml"
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -110,6 +124,25 @@ mount = next(m for m in container["volumeMounts"] if m["mountPath"] == "/telnet-
 volumes = deployment["spec"]["template"]["spec"]["volumes"]
 volume = next(v for v in volumes if v["name"] == mount["name"])
 assert volume["secret"]["secretName"] == "preview-release-telnet-tls"
+
+omitted_documents = list(yaml.safe_load_all(Path(os.environ["OMITTED_RENDERED"]).read_text(encoding="utf-8")))
+assert not any(d.get("kind") == "Certificate" for d in omitted_documents), "omitted TLS still renders a Certificate"
+omitted_deployment = next(
+    d for d in omitted_documents
+    if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
+)
+omitted_pod_spec = omitted_deployment["spec"]["template"]["spec"]
+omitted_container = omitted_pod_spec["containers"][0]
+omitted_env = {entry["name"]: entry.get("value") for entry in omitted_container.get("env", [])}
+assert "TCP_PROXY_TLS_ENABLED" not in omitted_env, "omitted TLS still renders enablement"
+assert not any(
+    item.get("mountPath") == "/telnet-tls"
+    for item in omitted_container.get("volumeMounts", [])
+), "omitted TLS still renders a volume mount"
+assert not any(
+    item.get("name") == "telnet-tls"
+    for item in omitted_pod_spec.get("volumes", [])
+), "omitted TLS still renders a volume"
 
 renamed_grpc = deepcopy(documents)
 renamed_grpc_deployment = next(

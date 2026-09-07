@@ -148,8 +148,7 @@ class MoveAggregationServiceTest {
                 .build());
 
     verify(worldStub).getRoomSnapshot(requestCaptor.capture());
-    assertThat(requestCaptor.getValue().getTenantId())
-        .isEqualTo(LookTestFixtures.TENANT);
+    assertThat(requestCaptor.getValue().getTenantId()).isEqualTo(LookTestFixtures.TENANT);
     assertThat(requestCaptor.getValue().getPreferredLocale()).isEqualTo("en-NZ");
     assertThat(requestCaptor.getValue().getSessionAttestation()).isEqualTo("attestation-1");
     assertThat(result.getSuccess()).isTrue();

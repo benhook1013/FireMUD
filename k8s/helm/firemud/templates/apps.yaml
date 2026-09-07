@@ -1,7 +1,8 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
+{{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- range $service := .Values.previewStack.services }}
-{{- $mountTelnetTls := and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
+{{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -154,7 +155,7 @@ spec:
         {{- if $mountTelnetTls }}
         - name: telnet-tls
           secret:
-            secretName: {{ $.Values.previewStack.telnetTls.secretName }}
+            secretName: {{ $telnetTls.secretName }}
         {{- end }}
       {{- end }}
 ---
