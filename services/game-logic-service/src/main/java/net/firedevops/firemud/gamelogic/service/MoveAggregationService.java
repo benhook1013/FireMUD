@@ -85,6 +85,13 @@ public class MoveAggregationService {
           throw new IllegalArgumentException(
               "destination room_instance.game_instance_id must not be empty");
         }
+        if (StringUtils.hasText(currentRoom.getGameInstanceId())
+            && !currentRoom.getGameInstanceId().equals(destinationGameInstanceId)) {
+          return errorResponse(
+              builder,
+              "WORLD_UNAVAILABLE",
+              "WorldManagementService returned a snapshot for a different game instance");
+        }
         RoomInstanceRef destinationRoom =
             RuntimeRoomInstanceRefs.requireCanonical(
                 RoomInstanceRef.newBuilder()

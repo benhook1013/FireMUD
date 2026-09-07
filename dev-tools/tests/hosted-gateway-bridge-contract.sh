@@ -543,6 +543,30 @@ if not any("distinct from the Telnet TLS Secret" in issue for issue in shared_id
         f"bridge client reused the Telnet identity without failing: {shared_identity_issues}"
     )
 
+proxy_policy = next(
+    document
+    for document in documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service-egress"
+)
+collector_rules = [
+    rule
+    for rule in proxy_policy["spec"]["egress"]
+    if rule.get("to")
+    == [{"podSelector": {"matchLabels": {"app": "otel-collector"}}}]
+]
+if len(collector_rules) != 1 or collector_rules[0].get("ports") != [
+    {"protocol": "TCP", "port": 4317}
+]:
+    raise SystemExit(
+        "TCP Proxy egress does not narrowly allow same-namespace OTLP to app=otel-collector"
+    )
+if any(
+    rule.get("to") == [{"podSelector": {"matchLabels": {"app": "postgres"}}}]
+    for rule in proxy_policy["spec"]["egress"]
+):
+    raise SystemExit("TCP Proxy egress unexpectedly allows direct Postgres access")
+
 widened_policy = copy.deepcopy(documents)
 gateway_policy = next(
     document

@@ -57,6 +57,47 @@ class GatewayGameplayReadinessProbeTest {
   }
 
   @Test
+  void synchronousPollingFailureClearsHealthyStateAndLaterPollingRetries() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> healthy = new CompletableFuture<>();
+    CompletableFuture<Boolean> retry = new CompletableFuture<>();
+    when(client.isReadyAsync())
+        .thenReturn(healthy)
+        .thenThrow(new IllegalStateException("synchronous failure"))
+        .thenReturn(retry);
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      healthy.complete(true);
+      awaitReadiness(probe, true);
+
+      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      awaitReadiness(probe, false);
+      verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
+      assertFalse(probe.isReady());
+    }
+  }
+
+  @Test
+  void nullPollingFutureClearsHealthyStateAndLaterPollingRetries() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> healthy = new CompletableFuture<>();
+    CompletableFuture<Boolean> retry = new CompletableFuture<>();
+    when(client.isReadyAsync()).thenReturn(healthy).thenReturn(null).thenReturn(retry);
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      healthy.complete(true);
+      awaitReadiness(probe, true);
+
+      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      awaitReadiness(probe, false);
+      verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
+      assertFalse(probe.isReady());
+    }
+  }
+
+  @Test
   void closeCancelsTheInFlightRequestAndLeavesTheCacheFailClosed() throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> pending = new CompletableFuture<>();

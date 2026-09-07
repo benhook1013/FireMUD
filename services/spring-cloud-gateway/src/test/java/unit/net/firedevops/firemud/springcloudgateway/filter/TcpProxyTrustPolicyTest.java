@@ -221,6 +221,21 @@ class TcpProxyTrustPolicyTest {
         .hasMessageContaining("restricted to explicit local/test profiles");
   }
 
+  @Test
+  void legacyPlaintextTrustAllowsOnlyConfiguredSourcesInExplicitTestProfile() throws Exception {
+    GatewayHeaderTrustProperties legacy = new GatewayHeaderTrustProperties();
+    legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    legacy.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("test"));
+
+    assertThat(policy.isTrusted(mock(ServerWebExchange.class), InetAddress.getByName("10.1.2.3")))
+        .isTrue();
+    assertThat(policy.isTrusted(mock(ServerWebExchange.class), InetAddress.getByName("192.0.2.1")))
+        .isFalse();
+  }
+
   private static TcpProxyTrustPolicy policy(
       GatewayTcpProxyListenerProperties properties, Set<String> activeProfiles) {
     return new TcpProxyTrustPolicy(

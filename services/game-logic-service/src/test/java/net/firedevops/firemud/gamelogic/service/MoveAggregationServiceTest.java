@@ -235,6 +235,45 @@ class MoveAggregationServiceTest {
   }
 
   @Test
+  void resolveRejectsSnapshotGameInstanceThatDiffersFromCurrentRoom() {
+    RoomSnapshot snapshot =
+        RoomSnapshot.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setGameInstanceId("game-instance-stale")
+            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+            .addExits(
+                RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
+                    .setLabel("NORTH")
+                    .setTargetRoomInstanceId("R-3042")
+                    .build())
+            .build();
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId(LookTestFixtures.TENANT)
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId(LookTestFixtures.TENANT)
+                        .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                        .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                        .build())
+                .setDirection("north")
+                .build());
+
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.hasDestinationRoomInstance()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("WORLD_UNAVAILABLE");
+    assertThat(result.getError().getMessage())
+        .contains("WorldManagementService returned a snapshot for a different game instance");
+  }
+
+  @Test
   void resolveRejectsNoncanonicalWorldDestinationAsWorldFailure() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()

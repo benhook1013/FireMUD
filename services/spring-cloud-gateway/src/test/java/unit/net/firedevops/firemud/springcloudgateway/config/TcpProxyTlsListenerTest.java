@@ -7,15 +7,12 @@ import static org.mockito.Mockito.when;
 
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
@@ -34,15 +31,11 @@ class TcpProxyTlsListenerTest {
 
   @Test
   void internalListenerRequiresClientCertificate() throws Exception {
-    int port = freePort();
-    GatewayTcpProxyListenerProperties properties = tlsProperties(port);
-    TcpProxyTrustPolicy policy =
-        new TcpProxyTrustPolicy(
-            properties,
-            new GatewayHeaderTrustProperties(),
-            8080,
-            Clock.systemUTC(),
-            Set.of("test"));
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.requiresClientCertificate()).thenReturn(true);
+    when(policy.profileName()).thenReturn("breakglass_fingerprint");
+    when(policy.timeUntilProfileExpiry()).thenReturn(null);
     HttpHandler handler =
         (request, response) -> {
           response.setStatusCode(HttpStatus.NO_CONTENT);
@@ -53,7 +46,8 @@ class TcpProxyTlsListenerTest {
     try {
       listener.start();
       assertThat(listener.isRunning()).isTrue();
-      assertThat(listener.boundPort()).isEqualTo(port);
+      int port = listener.boundPort();
+      assertThat(port).isPositive();
 
       assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
           .isEqualTo(HttpStatus.NO_CONTENT.value());
@@ -99,18 +93,11 @@ class TcpProxyTlsListenerTest {
 
   @Test
   void expiringTrustProfileTerminatesListenerAndExistingBridges() throws Exception {
-    int port = freePort();
-    GatewayTcpProxyListenerProperties properties = tlsProperties(port);
-    properties
-        .getBreakglassFingerprint()
-        .setExpiresAt(Instant.now().plus(Duration.ofSeconds(3)).toString());
-    TcpProxyTrustPolicy policy =
-        new TcpProxyTrustPolicy(
-            properties,
-            new GatewayHeaderTrustProperties(),
-            8080,
-            Clock.systemUTC(),
-            Set.of("test"));
+    GatewayTcpProxyListenerProperties properties = tlsProperties(0);
+    TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
+    when(policy.requiresClientCertificate()).thenReturn(true);
+    when(policy.profileName()).thenReturn("breakglass_fingerprint");
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(3));
     HttpHandler handler = (request, response) -> response.setComplete();
     TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, handler);
     Connection connection = null;
@@ -118,6 +105,8 @@ class TcpProxyTlsListenerTest {
     try {
       listener.start();
       assertThat(listener.isRunning()).isTrue();
+      int port = listener.boundPort();
+      assertThat(port).isPositive();
       SslContext context = clientContext(true);
       connection =
           TcpClient.create()
@@ -209,11 +198,5 @@ class TcpProxyTlsListenerTest {
         .resolve("services/common-test-support/src/testFixtures/resources/certs")
         .resolve(name)
         .normalize();
-  }
-
-  private static int freePort() throws Exception {
-    try (ServerSocket socket = new ServerSocket(0)) {
-      return socket.getLocalPort();
-    }
   }
 }

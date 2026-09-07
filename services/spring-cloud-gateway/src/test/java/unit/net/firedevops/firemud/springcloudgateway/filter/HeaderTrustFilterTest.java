@@ -131,16 +131,17 @@ class HeaderTrustFilterTest {
     assertThat(promoted.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"))
         .isEqualTo("conn-123");
 
-    MockServerHttpRequest publicRequest =
+    MockServerHttpRequest untrustedDedicatedRequest =
         MockServerHttpRequest.get("/ws/game/test")
-            .localAddress(new InetSocketAddress("127.0.0.1", 8080))
-            .remoteAddress(new InetSocketAddress("127.0.0.1", 50001))
+            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .remoteAddress(new InetSocketAddress("192.0.2.1", 50001))
             .sslInfo(org.mockito.Mockito.mock(SslInfo.class))
-            .header("X-Proxy-Connection-Id", "conn-123")
             .build();
-    MockServerWebExchange publicExchange = MockServerWebExchange.from(publicRequest);
-    filter.filter(publicExchange, ignored -> Mono.empty()).block();
-    assertThat(publicExchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    MockServerWebExchange untrustedDedicatedExchange =
+        MockServerWebExchange.from(untrustedDedicatedRequest);
+    filter.filter(untrustedDedicatedExchange, ignored -> Mono.empty()).block();
+    assertThat(untrustedDedicatedExchange.getResponse().getStatusCode())
+        .isEqualTo(HttpStatus.FORBIDDEN);
   }
 
   @Test

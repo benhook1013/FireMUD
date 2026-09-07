@@ -257,5 +257,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6565
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
 {{- end }}
 {{- end }}
