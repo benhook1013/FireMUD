@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 WORKFLOW_RELATIVE_PATH = Path(".github/workflows/dev-demo.yml")
+CANONICAL_SMOKE_CONDITION = "${{success()&&!cancelled()}}"
 ALLOWED_WORKSPACE_ROOT_VARIABLES = frozenset(
     {"FIREMUD_REPO_ROOT", "GITHUB_WORKSPACE", "ROOT_DIR"}
 )
@@ -790,17 +791,17 @@ def _load_workflow(root: Path) -> dict:
     return workflow
 
 
-def _find_step(deploy_job: dict, name: str) -> dict:
+def _find_step(job: dict, name: str, job_name: str = "dev-demo-deploy") -> dict:
     step = next(
         (
             candidate
-            for candidate in deploy_job["steps"]
+            for candidate in job["steps"]
             if isinstance(candidate, dict) and candidate.get("name") == name
         ),
         None,
     )
     if step is None:
-        raise AssertionError(f"dev-demo-deploy job missing required step {name!r}")
+        raise AssertionError(f"{job_name} job missing required step {name!r}")
     return step
 
 
@@ -1112,12 +1113,33 @@ def validate_workflow(root: Path) -> None:
         deploy_job.get("steps"), list
     ):
         raise AssertionError("dev-demo-deploy job missing its required steps list")
-    bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
-    smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
-    smoke_condition = smoke_step.get("if")
-    if not isinstance(smoke_condition, str) or "!cancelled()" not in smoke_condition:
+    bootstrap_job = jobs.get("dev-demo-bootstrap")
+    if not isinstance(bootstrap_job, dict) or not isinstance(
+        bootstrap_job.get("steps"), list
+    ):
         raise AssertionError(
-            "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure"
+            "dev-demo-bootstrap job missing its required steps list"
+        )
+    verify_job = jobs.get("dev-demo-verify")
+    if not isinstance(verify_job, dict) or not isinstance(
+        verify_job.get("steps"), list
+    ):
+        raise AssertionError("dev-demo-verify job missing its required steps list")
+    bootstrap_step = _find_step(
+        bootstrap_job, "Create dev-demo smoke account", "dev-demo-bootstrap"
+    )
+    smoke_step = _find_step(
+        verify_job, "Smoke dev-demo over TCP", "dev-demo-verify"
+    )
+    smoke_condition = smoke_step.get("if")
+    normalized_smoke_condition = (
+        re.sub(r"\s+", "", smoke_condition)
+        if isinstance(smoke_condition, str)
+        else None
+    )
+    if normalized_smoke_condition != CANONICAL_SMOKE_CONDITION:
+        raise AssertionError(
+            "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run"
         )
     bootstrap_manifest = bootstrap_step.get("run")
     if not isinstance(bootstrap_manifest, str):

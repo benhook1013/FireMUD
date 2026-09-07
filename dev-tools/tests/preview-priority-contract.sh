@@ -670,8 +670,9 @@ reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
-grep -q 'preview:paused' "$preview_workflow"
-grep -Fq "EVENT_LABELS_JSON: \${{ toJSON(github.event.pull_request.labels) }}" "$preview_workflow"
+grep -q 'group: preview-render-${{ github.event.pull_request.number }}' "$preview_workflow"
+grep -q 'PR_LABELS_JSON:' "$preview_workflow"
+grep -q -- '--labels-json "\$PR_LABELS_JSON"' "$preview_workflow"
 grep -q 'preview:paused' "$eligibility_script"
 grep -q 'malformed-label-metadata' "$eligibility_script"
 grep -q 'labels_valid' "$reconciler_workflow"
@@ -682,7 +683,11 @@ grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-n
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3
+if grep -Fq 'group: preview-allocation-lifecycle' "$preview_workflow"; then
+  echo "PR-controlled preview rendering must not use the global allocation lifecycle group" >&2
+  exit 1
+fi
+test "$(grep -h -c 'group: preview-allocation-lifecycle' "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 1
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Evaluate whether a PR is eligible for preview lifecycle actions.
 
-The labels input is required so trusted reconciliation cannot interpret
-missing or malformed metadata as an unpaused PR.
+The labels input is deliberately required. Trusted reconciliation must never
+interpret missing or malformed GitHub label metadata as an unpaused PR.
 """
 
 from __future__ import annotations

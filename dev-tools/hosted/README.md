@@ -11,7 +11,9 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 - `preview/`
   - PR-preview-only helpers
   - capacity allocation and bounded priority reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
-  - preview eligibility requires valid GitHub label metadata; `preview:paused` suppresses deploy, retain, and reconciliation while namespace destroy remains allowed
+  - preview eligibility requires valid GitHub label metadata; `preview:paused` suppresses deploy, retain, and reconciliation while namespace destroy remains allowed and `preview:priority` remains unchanged when absent or when the preview is not paused
+
+`preview:paused` is a deterministic safety gate. While the label is present, trusted render, deploy, retention, scheduled reconciliation, and hosted Active dispatch are ineligible; namespace destroy remains allowed so a paused preview can be reclaimed. `preview:priority` changes allocation ordering only when it is present on an otherwise eligible preview. Without it, allocation remains ordinary FIFO, and priority never bypasses `preview:paused`.
 
 - `dev-demo/`
   - fixed `develop` environment helpers

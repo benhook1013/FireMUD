@@ -1,0 +1,259 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: hostedenvironmentidentities.platform.firemud.dev
+  labels:
+    app.kubernetes.io/name: hosted-environment-identity-controller
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: firemud
+    firemud.dev/managed-by: hosted-identity-controller
+spec:
+  group: platform.firemud.dev
+  scope: Namespaced
+  names:
+    plural: hostedenvironmentidentities
+    singular: hostedenvironmentidentity
+    kind: HostedEnvironmentIdentity
+    shortNames:
+      - hei
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Runtime
+          type: string
+          jsonPath: .status.profile.runtimeNamespace
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          additionalProperties: false
+          required:
+            - apiVersion
+            - kind
+            - metadata
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+              # Kubernetes supplies metadata fields outside this CRD schema.  The
+              # user-controlled spec and status below remain closed objects.
+              x-kubernetes-preserve-unknown-fields: true
+            spec:
+              type: object
+              additionalProperties: false
+              required:
+                - desiredState
+              properties:
+                desiredState:
+                  type: string
+                  enum:
+                    - Active
+                    - Retired
+                  default: Active
+              x-kubernetes-validations:
+                - rule: "!has(oldSelf.desiredState) || self.desiredState == oldSelf.desiredState || (oldSelf.desiredState == 'Active' && self.desiredState == 'Retired')"
+                  message: desiredState is monotonic; Active may transition only to Retired
+            status:
+              type: object
+              additionalProperties: false
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - Provisioning
+                    - WaitingForCertificate
+                    - RuntimeAbsent
+                    - Syncing
+                    - Verifying
+                    - Ready
+                    - Degraded
+                    - Blocked
+                    - Retiring
+                    - Retired
+                profile:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 63
+                    environmentClass:
+                      type: string
+                      enum:
+                        - pr-preview
+                        - dev-demo-cluster
+                    identityNamespace:
+                      type: string
+                      maxLength: 63
+                      pattern: "^(dev-identity|pr-[1-9][0-9]*-identity)$"
+                    runtimeNamespace:
+                      type: string
+                      maxLength: 63
+                      pattern: "^(dev|pr-[1-9][0-9]*)$"
+                    runtimeNamespaceUid:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9][A-Za-z0-9./_-]{0,127}$"
+                    hostname:
+                      type: string
+                      maxLength: 253
+                      pattern: "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                    telnetPort:
+                      type: integer
+                      format: int32
+                      minimum: 1024
+                      maximum: 65535
+                    deployedHeadSha:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[0-9a-fA-F]{40}$"
+                conditions:
+                  type: array
+                  maxItems: 32
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - message
+                      - lastTransitionTime
+                    properties:
+                      type:
+                        type: string
+                        maxLength: 64
+                        pattern: "^[A-Za-z][A-Za-z0-9-]{0,63}$"
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                        maxLength: 128
+                        pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                      message:
+                        type: string
+                        maxLength: 2048
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                ingress:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    revision:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
+                    sourceGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    sourceObjectGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    spkiSha256:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[0-9a-f]{64}$"
+                    provenance:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                    state:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+                telnet:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    revision:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
+                    sourceGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    sourceObjectGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    spkiSha256:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[0-9a-f]{64}$"
+                    provenance:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                    state:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+                grpc:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    revision:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9][A-Za-z0-9._:+/@=-]{0,127}$"
+                    sourceGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    sourceObjectGeneration:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    spkiSha256:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[0-9a-f]{64}$"
+                    provenance:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+                    state:
+                      type: string
+                      maxLength: 64
+                      pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+          x-kubernetes-validations:
+            - rule: "self.metadata.namespace == 'firemud-system'"
+              message: HostedEnvironmentIdentity is served only from firemud-system
+            - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
+              message: name must be dev-demo or pr-N with a positive decimal PR number

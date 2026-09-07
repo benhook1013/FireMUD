@@ -61,9 +61,9 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def _bootstrap_manifest_fixture(self) -> str:
         workflow = self.validator._load_workflow(ROOT)
-        deploy_job = workflow["jobs"]["dev-demo-deploy"]
+        bootstrap_job = workflow["jobs"]["dev-demo-bootstrap"]
         return self.validator._find_step(
-            deploy_job, "Create dev-demo smoke account"
+            bootstrap_job, "Create dev-demo smoke account", "dev-demo-bootstrap"
         )["run"]
 
     def _bootstrap_manifest_with_pod_mutation(self, mutate) -> str:
@@ -83,16 +83,28 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         root: Path,
         bootstrap_manifest: str,
         summary_run: str = 'echo "safe summary" >> "$GITHUB_STEP_SUMMARY"',
-        smoke_condition: str = "${{ !cancelled() }}",
+        smoke_condition: str = "${{ success() && !cancelled() }}",
     ) -> None:
         workflow = {
             "jobs": {
                 "dev-demo-deploy": {
                     "steps": [
                         {
+                            "name": "Prepare dev-demo runtime",
+                            "run": "echo prepare",
+                        }
+                    ]
+                },
+                "dev-demo-bootstrap": {
+                    "steps": [
+                        {
                             "name": "Create dev-demo smoke account",
                             "run": bootstrap_manifest,
-                        },
+                        }
+                    ]
+                },
+                "dev-demo-verify": {
+                    "steps": [
                         {
                             "name": "Smoke dev-demo over TCP",
                             "if": smoke_condition,
@@ -103,7 +115,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                             "run": summary_run,
                         },
                     ]
-                }
+                },
             }
         }
         workflow_path = root / ".github/workflows/dev-demo.yml"
@@ -137,7 +149,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 AssertionError,
                 "dev-demo summaries must not reference bootstrap credential material; "
-                "offending summary writers: dev-demo-deploy/Summarize dev-demo access",
+                "offending summary writers: dev-demo-verify/Summarize dev-demo access",
             ):
                 self.validator.validate_workflow(root)
 
@@ -154,7 +166,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 AssertionError,
                 "dev-demo summaries must not reference bootstrap credential material; "
-                "offending summary writers: dev-demo-deploy/Summarize dev-demo access",
+                "offending summary writers: dev-demo-verify/Summarize dev-demo access",
             ):
                 self.validator.validate_workflow(root)
 
@@ -988,17 +1000,45 @@ RESOURCES"""
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_smoke_condition_without_cancellation_guard(self):
+    def test_validate_workflow_rejects_smoke_condition_without_success_guard(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(
                 root,
                 self._bootstrap_manifest_fixture(),
-                smoke_condition="${{ success() }}",
+                smoke_condition="${{ !cancelled() }}",
             )
             with self.assertRaisesRegex(
                 AssertionError,
-                "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure",
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_inverted_cancellation_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ success() && !!cancelled() }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_contradictory_smoke_condition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root,
+                self._bootstrap_manifest_fixture(),
+                smoke_condition="${{ success() && !cancelled() && failure() }}",
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo TCP smoke must require successful prerequisites and a non-cancelled run",
             ):
                 self.validator.validate_workflow(root)
 

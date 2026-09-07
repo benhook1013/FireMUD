@@ -1,5 +1,6 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $mountTelnetTls := and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
 ---
@@ -20,6 +21,13 @@ spec:
         app: {{ $service.name }}
     spec:
       serviceAccountName: firemud-app
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       {{- with $.Values.previewStack.imagePullSecrets }}
       imagePullSecrets:
         {{- range $secret := . }}
@@ -32,6 +40,13 @@ spec:
       {{- end }}
       containers:
         - name: {{ $service.name }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
           image: "{{ $service.image.repository }}:{{ default $.Values.previewStack.defaultImageTag $service.image.tag }}"
           imagePullPolicy: Always
           {{- if $service.springProfile }}
@@ -154,7 +169,7 @@ spec:
         {{- if $mountTelnetTls }}
         - name: telnet-tls
           secret:
-            secretName: {{ $.Values.previewStack.telnetTls.secretName }}
+            secretName: {{ include "firemud.telnetTlsSecretName" $ }}
         {{- end }}
       {{- end }}
 ---
@@ -174,7 +189,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and $port.nodePort (ne $hostedControllerMode "true") }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

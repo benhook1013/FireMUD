@@ -35,6 +35,27 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.certificateIdentityMode" -}}
+{{- $mode := default "standalone" .Values.previewStack.certificateIdentity.mode -}}
+{{- if or (eq $mode "standalone") (eq $mode "hosted-controller") -}}
+{{- $mode -}}
+{{- else -}}
+{{- fail (printf "previewStack.certificateIdentity.mode must be standalone or hosted-controller (got %q)" $mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "firemud.hostedControllerMode" -}}
+{{- eq (include "firemud.certificateIdentityMode" . | trim) "hosted-controller" -}}
+{{- end -}}
+
+{{- define "firemud.ingressTlsSecretName" -}}
+{{- default (printf "%s-tls" .Release.Name) .Values.previewStack.ingress.tlsSecretName -}}
+{{- end -}}
+
+{{- define "firemud.telnetTlsSecretName" -}}
+{{- default (printf "%s-telnet-tls" .Release.Name) .Values.previewStack.telnetTls.secretName -}}
+{{- end -}}
+
 {{- define "firemud.grpcTlsEnv" -}}
 - name: FIREMUD_GRPC_CERT_CHAIN_PATH
   value: /tls/client.crt

@@ -30,7 +30,22 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-configured-mode.yaml" --namespace pr-42 >"$TMP_DIR/rendered-configured-enabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/values-configured-mode.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
+  -f "$TMP_DIR/values-configured-mode.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-configured-disabled.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
+  --namespace pr-42 >"$TMP_DIR/rendered-standalone.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
+  --set-string previewStack.telnetTls.secretName= \
+  --namespace pr-42 >"$TMP_DIR/rendered-standalone-default-name.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string previewStack.certificateIdentity.mode= \
+  --namespace pr-42 >"$TMP_DIR/rendered-default.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-spring-profile.yaml"
@@ -53,7 +68,15 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-spring-profile.yaml" --namespace pr-42 >"$TMP_DIR/rendered-spring-profile.yaml"
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=unsupported \
+  --namespace pr-42 >/dev/null 2>&1; then
+  echo "unsupported certificate identity mode unexpectedly rendered" >&2
+  exit 1
+fi
+
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" STANDALONE_RENDERED="$TMP_DIR/rendered-standalone.yaml" STANDALONE_DEFAULT_NAME_RENDERED="$TMP_DIR/rendered-standalone-default-name.yaml" DEFAULT_RENDERED="$TMP_DIR/rendered-default.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" CONFIGURED_DISABLED_RENDERED="$TMP_DIR/rendered-configured-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -65,9 +88,46 @@ root = Path(os.environ["ROOT_DIR"])
 sys.path.insert(0, str(root / "dev-tools" / "deploy"))
 import preflight
 
-documents = list(yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8")))
+hosted_documents = list(yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8")))
+assert not any(d.get("kind") == "Certificate" for d in hosted_documents), "hosted-controller mode still renders a Certificate"
+hosted_ingress = next(d for d in hosted_documents if d.get("kind") == "Ingress")
+assert "annotations" not in hosted_ingress.get("metadata", {}), "hosted-controller mode still renders a cert-manager ingress shim"
+hosted_service = next(d for d in hosted_documents if d.get("kind") == "Service" and d["metadata"]["name"] == "tcp-proxy-service")
+assert all("nodePort" not in port for port in hosted_service["spec"]["ports"]), "hosted-controller mode carries a workflow-selected NodePort"
+
+documents = list(yaml.safe_load_all(Path(os.environ["STANDALONE_RENDERED"]).read_text(encoding="utf-8")))
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
+
+standalone_default_name = list(
+    yaml.safe_load_all(
+        Path(os.environ["STANDALONE_DEFAULT_NAME_RENDERED"]).read_text(encoding="utf-8")
+    )
+)
+default_name_certificate = next(
+    d for d in standalone_default_name if d.get("kind") == "Certificate"
+)
+default_name_deployment = next(
+    d
+    for d in standalone_default_name
+    if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
+)
+default_name_volume = next(
+    volume
+    for volume in default_name_deployment["spec"]["template"]["spec"]["volumes"]
+    if volume["name"] == "telnet-tls"
+)
+assert default_name_certificate["metadata"]["name"] == "preview-release-telnet-tls"
+assert default_name_certificate["spec"]["secretName"] == "preview-release-telnet-tls"
+assert default_name_volume["secret"]["secretName"] == "preview-release-telnet-tls"
+
+default_documents = list(yaml.safe_load_all(Path(os.environ["DEFAULT_RENDERED"]).read_text(encoding="utf-8")))
+default_certificate = next(d for d in default_documents if d.get("kind") == "Certificate")
+default_ingress = next(d for d in default_documents if d.get("kind") == "Ingress")
+assert default_certificate["metadata"]["name"] == "preview-release-telnet-tls"
+assert default_ingress["metadata"]["annotations"]["cert-manager.io/cluster-issuer"] == "letsencrypt-prod"
+default_service = next(d for d in default_documents if d.get("kind") == "Service" and d["metadata"]["name"] == "tcp-proxy-service")
+assert any("nodePort" in port for port in default_service["spec"]["ports"]), "standalone default dropped the allocated NodePort"
 
 deployment = next(d for d in documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 container = deployment["spec"]["template"]["spec"]["containers"][0]
@@ -226,11 +286,15 @@ assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "dis
 disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
-assert disabled_env["TCP_PROXY_TELNET_MODE"] == "PLAINTEXT", "disabled TLS discarded the configured Telnet mode"
+assert "TCP_PROXY_TELNET_MODE" not in disabled_env, "disabled TLS still renders DIRECT_TLS mode"
 configured_enabled_documents = list(yaml.safe_load_all(Path(os.environ["CONFIGURED_ENABLED_RENDERED"]).read_text(encoding="utf-8")))
 configured_enabled_deployment = next(d for d in configured_enabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 configured_enabled_env = {entry["name"]: entry.get("value") for entry in configured_enabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert configured_enabled_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS", "enabled TLS did not enforce canonical direct mode"
+configured_disabled_documents = list(yaml.safe_load_all(Path(os.environ["CONFIGURED_DISABLED_RENDERED"]).read_text(encoding="utf-8")))
+configured_disabled_deployment = next(d for d in configured_disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
+configured_disabled_env = {entry["name"]: entry.get("value") for entry in configured_disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
+assert configured_disabled_env["TCP_PROXY_TELNET_MODE"] == "PLAINTEXT", "disabled TLS discarded the configured Telnet mode"
 empty_pull_secret_documents = list(yaml.safe_load_all(Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"]).read_text(encoding="utf-8")))
 assert sum(d.get("kind") == "Deployment" for d in empty_pull_secret_documents) > 0, "empty imagePullSecrets omitted Deployments"
 spring_profile_documents = list(yaml.safe_load_all(Path(os.environ["SPRING_PROFILE_RENDERED"]).read_text(encoding="utf-8")))

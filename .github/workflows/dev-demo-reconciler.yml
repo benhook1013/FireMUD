@@ -29,13 +29,10 @@ jobs:
           version: v1.33.4
 
       - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-          PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
-        run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
-          bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.DEV_DEMO_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
 
       - name: Verify cluster access
         run: |
@@ -97,6 +94,4 @@ jobs:
             -f ref="develop" \
             -f 'inputs[action]=deploy' \
             -f "inputs[image_tag]=${desired_head_sha}" \
-            -f "inputs[head_sha]=${desired_head_sha}" \
-            -f 'inputs[hostname]=dev.preview.firedevops.net' \
-            -f 'inputs[telnet_port]=32016'
+            -f "inputs[head_sha]=${desired_head_sha}"

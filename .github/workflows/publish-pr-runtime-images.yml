@@ -91,7 +91,8 @@ jobs:
             social-groups-service \
             spring-cloud-gateway \
             tcp-proxy-service \
-            world-management-service; do
+            world-management-service \
+            hosted-environment-identity-controller; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             docker image inspect "$image" >/dev/null
             if docker manifest inspect "$image" >/dev/null 2>&1; then
