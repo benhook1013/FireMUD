@@ -549,18 +549,43 @@ def _summary_heredoc(
     return None
 
 
+def _shell_command_line_ranges(source: str) -> list[tuple[int, int]]:
+    """Return physical line ranges for quote-aware shell statements."""
+
+    lines = source.splitlines()
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(lines):
+        command_end = index
+        quote: str | None = None
+        while command_end + 1 < len(lines):
+            continues, quote = _shell_line_state(lines[command_end], quote)
+            if not continues:
+                break
+            command_end += 1
+        ranges.append((index, command_end))
+        index = command_end + 1
+    return ranges
+
+
 def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
     lines = source.splitlines()
     ranges: list[tuple[int, int]] = []
+    statement_ranges = _shell_command_line_ranges(source)
     for index, line in enumerate(lines):
         target_match = SUMMARY_TARGET.search(line)
         if target_match is None:
             continue
+        statement_start = index
+        for candidate_start, candidate_end in statement_ranges:
+            if candidate_start <= index <= candidate_end:
+                statement_start = candidate_start
+                break
         start = _grouped_command_start(lines, index, target_match)
         if start is None:
-            start = index
-            while start > 0 and lines[start - 1].rstrip().endswith("\\"):
-                start -= 1
+            start = statement_start
+        else:
+            start = min(start, statement_start)
         end = index
         heredoc_match = _summary_heredoc(lines, start, index)
         if heredoc_match is not None:

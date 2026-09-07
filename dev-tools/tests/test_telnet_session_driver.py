@@ -628,7 +628,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             echoed_command = command.removesuffix(b"\r\n")
             connection.sendall(echoed_command[:-1])
             time.sleep(0.02)
-            connection.sendall(b"X\r\n")
+            connection.sendall(b"X\r\nLantern light fills the room.\r\n")
             time.sleep(0.08)
 
         server = FakeServer(handler)
@@ -646,7 +646,10 @@ class TelnetSessionDriverTest(unittest.TestCase):
             session.send_command(f"LOGIN demo@example.com {secret}")
             records = wait_for(
                 session.store,
-                lambda rows: any(row.get("text") == "X\r\n" for row in rows),
+                lambda rows: any(
+                    row.get("text") == "Lantern light fills the room.\r\n"
+                    for row in rows
+                ),
             )
             session.close("boundary_complete")
             server.close_and_check()
@@ -656,9 +659,55 @@ class TelnetSessionDriverTest(unittest.TestCase):
             received = [
                 row["text"] for row in records if row.get("event") == "received"
             ]
-            self.assertEqual(received, ["X\r\n"])
+            self.assertEqual(received, ["Lantern light fills the room.\r\n"])
+            self.assertNotIn("Xcret-7", transcript_text)
+            self.assertNotIn("Xcret-7", rendered)
             self.assertNotIn(secret, transcript_text)
             self.assertNotIn(secret, rendered)
+
+    def test_login_redaction_suppresses_early_mismatch_and_recovers_next_line(self):
+        secret = "secret-7"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            connection.sendall(b"LOGIN demo@example.com s")
+            time.sleep(0.02)
+            connection.sendall(b"Xcret-7\r\nA later room line.\r\n")
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    row.get("text") == "A later room line.\r\n" for row in rows
+                ),
+            )
+            session.close("boundary_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(received, ["A later room line.\r\n"])
+            for forbidden in (secret, "Xcret-7", "sXcret-7"):
+                self.assertNotIn(forbidden, transcript_text)
+                self.assertNotIn(forbidden, rendered)
 
     def test_login_redaction_drops_partial_prefix_on_unrelated_bytes(self):
         _, raw, replacement = telnet_session._login_redaction(
@@ -676,11 +725,13 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
             partial = session._redact_inbound(raw[:-2])
             unrelated = session._redact_inbound(b" room text\r\n")
+            recovered = session._redact_inbound(b"Later room text\r\n")
 
             self.assertEqual(partial, b"")
-            self.assertEqual(unrelated, b" room text\r\n")
-            self.assertNotIn(raw[:-2], partial + unrelated)
-            self.assertNotIn(b"secret-7", partial + unrelated)
+            self.assertEqual(unrelated, b"")
+            self.assertEqual(recovered, b"Later room text\r\n")
+            self.assertNotIn(raw[:-2], partial + unrelated + recovered)
+            self.assertNotIn(b"secret-7", partial + unrelated + recovered)
             self.assertEqual(session.redaction_tail, b"")
 
     def test_login_redaction_drops_partial_prefix_at_eof(self):
@@ -720,7 +771,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
             safe = session._redact_inbound(b"room: " + raw[:-1] + b"X\r\n")
 
-            self.assertEqual(safe, b"room: X\r\n")
+            self.assertEqual(safe, b"")
             self.assertNotIn(b"secret", safe)
             self.assertNotIn(raw[:-1], safe)
             self.assertEqual(session.redaction_tail, b"")
