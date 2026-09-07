@@ -468,6 +468,59 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void newRequestForCurrentModeStoresAlreadyAppliedAndExactRetryReturnsSameDurableResult() {
+    SetAdmissionModeCommand command =
+        admissionCommand(
+            "NORMAL", "workflow-admission-already-applied", "actor-1", "confirm-normal");
+
+    AdmissionStateSummary first =
+        dsl.transactionResult(
+            configuration -> admissionService(configuration.dsl()).setMode(command));
+    var stateAfterFirst =
+        dsl.selectFrom(AUTOMATION_ADMISSION_STATES)
+            .where(
+                AUTOMATION_ADMISSION_STATES
+                    .TENANT_ID
+                    .eq("tenant-admission")
+                    .and(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID.eq("instance-admission"))
+                    .and(AUTOMATION_ADMISSION_STATES.REGION_ID.eq("region-admission")))
+            .fetchOne();
+    var historyAfterFirst =
+        dsl.selectFrom(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+            .where(
+                AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID.eq(
+                    "workflow-admission-already-applied"))
+            .fetchOne();
+
+    AdmissionStateSummary retry =
+        dsl.transactionResult(
+            configuration -> admissionService(configuration.dsl()).setMode(command));
+    var stateAfterRetry =
+        dsl.selectFrom(AUTOMATION_ADMISSION_STATES)
+            .where(
+                AUTOMATION_ADMISSION_STATES
+                    .TENANT_ID
+                    .eq("tenant-admission")
+                    .and(AUTOMATION_ADMISSION_STATES.GAME_INSTANCE_ID.eq("instance-admission"))
+                    .and(AUTOMATION_ADMISSION_STATES.REGION_ID.eq("region-admission")))
+            .fetchOne();
+    var historyAfterRetry =
+        dsl.selectFrom(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+            .where(
+                AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID.eq(
+                    "workflow-admission-already-applied"))
+            .fetchOne();
+
+    assertThat(first.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+    assertThat(first.targetMode()).isEqualTo("NORMAL");
+    assertThat(retry).isEqualTo(first);
+    assertThat(stateAfterRetry).isEqualTo(stateAfterFirst);
+    assertThat(historyAfterRetry).isEqualTo(historyAfterFirst);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(1);
+  }
+
+  @Test
   void missingAdmissionReadOnlyLookupDoesNotCreateStateOrHistory() {
     Optional<AdmissionStateSummary> missing =
         dsl.transactionResult(

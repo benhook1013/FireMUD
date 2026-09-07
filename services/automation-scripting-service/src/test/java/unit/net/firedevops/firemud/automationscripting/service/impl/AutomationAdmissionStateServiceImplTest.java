@@ -347,6 +347,26 @@ class AutomationAdmissionStateServiceImplTest {
   @ParameterizedTest
   @NullAndEmptySource
   @ValueSource(strings = {"   ", "\u2003"})
+  void rejectsBlankSetModeBeforeAnyLookup(String mode) {
+    AutomationAdmissionStateRepository repository =
+        Mockito.mock(AutomationAdmissionStateRepository.class);
+    AutomationAdmissionRequestHistoryRepository historyRepository =
+        Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
+    AutomationAdmissionStateService service = service(repository, historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.setMode(
+                    new AutomationAdmissionStateService.SetAdmissionModeCommand(
+                        "tenant-1", "game-1", "region-1", mode, "request-1", "actor-1", "reason")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("mode is required");
+    verifyNoInteractions(repository, historyRepository);
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {"   ", "\u2003"})
   void rejectsBlankGetScopeBeforeLookup(String tenantId) {
     AutomationAdmissionStateRepository repository =
         Mockito.mock(AutomationAdmissionStateRepository.class);

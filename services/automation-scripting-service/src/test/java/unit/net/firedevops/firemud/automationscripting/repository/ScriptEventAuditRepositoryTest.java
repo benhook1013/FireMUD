@@ -65,7 +65,10 @@ class ScriptEventAuditRepositoryTest {
         .isFalse();
 
     assertThat(whereClause(sql.get()))
-        .contains("plugin_id", "plugin_version_id", "binding_id", "is not distinct from");
+        .contains(
+            "\"plugin_id\" is not distinct from",
+            "\"plugin_version_id\" is not distinct from",
+            "\"binding_id\" is not distinct from");
   }
 
   @Test

@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.Scripts.SCRIPTS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -15,6 +16,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -136,6 +138,62 @@ class ScriptDefinitionRepositoryIntegrationTest {
         .extracting(
             record -> record.get(SCRIPTS.DEFINITION), record -> record.get(SCRIPTS.ROW_VERSION))
         .containsExactly("{\"value\":2}", 1);
+    assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+  }
+
+  @Test
+  void concurrentDifferingWritesKeepOneIdentityAndExposeDeterministicVersions() throws Exception {
+    String firstDefinition = "{\"value\":1}";
+    String secondDefinition = "{\"value\":2}";
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    List<Future<ScriptDefinition>> futures = new ArrayList<>();
+    try {
+      for (String definition : List.of(firstDefinition, secondDefinition)) {
+        futures.add(
+            executor.submit(
+                () -> {
+                  ready.countDown();
+                  await(start);
+                  return new ScriptDefinitionRepository(dsl).save(script(definition));
+                }));
+      }
+
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      ScriptDefinition first = get(futures.get(0));
+      ScriptDefinition second = get(futures.get(1));
+
+      assertThat(first.getId()).isEqualTo(second.getId());
+      assertThat(List.of(first.getRowVersion(), second.getRowVersion()).stream().sorted().toList())
+          .containsExactly(0, 1);
+      ScriptDefinition persisted = repository.findById(first.getId()).orElseThrow();
+      assertThat(persisted.getRowVersion()).isEqualTo(1);
+      assertThat(persisted.getDefinition()).isIn(firstDefinition, secondDefinition);
+      assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void explicitIdStableIdentityMutationIsRejectedWithoutChangingTheDurableRow() {
+    ScriptDefinition initial = repository.save(script("{\"original\":true}"));
+    ScriptDefinition changedIdentity = script("{\"replacement\":true}");
+    changedIdentity.setId(initial.getId());
+    changedIdentity.setName("renamed");
+    changedIdentity.setRowVersion(initial.getRowVersion());
+
+    assertThatThrownBy(() -> repository.save(changedIdentity))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
+
+    assertThat(repository.findById(initial.getId()))
+        .get()
+        .usingRecursiveComparison()
+        .isEqualTo(initial);
     assertThat(dsl.fetchCount(SCRIPTS)).isEqualTo(1);
   }
 

@@ -12,6 +12,7 @@ import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
@@ -95,12 +96,12 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private List<ScriptEventBinding> snapshotBindings(ScriptDefinitionDto dto) {
     List<ScriptEventBinding> bindings =
         bindingRepository
-            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                dto.tenantId(), dto.version());
+            .findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
+                dto.tenantId(), dto.version(), dto.name());
     if (bindings == null || bindings.isEmpty()) {
       return List.of();
     }
-    return bindings.stream().filter(binding -> dto.name().equals(binding.getScriptId())).toList();
+    return bindings;
   }
 
   private void compensateDefinition(
@@ -171,9 +172,9 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     return Objects.equals(left.getDefinition(), right.getDefinition());
   }
 
-  private static IllegalArgumentException identityConflict(
+  private static ScriptDefinitionIdentityConflictException identityConflict(
       ScriptDefinition existing, ScriptDefinition requested) {
-    return new IllegalArgumentException(
+    return new ScriptDefinitionIdentityConflictException(
         "SCRIPT_DEFINITION_CONFLICT: immutable stable identity cannot be changed for id="
             + requested.getId()
             + "; existing=(tenantId="
@@ -192,9 +193,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   }
 
   private static boolean isIdentityConflict(Throwable throwable) {
-    return throwable instanceof IllegalArgumentException
-        && throwable.getMessage() != null
-        && throwable.getMessage().startsWith("SCRIPT_DEFINITION_CONFLICT: ");
+    return throwable instanceof ScriptDefinitionIdentityConflictException;
   }
 
   private void validateBindings(ScriptDefinitionDto dto) {

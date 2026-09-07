@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -18,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 class ScriptDefinitionRepositoryTest {
   @Test
-  void identityUpsertReturnsDurableWinnerAndUsesNoOpConflictUpdate() {
+  void identityUpsertReturnsDurableWinnerAndUsesStableIdentityConflictUpdate() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
@@ -34,9 +35,10 @@ class ScriptDefinitionRepositoryTest {
 
     assertThat(winner.getId()).isEqualTo(17L);
     assertThat(winner.getRowVersion()).isEqualTo(4);
-    assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
-        .contains("on conflict", "tenant_id", "version", "name", "do update", "returning")
-        .contains("definition");
+    String normalizedSql = normalizeSql(sqlRef.get());
+    assertThat(normalizedSql)
+        .contains("on conflict (tenant_id, version, name) do update set")
+        .contains("definition", "row_version", "is distinct from", "excluded", "returning");
   }
 
   @Test
@@ -133,7 +135,7 @@ class ScriptDefinitionRepositoryTest {
     changedIdentity.setRowVersion(4);
 
     assertThatThrownBy(() -> repository.save(changedIdentity))
-        .isInstanceOf(IllegalArgumentException.class)
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
         .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
 
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
@@ -165,5 +167,9 @@ class ScriptDefinitionRepositoryTest {
     record.setDefinition(definition);
     record.setRowVersion(rowVersion);
     return record;
+  }
+
+  private static String normalizeSql(String sql) {
+    return sql.toLowerCase(Locale.ROOT).replace("\"", "").replaceAll("\\s+", " ").trim();
   }
 }

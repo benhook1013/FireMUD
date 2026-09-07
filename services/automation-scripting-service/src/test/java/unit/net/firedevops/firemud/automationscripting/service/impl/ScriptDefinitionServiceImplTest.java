@@ -19,6 +19,7 @@ import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptEventRegistryService;
@@ -132,16 +133,19 @@ class ScriptDefinitionServiceImplTest {
   void updateScriptExplicitIdIdenticalRetryReturnsCurrentDurableVersion() throws SagaException {
     ScriptDefinition existing = script(5L, "test", "v1", "{\"original\":true}");
     existing.setRowVersion(9);
+    ScriptDefinition persisted = script(5L, "test", "v1", "{\"original\":true}");
+    persisted.setRowVersion(9);
     when(repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "test"))
         .thenReturn(java.util.Optional.of(existing));
     when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(existing);
+    when(repository.save(any(ScriptDefinition.class))).thenReturn(persisted);
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(5L, 1L, "test", "v1", "{\"original\":true}", List.of());
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertEquals(5L, result.id());
+    assertEquals("{\"original\":true}", result.definition());
     ArgumentCaptor<ScriptDefinition> savedEntity = ArgumentCaptor.forClass(ScriptDefinition.class);
     verify(repository).save(savedEntity.capture());
     assertEquals(9, savedEntity.getValue().getRowVersion());
@@ -155,7 +159,7 @@ class ScriptDefinitionServiceImplTest {
         new ScriptDefinitionDto(5L, 1L, "renamed", "v1", "{\"replacement\":true}", List.of());
 
     assertThatThrownBy(() -> service.updateScript(dto))
-        .isInstanceOf(IllegalArgumentException.class)
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
         .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
 
     verify(repository, never()).save(any(ScriptDefinition.class));
@@ -244,8 +248,8 @@ class ScriptDefinitionServiceImplTest {
     previousBinding.setTargetScopeType("ACTION_TAG");
     previousBinding.setTargetScopeId("COMMUNICATION");
     when(bindingRepository
-            .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                1L, "v1"))
+            .findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
+                1L, "v1", "test"))
         .thenReturn(List.of(previousBinding));
 
     AtomicInteger saveAllCalls = new AtomicInteger();

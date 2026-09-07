@@ -64,11 +64,11 @@ class ScriptWorkItemServiceImplTest {
                     "request-1",
                     "actor",
                     "reason",
-                    100L,
+                    101L,
                     "NORMAL",
                     AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
                     "fingerprint-1",
-                    100L)));
+                    202L)));
     return service;
   }
 
@@ -750,7 +750,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.outcome())
         .isEqualTo(AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
     assertThat(summary.requestFingerprint()).isEqualTo("fingerprint-1");
-    assertThat(summary.acknowledgedAtMs()).isEqualTo(100L);
+    assertThat(summary.acknowledgedAtMs()).isEqualTo(202L);
     assertThat(summary.activeExecutionCount()).isEqualTo(2L);
     assertThat(summary.oldestActiveExecutionStartedAtMs()).isEqualTo(120L);
     assertThat(summary.pendingCancelableWorkItemCount()).isEqualTo(1L);

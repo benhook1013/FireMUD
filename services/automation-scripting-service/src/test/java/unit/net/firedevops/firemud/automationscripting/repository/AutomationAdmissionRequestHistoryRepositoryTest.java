@@ -20,6 +20,31 @@ class AutomationAdmissionRequestHistoryRepositoryTest {
   private static final String LONG_ACTOR_PRINCIPAL = "x".repeat(256);
 
   @Test
+  void findUsesAllFiveIdentityColumns() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql().toLowerCase(Locale.ROOT));
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(AUTOMATION_ADMISSION_REQUEST_HISTORY))
+          };
+        };
+    AutomationAdmissionRequestHistoryRepository repository =
+        new AutomationAdmissionRequestHistoryRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.find("tenant-1", "game-1", "region-1", "mode-1", "request-1")).isEmpty();
+
+    assertThat(sqlRef.get())
+        .contains("tenant_id", "game_instance_id", "region_id", "mode", "control_plane_request_id");
+    assertThat(bindingsRef.get())
+        .containsExactly("tenant-1", "game-1", "region-1", "mode-1", "request-1");
+  }
+
+  @Test
   void insertOrGetReturnsDurableWinnerWithoutOverwritingImmutableEvidence() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();

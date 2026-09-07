@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -91,8 +92,19 @@ public class ScriptDefinitionRepository {
             .execute();
     if (updated != 1) {
       ScriptDefinition current = findById(entity.getId()).orElse(null);
-      if (current != null && !sameIdentity(current, entity)) {
-        throw identityConflict(current, entity);
+      if (current != null) {
+        if (!sameIdentity(current, entity)) {
+          throw identityConflict(current, entity);
+        }
+        throw AutomationScriptingJooqRepositorySupport.staleWrite("scripts", entity.getId());
+      }
+      ScriptDefinition stableIdentityRow =
+          findByTenantIdAndScriptVersionAndName(
+                  entity.getTenantId(), entity.getScriptVersion(), entity.getName())
+              .orElse(null);
+      if (stableIdentityRow != null
+          && !java.util.Objects.equals(stableIdentityRow.getId(), entity.getId())) {
+        throw identityConflict(stableIdentityRow, entity);
       }
       throw AutomationScriptingJooqRepositorySupport.staleWrite("scripts", entity.getId());
     }
@@ -156,9 +168,9 @@ public class ScriptDefinitionRepository {
         && java.util.Objects.equals(left.getName(), right.getName());
   }
 
-  private static IllegalArgumentException identityConflict(
+  private static ScriptDefinitionIdentityConflictException identityConflict(
       ScriptDefinition existing, ScriptDefinition requested) {
-    return new IllegalArgumentException(
+    return new ScriptDefinitionIdentityConflictException(
         "SCRIPT_DEFINITION_CONFLICT: immutable stable identity cannot be changed for id="
             + requested.getId()
             + "; existing=(tenantId="
