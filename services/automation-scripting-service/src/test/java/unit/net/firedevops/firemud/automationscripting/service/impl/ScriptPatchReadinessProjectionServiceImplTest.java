@@ -172,10 +172,17 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     activeOnLoad.setScriptPatchVersion("patch-1");
     activeOnLoad.setEventType("onLoad");
     activeOnLoad.setStatus("EVALUATING");
+    ScriptWorkItem newerCanceledOnLoad = new ScriptWorkItem();
+    newerCanceledOnLoad.setTenantId("1");
+    newerCanceledOnLoad.setScriptPatchVersion("patch-1");
+    newerCanceledOnLoad.setEventType("onLoad");
+    newerCanceledOnLoad.setStatus("CANCELED");
+    newerCanceledOnLoad.setCancelReason("rollback_epoch_advanced");
+    newerCanceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(500));
     when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
         .thenReturn(Optional.of(projection));
     when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
-        .thenReturn(List.of(deadLetteredOnLoad, activeOnLoad));
+        .thenReturn(List.of(deadLetteredOnLoad, activeOnLoad, newerCanceledOnLoad));
 
     ScriptPatchReadinessProjectionServiceImpl service =
         new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
@@ -220,7 +227,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
   }
 
   @Test
-  void keepsPatchRunningWhenCapacityDeniedSiblingHasActiveOnLoadWork() {
+  void failsPatchWhenCapacityDeniedSiblingHasActiveOnLoadWork() {
     ScriptPatchReadinessProjectionRepository repository =
         Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
@@ -249,7 +256,7 @@ class ScriptPatchReadinessProjectionServiceImplTest {
 
     service.refreshFromOnLoadWorkItems("1", "patch-1");
 
-    assertThat(projection.getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
-    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_running");
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_budget_exceeded");
   }
 }
