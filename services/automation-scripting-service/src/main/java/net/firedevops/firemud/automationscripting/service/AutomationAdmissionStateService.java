@@ -45,7 +45,7 @@ public interface AutomationAdmissionStateService {
           regionId,
           mode,
           admissionEpoch,
-          controlPlaneRequestId,
+          "",
           actorPrincipal,
           reason,
           updatedAtMs,

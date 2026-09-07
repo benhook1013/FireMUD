@@ -454,8 +454,6 @@ Outputs:
 
 #### `SetAutomationAdmissionMode`
 
-Implementation note: the current Automation proto/runtime implements the durable admission acknowledgement boundary for this mutation. It normalizes the exact scope, step/target mode, and request identity once, computes the length-delimited SHA-256 request fingerprint, and records immutable successful `APPLIED`/`ALREADY_APPLIED` request history. Exact retries return the stored result, while changed input for the same idempotency tuple conflicts before mutation. The direct V1 schema and focused unit proof cover this acknowledgement boundary; Docker/runtime/CI validation is not claimed here and remains deferred to the implementation owner.
-
 Inputs:
 
 - `tenantId`
@@ -484,8 +482,6 @@ Outputs:
 - explicit target `mode`, bounded `outcome`, immutable request fingerprint, and acknowledgement/result timestamp
 
 #### `GetAutomationDrainStatus`
-
-Implementation note: the current Automation & Scripting implementation persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, durable immutable admission request history, and the current `admissionEpoch`; it stamps admitted `script_work_items` with that epoch and serves this read from admission state plus durable work-item truth. The operator lookup is read-only: a missing exact state returns `NOT_FOUND`, while a present state without durable successful history returns `ACKNOWLEDGEMENT_UNAVAILABLE`; missing history is fail-closed and is never reconstructed from mutable state. The response exposes the exact acknowledgement identity, target mode, fingerprint, outcome, and timestamp when successful. Focused unit proof covers exact lookup, diagnostics, exact retry readback, and changed-input conflict; Docker/runtime/CI validation is not claimed here and remains deferred to the implementation owner. While paused for rollback, the entire counted set is limited to rows whose `workItem.admissionEpoch <= 0` or `workItem.admissionEpoch < current admissionEpoch`, excluding positive current-epoch rows; `activeExecutionCount` and `pendingCancelableWorkItemCount` are then derived from that set. This current projection is distinct from the target mapping's current-epoch pre-DSL and evaluated-descriptor counts.
 
 Inputs:
 

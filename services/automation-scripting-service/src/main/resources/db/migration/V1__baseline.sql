@@ -489,6 +489,10 @@ CREATE TABLE automation_admission_states (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT ck_automation_admission_state_request_fingerprint CHECK (
+        control_plane_request_fingerprint = ''
+        OR control_plane_request_fingerprint ~ '^[0-9a-f]{64}$'
+    ),
     CONSTRAINT uq_automation_admission_scope UNIQUE (tenant_id, game_instance_id, region_id)
 );
 
@@ -511,6 +515,9 @@ CREATE TABLE automation_admission_request_history (
     actor_principal VARCHAR(256) NOT NULL,
     reason VARCHAR(256) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_automation_admission_request_history_fingerprint CHECK (
+        request_fingerprint ~ '^[0-9a-f]{64}$'
+    ),
     CONSTRAINT uq_automation_admission_request_history_identity UNIQUE (
         tenant_id, game_instance_id, region_id, mode, control_plane_request_id
     )

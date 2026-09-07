@@ -101,7 +101,8 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     }
 
     AutomationAdmissionState state = findOrCreate(tenantId, gameInstanceId, regionId);
-    if (requestId.equals(normalize(state.getControlPlaneRequestId()))
+    if (state.getMode().equals(mode)
+        && requestId.equals(normalize(state.getControlPlaneRequestId()))
         && !normalize(state.getControlPlaneRequestFingerprint()).isBlank()) {
       verifyRequestFingerprint(state.getControlPlaneRequestFingerprint(), fingerprint);
       throw new IllegalStateException(

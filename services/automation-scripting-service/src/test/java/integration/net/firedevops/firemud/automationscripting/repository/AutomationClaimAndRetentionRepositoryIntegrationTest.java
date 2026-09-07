@@ -1,5 +1,7 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionRequestHistory.AUTOMATION_ADMISSION_REQUEST_HISTORY;
+import static net.firedevops.firemud.automationscripting.jooq.tables.AutomationAdmissionStates.AUTOMATION_ADMISSION_STATES;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
@@ -28,6 +30,10 @@ import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchPinProjection;
 import net.firedevops.firemud.automationscripting.entity.ScriptScheduleInstance;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService.AdmissionStateSummary;
+import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService.SetAdmissionModeCommand;
+import net.firedevops.firemud.automationscripting.service.impl.AutomationAdmissionStateServiceImpl;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -87,7 +93,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @BeforeEach
   void cleanTables() {
     dsl.execute(
-        "TRUNCATE TABLE script_patch_pin_projections, script_schedule_instances, script_event_audit, script_handoff_events,"
+        "TRUNCATE TABLE automation_admission_request_history, automation_admission_states,"
+            + " script_patch_pin_projections, script_schedule_instances, script_event_audit, script_handoff_events,"
             + " script_work_items,"
             + " script_event_ingress_audit RESTART IDENTITY CASCADE");
     executor = Executors.newFixedThreadPool(3);
@@ -316,6 +323,161 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                 SCRIPT_SCHEDULE_INSTANCES.BINDING_ID,
                 SCRIPT_SCHEDULE_INSTANCES.ID.eq(saved.getId())))
         .isEqualTo("binding-1");
+  }
+
+  @Test
+  void concurrentAdmissionRetriesAdvanceOnePauseEpochAndReturnOneDurableResult() throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    SetAdmissionModeCommand command =
+        admissionCommand("PAUSED_FOR_ROLLBACK", "workflow-admission-retry", "actor-1", "rollback");
+    List<Future<AdmissionStateSummary>> futures = new ArrayList<>();
+    for (int i = 0; i < 2; i++) {
+      futures.add(
+          executor.submit(
+              () -> {
+                DSLContext transactionRoot =
+                    newDsl("automation-admission-retry-" + System.nanoTime());
+                ready.countDown();
+                await(start);
+                return transactionRoot.transactionResult(
+                    configuration -> admissionService(configuration.dsl()).setMode(command));
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    AdmissionStateSummary first = get(futures.get(0));
+    AdmissionStateSummary second = get(futures.get(1));
+
+    assertThat(second).isEqualTo(first);
+    assertThat(first.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+    assertThat(first.targetMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+    assertThat(first.admissionEpoch()).isEqualTo(2L);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(1);
+    assertThat(
+            dsl.fetchValue(
+                AUTOMATION_ADMISSION_STATES.ADMISSION_EPOCH,
+                AUTOMATION_ADMISSION_STATES.TENANT_ID.eq("tenant-admission")))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.fetchValue(
+                AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID.eq(
+                    "workflow-admission-retry")))
+        .isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+  }
+
+  @Test
+  void concurrentAdmissionFingerprintConflictKeepsOneWinnerAndOneHistoryRow() throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<SetAdmissionModeCommand> commands =
+        List.of(
+            admissionCommand(
+                "PAUSED_FOR_ROLLBACK", "workflow-admission-conflict", "actor-1", "rollback-1"),
+            admissionCommand(
+                "PAUSED_FOR_ROLLBACK", "workflow-admission-conflict", "actor-2", "rollback-2"));
+    List<Future<MutationAttempt>> futures = new ArrayList<>();
+    for (SetAdmissionModeCommand command : commands) {
+      futures.add(
+          executor.submit(
+              () -> {
+                DSLContext transactionRoot =
+                    newDsl("automation-admission-conflict-" + System.nanoTime());
+                ready.countDown();
+                await(start);
+                try {
+                  return MutationAttempt.success(
+                      transactionRoot.transactionResult(
+                          configuration -> admissionService(configuration.dsl()).setMode(command)));
+                } catch (RuntimeException exception) {
+                  return MutationAttempt.failure(exception);
+                }
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    List<MutationAttempt> attempts = List.of(get(futures.get(0)), get(futures.get(1)));
+
+    assertThat(attempts.stream().filter(attempt -> attempt.summary() != null).count()).isEqualTo(1);
+    assertThat(attempts.stream().filter(attempt -> attempt.failure() != null).count()).isEqualTo(1);
+    MutationAttempt conflict =
+        attempts.stream().filter(attempt -> attempt.failure() != null).findFirst().orElseThrow();
+    assertThat(conflict.failure())
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("different admission-mode request");
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(1);
+    assertThat(
+            dsl.fetchValue(
+                AUTOMATION_ADMISSION_STATES.ADMISSION_EPOCH,
+                AUTOMATION_ADMISSION_STATES.TENANT_ID.eq("tenant-admission")))
+        .isEqualTo(2L);
+  }
+
+  @Test
+  void workflowRequestIdCanSpanModeKeysAndReadbackReturnsTheCurrentResult() {
+    AdmissionStateSummary pause =
+        dsl.transactionResult(
+            configuration ->
+                admissionService(configuration.dsl())
+                    .setMode(
+                        admissionCommand(
+                            "PAUSED_FOR_ROLLBACK",
+                            "workflow-admission-modes",
+                            "actor-1",
+                            "pause")));
+    AdmissionStateSummary normal =
+        dsl.transactionResult(
+            configuration ->
+                admissionService(configuration.dsl())
+                    .setMode(
+                        admissionCommand(
+                            "NORMAL", "workflow-admission-modes", "actor-1", "resume")));
+
+    assertThat(pause.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+    assertThat(pause.admissionEpoch()).isEqualTo(2L);
+    assertThat(normal.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+    assertThat(normal.targetMode()).isEqualTo("NORMAL");
+    assertThat(normal.admissionEpoch()).isEqualTo(2L);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(2);
+    assertThat(
+            dsl.select(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE)
+                .from(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                .where(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY
+                        .TENANT_ID
+                        .eq("tenant-admission")
+                        .and(
+                            AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID.eq(
+                                "workflow-admission-modes")))
+                .fetch(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE))
+        .containsExactlyInAnyOrder("NORMAL", "PAUSED_FOR_ROLLBACK");
+
+    Optional<AdmissionStateSummary> readback =
+        dsl.transactionResult(
+            configuration ->
+                admissionService(configuration.dsl())
+                    .findState("tenant-admission", "instance-admission", "region-admission"));
+    assertThat(readback).isPresent();
+    assertThat(readback.orElseThrow()).isEqualTo(normal);
+  }
+
+  @Test
+  void missingAdmissionReadOnlyLookupDoesNotCreateStateOrHistory() {
+    Optional<AdmissionStateSummary> missing =
+        dsl.transactionResult(
+            configuration ->
+                admissionService(configuration.dsl())
+                    .findState("tenant-admission", "instance-admission", "region-admission"));
+
+    assertThat(missing).isEmpty();
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isZero();
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isZero();
   }
 
   @Test
@@ -610,6 +772,25 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     return schedule;
   }
 
+  private AutomationAdmissionStateService admissionService(DSLContext transactionDsl) {
+    return new AutomationAdmissionStateServiceImpl(
+        new AutomationAdmissionStateRepository(transactionDsl),
+        transactionDsl,
+        new AutomationAdmissionRequestHistoryRepository(transactionDsl));
+  }
+
+  private SetAdmissionModeCommand admissionCommand(
+      String mode, String requestId, String actor, String reason) {
+    return new SetAdmissionModeCommand(
+        "tenant-admission",
+        "instance-admission",
+        "region-admission",
+        mode,
+        requestId,
+        actor,
+        reason);
+  }
+
   private ScriptHandoffEvent retainedHandoff(Long workItemId) {
     ScriptHandoffEvent handoff = new ScriptHandoffEvent();
     handoff.setEventId("handoff-event-1");
@@ -644,6 +825,16 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private static <T> T get(Future<T> future)
       throws InterruptedException, ExecutionException, TimeoutException {
     return future.get(10, TimeUnit.SECONDS);
+  }
+
+  private record MutationAttempt(AdmissionStateSummary summary, RuntimeException failure) {
+    private static MutationAttempt success(AdmissionStateSummary summary) {
+      return new MutationAttempt(summary, null);
+    }
+
+    private static MutationAttempt failure(RuntimeException failure) {
+      return new MutationAttempt(null, failure);
+    }
   }
 
   private DSLContext newDsl(String applicationName) {

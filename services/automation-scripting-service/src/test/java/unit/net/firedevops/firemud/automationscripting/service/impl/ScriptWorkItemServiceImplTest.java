@@ -819,6 +819,11 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.admissionEpoch()).isZero();
     assertThat(summary.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_NOT_FOUND);
     assertThat(summary.controlPlaneRequestId()).isEmpty();
+    assertThat(summary.targetMode()).isEmpty();
+    assertThat(summary.requestFingerprint()).isEmpty();
+    assertThat(summary.acknowledgedAtMs()).isZero();
+    verify(admissionStateService).findState("1", "game-1", "region-1");
+    Mockito.verifyNoMoreInteractions(admissionStateService);
   }
 
   @ParameterizedTest

@@ -56,7 +56,7 @@ class AutomationAdmissionRequestHistoryRepositoryTest {
     assertThat(updateStart).isGreaterThanOrEqualTo(0);
     assertThat(returningStart).isGreaterThan(updateStart);
     assertThat(normalizedSql.substring(updateStart, returningStart))
-        .contains("id")
+        .contains("\"id\" =")
         .doesNotContain(
             "request_fingerprint",
             "admission_epoch",
