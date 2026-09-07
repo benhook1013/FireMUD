@@ -29,16 +29,13 @@ SPEC.loader.exec_module(telnet_session)
 class FakeServer:
     def __init__(self, handler):
         self.handler = handler
-        self.ready = threading.Event()
         self.error = None
         self.listener = socket.socket()
         self.listener.bind(("127.0.0.1", 0))
         self.listener.listen(1)
         self.port = self.listener.getsockname()[1]
-        self.ready.set()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        self.ready.wait(1)
 
     def _run(self):
         try:

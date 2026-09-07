@@ -3874,6 +3874,11 @@ def canonical_gateway_ws_endpoint(
     return f"{host}:{ports[0]['port']}", []
 
 
+def path_is_under_mount(path: str, mount_path: str) -> bool:
+    """Return whether a path is the mount itself or one of its descendants."""
+    return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+
 def validate_gateway_ws_values(
     documents: list[dict[str, Any]], expected: dict[str, Any]
 ) -> tuple[list[str], list[str]]:
@@ -3922,9 +3927,6 @@ def validate_gateway_ws_values(
                 if isinstance(path, str) and path.startswith("/")
             }
 
-            def path_is_under(path: str, mount_path: str) -> bool:
-                return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
-
             grpc_mounts = [
                 mount
                 for mount in container.get("volumeMounts") or []
@@ -3932,7 +3934,10 @@ def validate_gateway_ws_values(
                 and mount.get("readOnly") is True
                 and volumes.get(mount.get("name"))
                 and isinstance(mount.get("mountPath"), str)
-                and any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+                and any(
+                    path_is_under_mount(path, mount["mountPath"])
+                    for path in grpc_paths
+                )
             ]
             if len(grpc_mounts) != 1:
                 issues.append(
@@ -4191,16 +4196,16 @@ def validate_hosted_telnet_tls_values(
         if isinstance(path, str) and path.startswith("/")
     }
 
-    def path_is_under(path: str, mount_path: str) -> bool:
-        return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
-
     grpc_secret_names: set[str] = set()
     for mount in container.get("volumeMounts") or []:
         if (
             not isinstance(mount, dict)
             or mount.get("readOnly") is not True
             or not isinstance(mount.get("mountPath"), str)
-            or not any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+            or not any(
+                path_is_under_mount(path, mount["mountPath"])
+                for path in grpc_paths
+            )
         ):
             continue
         volume = volumes.get(mount.get("name"))
@@ -4226,6 +4231,13 @@ def label_bridge_validation_issues(
 def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
     """Describe either transport without making a Telnet-only failure look like Gateway-only."""
     return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+
+
+def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
+    """Build the canonical shared bridge policy result."""
+    if bridge_issues:
+        return "fail", bridge_validation_failure_message(bridge_issues)
+    return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -6309,16 +6321,14 @@ def main() -> int:
     bridge_issues = label_bridge_validation_issues(
         gateway_bridge_issues, telnet_tls_issues
     )
-    if bridge_issues:
-        has_required_failure = append_result(
-            check_results,
-            "PREFLIGHT-BRIDGE-001",
-            True,
-            "fail",
-            bridge_validation_failure_message(bridge_issues),
-        ) or has_required_failure
-    else:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge and direct Telnet TLS alignment is valid") or has_required_failure
+    bridge_status, bridge_message = bridge_validation_result(bridge_issues)
+    has_required_failure = append_result(
+        check_results,
+        "PREFLIGHT-BRIDGE-001",
+        True,
+        bridge_status,
+        bridge_message,
+    ) or has_required_failure
 
     _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
     if redis_issues:

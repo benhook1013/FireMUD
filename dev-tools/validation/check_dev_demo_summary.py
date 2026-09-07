@@ -192,6 +192,43 @@ TIMEOUT_FLAG_OPTIONS = frozenset(
     {"--foreground", "--preserve-status", "-v", "--verbose"}
 )
 TIMEOUT_VALUE_OPTIONS = frozenset({"-k", "--kill-after", "-s", "--signal"})
+ENV_FLAG_OPTIONS = frozenset(
+    {
+        "-i",
+        "--ignore-environment",
+        "-0",
+        "--null",
+        "--list-signal-handling",
+        "-v",
+        "--debug",
+        "--help",
+        "--version",
+    }
+)
+ENV_VALUE_OPTIONS = frozenset({"-u", "--unset", "-C", "--chdir"})
+ENV_SPLIT_VALUE_OPTIONS = frozenset({"-S", "--split-string"})
+ENV_OPTIONAL_VALUE_OPTIONS = frozenset(
+    {"--block-signal", "--default-signal", "--ignore-signal"}
+)
+# This bootstrap boundary intentionally does not interpret general command
+# launchers. The canonical workflow needs none of these, so reject them instead
+# of trying to prove what command their options or evaluated input will execute.
+UNSAFE_BOOTSTRAP_EXECUTABLES = frozenset(
+    {
+        "bash",
+        "sh",
+        "xargs",
+        "exec",
+        "eval",
+        "builtin",
+        "nohup",
+        "nice",
+        "setsid",
+        "chroot",
+        "stdbuf",
+        "ionice",
+    }
+)
 KUBECTL_VALUE_FLAGS = frozenset(
     {
         "-n",
@@ -464,28 +501,97 @@ def _wrapped_executable_index(
     return index
 
 
-def _kubectl_arguments(command: list[str]) -> list[str] | None:
+def _attached_env_value_option(argument: str) -> str | None:
+    return next(
+        (
+            option
+            for option in ("-u", "-C", "-S")
+            if argument.startswith(option) and len(argument) > len(option)
+        ),
+        None,
+    )
+
+
+def _env_executable_index(command: list[str], index: int) -> int:
+    options_ended = False
+    while index < len(command):
+        argument = command[index]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", argument):
+            index += 1
+            continue
+        if options_ended:
+            return index
+        if argument == "--":
+            options_ended = True
+            index += 1
+            continue
+        if argument == "-":
+            index += 1
+            continue
+        if not argument.startswith("-"):
+            return index
+
+        option = argument.split("=", 1)[0]
+        attached_value_option = _attached_env_value_option(argument)
+        if (
+            option in ENV_VALUE_OPTIONS
+            or option in ENV_SPLIT_VALUE_OPTIONS
+            or attached_value_option is not None
+        ):
+            if "=" in argument:
+                value = argument.split("=", 1)[1]
+            elif attached_value_option is not None:
+                value = argument[len(attached_value_option) :]
+            else:
+                if index + 1 >= len(command):
+                    raise AssertionError(
+                        f"env option {argument!r} requires a value"
+                    )
+                value = command[index + 1]
+                index += 1
+            if not value:
+                raise AssertionError(f"env option {option!r} requires a value")
+            if option in ENV_SPLIT_VALUE_OPTIONS or (
+                attached_value_option in ENV_SPLIT_VALUE_OPTIONS
+            ):
+                raise AssertionError(
+                    "env split-string command expansion is unsupported"
+                )
+            index += 1
+            continue
+        if option in ENV_OPTIONAL_VALUE_OPTIONS:
+            index += 1
+            continue
+        if argument in ENV_FLAG_OPTIONS:
+            index += 1
+            continue
+        if (
+            not argument.startswith("--")
+            and len(argument) > 2
+            and all(f"-{flag}" in ENV_FLAG_OPTIONS for flag in argument[1:])
+        ):
+            index += 1
+            continue
+        raise AssertionError(f"unsupported env option syntax: {argument!r}")
+    return index
+
+
+def _effective_executable_index(command: list[str]) -> int | None:
     index = 0
     while index < len(command):
         token = command[index]
         if token in SHELL_COMMAND_PREFIXES or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
             index += 1
             continue
-        if token == "env":
-            index += 1
-            while index < len(command) and (
-                command[index] == "--"
-                or command[index].startswith("-")
-                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", command[index])
-            ):
-                index += 1
+        executable = token.rsplit("/", 1)[-1]
+        if executable == "env":
+            index = _env_executable_index(command, index + 1)
             continue
         if token == "command":
             index += 1
             while index < len(command) and command[index].startswith("-"):
                 index += 1
             continue
-        executable = token.rsplit("/", 1)[-1]
         if executable == "sudo":
             index = _wrapped_executable_index(
                 command,
@@ -505,8 +611,15 @@ def _kubectl_arguments(command: list[str]) -> list[str] | None:
             )
             index = duration_index + 1
             continue
-        return command[index + 1 :] if executable == "kubectl" else None
+        return index
     return None
+
+
+def _kubectl_arguments(command: list[str]) -> list[str] | None:
+    index = _effective_executable_index(command)
+    if index is None or command[index].rsplit("/", 1)[-1] != "kubectl":
+        return None
+    return command[index + 1 :]
 
 
 def _next_kubectl_positional(
@@ -591,19 +704,15 @@ def _heredoc_contains_secret_manifest(body: str) -> bool:
     """Recognize Secret documents, including multi-document and templated YAML."""
 
     try:
-        if any(
-            _contains_secret_manifest(document)
-            for document in yaml.safe_load_all(body)
-        ):
-            return True
+        documents = list(yaml.safe_load_all(body))
     except yaml.YAMLError:
         # A shell-expanded value may not be valid YAML until execution. Keep the
         # resource-kind check fail closed without treating ordinary text as a Secret.
-        pass
-    return any(
-        KUBERNETES_SECRET_KIND.search(textwrap.dedent(document)) is not None
-        for document in YAML_DOCUMENT_SEPARATOR.split(body)
-    )
+        return any(
+            KUBERNETES_SECRET_KIND.search(textwrap.dedent(document)) is not None
+            for document in YAML_DOCUMENT_SEPARATOR.split(body)
+        )
+    return any(_contains_secret_manifest(document) for document in documents)
 
 
 def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
@@ -613,6 +722,11 @@ def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
     for statement, _ in _shell_statements(bootstrap_manifest, source_label):
         for group in _shell_command_groups(_shell_tokens(statement, source_label)):
             for command in _pipeline_commands(group):
+                executable_index = _effective_executable_index(command)
+                if executable_index is not None and command[
+                    executable_index
+                ].rsplit("/", 1)[-1] in UNSAFE_BOOTSTRAP_EXECUTABLES:
+                    return True
                 arguments = _kubectl_arguments(command)
                 if arguments is not None and _kubectl_creates_secret(arguments):
                     return True
@@ -1240,7 +1354,10 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or _bootstrap_creates_secret(
         bootstrap_manifest
     ):
-        raise AssertionError("dev-demo session pod must not create or mount credential Secret material")
+        raise AssertionError(
+            "dev-demo session pod must not create or mount credential Secret material "
+            "or use disallowed command-indirection launchers"
+        )
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
         raise AssertionError(

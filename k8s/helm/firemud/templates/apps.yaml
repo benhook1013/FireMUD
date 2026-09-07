@@ -1,11 +1,8 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
-{{- $telnetTlsSecretName := $telnetTls.secretName | default "" }}
+{{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
-{{- if $telnetTls.enabled }}
-{{- $telnetTlsSecretName = required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName }}
-{{- end }}
 {{- range $service := .Values.previewStack.services }}
 {{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 ---

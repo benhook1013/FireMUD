@@ -52,6 +52,10 @@ malformed_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref
 grep -q '^eligible=false$' <<<"$malformed_retain"
 grep -q '^reason=malformed-label-metadata$' <<<"$malformed_retain"
 
+invalid_json_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '{not-json')"
+grep -q '^eligible=false$' <<<"$invalid_json_retain"
+grep -q '^reason=malformed-label-metadata$' <<<"$invalid_json_retain"
+
 malformed_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
 grep -q '^eligible=true$' <<<"$malformed_destroy"
 grep -q '^reason=eligible$' <<<"$malformed_destroy"

@@ -527,6 +527,108 @@ RESOURCES"""
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_shell_and_xargs_executables(self):
+        commands = (
+            'bash -c "printf safe"',
+            "sh -c 'exec kubectl create secret generic unrelated-resource'",
+            "xargs kubectl create secret generic unrelated-resource",
+            (
+                "xargs sh -c "
+                "'eval kubectl create secret generic unrelated-resource'"
+            ),
+            "exec kubectl create secret generic unrelated-resource",
+            "eval 'kubectl create secret generic unrelated-resource'",
+            "builtin command kubectl create secret generic unrelated-resource",
+            "nohup kubectl create secret generic unrelated-resource",
+            "nice kubectl create secret generic unrelated-resource",
+            "setsid kubectl create secret generic unrelated-resource",
+            "chroot / kubectl create secret generic unrelated-resource",
+            "stdbuf -oL kubectl create secret generic unrelated-resource",
+            "ionice -c2 kubectl create secret generic unrelated-resource",
+            "env -u FOO nohup kubectl create secret generic unrelated-resource",
+            "sudo -n nice kubectl create secret generic unrelated-resource",
+            "timeout 30s setsid kubectl create secret generic unrelated-resource",
+            "sudo -n timeout 30s env --chdir=/tmp bash -c 'printf safe'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                bootstrap_manifest = (
+                    self._bootstrap_manifest_fixture() + "\n" + command
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, bootstrap_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "or use disallowed command-indirection launchers",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_safe_ordinary_commands(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture() + r"""
+printf '%s\n' 'safe summary'
+kubectl get pod dev-demo-bootstrap
+env -u kubectl printf '%s\n' safe
+env -ukubectl printf '%s\n' safe
+env --unset sh printf '%s\n' safe
+env --unset=sh printf '%s\n' safe
+env -C bash printf '%s\n' safe
+env -Cbash printf '%s\n' safe
+env --chdir sh printf '%s\n' safe
+env --chdir=sh printf '%s\n' safe
+env -u nohup printf '%s\n' safe
+env -C nice printf '%s\n' safe
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_env_wrapper_parser_respects_option_values_and_missing_values(self):
+        executable = ["printf", "%s\\n", "safe"]
+        value_options = (
+            ["-u", "kubectl"],
+            ["-ukubectl"],
+            ["--unset", "bash"],
+            ["--unset=sh"],
+            ["-C", "bash"],
+            ["-Csh"],
+            ["--chdir", "kubectl"],
+            ["--chdir=bash"],
+        )
+        for options in value_options:
+            command = ["env", *options, *executable]
+            with self.subTest(command=command):
+                self.assertEqual(
+                    self.validator._effective_executable_index(command),
+                    len(options) + 1,
+                )
+
+        missing_value_commands = (
+            ["env", "-u"],
+            ["env", "-C"],
+            ["env", "--unset"],
+            ["env", "--chdir"],
+            ["env", "--unset="],
+            ["env", "--chdir="],
+        )
+        for command in missing_value_commands:
+            with self.subTest(command=command), self.assertRaisesRegex(
+                AssertionError, "requires a value"
+            ):
+                self.validator._effective_executable_index(command)
+
+        unsupported_commands = (
+            ["env", "--unknown", *executable],
+            ["env", "-S", "kubectl get pod"],
+            ["env", "--split-string=kubectl get pod"],
+        )
+        for command in unsupported_commands:
+            with self.subTest(command=command), self.assertRaisesRegex(
+                AssertionError, "unsupported"
+            ):
+                self.validator._effective_executable_index(command)
+
     def test_validate_workflow_accepts_non_kubectl_wrapper_commands(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         valid_manifest = bootstrap_manifest + r"""
@@ -807,6 +909,26 @@ metadata:
 data:
   example.yaml: |
     kind: Secret
+YAML"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_configmap_with_multiline_secret_documentation(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + """
+kubectl apply -f - <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-documentation
+data:
+  example.yaml: "first line
+kind: Secret
+    last line"
 YAML"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

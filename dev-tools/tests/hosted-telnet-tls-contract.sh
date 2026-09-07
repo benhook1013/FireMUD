@@ -111,6 +111,29 @@ if ! grep -Fq "$TELNET_TLS_SECRET_NAME_ERROR" "$TMP_DIR/missing-secret.err"; the
   exit 1
 fi
 
+TELNET_TLS_SECRET_SUFFIX_ERROR="previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled"
+helm template raw-hosted-sentinel "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  --namespace pr-42 >/dev/null
+for invalid_secret_name in \
+  '__TELNET_TLS_SECRET_NAME_' \
+  '_TELNET_TLS_SECRET_NAME__' \
+  'preview-release-public-tls'
+do
+  if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$TMP_DIR/values.yaml" \
+    --set-string "previewStack.telnetTls.secretName=${invalid_secret_name}" \
+    --namespace pr-42 >/dev/null 2>"$TMP_DIR/invalid-secret-suffix.err"; then
+    echo "chart rendered Telnet TLS with invalid Secret name ${invalid_secret_name}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$TELNET_TLS_SECRET_SUFFIX_ERROR" "$TMP_DIR/invalid-secret-suffix.err"; then
+    echo "chart did not report the expected invalid Telnet TLS Secret suffix diagnostic for ${invalid_secret_name}" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-secret-suffix.err" >&2
+    exit 1
+  fi
+done
+
 TELNET_TLS_CLUSTER_ISSUER_ERROR="previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" \
@@ -240,9 +263,9 @@ renamed_certificate = next(d for d in renamed_grpc if d.get("kind") == "Certific
 renamed_certificate["metadata"]["name"] = renamed_grpc_secret
 renamed_certificate["spec"]["secretName"] = renamed_grpc_secret
 renamed_grpc_issues = preflight.validate_hosted_telnet_tls_values(renamed_grpc)
-assert any("must not reuse the gRPC TLS Secret" in issue for issue in renamed_grpc_issues), (
-    "gRPC TLS Secret reuse was accepted after the volume was renamed"
-)
+assert renamed_grpc_issues == [
+    "TCP Proxy Telnet TLS Secret must not reuse the gRPC TLS Secret"
+], renamed_grpc_issues
 
 certificate = next(d for d in documents if d.get("kind") == "Certificate")
 assert certificate["spec"]["secretName"] == "preview-release-telnet-tls"
@@ -257,12 +280,21 @@ assert certificate["spec"]["secretName"] != ingress["spec"]["tls"][0]["secretNam
 mismatched = deepcopy(documents)
 mismatched_certificate = next(d for d in mismatched if d.get("kind") == "Certificate")
 mismatched_certificate["spec"]["secretName"] = "wrong-telnet-secret"
-assert preflight.validate_hosted_telnet_tls_values(mismatched), "certificate Secret mismatch was accepted"
+mismatched_issues = preflight.validate_hosted_telnet_tls_values(mismatched)
+assert mismatched_issues == [
+    "TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name",
+    "/telnet-tls must reference the dedicated Telnet TLS Secret",
+], mismatched_issues
 
 reused = deepcopy(documents)
 reused_certificate = next(d for d in reused if d.get("kind") == "Certificate")
 reused_certificate["spec"]["secretName"] = ingress["spec"]["tls"][0]["secretName"]
-assert preflight.validate_hosted_telnet_tls_values(reused), "HTTP Ingress Secret reuse was accepted"
+reused_issues = preflight.validate_hosted_telnet_tls_values(reused)
+assert reused_issues == [
+    "TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name",
+    "TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret",
+    "/telnet-tls must reference the dedicated Telnet TLS Secret",
+], reused_issues
 
 reused_in_later_ingress_entry = deepcopy(documents)
 later_ingress = next(d for d in reused_in_later_ingress_entry if d.get("kind") == "Ingress")
@@ -270,9 +302,12 @@ later_ingress["spec"]["tls"] = [
     {"secretName": "unrelated-http-secret"},
     {"secretName": "preview-release-telnet-tls"},
 ]
-assert preflight.validate_hosted_telnet_tls_values(reused_in_later_ingress_entry), (
-    "Telnet TLS Secret reuse in a later Ingress TLS entry was accepted"
+later_ingress_reuse_issues = preflight.validate_hosted_telnet_tls_values(
+    reused_in_later_ingress_entry
 )
+assert later_ingress_reuse_issues == [
+    "TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret"
+], later_ingress_reuse_issues
 
 cross_namespace_decoys = deepcopy(documents)
 cross_namespace_decoys.extend(

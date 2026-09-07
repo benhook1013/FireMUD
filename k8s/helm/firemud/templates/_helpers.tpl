@@ -35,6 +35,19 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- default "firemud-grpc-tls" .Values.previewStack.grpcTls.secretName -}}
 {{- end -}}
 
+{{- define "firemud.telnetTlsSecretName" -}}
+{{- $telnetTls := .Values.previewStack.telnetTls | default (dict) -}}
+{{- if $telnetTls.enabled -}}
+{{- $secretName := required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName -}}
+{{- if and (ne $secretName "__TELNET_TLS_SECRET_NAME__") (not (hasSuffix "-telnet-tls" $secretName)) -}}
+{{- fail "previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled" -}}
+{{- end -}}
+{{- $secretName -}}
+{{- else -}}
+{{- $telnetTls.secretName | default "" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "firemud.grpcTlsEnv" -}}
 - name: FIREMUD_GRPC_CERT_CHAIN_PATH
   value: /tls/client.crt

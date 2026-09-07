@@ -2714,6 +2714,10 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+if not module.path_is_under_mount("/grpc-tls/client.crt", "/grpc-tls"):
+    raise SystemExit("gRPC TLS path was not recognized beneath its mount")
+if module.path_is_under_mount("/grpc-tls-shadow/client.crt", "/grpc-tls"):
+    raise SystemExit("gRPC TLS mount matching accepted a sibling path prefix")
 labeled_bridge_issues = module.label_bridge_validation_issues(
     ["certificate-backed Gateway bridge is unavailable"],
     ["dedicated Telnet TLS certificate is unavailable"],
@@ -2724,12 +2728,15 @@ if labeled_bridge_issues != [
 ]:
     raise SystemExit(f"bridge transport failures were not labeled separately: {labeled_bridge_issues}")
 bridge_failure_results = []
+bridge_failure_status, bridge_failure_message = module.bridge_validation_result(
+    labeled_bridge_issues
+)
 module.append_result(
     bridge_failure_results,
     "PREFLIGHT-BRIDGE-001",
     True,
-    "fail",
-    module.bridge_validation_failure_message(labeled_bridge_issues),
+    bridge_failure_status,
+    bridge_failure_message,
 )
 if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
     "Bridge and Telnet transport validation failed: "
@@ -2741,12 +2748,13 @@ if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
         f"{bridge_failure_results}"
     )
 bridge_pass_results = []
+bridge_pass_status, bridge_pass_message = module.bridge_validation_result([])
 module.append_result(
     bridge_pass_results,
     "PREFLIGHT-BRIDGE-001",
     True,
-    "pass",
-    "Gateway bridge and direct Telnet TLS alignment is valid",
+    bridge_pass_status,
+    bridge_pass_message,
 )
 if len(bridge_pass_results) != 1 or bridge_pass_results[0].message != (
     "Gateway bridge and direct Telnet TLS alignment is valid"

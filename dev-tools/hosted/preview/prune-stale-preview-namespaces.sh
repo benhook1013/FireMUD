@@ -76,6 +76,10 @@ for row in "${namespace_rows[@]}"; do
     echo "Keeping ${namespace}: PR #${pr_number} metadata transport is incomplete"
     continue
   fi
+  if [[ "$pr_labels_base64" == "malformed" ]]; then
+    echo "Keeping ${namespace}: PR #${pr_number} label metadata is malformed"
+    continue
+  fi
 
   if ! pr_labels_json="$(printf '%s' "$pr_labels_base64" | base64 --decode 2>/dev/null)"; then
     echo "Keeping ${namespace}: PR #${pr_number} label transport is malformed"
@@ -111,6 +115,15 @@ for row in "${namespace_rows[@]}"; do
     echo "Keeping ${namespace}: PR #${pr_number} remains preview-eligible"
     continue
   fi
+
+  case "$reason" in
+    preview-paused | dependency-bot | unsupported-base-branch | pr-not-open)
+      ;;
+    *)
+      echo "Keeping ${namespace}: PR #${pr_number} eligibility reason is not authoritative for pruning (reason=${reason})"
+      continue
+      ;;
+  esac
 
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then

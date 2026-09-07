@@ -1,8 +1,5 @@
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
-{{- $telnetTlsSecretName := $telnetTls.secretName | default "" }}
-{{- if $telnetTls.enabled }}
-{{- $telnetTlsSecretName = required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName }}
-{{- end }}
+{{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
 {{- if and .Values.previewStack.enabled $telnetTls.enabled }}
 {{- $telnetTlsClusterIssuer := required "previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate" $telnetTls.clusterIssuer }}
 {{- $previewHostname := required "preview.hostname is required when rendering the standalone Telnet TLS Certificate" .Values.preview.hostname }}

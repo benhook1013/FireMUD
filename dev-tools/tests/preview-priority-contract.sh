@@ -98,8 +98,21 @@ case "$resource" in
     printf 'open\t%s\t%s\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority" "$paused" "$labels_valid"
     ;;
   */pulls/101)
-    if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" || "${FAKE_PRUNE_JQ_FAIL:-false}" == "true" ]]; then
+    if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
+    fi
+    if [[ "${FAKE_PRUNE_JQ_FAIL:-false}" == "true" ]]; then
+      jq_query='.'
+      previous=''
+      for arg in "$@"; do
+        if [[ "$previous" == '--jq' ]]; then
+          jq_query="$arg"
+          break
+        fi
+        previous="$arg"
+      done
+      jq -r "$jq_query" <<<'{invalid-json'
+      exit 0
     fi
     if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
       printf '%b' "$FAKE_PRUNE_METADATA"
@@ -231,6 +244,7 @@ priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 |
 paused_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"preview:paused"}]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
+invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
   rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
@@ -710,6 +724,24 @@ if [[ -e "$FAKE_DELETE_LOG" ]]; then
   exit 1
 fi
 
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA=$'open\tdevelop\thuman\tmalformed\n'
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after explicit malformed-label metadata" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${invalid_json_labels_base64}\n"
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after decoded label JSON was invalid" >&2
+  exit 1
+fi
+
 for malformed_pr_metadata in \
   $'open\tdevelop\thuman\n' \
   "open\tdevelop\thuman\t${priority_labels_base64}\textra\n" \
@@ -753,6 +785,31 @@ do
     echo "prune deleted a namespace after malformed eligibility output" >&2
     exit 1
   fi
+done
+
+for non_authoritative_reason in malformed-label-metadata future-eligibility-reason; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="eligible=false
+reason=${non_authoritative_reason}"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace for non-authoritative reason ${non_authoritative_reason}" >&2
+    exit 1
+  fi
+done
+
+for authoritative_prune_reason in preview-paused dependency-bot unsupported-base-branch pr-not-open; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="eligible=false
+reason=${authoritative_prune_reason}"
+  bash "$PRUNER" --apply
+  grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 done
 
 reset_case
