@@ -450,6 +450,44 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
         self.assertEqual(observed, {"read_timeout": 0.125, "connect_timeout": 7.5})
 
+    def test_run_connect_advertises_every_supported_meta_command(self):
+        class StubSession:
+            def __init__(self, *_args, **_kwargs):
+                self.closed = False
+
+            def connect(self):
+                return None
+
+            def close(self, _reason):
+                self.closed = True
+
+        args = argparse.Namespace(
+            host="localhost",
+            port=32000,
+            transcript=Path("/tmp/session.jsonl"),
+            timeout=0.25,
+            allow_insecure=False,
+            ca_file=None,
+            server_hostname=None,
+        )
+        output = io.StringIO()
+        with (
+            patch.object(telnet_session, "TelnetSession", StubSession),
+            patch("sys.stdin", io.StringIO(":quit\n")),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(telnet_session.run_connect(args), 0)
+
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                (
+                    "Commands are sent as entered. Meta-commands: "
+                    ":read [cursor], :cursor, :close [reason], :quit."
+                )
+            ],
+        )
+
     def test_run_connect_records_connect_reason_when_connection_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"

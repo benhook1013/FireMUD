@@ -611,7 +611,10 @@ def run_connect(args: argparse.Namespace) -> int:
     try:
         session.connect()
         connected = True
-        print("Commands are sent as entered. Meta-commands: :read [cursor], :cursor, :close [reason].")
+        print(
+            "Commands are sent as entered. Meta-commands: "
+            ":read [cursor], :cursor, :close [reason], :quit."
+        )
         for line in sys.stdin:
             line = line.rstrip("\r\n")
             if line == ":cursor":
