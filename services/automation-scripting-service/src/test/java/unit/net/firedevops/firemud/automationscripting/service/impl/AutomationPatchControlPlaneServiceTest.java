@@ -516,7 +516,11 @@ class AutomationPatchControlPlaneServiceTest {
                 "req-2",
                 "admin",
                 "rollback",
-                300L));
+                300L,
+                "PAUSED_FOR_ROLLBACK",
+                AutomationAdmissionStateService.OUTCOME_APPLIED,
+                "fingerprint-2",
+                301L));
     var service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -543,5 +547,59 @@ class AutomationPatchControlPlaneServiceTest {
     assertThat(response.getMode())
         .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK);
     assertThat(response.getAdmissionEpoch()).isEqualTo(2L);
+    assertThat(response.getControlPlaneRequestId()).isEqualTo("req-2");
+    assertThat(response.getTargetMode())
+        .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK);
+    assertThat(response.getOutcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+    assertThat(response.getRequestFingerprint()).isEqualTo("fingerprint-2");
+    assertThat(response.getAcknowledgedAtMs()).isEqualTo(301L);
+  }
+
+  @Test
+  void mapsDurableAdmissionAcknowledgementOnDrainStatusReadback() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
+        .thenReturn(
+            new ScriptWorkItemService.AutomationDrainStatusSummary(
+                "1",
+                "game-1",
+                "region-1",
+                true,
+                "PAUSED_FOR_ROLLBACK",
+                2L,
+                "req-2",
+                "PAUSED_FOR_ROLLBACK",
+                AutomationAdmissionStateService.OUTCOME_APPLIED,
+                "fingerprint-2",
+                301L,
+                3L,
+                200L,
+                4L,
+                System.currentTimeMillis()));
+    var service =
+        newService(
+            workItemService,
+            Mockito.mock(AutomationAdmissionStateService.class),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            new ScriptRuntimeProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class));
+
+    var response =
+        service.getAutomationDrainStatus(
+            net.firedevops.firemud.automationscripting.v1.GetAutomationDrainStatusRequest
+                .newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("game-1")
+                .setRegionId("region-1")
+                .build());
+
+    assertThat(response.getStatePresent()).isTrue();
+    assertThat(response.getControlPlaneRequestId()).isEqualTo("req-2");
+    assertThat(response.getTargetMode())
+        .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK);
+    assertThat(response.getOutcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_APPLIED);
+    assertThat(response.getRequestFingerprint()).isEqualTo("fingerprint-2");
+    assertThat(response.getAcknowledgedAtMs()).isEqualTo(301L);
   }
 }

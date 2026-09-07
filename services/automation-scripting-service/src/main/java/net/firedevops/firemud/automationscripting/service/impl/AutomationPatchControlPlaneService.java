@@ -155,6 +155,11 @@ final class AutomationPatchControlPlaneService {
         .setMode(AutomationControlPlaneSupport.toProtoMode(summary.mode()))
         .setAdmissionEpoch(summary.admissionEpoch())
         .setUpdatedAtMs(summary.updatedAtMs())
+        .setControlPlaneRequestId(summary.controlPlaneRequestId())
+        .setTargetMode(AutomationControlPlaneSupport.toProtoMode(summary.targetMode()))
+        .setOutcome(summary.outcome())
+        .setRequestFingerprint(summary.requestFingerprint())
+        .setAcknowledgedAtMs(summary.acknowledgedAtMs())
         .build();
   }
 
@@ -173,6 +178,12 @@ final class AutomationPatchControlPlaneService {
         .setOldestActiveExecutionStartedAtMs(summary.oldestActiveExecutionStartedAtMs())
         .setPendingCancelableWorkItemCount(summary.pendingCancelableWorkItemCount())
         .setObservedAtMs(summary.observedAtMs())
+        .setStatePresent(summary.statePresent())
+        .setControlPlaneRequestId(summary.controlPlaneRequestId())
+        .setTargetMode(AutomationControlPlaneSupport.toProtoMode(summary.targetMode()))
+        .setOutcome(summary.outcome())
+        .setRequestFingerprint(summary.requestFingerprint())
+        .setAcknowledgedAtMs(summary.acknowledgedAtMs())
         .setIsStale(isDrainStatusStale(summary.observedAtMs()))
         .build();
   }

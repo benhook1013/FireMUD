@@ -410,7 +410,21 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
         .thenReturn(
             new ScriptWorkItemService.AutomationDrainStatusSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
+                "1",
+                "game-1",
+                "region-1",
+                true,
+                "NORMAL",
+                1L,
+                "request-1",
+                "NORMAL",
+                AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
+                "fingerprint-1",
+                100L,
+                2L,
+                123L,
+                4L,
+                observedAtMs));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -433,6 +447,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getAdmissionMode().name()).isEqualTo("AUTOMATION_ADMISSION_MODE_NORMAL");
     assertThat(ref.get().getAdmissionEpoch()).isEqualTo(1L);
+    assertThat(ref.get().getStatePresent()).isTrue();
+    assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("request-1");
+    assertThat(ref.get().getOutcome())
+        .isEqualTo(AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+    assertThat(ref.get().getRequestFingerprint()).isEqualTo("fingerprint-1");
+    assertThat(ref.get().getAcknowledgedAtMs()).isEqualTo(100L);
     assertThat(ref.get().getActiveExecutionCount()).isEqualTo(2L);
     assertThat(ref.get().getOldestActiveExecutionStartedAtMs()).isEqualTo(123L);
     assertThat(ref.get().getPendingCancelableWorkItemCount()).isEqualTo(4L);
@@ -448,7 +468,21 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
         .thenReturn(
             new ScriptWorkItemService.AutomationDrainStatusSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
+                "1",
+                "game-1",
+                "region-1",
+                true,
+                "NORMAL",
+                1L,
+                "request-1",
+                "NORMAL",
+                AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
+                "fingerprint-1",
+                100L,
+                2L,
+                123L,
+                4L,
+                observedAtMs));
     ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
     runtimeProperties.setDrainStatusStaleThresholdMs(1L);
     AutomationScriptingControlPlaneGrpcService service =

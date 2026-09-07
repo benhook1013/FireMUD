@@ -483,7 +483,8 @@ CREATE TABLE automation_admission_states (
     mode VARCHAR(64) NOT NULL DEFAULT 'NORMAL',
     admission_epoch BIGINT NOT NULL DEFAULT 1,
     control_plane_request_id VARCHAR(128),
-    actor_principal VARCHAR(128),
+    control_plane_request_fingerprint VARCHAR(64) NOT NULL DEFAULT '',
+    actor_principal VARCHAR(256),
     reason VARCHAR(256),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -493,6 +494,31 @@ CREATE TABLE automation_admission_states (
 
 CREATE INDEX idx_automation_admission_scope
     ON automation_admission_states(tenant_id, game_instance_id, region_id);
+
+-- Admission-mode request identity and result are immutable history. The mutable
+-- admission state row is only the current barrier and cannot be the deduplication
+-- authority after later mode transitions.
+CREATE TABLE automation_admission_request_history (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    game_instance_id VARCHAR(64) NOT NULL,
+    region_id VARCHAR(64) NOT NULL,
+    mode VARCHAR(64) NOT NULL,
+    control_plane_request_id VARCHAR(128) NOT NULL,
+    request_fingerprint VARCHAR(64) NOT NULL,
+    admission_epoch BIGINT NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    actor_principal VARCHAR(256) NOT NULL,
+    reason VARCHAR(256) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_automation_admission_request_history_identity UNIQUE (
+        tenant_id, game_instance_id, region_id, mode, control_plane_request_id
+    )
+);
+
+CREATE INDEX idx_automation_admission_request_history_scope
+    ON automation_admission_request_history
+       (tenant_id, game_instance_id, region_id, created_at);
 
 CREATE TABLE script_patch_instance_rollout_events (
     id BIGSERIAL PRIMARY KEY,

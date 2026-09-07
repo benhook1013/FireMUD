@@ -92,7 +92,18 @@ Across the investigation scopes and final domain assessment, cover the selected 
 
 Fresh disjoint-scope investigations may run while CodeRabbit reviews the active front PR. The Worker consumes and adjudicates each broad search before starting another, so every fresh search examines the updated corpus and the current fix state. During active hosted review, prepare corrections locally and preserve review safety: do not publish review-invalidating changes until the hosted review completes. Coherent stacks are allowed when they retain a stable merge front and account for fixes already downstream.
 
+Keep the active in-progress or draft PR visible by publishing meaningful coherent checkpoints; completing every planned investigation or correction is not a prerequisite to showing current progress.
+
 PR closure follows the hosted review evidence and judgment described by the [PR lifecycle](../../developer-workflows/pr-lifecycle.md). Domain closure has an additional requirement: after fixes converge, complete a fresh assessment of the whole selected domain. Continue work for meaningful gaps, contradictions, owner conflicts, or proof consequences. Stop when remaining suggestions are only duplicates, unsupported, transient status churn, or low-value polishing. The Worker may advance each cycle without per-cycle Overseer approval; escalate consequential new architecture or scope, competing target states, or other decisions that require human judgment through the normal workflow. This model applies to the 5B cleanup and does not modify reusable generic delegation rules or technical architecture.
+
+### Domain split checklist
+
+- Split by responsibility and contract, not arbitrary file lists or service boundaries that cut across an invariant.
+- Independent portions may target `develop`; dependent portions stack with their parent contribution explicit.
+- Keep the owning design, affected implementation/call sites, and necessary proof coherent.
+- Prefer reasonably balanced natural splits with review headroom over tiny artificial extractions.
+- Preserve useful front-PR review progress and check fixes already downstream.
+- Make integration and deployment dependencies explicit using existing controls. File limits and mechanics follow the [PR lifecycle](../../developer-workflows/pr-lifecycle.md).
 
 ## Authority Boundaries
 
