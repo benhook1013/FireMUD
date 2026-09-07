@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
+import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 
 public final class WorldManagementStubServer implements AutoCloseable {
@@ -32,12 +33,21 @@ public final class WorldManagementStubServer implements AutoCloseable {
                       return;
                     }
                     try {
+                      RoomSnapshot snapshot =
+                          LookTestFixtures.sampleRoomSnapshot(
+                              request.getRoomInstance().getRoomInstanceId());
+                      RoomSnapshot.Builder scopedSnapshot = snapshot.toBuilder();
+                      if (!request.getRoomInstance().getTenantId().isBlank()) {
+                        scopedSnapshot.setTenantId(request.getRoomInstance().getTenantId());
+                      } else if (!request.getTenantId().isBlank()) {
+                        scopedSnapshot.setTenantId(request.getTenantId());
+                      }
+                      if (!request.getRoomInstance().getGameInstanceId().isBlank()) {
+                        scopedSnapshot.setGameInstanceId(
+                            request.getRoomInstance().getGameInstanceId());
+                      }
                       responseObserver.onNext(
-                          GetRoomSnapshotResponse.newBuilder()
-                              .setSnapshot(
-                                  LookTestFixtures.sampleRoomSnapshot(
-                                      request.getRoomInstance().getRoomInstanceId()))
-                              .build());
+                          GetRoomSnapshotResponse.newBuilder().setSnapshot(scopedSnapshot).build());
                       responseObserver.onCompleted();
                     } catch (IllegalArgumentException ex) {
                       responseObserver.onError(
