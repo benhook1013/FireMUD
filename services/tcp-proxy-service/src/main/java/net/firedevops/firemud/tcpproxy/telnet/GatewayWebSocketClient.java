@@ -196,12 +196,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     CompletableFuture<WebSocket> connection = builder.buildAsync(gatewayUri, releasingListener);
     connection.whenComplete(
         (ignored, error) -> {
-          if (error != null) {
-            releasingListener.release();
+          if (error != null && !connection.isCancelled()) {
             recordFailure(classifyFailure(error));
           }
         });
-    return connection.thenApply(releasingListener::wrap);
+    return new ConnectionFuture(connection, releasingListener);
   }
 
   public CompletableFuture<Boolean> isReadyAsync() {
@@ -243,6 +242,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
 
   public URI readinessUri() {
     return readinessUri;
+  }
+
+  public URI gatewayUri() {
+    return gatewayUri;
   }
 
   synchronized boolean reloadNow() {
@@ -711,6 +714,39 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       if (released.compareAndSet(false, true)) {
         releaseAction.run();
       }
+    }
+  }
+
+  static final class ConnectionFuture extends CompletableFuture<WebSocket> {
+    private final CompletableFuture<WebSocket> handshake;
+    private final ReleasingWebSocketListener releasingListener;
+
+    ConnectionFuture(
+        CompletableFuture<WebSocket> handshake, ReleasingWebSocketListener releasingListener) {
+      this.handshake = Objects.requireNonNull(handshake, "handshake");
+      this.releasingListener = Objects.requireNonNull(releasingListener, "releasingListener");
+      handshake.whenComplete(
+          (webSocket, error) -> {
+            if (error != null) {
+              releasingListener.release();
+              completeExceptionally(error);
+              return;
+            }
+            WebSocket wrapped = releasingListener.wrap(webSocket);
+            if (!complete(wrapped)) {
+              wrapped.abort();
+            }
+          });
+    }
+
+    @Override
+    public boolean cancel(boolean mayInterruptIfRunning) {
+      if (!super.cancel(mayInterruptIfRunning)) {
+        return false;
+      }
+      handshake.cancel(mayInterruptIfRunning);
+      releasingListener.release();
+      return true;
     }
   }
 

@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -56,8 +56,7 @@ class GatewayGameplayReadinessProbeTest {
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10))) {
       verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
-      Thread.sleep(50);
-      verify(client, times(1)).isReadyAsync();
+      verify(client, after(50).times(1)).isReadyAsync();
 
       pending.complete(true);
       awaitReadiness(probe, true);
@@ -137,8 +136,7 @@ class GatewayGameplayReadinessProbeTest {
 
     assertTrue(pending.isCancelled());
     assertFalse(probe.isReady());
-    Thread.sleep(50);
-    verify(client, times(1)).isReadyAsync();
+    verify(client, after(50).times(1)).isReadyAsync();
   }
 
   @Test

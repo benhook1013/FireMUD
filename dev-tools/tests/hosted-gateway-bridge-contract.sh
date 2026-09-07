@@ -429,6 +429,37 @@ if gateway.get("spec", {}).get("strategy") != {"type": "Recreate"}:
 if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
     raise SystemExit("TCP Proxy identity withdrawal can retain a stale rolling-update pod")
 
+strategy_issue = (
+    "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
+    "cannot retain stale pods"
+)
+multi_container_proxy = copy.deepcopy(documents)
+proxy_copy = next(
+    document
+    for document in multi_container_proxy
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+second_proxy_container = copy.deepcopy(
+    proxy_copy["spec"]["template"]["spec"]["containers"][0]
+)
+second_proxy_container["name"] = "tcp-proxy-shadow-service"
+proxy_copy["spec"]["template"]["spec"]["containers"].append(second_proxy_container)
+_, recreate_issues = module.validate_gateway_ws_values(multi_container_proxy, expected)
+if strategy_issue in recreate_issues:
+    raise SystemExit(
+        f"multi-container Recreate bridge reported a strategy issue: {recreate_issues}"
+    )
+proxy_copy["spec"]["strategy"] = {"type": "RollingUpdate"}
+_, rolling_update_issues = module.validate_gateway_ws_values(
+    multi_container_proxy, expected
+)
+if rolling_update_issues.count(strategy_issue) != 1:
+    raise SystemExit(
+        "multi-container non-Recreate bridge did not report exactly one strategy issue: "
+        f"{rolling_update_issues}"
+    )
+
 
 def mutate_env(documents_to_mutate, workload, name, value=None, remove=False):
     deployment = next(

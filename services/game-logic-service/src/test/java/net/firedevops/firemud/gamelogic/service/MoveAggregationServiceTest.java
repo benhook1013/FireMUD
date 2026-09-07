@@ -74,6 +74,7 @@ class MoveAggregationServiceTest {
                 .setRoomInstance(
                     RoomInstanceRef.newBuilder()
                         .setTenantId(LookTestFixtures.TENANT)
+                        .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
                         .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
                         .build())
                 .setDirection("east")
@@ -235,18 +236,12 @@ class MoveAggregationServiceTest {
   }
 
   @Test
-  void resolveRejectsSnapshotGameInstanceThatDiffersFromCurrentRoom() {
+  void resolveRejectsSnapshotGameInstanceMismatchBeforeMissingExit() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()
             .setTenantId(LookTestFixtures.TENANT)
             .setGameInstanceId("game-instance-stale")
             .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
-            .addExits(
-                RoomExitSnapshot.newBuilder()
-                    .setDirection("NORTH")
-                    .setLabel("NORTH")
-                    .setTargetRoomInstanceId("R-3042")
-                    .build())
             .build();
     when(worldStub.getRoomSnapshot(any()))
         .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
@@ -263,7 +258,7 @@ class MoveAggregationServiceTest {
                         .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
                         .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
                         .build())
-                .setDirection("north")
+                .setDirection("east")
                 .build());
 
     assertThat(result.getSuccess()).isFalse();

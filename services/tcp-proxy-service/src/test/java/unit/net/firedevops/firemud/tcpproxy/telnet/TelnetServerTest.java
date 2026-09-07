@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -39,7 +40,6 @@ class TelnetServerTest {
     server =
         new TelnetServer(
             0,
-            "ws://localhost/ws",
             false,
             "",
             "",
@@ -50,7 +50,7 @@ class TelnetServerTest {
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
             readyProbe(),
-            Mockito.mock(GatewayWebSocketClient.class));
+            gatewayClient());
     server.start();
     server.stop();
     assertTrue(true); // no exception means success
@@ -68,7 +68,6 @@ class TelnetServerTest {
             () ->
                 new TelnetServer(
                     0,
-                    "ws://localhost/ws",
                     true,
                     cert,
                     key,
@@ -79,7 +78,7 @@ class TelnetServerTest {
                     registry,
                     Mockito.mock(TcpProxyEventService.class),
                     readyProbe(),
-                    Mockito.mock(GatewayWebSocketClient.class)));
+                    gatewayClient()));
 
     assertTrue(ex.getMessage().contains("TLS"));
     assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
@@ -100,7 +99,6 @@ class TelnetServerTest {
     server =
         new TelnetServer(
             0,
-            "ws://localhost/ws",
             true,
             certificatePath.toString(),
             keyPath.toString(),
@@ -111,7 +109,7 @@ class TelnetServerTest {
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
             readyProbe(),
-            Mockito.mock(GatewayWebSocketClient.class));
+            gatewayClient());
     server.start();
 
     KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
@@ -144,5 +142,11 @@ class TelnetServerTest {
     GatewayGameplayReadinessProbe probe = Mockito.mock(GatewayGameplayReadinessProbe.class);
     Mockito.when(probe.isReady()).thenReturn(true);
     return probe;
+  }
+
+  private GatewayWebSocketClient gatewayClient() {
+    GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
+    Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws"));
+    return client;
   }
 }

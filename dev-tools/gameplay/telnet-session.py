@@ -618,7 +618,11 @@ def run_connect(args: argparse.Namespace) -> int:
     )
     connected = False
     try:
-        session.connect()
+        try:
+            session.connect()
+        except OSError as exc:
+            print(f"Unable to connect: {exc}", file=sys.stderr)
+            return 1
         connected = True
         print(
             "Commands are sent as entered. Meta-commands: "

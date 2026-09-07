@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.URI;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,6 @@ class TlsMisconfigurationIntegrationTest {
     @Bean
     TelnetServer telnetServer(
         @Value("${TCP_PROXY_PORT:2323}") int port,
-        @Value("${GATEWAY_WS_URL:ws://localhost/ws}") String gatewayWsUrl,
         @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
         @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
         @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
@@ -70,7 +70,6 @@ class TlsMisconfigurationIntegrationTest {
         GatewayWebSocketClient gatewayWebSocketClient) {
       return new TelnetServer(
           port,
-          gatewayWsUrl,
           tlsEnabled,
           certPath,
           keyPath,
@@ -86,7 +85,9 @@ class TlsMisconfigurationIntegrationTest {
 
     @Bean
     GatewayWebSocketClient gatewayWebSocketClient() {
-      return Mockito.mock(GatewayWebSocketClient.class);
+      GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
+      Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws"));
+      return client;
     }
   }
 }

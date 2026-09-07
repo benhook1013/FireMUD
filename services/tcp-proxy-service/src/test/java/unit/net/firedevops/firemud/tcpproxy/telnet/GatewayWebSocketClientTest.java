@@ -20,8 +20,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import java.net.InetAddress;
-import java.net.URI;
-import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
@@ -43,6 +41,7 @@ import javax.net.ssl.SSLHandshakeException;
 import okhttp3.Response;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -466,6 +465,70 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void cancellingConnectionFutureCancelsHandshakeAndReleasesExactlyOnce() {
+    AtomicInteger releases = new AtomicInteger();
+    CompletableFuture<WebSocket> handshake = new CompletableFuture<>();
+    GatewayWebSocketClient.ReleasingWebSocketListener listener =
+        new GatewayWebSocketClient.ReleasingWebSocketListener(
+            new WebSocket.Listener() {}, releases::incrementAndGet);
+    CompletableFuture<WebSocket> connection =
+        new GatewayWebSocketClient.ConnectionFuture(handshake, listener);
+
+    assertTrue(connection.cancel(true));
+
+    assertTrue(handshake.isCancelled());
+    assertEquals(1, releases.get());
+    listener.onError(mock(WebSocket.class), new IllegalStateException("late callback"));
+    assertEquals(1, releases.get());
+  }
+
+  @Test
+  void cancellationAbortsAHandshakeThatSucceedsAfterCancellation() {
+    AtomicInteger releases = new AtomicInteger();
+    AtomicInteger cancellationAttempts = new AtomicInteger();
+    CompletableFuture<WebSocket> handshake =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            cancellationAttempts.incrementAndGet();
+            return false;
+          }
+        };
+    WebSocket webSocket = mock(WebSocket.class);
+    GatewayWebSocketClient.ReleasingWebSocketListener listener =
+        new GatewayWebSocketClient.ReleasingWebSocketListener(
+            new WebSocket.Listener() {}, releases::incrementAndGet);
+    CompletableFuture<WebSocket> connection =
+        new GatewayWebSocketClient.ConnectionFuture(handshake, listener);
+
+    assertTrue(connection.cancel(true));
+    assertTrue(handshake.complete(webSocket));
+
+    assertEquals(1, cancellationAttempts.get());
+    verify(webSocket).abort();
+    assertEquals(1, releases.get());
+    listener.onError(webSocket, new IllegalStateException("late callback"));
+    assertEquals(1, releases.get());
+  }
+
+  @Test
+  void cancelledPendingHandshakeDoesNotPinRetiredGeneration() throws Exception {
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+    GatewayWebSocketClient client = newClient("localhost", server.getPort(), caCertificate);
+    HttpClient initialGeneration = (HttpClient) client.clientIdentity();
+    CompletableFuture<WebSocket> connection =
+        client.connect(null, null, null, null, null, null, null, new WebSocket.Listener() {});
+    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+
+    assertTrue(connection.cancel(true));
+    assertTrue(client.reloadNow());
+
+    awaitTermination(initialGeneration);
+    awaitGenerationCount(client, 1);
+  }
+
+  @Test
   void beanShutdownTerminatesCurrentAndRetiredGenerations() throws Exception {
     GatewayWebSocketClient client =
         new GatewayWebSocketClient(
@@ -541,7 +604,7 @@ class GatewayWebSocketClientTest {
     Files.createSymbolicLink(projection.resolve("tls.key"), Path.of("..data/tls.key"));
     Files.createSymbolicLink(projection.resolve("ca.crt"), Path.of("..data/ca.crt"));
 
-    TlsMaterial rotatedMaterial = copyDistinctClasspathTlsMaterial();
+    TlsMaterial rotatedMaterial = copyRotatedTlsMaterial();
     Path rotatedCertificate = rotatedMaterial.certificate();
     Path rotatedPrivateKey = rotatedMaterial.privateKey();
     Path rotatedClientCa = rotatedMaterial.caCertificate();
@@ -659,25 +722,11 @@ class GatewayWebSocketClientTest {
     return generation;
   }
 
-  private TlsMaterial copyDistinctClasspathTlsMaterial() throws Exception {
-    X509Certificate initialCertificate = readCertificate(certificate);
-    var resources = getClass().getClassLoader().getResources("certs/dev-cert.pem");
-    while (resources.hasMoreElements()) {
-      URL certificateResource = resources.nextElement();
-      X509Certificate candidate;
-      try (var input = certificateResource.openStream()) {
-        candidate =
-            (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      }
-      if (GatewayWebSocketClient.samePublicKey(initialCertificate, candidate)) {
-        continue;
-      }
-      return new TlsMaterial(
-          copyResource(certificateResource, "rotated-client.crt"),
-          copyResource(siblingResource(certificateResource, "dev-key.pem"), "rotated-client.key"),
-          copyResource(siblingResource(certificateResource, "dev-ca.pem"), "rotated-ca.crt"));
-    }
-    throw new IllegalStateException("Distinct common test-support TLS material not found");
+  private TlsMaterial copyRotatedTlsMaterial() throws Exception {
+    return new TlsMaterial(
+        copyResource("/certs/rotated-gateway-client.crt", "rotated-client.crt"),
+        copyResource("/certs/rotated-gateway-client.key", "rotated-client.key"),
+        copyResource("/certs/rotated-gateway-client-ca.crt", "rotated-ca.crt"));
   }
 
   private Path copyResource(String resourceName, String fileName) throws Exception {
@@ -687,19 +736,6 @@ class GatewayWebSocketClientTest {
       Files.copy(input, target);
     }
     return target;
-  }
-
-  private Path copyResource(URL resource, String fileName) throws Exception {
-    Path target = materialDirectory.resolve(fileName);
-    try (var input = resource.openStream()) {
-      Files.copy(input, target);
-    }
-    return target;
-  }
-
-  private static URL siblingResource(URL resource, String fileName) throws Exception {
-    String location = resource.toExternalForm();
-    return URI.create(location.substring(0, location.lastIndexOf('/') + 1) + fileName).toURL();
   }
 
   private static X509Certificate readCertificate(Path path) throws Exception {

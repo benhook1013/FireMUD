@@ -243,6 +243,107 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void channelInactiveCancelsStalledGatewayConnectionAndAbortsLateOpen() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicInteger cancellationAttempts = new AtomicInteger();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    CompletableFuture<WebSocket> pendingConnection =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            cancellationAttempts.incrementAndGet();
+            return super.cancel(mayInterruptIfRunning);
+          }
+        };
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(ctx.writeAndFlush(any())).thenReturn(null);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelInactive(ctx);
+
+    assertTrue(pendingConnection.isCancelled());
+    assertEquals(1, cancellationAttempts.get());
+    WebSocket lateWebSocket = mock(WebSocket.class);
+    listenerRef.get().onOpen(lateWebSocket);
+    listenerRef.get().onError(lateWebSocket, new IllegalStateException("late callback"));
+    verify(lateWebSocket).abort();
+    assertEquals(1, cancellationAttempts.get());
+    verify(ctx, Mockito.never()).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void failCloseCancelsStalledGatewayConnectionWithoutDuplicateDisconnect() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicInteger cancellationAttempts = new AtomicInteger();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    CompletableFuture<WebSocket> pendingConnection =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            cancellationAttempts.incrementAndGet();
+            return super.cancel(mayInterruptIfRunning);
+          }
+        };
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+    when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    WebSocket gatewayWebSocket = mock(WebSocket.class);
+    listenerRef.get().onError(gatewayWebSocket, new IllegalStateException("bridge failed"));
+    listenerRef.get().onError(gatewayWebSocket, new IllegalStateException("late callback"));
+
+    assertTrue(pendingConnection.isCancelled());
+    assertEquals(1, cancellationAttempts.get());
+    verify(ctx, times(1))
+        .writeAndFlush("DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n");
+    verify(closeFuture).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void connectionClosedWhenBufferDepthExceeded() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =

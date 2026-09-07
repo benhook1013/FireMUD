@@ -396,15 +396,9 @@ def _shell_statements(
     lines = source.splitlines()
     index = 0
     while index < len(lines):
-        command_end = index
-        quote: str | None = None
-        while command_end + 1 < len(lines):
-            continues, quote = _shell_line_state(
-                lines[command_end], quote, source_label
-            )
-            if not continues:
-                break
-            command_end += 1
+        _, command_end = next(
+            _shell_command_line_ranges(source, source_label, start=index)
+        )
         command = "\n".join(lines[index : command_end + 1])
         heredocs = _heredoc_specs(command, source_label)
         if not heredocs:
@@ -734,6 +728,8 @@ def _heredoc_contains_secret_manifest(body: str) -> bool:
     except yaml.YAMLError:
         # A shell-expanded value may not be valid YAML until execution. Keep the
         # resource-kind check fail closed without treating ordinary text as a Secret.
+        # Dedenting each document lets the root-anchored kind check recognize common
+        # heredoc indentation without matching indented examples inside another kind.
         return any(
             KUBERNETES_SECRET_KIND.search(textwrap.dedent(document)) is not None
             for document in YAML_DOCUMENT_SEPARATOR.split(body)
@@ -876,13 +872,12 @@ def _summary_heredoc(
 
 
 def _shell_command_line_ranges(
-    source: str, source_label: str = "shell source"
-) -> list[tuple[int, int]]:
-    """Return physical line ranges for quote-aware shell statements."""
+    source: str, source_label: str = "shell source", *, start: int = 0
+) -> Iterable[tuple[int, int]]:
+    """Yield physical line ranges for quote-aware shell statements."""
 
     lines = source.splitlines()
-    ranges: list[tuple[int, int]] = []
-    index = 0
+    index = start
     while index < len(lines):
         command_end = index
         quote: str | None = None
@@ -893,9 +888,8 @@ def _shell_command_line_ranges(
             if not continues:
                 break
             command_end += 1
-        ranges.append((index, command_end))
+        yield index, command_end
         index = command_end + 1
-    return ranges
 
 
 def _summary_write_line_ranges(
@@ -903,7 +897,7 @@ def _summary_write_line_ranges(
 ) -> list[tuple[int, int]]:
     lines = source.splitlines()
     ranges: list[tuple[int, int]] = []
-    statement_ranges = _shell_command_line_ranges(source, source_label)
+    statement_ranges = list(_shell_command_line_ranges(source, source_label))
     for index, line in enumerate(lines):
         target_match = SUMMARY_TARGET.search(line)
         if target_match is None:

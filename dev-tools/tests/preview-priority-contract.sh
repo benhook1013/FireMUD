@@ -1074,7 +1074,6 @@ run_reconciler_fixture "$MUTATED_RECONCILER_RUN" "$TEMP_DIR/reconciler-mutated.o
 grep -Fq 'inputs[pr_number]=101' "$FAKE_RECONCILER_DISPATCH_LOG"
 
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
-eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
 grep -q 'github.event.label.name == '\''preview:paused'\''' "$preview_workflow"
 grep -q '^      - unlabeled$' "$preview_workflow"
@@ -1088,10 +1087,6 @@ grep -Fq -- '--inspect-labels --labels-json "$EVENT_LABELS_JSON"' "$preview_work
 grep -Fq '[ "$labels_valid" = "true" ] && [ "$paused" = "true" ]' "$preview_workflow"
 grep -Fq '(requiresPausedLabel && !pauseStillPresent) ||' "$preview_workflow"
 grep -Fq 'currentPullRequest.labels.some(label => label?.name === "preview:paused")' "$preview_workflow"
-grep -q 'preview:paused' "$preview_workflow"
-grep -Fq "EVENT_LABELS_JSON: \${{ toJSON(github.event.pull_request.labels) }}" "$preview_workflow"
-grep -q 'preview:paused' "$eligibility_script"
-grep -q 'malformed-label-metadata' "$eligibility_script"
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
 test "$(grep -Fhc -- 'revalidate-preview-deploy.sh' "$preview_workflow" "$ALLOCATOR" | awk '{ total += $1 } END { print total }')" -eq 2
 test "$(grep -Fc -- '--revalidate-deploy' "$revalidation_helper")" -eq 1

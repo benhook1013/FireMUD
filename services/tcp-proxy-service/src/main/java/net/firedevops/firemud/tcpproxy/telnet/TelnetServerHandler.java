@@ -27,6 +27,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
@@ -99,6 +100,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile boolean connectedOnce;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
+  private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
+      new AtomicReference<>();
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
@@ -435,6 +438,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   public void channelInactive(ChannelHandlerContext ctx) {
     try (CombinedLoggingContext ignored = openLoggingContext()) {
       closing = true;
+      cancelInFlightGatewayConnection();
       stopHeartbeat();
       cancelIdleCheck();
       closeGatewayWebSocket();
@@ -520,8 +524,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     reconnecting = true;
-    webSocketConnector
-        .connect(
+    CompletableFuture<WebSocket> connection =
+        webSocketConnector.connect(
             clientIp,
             proxyConnectionId,
             sessionContext.gameInstanceId(),
@@ -529,16 +533,18 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             sessionContext.worldSlug(),
             sessionContext.realmSlug(),
             sessionContext.pointerVersion(),
-            gatewayListener())
-        .whenComplete(
-            (socket, error) -> {
-              if (error != null) {
-                try (CombinedLoggingContext ignored = openLoggingContext()) {
-                  logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-                  failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
-                }
-              }
-            });
+            gatewayListener());
+    inFlightGatewayConnection.set(connection);
+    connection.whenComplete(
+        (socket, error) -> {
+          if (!inFlightGatewayConnection.compareAndSet(connection, null) || error == null) {
+            return;
+          }
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
+            logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+            failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+          }
+        });
   }
 
   private void handleGatewayDisconnect() {
@@ -574,6 +580,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     closing = true;
     reconnecting = false;
+    cancelInFlightGatewayConnection();
     if (context != null) {
       context
           .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
@@ -627,6 +634,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.forEach(future -> future.cancel(true));
     outstandingSends.clear();
     updateBufferDepthGauge();
+  }
+
+  private void cancelInFlightGatewayConnection() {
+    CompletableFuture<WebSocket> connection = inFlightGatewayConnection.getAndSet(null);
+    if (connection != null) {
+      connection.cancel(true);
+    }
+    reconnecting = false;
   }
 
   private void updateBufferDepthGauge() {
@@ -776,6 +791,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       @Override
       public void onOpen(WebSocket webSocket) {
         try (CombinedLoggingContext ignored = openLoggingContext()) {
+          if (closing) {
+            webSocket.abort();
+            return;
+          }
           boolean wasConnected = connectedOnce;
           connectedOnce = true;
           setWebSocket(webSocket, wasConnected);
@@ -818,6 +837,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       @Override
       public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
         try (CombinedLoggingContext ignored = openLoggingContext()) {
+          if (closing) {
+            return Listener.super.onClose(webSocket, statusCode, reason);
+          }
           logger.warn(
               "Gateway WebSocket closed for {} with status {} and reason {}",
               gatewayWsUrl,
@@ -831,6 +853,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       @Override
       public void onError(WebSocket webSocket, Throwable error) {
         try (CombinedLoggingContext ignored = openLoggingContext()) {
+          if (closing) {
+            return;
+          }
           logger.error("WebSocket error for {}", gatewayWsUrl, error);
           handleGatewayDisconnect();
         }

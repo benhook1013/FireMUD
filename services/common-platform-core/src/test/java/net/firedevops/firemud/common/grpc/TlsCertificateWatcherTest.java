@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.grpc;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,7 +18,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TlsCertificateWatcherTest {
   @Test
-  void directFileChangeBurstTriggersOneReload(@TempDir Path directory) throws Exception {
+  void rapidDirectFileChangesTriggerOneOrMoreCoalescedReloadBursts(@TempDir Path directory)
+      throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
     Path privateKey = Files.writeString(directory.resolve("tls.key"), "key-1");
     Path caCertificate = Files.writeString(directory.resolve("ca.crt"), "ca-1");
@@ -42,6 +44,37 @@ class TlsCertificateWatcherTest {
       Thread.sleep(300);
       assertTrue(reloads.get() >= 1);
       assertTrue(reloads.get() <= 3);
+    }
+  }
+
+  @Test
+  void changesQueuedAcrossWatchKeysInOneBurstTriggerExactlyOneReload(@TempDir Path directory)
+      throws Exception {
+    Path certificateDirectory = Files.createDirectory(directory.resolve("certificate"));
+    Path privateKeyDirectory = Files.createDirectory(directory.resolve("private-key"));
+    Path certificate = Files.writeString(certificateDirectory.resolve("tls.crt"), "certificate-1");
+    Path privateKey = Files.writeString(privateKeyDirectory.resolve("tls.key"), "key-1");
+    AtomicInteger reloads = new AtomicInteger();
+    CountDownLatch firstReload = new CountDownLatch(1);
+    CountDownLatch secondReload = new CountDownLatch(1);
+
+    try (TlsCertificateWatcher watcher =
+        new TlsCertificateWatcher(
+            List.of(certificate, privateKey),
+            () -> {
+              if (reloads.incrementAndGet() == 1) {
+                firstReload.countDown();
+              } else {
+                secondReload.countDown();
+              }
+            })) {
+      Files.writeString(certificate, "certificate-2");
+      Files.writeString(privateKey, "key-2");
+      watcher.start();
+
+      assertTrue(firstReload.await(5, TimeUnit.SECONDS));
+      assertFalse(secondReload.await(300, TimeUnit.MILLISECONDS));
+      assertEquals(1, reloads.get());
     }
   }
 

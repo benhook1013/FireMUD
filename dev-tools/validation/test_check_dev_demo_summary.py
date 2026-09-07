@@ -2007,9 +2007,36 @@ RESOURCES"""
                 statements = list(validator._shell_statements(fixture))
                 self.assertEqual(len(statements), 1)
                 self.assertEqual(
+                    list(validator._shell_command_line_ranges(fixture)), [(0, 1)]
+                )
+                self.assertEqual(
                     validator.has_forbidden_summary_reference(statements[0][0]),
                     unsafe,
                 )
+
+    def test_shell_statements_skip_quote_like_heredoc_body_before_next_command(self):
+        validator = self.validator
+        source = """cat <<'EXAMPLE'
+unmatched quote: "
+trailing pipeline marker |
+EXAMPLE
+kubectl apply -f - <<'RESOURCES'
+{{ invalid-template }}
+kind: Secret
+metadata:
+  name: unrelated-resource
+RESOURCES"""
+
+        statements = list(validator._shell_statements(source))
+
+        self.assertEqual(len(statements), 2)
+        self.assertEqual(statements[0][0], "cat <<'EXAMPLE'")
+        self.assertEqual(
+            statements[0][1],
+            [('unmatched quote: "\ntrailing pipeline marker |', False)],
+        )
+        self.assertEqual(statements[1][0], "kubectl apply -f - <<'RESOURCES'")
+        self.assertTrue(validator._bootstrap_creates_secret(source))
 
     def test_summary_write_regions_cover_multiline_quoted_writer(self):
         validator = self.validator
