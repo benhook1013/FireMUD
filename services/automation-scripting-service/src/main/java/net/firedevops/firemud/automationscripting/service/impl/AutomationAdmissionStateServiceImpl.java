@@ -158,7 +158,7 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
         state.getRegionId(),
         state.getMode(),
         state.getAdmissionEpoch(),
-        blankToEmpty(state.getControlPlaneRequestId()),
+        "",
         blankToEmpty(state.getActorPrincipal()),
         blankToEmpty(state.getReason()),
         state.getUpdatedAt().toEpochMilli(),

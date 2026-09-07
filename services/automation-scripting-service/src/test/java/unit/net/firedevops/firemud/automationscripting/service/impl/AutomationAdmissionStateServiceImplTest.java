@@ -318,6 +318,28 @@ class AutomationAdmissionStateServiceImplTest {
   }
 
   @Test
+  void getStateDoesNotExposeUnverifiedMutableAcknowledgementRequestId() {
+    AutomationAdmissionStateRepository repository =
+        Mockito.mock(AutomationAdmissionStateRepository.class);
+    AutomationAdmissionRequestHistoryRepository historyRepository =
+        Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
+    AutomationAdmissionState state = state("tenant-1", "game-1", "region-1");
+    state.setControlPlaneRequestId("mutable-only-request");
+    state.setControlPlaneRequestFingerprint("a".repeat(64));
+    when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
+        .thenReturn(Optional.of(state));
+    AutomationAdmissionStateService service = service(repository, historyRepository);
+
+    AutomationAdmissionStateService.AdmissionStateSummary summary =
+        service.getState("tenant-1", "game-1", "region-1");
+
+    assertThat(summary.outcome())
+        .isEqualTo(AutomationAdmissionStateService.OUTCOME_ACKNOWLEDGEMENT_UNAVAILABLE);
+    assertThat(summary.controlPlaneRequestId()).isEmpty();
+    verifyNoInteractions(historyRepository);
+  }
+
+  @Test
   void readOnlyLookupReturnsOnlyMatchingCurrentSuccessfulAcknowledgement() {
     AutomationAdmissionStateRepository repository =
         Mockito.mock(AutomationAdmissionStateRepository.class);

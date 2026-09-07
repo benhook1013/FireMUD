@@ -508,9 +508,10 @@ CREATE TABLE automation_admission_states (
 CREATE INDEX idx_automation_admission_scope
     ON automation_admission_states(tenant_id, game_instance_id, region_id);
 
--- Admission-mode request identity and result are immutable history. The mutable
--- admission state row is only the current barrier and cannot be the deduplication
--- authority after later mode transitions.
+-- Admission-mode request identity and result are immutable, append-only history.
+-- Current acknowledgement history must be preserved as the mutable admission state row
+-- changes; that row is only the current barrier and cannot be the deduplication authority
+-- after later mode transitions.
 CREATE TABLE automation_admission_request_history (
     id BIGSERIAL PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
