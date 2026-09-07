@@ -150,4 +150,71 @@ class ScriptPatchReadinessProjectionServiceImplTest {
     assertThat(service.getProjection("1", "patch-1").get().status())
         .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
   }
+
+  @Test
+  void marksPatchFailedWhenOnLoadReadinessCapacityIsDenied() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
+    canceledOnLoad.setTenantId("1");
+    canceledOnLoad.setScriptPatchVersion("patch-1");
+    canceledOnLoad.setEventType("onLoad");
+    canceledOnLoad.setStatus("CANCELED");
+    canceledOnLoad.setCancelReason("onload_budget_exceeded");
+    canceledOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(canceledOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_budget_exceeded");
+    assertThat(service.getProjection("1", "patch-1")).isPresent();
+    assertThat(service.getProjection("1", "patch-1").get().status())
+        .isEqualTo(ScriptPatchStatus.SCRIPT_PATCH_STATUS_FAILED);
+  }
+
+  @Test
+  void keepsPatchRunningWhenCapacityDeniedSiblingHasActiveOnLoadWork() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem canceledOnLoad = new ScriptWorkItem();
+    canceledOnLoad.setTenantId("1");
+    canceledOnLoad.setScriptPatchVersion("patch-1");
+    canceledOnLoad.setEventType("onLoad");
+    canceledOnLoad.setStatus("CANCELED");
+    canceledOnLoad.setCancelReason("onload_budget_exceeded");
+    ScriptWorkItem activeOnLoad = new ScriptWorkItem();
+    activeOnLoad.setTenantId("1");
+    activeOnLoad.setScriptPatchVersion("patch-1");
+    activeOnLoad.setEventType("onLoad");
+    activeOnLoad.setStatus("EVALUATING");
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(canceledOnLoad, activeOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("ONLOAD_RUNNING");
+    assertThat(projection.getStatusReason()).isEqualTo("tenant_readiness_running");
+  }
 }
