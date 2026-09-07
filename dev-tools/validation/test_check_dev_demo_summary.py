@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -554,7 +555,10 @@ RESOURCES"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"port-forward transport; missing: {conversion}"),
+            ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_multiple_player_bootstrap_requests(self):
@@ -632,7 +636,10 @@ RESOURCES"""
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "authenticated Kubernetes.*missing"
+                AssertionError,
+                re.escape(
+                    "port-forward transport; missing: --address 127.0.0.1"
+                ),
             ):
                 self.validator.validate_workflow(root)
 
@@ -646,7 +653,10 @@ RESOURCES"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"port-forward transport; missing: {scoped_check}"),
+            ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_wrong_port_forward_namespace_scope(self):
@@ -659,7 +669,10 @@ RESOURCES"""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(AssertionError, "port-forward transport.*missing"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"port-forward transport; missing: {scoped_check}"),
+            ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_non_gateway_endpoint(self):
@@ -675,7 +688,8 @@ RESOURCES"""
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "authenticated Kubernetes.*missing"
+                AssertionError,
+                re.escape(f"port-forward transport; missing: {dynamic_assignment}"),
             ):
                 self.validator.validate_workflow(root)
 
@@ -688,7 +702,8 @@ RESOURCES"""
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "authenticated Kubernetes.*missing"
+                AssertionError,
+                re.escape(f"port-forward transport; missing: {gateway_endpoint}"),
             ):
                 self.validator.validate_workflow(root)
 
@@ -700,7 +715,8 @@ RESOURCES"""
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError, "authenticated Kubernetes.*missing"
+                AssertionError,
+                re.escape("port-forward transport; missing: value: session"),
             ):
                 self.validator.validate_workflow(root)
 
@@ -1382,6 +1398,50 @@ RESOURCES"""
                     ),
                     unsafe,
                 )
+
+    def test_summary_write_regions_join_multiline_quotes_without_losing_secret_detection(
+        self,
+    ):
+        validator = self.validator
+        fixtures = (
+            (
+                (
+                    'printf "unsafe: $DEMO_SMOKE_PASSWORD\n'
+                    'continued" >> "$GITHUB_STEP_SUMMARY"'
+                ),
+                True,
+            ),
+            (
+                'printf "safe summary\ncontinued" >> "$GITHUB_STEP_SUMMARY"',
+                False,
+            ),
+        )
+        for fixture, unsafe in fixtures:
+            with self.subTest(fixture=fixture):
+                statements = list(validator._shell_statements(fixture))
+                self.assertEqual(len(statements), 1)
+                self.assertEqual(
+                    validator.has_forbidden_summary_reference(statements[0][0]),
+                    unsafe,
+                )
+
+    def test_multiline_quote_does_not_absorb_following_secret_creation(self):
+        validator = self.validator
+        source = (
+            'printf "safe summary\n'
+            'continued" >> "$GITHUB_STEP_SUMMARY"\n'
+            'kubectl create secret generic smoke --from-literal=password="$DEMO_SMOKE_PASSWORD"'
+        )
+        statements = list(validator._shell_statements(source))
+        self.assertEqual(len(statements), 2)
+        self.assertTrue(validator._bootstrap_creates_secret(source))
+
+        harmless_source = source.replace(
+            'kubectl create secret generic smoke --from-literal=password="$DEMO_SMOKE_PASSWORD"',
+            'echo "safe summary"',
+        )
+        self.assertEqual(len(list(validator._shell_statements(harmless_source))), 2)
+        self.assertFalse(validator._bootstrap_creates_secret(harmless_source))
 
     def test_forbidden_summary_reference_detects_secret_pipelines_without_crossing_commands(
         self,

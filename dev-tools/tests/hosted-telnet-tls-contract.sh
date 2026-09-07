@@ -10,8 +10,27 @@ python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
   "$TMP_DIR/values.yaml" 42 pr-42 preview-release preview-42.preview.example.test image-tag 32042
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --namespace pr-42 >"$TMP_DIR/rendered.yaml"
+cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-configured-mode.yaml"
+python3 - "$TMP_DIR/values-configured-mode.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+for service in values["previewStack"]["services"]:
+    if service["name"] == "tcp-proxy-service":
+        service.setdefault("extraEnv", {})["TCP_PROXY_TELNET_MODE"] = "PLAINTEXT"
+        break
+else:
+    raise SystemExit("tcp-proxy-service fixture is missing")
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/values.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
+  -f "$TMP_DIR/values-configured-mode.yaml" --namespace pr-42 >"$TMP_DIR/rendered-configured-enabled.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-configured-mode.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-spring-profile.yaml"
@@ -34,7 +53,7 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-spring-profile.yaml" --namespace pr-42 >"$TMP_DIR/rendered-spring-profile.yaml"
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -207,7 +226,11 @@ assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "dis
 disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
-assert "TCP_PROXY_TELNET_MODE" not in disabled_env, "disabled TLS still renders DIRECT_TLS mode"
+assert disabled_env["TCP_PROXY_TELNET_MODE"] == "PLAINTEXT", "disabled TLS discarded the configured Telnet mode"
+configured_enabled_documents = list(yaml.safe_load_all(Path(os.environ["CONFIGURED_ENABLED_RENDERED"]).read_text(encoding="utf-8")))
+configured_enabled_deployment = next(d for d in configured_enabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
+configured_enabled_env = {entry["name"]: entry.get("value") for entry in configured_enabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
+assert configured_enabled_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS", "enabled TLS did not enforce canonical direct mode"
 empty_pull_secret_documents = list(yaml.safe_load_all(Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"]).read_text(encoding="utf-8")))
 assert sum(d.get("kind") == "Deployment" for d in empty_pull_secret_documents) > 0, "empty imagePullSecrets omitted Deployments"
 spring_profile_documents = list(yaml.safe_load_all(Path(os.environ["SPRING_PROFILE_RENDERED"]).read_text(encoding="utf-8")))

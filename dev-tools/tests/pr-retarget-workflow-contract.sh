@@ -391,6 +391,10 @@ require_contains "$preview_path" 'EVENT_LABELS_JSON:'
 require_contains "$preview_path" '--labels-json "$LABELS_JSON"'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels immediately before helm deploy'
+assert_job_contains preview.yml preview-deploy 'Set up GitHub CLI'
+require_ordered_sequence "$preview_path" \
+  '      - name: Set up GitHub CLI' \
+  '      - name: Revalidate preview target labels before deploy'
 assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
   'Deploy preview release'

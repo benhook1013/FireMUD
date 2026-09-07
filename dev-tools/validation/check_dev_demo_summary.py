@@ -169,8 +169,10 @@ def _shell_tokens(source: str) -> list[str]:
         raise AssertionError("dev-demo bootstrap step contains invalid shell syntax") from error
 
 
-def _shell_line_continues(line: str) -> bool:
-    quote: str | None = None
+def _shell_line_state(
+    line: str, initial_quote: str | None = None
+) -> tuple[bool, str | None]:
+    quote = initial_quote
     escaped = False
     word_started = False
     for character in line:
@@ -192,10 +194,15 @@ def _shell_line_continues(line: str) -> bool:
         if character == "#" and not word_started:
             break
         word_started = not (character.isspace() or character in ";|&<>()")
-    if escaped and quote is None:
-        return True
-    tokens = _shell_tokens(line)
-    return bool(tokens) and tokens[-1] in {"|", "||", "&&"}
+    if quote is not None or escaped:
+        return True, quote
+    token_source = line if initial_quote is None else initial_quote + line
+    tokens = _shell_tokens(token_source)
+    return bool(tokens) and tokens[-1] in {"|", "||", "&&"}, quote
+
+
+def _shell_line_continues(line: str) -> bool:
+    return _shell_line_state(line)[0]
 
 
 def _heredoc_specs(command: str) -> list[tuple[str, bool, bool]]:
@@ -257,7 +264,11 @@ def _shell_statements(source: str) -> Iterable[tuple[str, list[tuple[str, bool]]
     index = 0
     while index < len(lines):
         command_end = index
-        while command_end + 1 < len(lines) and _shell_line_continues(lines[command_end]):
+        quote: str | None = None
+        while command_end + 1 < len(lines):
+            continues, quote = _shell_line_state(lines[command_end], quote)
+            if not continues:
+                break
             command_end += 1
         command = "\n".join(lines[index : command_end + 1])
         heredocs = _heredoc_specs(command)
