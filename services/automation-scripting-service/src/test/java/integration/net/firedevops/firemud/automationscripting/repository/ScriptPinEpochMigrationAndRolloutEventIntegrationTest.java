@@ -156,6 +156,13 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     assertThatThrownBy(
             () ->
                 insertIngressAudit(
+                    dsl, null, 6L, "owner-null-instance", "event-rejected-null-instance"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
                     dsl, "instance-positive-null-owner", 7L, null, "event-rejected-null-owner"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
