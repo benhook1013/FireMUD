@@ -394,51 +394,49 @@ assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
 assert_job_contains preview.yml preview-plan 'EVENT_ACTION: ${{ github.event.action }}'
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
-assert_job_contains preview.yml preview-plan 'EVENT_LABEL_NAME: ${{ github.event.label.name }}'
+assert_job_contains preview.yml preview-plan 'EVENT_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}'
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
-assert_job_contains preview.yml preview-plan '[ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]'
+assert_job_contains preview.yml preview-plan '--inspect-labels --labels-json "$EVENT_LABELS_JSON"'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+assert_job_contains preview.yml preview-plan '[ "$labels_valid" = "true" ] && [ "$paused" = "true" ]'
 assert_job_contains preview.yml preview-plan 'ACTION="destroy"'
 require_contains "$preview_path" 'preview:paused'
 require_contains "$preview_path" 'EVENT_LABELS_JSON:'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 require_contains "$preview_path" '--labels-json "$LABELS_JSON"'
-assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels immediately before helm deploy'
 assert_job_contains preview.yml preview-deploy 'Set up GitHub CLI'
 require_ordered_sequence "$preview_path" \
   '      - name: Set up GitHub CLI' \
-  '      - name: Revalidate preview target labels before deploy' \
   '      - name: Enforce preview capacity' \
   '      - name: Reset preview namespace for clean deploy'
 assert_step_immediately_followed_by preview.yml preview-deploy \
-  'Revalidate preview target labels before deploy' \
+  'Prune stale preview namespaces' \
   'Enforce preview capacity'
-# shellcheck disable=SC2016 # This assertion intentionally matches a literal workflow expression.
 assert_step_contains preview.yml preview-deploy \
-  'Revalidate preview target labels before deploy' \
-  "if: \${{ steps.preview-access.outputs.available == 'true' }}"
-for revalidation_step in \
-  'Revalidate preview target labels before deploy' \
-  'Revalidate preview target labels immediately before helm deploy'; do
-  # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}'
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '--expected-repository "$GITHUB_REPOSITORY"'
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '--expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json"'
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '--revalidate-deploy'
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'current pull request metadata is unavailable'
-  # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '${refusal_reason:-preview eligibility evaluation failed}'
-done
-if [[ "$(grep -Fc -- '--revalidate-deploy' "$preview_path")" -ne 2 ]]; then
-  echo "Preview workflow must use the centralized deploy revalidation exactly twice" >&2
+  'Enforce preview capacity' \
+  'allocate-preview-capacity.sh'
+allocator_path="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+revalidation_helper_path="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+require_contains "$allocator_path" 'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"'
+assert_step_contains preview.yml preview-deploy \
+  'Revalidate preview target labels immediately before helm deploy' \
+  'revalidate-preview-deploy.sh'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
+assert_step_contains preview.yml preview-deploy \
+  'Revalidate preview target labels immediately before helm deploy' \
+  '${{ needs.preview-plan.outputs.head_sha }}'
+require_contains "$revalidation_helper_path" '--revalidate-deploy'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$revalidation_helper_path" '--expected-repository "$GITHUB_REPOSITORY"'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$revalidation_helper_path" '--expected-head-sha "$expected_head_sha" <<<"$pull_request_json"'
+require_contains "$revalidation_helper_path" 'current pull request metadata is unavailable'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+require_contains "$revalidation_helper_path" '${refusal_reason:-preview eligibility evaluation failed}'
+if [[ "$(grep -Fhc -- 'revalidate-preview-deploy.sh' "$preview_path" "$allocator_path" | awk '{ total += $1 } END { print total }')" -ne 2 ]]; then
+  echo "Preview deploy must call the shared revalidation helper at exactly two boundaries" >&2
   exit 1
 fi
 if grep -Fq 'def labels_valid:' "$preview_path"; then
@@ -525,8 +523,10 @@ assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup targ
 assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
 assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
 assert_job_contains preview.yml preview-destroy 'const requiresPausedLabel ='
-assert_job_contains preview.yml preview-destroy 'context.payload.action === "labeled"'
-assert_job_contains preview.yml preview-destroy 'context.payload.label?.name === "preview:paused"'
+assert_job_contains preview.yml preview-destroy '!requiresClosedState'
+assert_job_contains preview.yml preview-destroy 'process.env.PREVIEW_ACTION === "destroy"'
+# shellcheck disable=SC2016 # Assert the derived cleanup action is transported through the environment.
+assert_job_contains preview.yml preview-destroy 'PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}'
 assert_job_contains preview.yml preview-destroy 'Array.isArray(currentPullRequest.labels)'
 assert_job_contains preview.yml preview-destroy 'currentPullRequest.labels.some(label => label?.name === "preview:paused")'
 assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
@@ -563,6 +563,15 @@ require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
+require_contains "$preview_reconciler_path" '(.head.repo.full_name | tojson | @base64)'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+require_contains "$preview_reconciler_path" '[[ "$head_repository" != "$GITHUB_REPOSITORY" ]]'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+require_ordered_sequence "$preview_reconciler_path" \
+  'if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]' \
+  'normalized_pr_rows+=' \
+  'gh run list' \
+  'actions/workflows/preview.yml/dispatches'
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
 require_contains "$preview_reconciler_path" "--jq '.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId'"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.

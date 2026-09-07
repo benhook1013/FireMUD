@@ -61,7 +61,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     try (ConfigurableApplicationContext context =
         application.run(
             "--server.port=0",
-            "--spring.config.additional-location=file:src/main/resources/application.yml",
+            "--spring.config.additional-location=" + mainApplicationConfig().toUri(),
             "--spring.flyway.enabled=false",
             "--spring.cloud.gateway.server.webflux.default-filters=",
             "--firemud.database.enabled=false",
@@ -374,6 +374,17 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     return workingDirectory
         .resolve("services/spring-cloud-gateway/src/test/resources/certs")
         .resolve(name)
+        .normalize();
+  }
+
+  private static Path mainApplicationConfig() {
+    Path workingDirectory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    Path moduleLocal = workingDirectory.resolve("src/main/resources/application.yml").normalize();
+    if (Files.isRegularFile(moduleLocal)) {
+      return moduleLocal;
+    }
+    return workingDirectory
+        .resolve("services/spring-cloud-gateway/src/main/resources/application.yml")
         .normalize();
   }
 

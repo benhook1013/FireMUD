@@ -87,32 +87,45 @@ jobs:
         id: derive
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
-          EVENT_LABEL_NAME: ${{ github.event.label.name }}
+          EVENT_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          INPUT_PREVIEW_DOMAIN: ${{ inputs.preview_domain }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_NUMBER="$EVENT_PR_NUMBER"
+            HEAD_SHA="$EVENT_HEAD_SHA"
+            BASE_SHA="$EVENT_BASE_SHA"
             PREVIEW_DOMAIN="preview.firedevops.net"
+            label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+              --inspect-labels --labels-json "$EVENT_LABELS_JSON")"
+            labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
+            paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
             if [ "$EVENT_ACTION" = "closed" ] || \
-              { [ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]; }; then
+              { [ "$labels_valid" = "true" ] && [ "$paused" = "true" ]; }; then
               ACTION="destroy"
             else
               ACTION="deploy"
             fi
           else
-            PR_NUMBER="${{ inputs.pr_number }}"
-            HEAD_SHA="${{ inputs.head_sha }}"
+            PR_NUMBER="$INPUT_PR_NUMBER"
+            HEAD_SHA="$INPUT_HEAD_SHA"
             BASE_SHA=""
-            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
-            ACTION="${{ inputs.action }}"
-            IMAGE_TAG="${{ inputs.image_tag }}"
+            PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"
+            ACTION="$INPUT_ACTION"
+            IMAGE_TAG="$INPUT_IMAGE_TAG"
           fi
-          if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ -z "$HEAD_SHA" ] && [ "$EVENT_NAME" != "pull_request" ]; then
             HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
           fi
-          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ -z "$BASE_SHA" ] && [ "$EVENT_NAME" != "pull_request" ]; then
             BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
           fi
           if [ -z "$HEAD_SHA" ]; then
@@ -355,28 +368,6 @@ jobs:
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
-      - name: Revalidate preview target labels before deploy
-        if: ${{ steps.preview-access.outputs.available == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          refuse_preview() {
-            echo "::error::Refusing preview deploy for PR #${PR_NUMBER}: $1" >&2
-            exit 1
-          }
-          if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
-            refuse_preview "current pull request metadata is unavailable"
-          fi
-          if ! refusal_reason="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --revalidate-deploy \
-            --expected-repository "$GITHUB_REPOSITORY" \
-            --expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json")"; then
-            refuse_preview "${refusal_reason:-preview eligibility evaluation failed}"
-          fi
-
       - name: Enforce preview capacity
         if: ${{ steps.preview-access.outputs.available == 'true' }}
         id: preview-capacity
@@ -554,23 +545,10 @@ jobs:
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
         run: |
-          set -euo pipefail
-          refuse_preview() {
-            echo "::error::Refusing preview deploy for PR #${PR_NUMBER}: $1" >&2
-            exit 1
-          }
-          if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
-            refuse_preview "current pull request metadata is unavailable"
-          fi
-          if ! refusal_reason="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --revalidate-deploy \
-            --expected-repository "$GITHUB_REPOSITORY" \
-            --expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json")"; then
-            refuse_preview "${refusal_reason:-preview eligibility evaluation failed}"
-          fi
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"
 
       - name: Deploy preview release
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
@@ -817,6 +795,7 @@ jobs:
         env:
           PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_ACTION: ${{ needs.preview-plan.outputs.action }}
         with:
           script: |
             const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
@@ -829,8 +808,8 @@ jobs:
               context.eventName === "pull_request" && context.payload.action === "closed";
             const requiresPausedLabel =
               context.eventName === "pull_request" &&
-              context.payload.action === "labeled" &&
-              context.payload.label?.name === "preview:paused";
+              !requiresClosedState &&
+              process.env.PREVIEW_ACTION === "destroy";
             const pauseStillPresent =
               Array.isArray(currentPullRequest.labels) &&
               currentPullRequest.labels.some(label => label?.name === "preview:paused");

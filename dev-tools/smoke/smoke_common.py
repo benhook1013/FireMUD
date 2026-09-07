@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import os
 import socket
@@ -19,6 +20,24 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
 
 
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
+
+
+def is_localhost_equivalent(host):
+    if not isinstance(host, str):
+        return False
+    normalized = host.strip().casefold()
+    if normalized in {"localhost", "localhost."}:
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped is not None and mapped.is_loopback
 
 
 def compose_postgres_container_name():

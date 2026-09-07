@@ -162,7 +162,7 @@ class TcpProxyTlsListenerTest {
             .get()
             .uri("https://127.0.0.1:" + port + path)
             .responseSingle((response, content) -> content.thenReturn(response.status().code()))
-            .block());
+            .block(Duration.ofSeconds(5)));
   }
 
   private static SslContext clientContext(boolean withCertificate) throws Exception {

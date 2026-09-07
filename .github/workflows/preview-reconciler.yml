@@ -76,6 +76,7 @@ jobs:
               .[]
               | [
                   .number,
+                  (.head.repo.full_name | tojson | @base64),
                   .head.ref,
                   .head.sha,
                   .user.login,
@@ -88,8 +89,16 @@ jobs:
             exit 1
           fi
           normalized_pr_rows=""
-          while IFS=$'\t' read -r pr_number head_ref head_sha pr_author pr_base_ref pr_state labels_base64; do
+          while IFS=$'\t' read -r pr_number head_repository_base64 head_ref head_sha pr_author pr_base_ref pr_state labels_base64; do
             [[ -n "$pr_number" ]] || continue
+            if ! head_repository="$(printf '%s' "$head_repository_base64" | base64 --decode 2>/dev/null | jq -er 'if type == "string" and length > 0 then . else error("invalid head repository") end')"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: malformed head repository transport"
+              continue
+            fi
+            if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
+              echo "Skipping preview reconcile for PR #${pr_number}: untrusted head repository ${head_repository}"
+              continue
+            fi
             if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
               echo "Skipping preview reconcile for PR #${pr_number}: malformed label transport"
               continue

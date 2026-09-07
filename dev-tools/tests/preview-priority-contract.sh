@@ -7,6 +7,36 @@ PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
+extract_workflow_step_run() {
+  local workflow="$1"
+  local step_name="$2"
+  local output="$3"
+  local body_type="${4:-run}"
+  python3 - "$workflow" "$step_name" "$output" "$body_type" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for job in workflow["jobs"].values():
+    for step in job.get("steps", []):
+        if step.get("name") == sys.argv[2]:
+            body = (
+                step["run"]
+                if sys.argv[4] == "run"
+                else step.get("with", {}).get("script")
+            )
+            if not isinstance(body, str):
+                raise SystemExit(
+                    f"workflow step {sys.argv[2]} has no {sys.argv[4]} body"
+                )
+            Path(sys.argv[3]).write_text(body, encoding="utf-8")
+            raise SystemExit(0)
+raise SystemExit(f"workflow step not found: {sys.argv[2]}")
+PY
+}
+
 mkdir -p "$TEMP_DIR/bin"
 cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
@@ -68,11 +98,18 @@ EOF
 cat > "$TEMP_DIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == "run" && "${2:-}" == "list" ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RECONCILER_RUN_LIST_LOG"
+  printf '%s' "${FAKE_ACTIVE_PREVIEW_RUN_ID:-}"
+  exit 0
+fi
 resource=""
+has_jq=false
 for arg in "$@"; do
   if [[ "$arg" == repos/* ]]; then
     resource="$arg"
-    break
+  elif [[ "$arg" == "--jq" ]]; then
+    has_jq=true
   fi
 done
 encode_fake_labels() {
@@ -96,18 +133,37 @@ case "$resource" in
     if [[ "${FAKE_PRIORITY_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
     fi
-    printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
+    if [[ "${FAKE_RECONCILER_MODE:-false}" == "true" ]]; then
+      printf '%b' "${FAKE_RECONCILER_PR_ROWS:-}"
+    else
+      printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
+    fi
     ;;
   */pulls/900)
+    priority="${FAKE_TARGET_PRIORITY:-true}"
+    paused="${FAKE_TARGET_PAUSED:-false}"
+    labels_valid="${FAKE_TARGET_LABELS_VALID:-valid}"
+    if [[ "$has_jq" != true ]]; then
+      if [[ "${FAKE_TARGET_RAW_QUERY_FAIL:-false}" == true ]]; then
+        exit 1
+      fi
+      labels_json="$(encode_fake_labels "$priority" "$paused" "$labels_valid" | base64 --decode)"
+      jq -cn \
+        --arg state "${FAKE_TARGET_STATE:-open}" \
+        --arg head "$FAKE_TARGET_HEAD" \
+        --arg repository "${FAKE_TARGET_REPOSITORY:-example/FireMUD}" \
+        --arg base "${FAKE_TARGET_BASE_REF:-develop}" \
+        --arg author "${FAKE_TARGET_AUTHOR:-human}" \
+        --argjson labels "$labels_json" \
+        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
+      exit 0
+    fi
     count=0
     if [[ -f "$FAKE_TARGET_CALLS" ]]; then
       count="$(<"$FAKE_TARGET_CALLS")"
     fi
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_TARGET_CALLS"
-    priority="${FAKE_TARGET_PRIORITY:-true}"
-    paused="${FAKE_TARGET_PAUSED:-false}"
-    labels_valid="${FAKE_TARGET_LABELS_VALID:-valid}"
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
@@ -149,6 +205,9 @@ case "$resource" in
     printf 'open\thead-101\t%s\n' "$(encode_fake_labels "$priority" "$paused" "$labels_valid")"
   ;;
   */pulls/102) printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" "${FAKE_PR_102_PAUSED:-false}" valid)" ;;
+  */actions/workflows/preview.yml/dispatches)
+    printf '%s\n' "$*" >> "$FAKE_RECONCILER_DISPATCH_LOG"
+    ;;
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
@@ -254,6 +313,8 @@ export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
+export FAKE_RECONCILER_RUN_LIST_LOG="$TEMP_DIR/reconciler-run-list.log"
+export FAKE_RECONCILER_DISPATCH_LOG="$TEMP_DIR/reconciler-dispatch.log"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -263,11 +324,16 @@ adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"na
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RUN_LIST_LOG" "$FAKE_RECONCILER_DISPATCH_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_PAUSED=false
   export FAKE_TARGET_LABELS_VALID=valid
+  export FAKE_TARGET_RAW_QUERY_FAIL=false
+  export FAKE_TARGET_STATE=open
+  export FAKE_TARGET_REPOSITORY=example/FireMUD
+  export FAKE_TARGET_BASE_REF=develop
+  export FAKE_TARGET_AUTHOR=human
   export FAKE_TARGET_LOSES_PRIORITY=false
   export FAKE_PR_101_PRIORITY=false
   export FAKE_PR_101_PAUSED=false
@@ -295,6 +361,9 @@ reset_case() {
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_ELIGIBILITY_OUTPUT=''
+  export FAKE_RECONCILER_MODE=false
+  export FAKE_RECONCILER_PR_ROWS=''
+  export FAKE_ACTIVE_PREVIEW_RUN_ID=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
@@ -681,6 +750,23 @@ if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
 fi
 test ! -e "$FAKE_DELETE_LOG"
 
+for target_contract_case in repository head base author metadata; do
+  reset_case
+  case "$target_contract_case" in
+    repository) export FAKE_TARGET_REPOSITORY=other/FireMUD ;;
+    head) expected_target_head=other-head ;;
+    base) export FAKE_TARGET_BASE_REF=feature/stack ;;
+    author) export FAKE_TARGET_AUTHOR='renovate[bot]' ;;
+    metadata) export FAKE_TARGET_RAW_QUERY_FAIL=true ;;
+  esac
+  if bash "$ALLOCATOR" pr-900 3 900 "${expected_target_head:-$FAKE_TARGET_HEAD}"; then
+    echo "allocator accepted invalid live target ${target_contract_case} metadata" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
+  unset expected_target_head
+done
+
 reset_case
 export FAKE_TARGET_PRIORITY=false
 # The centralized authority must derive pause state from the transported labels.
@@ -834,6 +920,159 @@ test ! -e "$FAKE_DELETE_LOG"
 
 preview_workflow="$ROOT_DIR/.github/workflows/preview.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
+PREVIEW_DERIVE_RUN="$TEMP_DIR/preview-derive.sh"
+PREVIEW_CLEANUP_SCRIPT="$TEMP_DIR/preview-cleanup.js"
+RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+extract_workflow_step_run "$preview_workflow" "Derive preview identifiers" "$PREVIEW_DERIVE_RUN"
+extract_workflow_step_run \
+  "$preview_workflow" \
+  "Revalidate preview cleanup target before deletion" \
+  "$PREVIEW_CLEANUP_SCRIPT" \
+  script
+extract_workflow_step_run "$reconciler_workflow" "Dispatch preview deploys for drifted PRs" "$RECONCILER_RUN"
+
+run_preview_derive() {
+  local event_action="$1"
+  local labels_json="$2"
+  local output="$3"
+  rm -f "$output"
+  (
+    cd "$ROOT_DIR"
+    EVENT_NAME=pull_request \
+      EVENT_ACTION="$event_action" \
+      EVENT_LABELS_JSON="$labels_json" \
+      EVENT_PR_NUMBER=900 \
+      EVENT_HEAD_SHA=head-900 \
+      EVENT_BASE_SHA=base-900 \
+      INPUT_PR_NUMBER='' \
+      INPUT_HEAD_SHA='' \
+      INPUT_PREVIEW_DOMAIN='' \
+      INPUT_ACTION='' \
+      INPUT_IMAGE_TAG='' \
+      GITHUB_SHA=head-900 \
+      GITHUB_OUTPUT="$output" \
+      bash "$PREVIEW_DERIVE_RUN"
+  )
+}
+
+adversarial_paused_labels_json='[{"name":"preview:paused"},{"name":"quote\"slash\\label"}]'
+for paused_event_action in opened synchronize reopened; do
+  derive_output="$TEMP_DIR/derive-${paused_event_action}.out"
+  run_preview_derive "$paused_event_action" "$adversarial_paused_labels_json" "$derive_output"
+  grep -qx 'action=destroy' "$derive_output"
+done
+
+for pause_present in true false; do
+  PREVIEW_PR_NUMBER=900 \
+    EXPECTED_HEAD_SHA=head-900 \
+    PREVIEW_ACTION=destroy \
+    node - "$PREVIEW_CLEANUP_SCRIPT" "$pause_present" <<'NODE'
+const fs = require("node:fs");
+
+const [scriptPath, pausePresent] = process.argv.slice(2);
+const script = fs.readFileSync(scriptPath, "utf8");
+let failure = "";
+const github = {
+  rest: {
+    pulls: {
+      get: async () => ({
+        data: {
+          state: "open",
+          head: { sha: "head-900" },
+          labels: pausePresent === "true" ? [{ name: "preview:paused" }] : [],
+        },
+      }),
+    },
+  },
+};
+const context = {
+  eventName: "pull_request",
+  payload: { action: "synchronize" },
+  repo: { owner: "example", repo: "FireMUD" },
+};
+const core = {
+  info: () => {},
+  setFailed: (message) => {
+    failure = message;
+  },
+};
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+(async () => {
+  await new AsyncFunction("github", "context", "core", script)(github, context, core);
+  if (pausePresent === "true" && failure) {
+    throw new Error(`paused synchronize cleanup was rejected: ${failure}`);
+  }
+  if (pausePresent === "false" && !failure) {
+    throw new Error("paused synchronize cleanup ignored removal of preview:paused");
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+NODE
+done
+
+run_preview_derive synchronize '{}' "$TEMP_DIR/derive-malformed.out"
+grep -qx 'action=deploy' "$TEMP_DIR/derive-malformed.out"
+malformed_eligibility="$(
+  python3 "$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py" \
+    --operation deploy \
+    --state open \
+    --base-ref develop \
+    --author human \
+    --labels-json '{}'
+)"
+grep -qx 'eligible=false' <<<"$malformed_eligibility"
+grep -qx 'reason=malformed-label-metadata' <<<"$malformed_eligibility"
+
+run_preview_derive unlabeled '[]' "$TEMP_DIR/derive-unpaused.out"
+grep -qx 'action=deploy' "$TEMP_DIR/derive-unpaused.out"
+
+fork_repository_base64="$(printf '%s' '"fork/FireMUD"' | base64 | tr -d '\n')"
+same_repository_base64="$(printf '%s' '"example/FireMUD"' | base64 | tr -d '\n')"
+empty_labels_base64="$(printf '%s' '[]' | base64 | tr -d '\n')"
+reconciler_rows="101\t${fork_repository_base64}\tshared-ref\tfork-head\thuman\tdevelop\topen\t${empty_labels_base64}\n102\t${same_repository_base64}\tshared-ref\tsame-head\thuman\tdevelop\topen\t${empty_labels_base64}\n"
+
+run_reconciler_fixture() {
+  local script="$1"
+  local output="$2"
+  FAKE_RECONCILER_MODE=true \
+    FAKE_RECONCILER_PR_ROWS="$reconciler_rows" \
+    FAKE_NAMESPACE_ROWS='' \
+    PREVIEW_MAX_ACTIVE=2 \
+    bash "$script" >"$output"
+}
+
+reset_case
+run_reconciler_fixture "$RECONCILER_RUN" "$TEMP_DIR/reconciler.out"
+grep -Fq 'Skipping preview reconcile for PR #101: untrusted head repository fork/FireMUD' "$TEMP_DIR/reconciler.out"
+grep -Fq 'inputs[pr_number]=102' "$FAKE_RECONCILER_DISPATCH_LOG"
+if grep -Fq 'inputs[pr_number]=101' "$FAKE_RECONCILER_DISPATCH_LOG"; then
+  echo "preview reconciler dispatched the same-ref fork PR" >&2
+  exit 1
+fi
+test "$(wc -l < "$FAKE_RECONCILER_RUN_LIST_LOG")" -eq 1
+
+MUTATED_RECONCILER_RUN="$TEMP_DIR/preview-reconciler-without-head-repository-guard.sh"
+python3 - "$RECONCILER_RUN" "$MUTATED_RECONCILER_RUN" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+guard = '''if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
+    echo "Skipping preview reconcile for PR #${pr_number}: untrusted head repository ${head_repository}"
+    continue
+  fi
+'''
+if source.count(guard) != 1:
+    raise SystemExit("expected one head-repository guard in reconciler fixture")
+Path(sys.argv[2]).write_text(source.replace(guard, ""), encoding="utf-8")
+PY
+reset_case
+run_reconciler_fixture "$MUTATED_RECONCILER_RUN" "$TEMP_DIR/reconciler-mutated.out"
+grep -Fq 'inputs[pr_number]=101' "$FAKE_RECONCILER_DISPATCH_LOG"
+
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
@@ -842,18 +1081,29 @@ grep -q '^      - unlabeled$' "$preview_workflow"
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
 grep -Fq 'EVENT_ACTION: ${{ github.event.action }}' "$preview_workflow"
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
-grep -Fq 'EVENT_LABEL_NAME: ${{ github.event.label.name }}' "$preview_workflow"
+grep -Fq 'EVENT_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}' "$preview_workflow"
 # shellcheck disable=SC2016 # Assert literal shell source in the workflow.
-grep -Fq '[ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]' "$preview_workflow"
+grep -Fq -- '--inspect-labels --labels-json "$EVENT_LABELS_JSON"' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+grep -Fq '[ "$labels_valid" = "true" ] && [ "$paused" = "true" ]' "$preview_workflow"
 grep -Fq '(requiresPausedLabel && !pauseStillPresent) ||' "$preview_workflow"
 grep -Fq 'currentPullRequest.labels.some(label => label?.name === "preview:paused")' "$preview_workflow"
 grep -q 'preview:paused' "$preview_workflow"
 grep -Fq "EVENT_LABELS_JSON: \${{ toJSON(github.event.pull_request.labels) }}" "$preview_workflow"
 grep -q 'preview:paused' "$eligibility_script"
 grep -q 'malformed-label-metadata' "$eligibility_script"
-test "$(grep -Fc -- '--revalidate-deploy' "$preview_workflow")" -eq 2
+revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+test "$(grep -Fhc -- 'revalidate-preview-deploy.sh' "$preview_workflow" "$ALLOCATOR" | awk '{ total += $1 } END { print total }')" -eq 2
+test "$(grep -Fc -- '--revalidate-deploy' "$revalidation_helper")" -eq 1
+# shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
+grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
+# shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
+grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
 grep -q -- '--inspect-labels --labels-json "$labels_json"' "$reconciler_workflow"
+grep -Fq '(.head.repo.full_name | tojson | @base64)' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+grep -Fq '[[ "$head_repository" != "$GITHUB_REPOSITORY" ]]' "$reconciler_workflow"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 grep -q -- '--inspect-labels --labels-json "$labels_json"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"

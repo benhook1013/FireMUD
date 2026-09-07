@@ -15,11 +15,38 @@ sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
 from smoke_common import (
+    is_localhost_equivalent,
     open_telnet_socket,
     run_telnet_smoke_session,
     run_transport_session,
     run_websocket_smoke_session,
 )
+
+
+for local_host in (
+    "localhost",
+    "LOCALHOST",
+    "localhost.",
+    "127.0.0.1",
+    "127.255.255.254",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+):
+    assert is_localhost_equivalent(local_host), local_host
+
+for remote_host in (
+    "",
+    "remotehost",
+    "example.test",
+    "localhost.example.test",
+    "0.0.0.0",
+    "192.168.1.10",
+    "203.0.113.10",
+    "::",
+    "::ffff:192.168.1.10",
+):
+    assert not is_localhost_equivalent(remote_host), remote_host
 
 
 class FakeSession:
@@ -821,6 +848,10 @@ assert_command_rejects \
   env SMOKE_MUTATION_EXTENSION=true \
   SMOKE_MUTATION_BOUNDARY=run-owned-compose \
   SMOKE_TELNET_HOST=remotehost \
+  bash "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
+assert_command_rejects \
+  "Plaintext Telnet smoke requires a localhost-equivalent target" \
+  env SMOKE_TELNET_HOST=remotehost \
   bash "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 assert_command_rejects \
   "canonical Telnet endpoint" \

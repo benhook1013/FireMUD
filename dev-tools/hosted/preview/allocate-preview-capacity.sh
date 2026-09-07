@@ -13,6 +13,7 @@ target_head_sha="$4"
 priority_label="preview:priority"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
+revalidate_deploy_script="${script_dir}/revalidate-preview-deploy.sh"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 publish_reclaimed_script="${PREVIEW_RECLAIMED_PUBLISH_SCRIPT:-${script_dir}/publish-preview-reclaimed.sh}"
 publish_attempts="${PREVIEW_RECLAIM_PUBLISH_ATTEMPTS:-3}"
@@ -178,6 +179,11 @@ find_unsatisfied_priority_pr() {
     fi
   done <<<"$priority_rows"
 }
+
+# Fail closed on the complete live PR contract before evaluating or mutating
+# shared preview capacity. The workflow repeats this check immediately before
+# Helm so both race-sensitive deploy boundaries stay protected.
+bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"
 
 mapfile -t namespace_rows < <(
   kubectl get namespaces -l firemud.dev/preview=true \
