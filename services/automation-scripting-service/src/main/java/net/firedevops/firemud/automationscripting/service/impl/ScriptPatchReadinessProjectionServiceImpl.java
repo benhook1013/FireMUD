@@ -81,13 +81,13 @@ public class ScriptPatchReadinessProjectionServiceImpl
     if (onLoadWorkItems.isEmpty()) {
       projection.setReadinessStatus("READY");
       projection.setStatusReason("no_scripts_in_patch");
-    } else if (onLoadWorkItems.stream().anyMatch(this::isActiveOnLoadStatus)) {
-      projection.setReadinessStatus("ONLOAD_RUNNING");
-      projection.setStatusReason("tenant_readiness_running");
     } else if (onLoadWorkItems.stream()
         .anyMatch(item -> "DEAD_LETTERED".equals(item.getStatus()))) {
       projection.setReadinessStatus("FAILED");
       projection.setStatusReason(latestCanceledReason(onLoadWorkItems, "onload_failed"));
+    } else if (onLoadWorkItems.stream().anyMatch(this::isActiveOnLoadStatus)) {
+      projection.setReadinessStatus("ONLOAD_RUNNING");
+      projection.setStatusReason("tenant_readiness_running");
     } else if (onLoadWorkItems.stream().anyMatch(this::isFailedOnLoadCancellation)) {
       projection.setReadinessStatus("FAILED");
       projection.setStatusReason("onload_budget_exceeded");

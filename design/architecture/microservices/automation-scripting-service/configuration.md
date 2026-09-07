@@ -41,7 +41,7 @@ These knobs are the authoritative defaults referenced by the scripting architect
 
 ## Implementation Status
 
-Formation REST handlers are absent from the runtime and authoritative OpenAPI, so no HTTP route or HTTP auth configuration exists for that family. The remaining authenticated internal gRPC operations retain their admin guard, but configuration does not establish Entity-owned NPC namespace or ownership proof; see the [API Contracts implementation status](./api-contracts.md#implementation-status) for the canonical boundary.
+Formation REST controllers remain registered on the Automation service-local HTTP port, but the family is omitted from the external OpenAPI and Gateway route catalog and is not externally routed or advertised. No HTTP `SessionContext` or tenant-authorization guard is configured for these controllers, so they remain unauthenticated for permitted in-cluster callers. The remaining authenticated internal gRPC operations retain their admin guard, but configuration does not establish Entity-owned NPC namespace or ownership proof; see the [API Contracts implementation status](./api-contracts.md#implementation-status) for the canonical boundary.
 
 Current live bindings in the service are narrower than the full target-state scripting design:
 

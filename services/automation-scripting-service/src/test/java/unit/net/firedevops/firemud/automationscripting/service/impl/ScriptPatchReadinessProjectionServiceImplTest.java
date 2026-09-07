@@ -152,6 +152,41 @@ class ScriptPatchReadinessProjectionServiceImplTest {
   }
 
   @Test
+  void deadLetteredOnLoadTakesPrecedenceOverActiveSibling() {
+    ScriptPatchReadinessProjectionRepository repository =
+        Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptPatchReadinessProjection projection = new ScriptPatchReadinessProjection();
+    projection.setTenantId("1");
+    projection.setScriptPatchVersion("patch-1");
+    projection.setReadinessStatus("ONLOAD_RUNNING");
+    ScriptWorkItem deadLetteredOnLoad = new ScriptWorkItem();
+    deadLetteredOnLoad.setTenantId("1");
+    deadLetteredOnLoad.setScriptPatchVersion("patch-1");
+    deadLetteredOnLoad.setEventType("onLoad");
+    deadLetteredOnLoad.setStatus("DEAD_LETTERED");
+    deadLetteredOnLoad.setCancelReason("onload_commands_not_allowed");
+    deadLetteredOnLoad.setUpdatedAt(Instant.ofEpochMilli(400));
+    ScriptWorkItem activeOnLoad = new ScriptWorkItem();
+    activeOnLoad.setTenantId("1");
+    activeOnLoad.setScriptPatchVersion("patch-1");
+    activeOnLoad.setEventType("onLoad");
+    activeOnLoad.setStatus("EVALUATING");
+    when(repository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(Optional.of(projection));
+    when(workItemRepository.findByTenantIdAndScriptPatchVersion("1", "patch-1"))
+        .thenReturn(List.of(deadLetteredOnLoad, activeOnLoad));
+
+    ScriptPatchReadinessProjectionServiceImpl service =
+        new ScriptPatchReadinessProjectionServiceImpl(repository, workItemRepository);
+
+    service.refreshFromOnLoadWorkItems("1", "patch-1");
+
+    assertThat(projection.getReadinessStatus()).isEqualTo("FAILED");
+    assertThat(projection.getStatusReason()).isEqualTo("onload_commands_not_allowed");
+  }
+
+  @Test
   void marksPatchFailedWhenOnLoadReadinessCapacityIsDenied() {
     ScriptPatchReadinessProjectionRepository repository =
         Mockito.mock(ScriptPatchReadinessProjectionRepository.class);
