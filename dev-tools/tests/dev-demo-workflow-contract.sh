@@ -66,5 +66,33 @@ if check_port_forward_guard "$WRONG_LISTENER_FIXTURE" >/dev/null 2>&1; then
   exit 1
 fi
 
+LATE_GUARD_FIXTURE="$FIXTURE_DIR/late-port-forward-guard.yml"
+python3 - "$WORKFLOW" "$LATE_GUARD_FIXTURE" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+guard_start = source.index("          if ! wait_for_bootstrap_port_forward; then\n")
+account_bootstrap = source.index("          if ! BOOTSTRAP_MODE=account \\\n", guard_start)
+guard = source[guard_start:account_bootstrap]
+source = source[:guard_start] + source[account_bootstrap:]
+account_bootstrap = source.index("          if ! BOOTSTRAP_MODE=account \\\n", guard_start)
+cleanup = source.index("          cleanup_bootstrap_port_forward\n", account_bootstrap)
+Path(sys.argv[2]).write_text(source[:cleanup] + guard + source[cleanup:], encoding="utf-8")
+PY
+if check_port_forward_guard "$LATE_GUARD_FIXTURE" >/dev/null 2>&1; then
+  echo "dev-demo workflow contract accepted account bootstrap before the port-forward guard" >&2
+  exit 1
+fi
+
+PRINTED_LOG_FIXTURE="$FIXTURE_DIR/printed-port-forward-log.yml"
+# shellcheck disable=SC2016 # Insert the literal workflow variable reference.
+sed '/^          BOOTSTRAP_PORT_FORWARD_PID=\$!$/a\          cat "${BOOTSTRAP_PORT_FORWARD_LOG}"' \
+  "$WORKFLOW" > "$PRINTED_LOG_FIXTURE"
+if check_port_forward_guard "$PRINTED_LOG_FIXTURE" >/dev/null 2>&1; then
+  echo "dev-demo workflow contract accepted printing the raw port-forward log after PID assignment" >&2
+  exit 1
+fi
+
 python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"

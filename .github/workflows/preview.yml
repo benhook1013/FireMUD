@@ -87,14 +87,16 @@ jobs:
         id: derive
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_LABEL_NAME: ${{ github.event.label.name }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
-            if [ "${{ github.event.action }}" = "closed" ] || \
-              { [ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "preview:paused" ]; }; then
+            if [ "$EVENT_ACTION" = "closed" ] || \
+              { [ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]; }; then
               ACTION="destroy"
             else
               ACTION="deploy"

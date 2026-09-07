@@ -181,6 +181,40 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void rejectsLegacyTrustedProxyWhenProxyClientIpIsMissingOrMalformed() {
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    properties.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = legacyFilter(properties);
+
+    for (String clientIp : new String[] {null, "not-an-ip"}) {
+      MockServerHttpRequest.BaseBuilder<?> requestBuilder =
+          MockServerHttpRequest.get("/ws/game/test")
+              .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+              .header("X-Proxy-Connection-Id", "conn-123")
+              .header("X-Proxy-Game-Instance-Id", "42")
+              .header("X-Proxy-Tenant-Id", "7");
+      if (clientIp != null) {
+        requestBuilder.header("X-Proxy-Client-IP", clientIp);
+      }
+      MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
+      AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+      filter
+          .filter(
+              exchange,
+              candidate -> {
+                delegated.set(candidate);
+                return Mono.empty();
+              })
+          .block();
+
+      assertThat(delegated.get()).isNull();
+      assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+  }
+
+  @Test
   void doesNotEmitLegacySessionId() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);

@@ -391,8 +391,12 @@ require_contains "$preview_path" '      - unlabeled'
 assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:priority'"
 assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:paused'"
 assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'"
-# shellcheck disable=SC2016 # Assert literal event expressions in workflow source.
-assert_job_contains preview.yml preview-plan '[ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "preview:paused" ]'
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+assert_job_contains preview.yml preview-plan 'EVENT_ACTION: ${{ github.event.action }}'
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+assert_job_contains preview.yml preview-plan 'EVENT_LABEL_NAME: ${{ github.event.label.name }}'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+assert_job_contains preview.yml preview-plan '[ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]'
 assert_job_contains preview.yml preview-plan 'ACTION="destroy"'
 require_contains "$preview_path" 'preview:paused'
 require_contains "$preview_path" 'EVENT_LABELS_JSON:'

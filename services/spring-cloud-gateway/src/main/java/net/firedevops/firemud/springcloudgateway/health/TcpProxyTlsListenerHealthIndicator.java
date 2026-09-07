@@ -1,6 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.health;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import net.firedevops.firemud.springcloudgateway.config.TcpProxyTlsListener;
@@ -29,12 +30,11 @@ public final class TcpProxyTlsListenerHealthIndicator implements HealthIndicator
     if (!properties.isEnabled()) {
       return Health.up().withDetail("listener", "disabled").build();
     }
-    Map<String, Object> details =
-        Map.of(
-            "listener", "tcp-proxy-internal-tls",
-            "configuredPort", properties.getPort(),
-            "boundPort", listener.boundPort(),
-            "trustProfile", properties.getTrustProfile());
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("listener", "tcp-proxy-internal-tls");
+    details.put("configuredPort", properties.getPort());
+    details.put("boundPort", listener.boundPort());
+    details.put("trustProfile", properties.getTrustProfile());
     return listener.isRunning()
         ? Health.up().withDetails(details).build()
         : Health.outOfService().withDetails(details).build();

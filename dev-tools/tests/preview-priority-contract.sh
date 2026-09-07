@@ -839,8 +839,12 @@ eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
 grep -q 'github.event.label.name == '\''preview:paused'\''' "$preview_workflow"
 grep -q '^      - unlabeled$' "$preview_workflow"
-# shellcheck disable=SC2016 # Assert literal pause-event expressions in workflow source.
-grep -Fq '[ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "preview:paused" ]' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+grep -Fq 'EVENT_ACTION: ${{ github.event.action }}' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+grep -Fq 'EVENT_LABEL_NAME: ${{ github.event.label.name }}' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+grep -Fq '[ "$EVENT_ACTION" = "labeled" ] && [ "$EVENT_LABEL_NAME" = "preview:paused" ]' "$preview_workflow"
 grep -Fq '(requiresPausedLabel && !pauseStillPresent) ||' "$preview_workflow"
 grep -Fq 'currentPullRequest.labels.some(label => label?.name === "preview:paused")' "$preview_workflow"
 grep -q 'preview:paused' "$preview_workflow"
