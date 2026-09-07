@@ -63,7 +63,7 @@ class V1__baselineTest {
             "request_digest VARCHAR(64) NOT NULL DEFAULT ''",
             "claim_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP",
             "CONSTRAINT ck_script_event_ingress_audit_request_digest CHECK ( request_digest = '' OR request_digest ~ '^[0-9a-f]{64}$' )",
-            "CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
+            "CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND game_instance_id IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
 
     assertIndexColumns(
         normalized,

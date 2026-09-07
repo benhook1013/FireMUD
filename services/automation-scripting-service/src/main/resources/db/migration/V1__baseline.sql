@@ -112,6 +112,7 @@ CREATE TABLE script_event_ingress_audit (
     ),
     CONSTRAINT ck_script_event_ingress_audit_pin_tuple CHECK (
         (script_pin_epoch IS NULL
+            AND game_instance_id IS NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
         OR (script_pin_epoch > 0
             AND game_instance_id IS NOT NULL
