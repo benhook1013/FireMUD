@@ -874,3 +874,9 @@ jobs:
           spec:
             desiredState: Retired
           EOF
+      - name: Observe terminal retirement and delete request
+        run: |
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            --retired dev-demo
+          kubectl -n firemud-system delete hostedenvironmentidentity dev-demo \
+            --wait=true --timeout=180s

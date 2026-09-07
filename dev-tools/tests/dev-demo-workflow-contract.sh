@@ -16,6 +16,8 @@ for required in \
   'namespace: firemud-system' \
   'desiredState: Active' \
   'desiredState: Retired' \
+  '--retired dev-demo' \
+  'delete hostedenvironmentidentity dev-demo' \
   'wait-for-hosted-identity.sh' \
   'prune-stale-preview-namespaces.sh' \
   '--delete-runtime' \

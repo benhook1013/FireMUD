@@ -12,6 +12,7 @@ helm_values="$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml"
 helm_ingress="$ROOT_DIR/k8s/helm/firemud/templates/ingress.yaml"
 helm_certificate="$ROOT_DIR/k8s/helm/firemud/templates/tcp-proxy-certificate.yaml"
 helm_apps="$ROOT_DIR/k8s/helm/firemud/templates/apps.yaml"
+helm_network_policies="$ROOT_DIR/k8s/helm/firemud/templates/network-policies.yaml"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 
@@ -44,6 +45,8 @@ for required in \
   'namespace: firemud-system' \
   'desiredState: Active' \
   'desiredState: Retired' \
+  '--retired "$IDENTITY_NAME"' \
+  'delete hostedenvironmentidentity "$IDENTITY_NAME"' \
   'HOSTED_IDENTITY_REQUESTER_KUBECONFIG' \
   'PREVIEW_RUNTIME_KUBECONFIG' \
   'validate-preview-artifact.py' \
@@ -98,12 +101,35 @@ contains "$helm_values" 'mode: hosted-controller'
 contains "$helm_ingress" 'include "firemud.hostedControllerMode"'
 contains "$helm_certificate" 'include "firemud.hostedControllerMode"'
 contains "$helm_apps" 'include "firemud.hostedControllerMode"'
+for workload_template in \
+  "$helm_apps" \
+  "$ROOT_DIR/k8s/helm/firemud/templates/stateful-core.yaml" \
+  "$ROOT_DIR/k8s/helm/firemud/templates/seed-job.yaml"; do
+  contains "$workload_template" 'runAsNonRoot: true'
+  contains "$workload_template" 'runAsUser:'
+  contains "$workload_template" 'runAsGroup:'
+  contains "$workload_template" 'fsGroup:'
+  contains "$workload_template" 'allowPrivilegeEscalation: false'
+  contains "$workload_template" 'type: RuntimeDefault'
+done
+for stateful_template in \
+  "$ROOT_DIR/k8s/helm/firemud/templates/stateful-core.yaml" \
+  "$ROOT_DIR/k8s/helm/firemud/templates/seed-job.yaml"; do
+  contains "$stateful_template" 'readOnlyRootFilesystem: false'
+done
+contains "$ROOT_DIR/k8s/helm/firemud/templates/stateful-core.yaml" 'name: PGDATA'
+contains "$ROOT_DIR/k8s/helm/firemud/templates/stateful-core.yaml" '/var/lib/postgresql/data/pgdata'
+contains "$helm_network_policies" 'kubernetes.io/metadata.name: firemud-system'
+contains "$helm_network_policies" 'app.kubernetes.io/name: hosted-environment-identity-controller'
+contains "$helm_network_policies" 'app.kubernetes.io/component: controller'
 contains "$ROOT_DIR/k8s/helm/firemud/templates/_helpers.tpl" 'define "firemud.certificateIdentityMode"'
 contains "$ROOT_DIR/k8s/helm/firemud/templates/_helpers.tpl" 'standalone'
 contains "$ROOT_DIR/k8s/helm/firemud/templates/_helpers.tpl" 'hosted-controller'
 contains "$ROOT_DIR/k8s/helm/firemud/templates/_helpers.tpl" 'must be standalone or hosted-controller'
 
 contains "$waiter" '.status.observedGeneration'
+contains "$waiter" '--retired'
+contains "$waiter" '"$ready_generation" == "$generation"'
 contains "$waiter" '.status.conditions[]? | select(.type == "Ready")'
 contains "$waiter" '.status.ingress.revision'
 contains "$waiter" '.status.telnet.revision'
@@ -126,6 +152,44 @@ contains "$validator" '_validate_image_reference'
 contains "$validator" 'uses an untagged image'
 contains "$validator" 'MIN_PREVIEW_TELNET_PORT = 32000'
 contains "$validator" 'MAX_PREVIEW_TELNET_PORT = 32015'
+contains "$validator" '_validate_restricted_pod_security'
+contains "$validator" 'hostPath is forbidden'
+contains "$validator" 'allowPrivilegeEscalation must be false'
+contains "$validator" 'capabilities must drop ALL'
+contains "$validator" 'account-service-controller-ingress'
+contains "$validator" 'validate_network_policies'
+contains "$validator" 'hostPort is forbidden'
+contains "$validator" 'windowsOptions.hostProcess is forbidden'
+contains "$validator" 'seLinuxOptions'
+contains "$validator" 'probe/lifecycle action'
+
+for namespace_script in \
+  "$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh" \
+  "$ROOT_DIR/dev-tools/hosted/preview/ensure-preview-namespace.sh" \
+  "$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh" \
+  "$ROOT_DIR/dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh"; do
+  for psa_label in \
+    'pod-security.kubernetes.io/enforce=restricted' \
+    'pod-security.kubernetes.io/audit=restricted' \
+    'pod-security.kubernetes.io/warn=restricted'; do
+    contains "$namespace_script" "$psa_label"
+  done
+done
+
+python3 - "$trusted" "$ROOT_DIR/.github/workflows/dev-demo.yml" <<'PY'
+import sys
+from pathlib import Path
+
+for workflow_path, apply_marker in (
+    (Path(sys.argv[1]), "Apply validated PR runtime artifact"),
+    (Path(sys.argv[2]), "Deploy dev-demo release"),
+):
+    workflow = workflow_path.read_text(encoding="utf-8")
+    annotation_marker = "annotate-preview-namespace.sh" if "PR runtime" in apply_marker else "annotate-dev-demo-namespace.sh"
+    annotation_index = workflow.index(annotation_marker)
+    apply_index = workflow.index(apply_marker)
+    assert annotation_index < apply_index, (workflow_path, annotation_marker, apply_marker)
+PY
 
 python3 - "$validator" <<'PY'
 import importlib.util
@@ -153,10 +217,23 @@ def deployment(secret_name, annotations=None):
             "template": {
                 "metadata": {"annotations": annotations},
                 "spec": {
+                    "securityContext": {
+                        "runAsNonRoot": True,
+                        "runAsUser": 1000,
+                        "runAsGroup": 1000,
+                        "fsGroup": 1000,
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                    },
                     "containers": [
                         {
                             "name": "account-service",
                             "image": "ghcr.io/benhook1013/account-service:image-tag",
+                            "securityContext": {
+                                "allowPrivilegeEscalation": False,
+                                "runAsUser": 1000,
+                                "runAsGroup": 1000,
+                                "capabilities": {"drop": ["ALL"]},
+                            },
                             "env": [
                                 {
                                     "name": "EXAMPLE",
@@ -176,9 +253,77 @@ def deployment(secret_name, annotations=None):
     }
 
 
+def network_policy(name):
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {"name": name, "namespace": "pr-42"},
+    }
+
+
 with TemporaryDirectory() as temporary_directory:
     source = Path(temporary_directory) / "rendered.yaml"
     destination = Path(temporary_directory) / "sanitized.yaml"
+
+    def expect_rejected(adversarial, marker, message):
+        source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+        try:
+            validator.sanitize(source, destination)
+        except ValueError as error:
+            assert marker in str(error), error
+        else:
+            raise AssertionError(message)
+
+    exact_policy = network_policy("account-service-controller-ingress")
+    exact_policy["spec"] = {
+        "podSelector": {"matchLabels": {"app": "account-service"}},
+        "policyTypes": ["Ingress"],
+        "ingress": [
+            {
+                "from": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+                        },
+                        "podSelector": {
+                            "matchLabels": {
+                                "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                                "app.kubernetes.io/component": "controller",
+                            }
+                        },
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 6565}],
+            }
+        ],
+    }
+    validator.validate_network_policies(
+        [
+            network_policy("internal-services"),
+            network_policy("internal-services-egress"),
+            exact_policy,
+        ]
+    )
+    extra_policy = network_policy("untrusted-extra-policy")
+    try:
+        validator.validate_network_policies(
+            [
+                network_policy("internal-services"),
+                network_policy("internal-services-egress"),
+                exact_policy,
+                extra_policy,
+            ]
+        )
+    except ValueError as error:
+        assert "not closed" in str(error), error
+    else:
+        raise AssertionError("arbitrary additional NetworkPolicy was accepted")
+    expect_rejected(
+        extra_policy,
+        "not an approved runtime policy",
+        "arbitrary NetworkPolicy artifact was accepted",
+    )
+
     annotated = deployment(
         "firemud-secret",
         {"sidecar.istio.io/inject": "true"},
@@ -208,6 +353,155 @@ with TemporaryDirectory() as temporary_directory:
         assert "secretKeyRef.name" in str(error), error
     else:
         raise AssertionError("unapproved nested secretKeyRef.name was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["securityContext"][
+        "privileged"
+    ] = True
+    source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+    try:
+        validator.sanitize(source, destination)
+    except ValueError as error:
+        assert "privileged" in str(error), error
+    else:
+        raise AssertionError("privileged PR-selected container was accepted")
+
+    for mutation, marker in (
+        (lambda value: value.update(runAsUser=0), "runAsUser"),
+        (lambda value: value.pop("runAsUser"), "runAsUser"),
+    ):
+        adversarial = deployment("firemud-secret")
+        mutation(adversarial["spec"]["template"]["spec"]["securityContext"])
+        source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+        try:
+            validator.sanitize(source, destination)
+        except ValueError as error:
+            assert marker in str(error), error
+        else:
+            raise AssertionError("root or unspecified effective runAsUser was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["securityContext"][
+        "runAsUser"
+    ] = 0
+    source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+    try:
+        validator.sanitize(source, destination)
+    except ValueError as error:
+        assert "runAsUser" in str(error), error
+    else:
+        raise AssertionError("container root runAsUser was accepted")
+
+    for field in ("hostNetwork", "hostPID", "hostIPC"):
+        adversarial = deployment("firemud-secret")
+        adversarial["spec"]["template"]["spec"][field] = True
+        source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+        try:
+            validator.sanitize(source, destination)
+        except ValueError as error:
+            assert field in str(error), error
+        else:
+            raise AssertionError(f"PR-selected {field} was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["volumes"] = [
+        {"name": "host", "hostPath": {"path": "/"}}
+    ]
+    source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+    try:
+        validator.sanitize(source, destination)
+    except ValueError as error:
+        assert "hostPath" in str(error), error
+    else:
+        raise AssertionError("PR-selected hostPath was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["securityContext"][
+        "allowPrivilegeEscalation"
+    ] = True
+    source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+    try:
+        validator.sanitize(source, destination)
+    except ValueError as error:
+        assert "allowPrivilegeEscalation" in str(error), error
+    else:
+        raise AssertionError("PR-selected privilege escalation was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["securityContext"][
+        "capabilities"
+    ] = {"drop": ["ALL"], "add": ["SYS_ADMIN"]}
+    source.write_text(yaml.safe_dump(adversarial), encoding="utf-8")
+    try:
+        validator.sanitize(source, destination)
+    except ValueError as error:
+        assert "unsafe capabilities" in str(error), error
+    else:
+        raise AssertionError("PR-selected unsafe capability was accepted")
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["ports"] = [
+        {"containerPort": 8080, "hostPort": 8080}
+    ]
+    expect_rejected(adversarial, "hostPort", "container hostPort was accepted")
+
+    for location in ("pod", "container"):
+        for field, value in (
+            ("user", "root"),
+            ("role", "system_r"),
+            ("type", "spc_t"),
+        ):
+            adversarial = deployment("firemud-secret")
+            security = adversarial["spec"]["template"]["spec"]["securityContext"]
+            if location == "container":
+                security = adversarial["spec"]["template"]["spec"]["containers"][0][
+                    "securityContext"
+                ]
+            security["seLinuxOptions"] = {field: value}
+            expect_rejected(
+                adversarial,
+                "seLinuxOptions",
+                f"{location} unsafe SELinux {field} was accepted",
+            )
+
+    for location in ("pod", "container"):
+        adversarial = deployment("firemud-secret")
+        security = adversarial["spec"]["template"]["spec"]["securityContext"]
+        if location == "container":
+            security = adversarial["spec"]["template"]["spec"]["containers"][0][
+                "securityContext"
+            ]
+        security["appArmorProfile"] = {"type": "Unconfined"}
+        expect_rejected(
+            adversarial,
+            "appArmorProfile",
+            f"{location} unsafe AppArmor profile was accepted",
+        )
+
+    for location in ("pod", "container"):
+        adversarial = deployment("firemud-secret")
+        security = adversarial["spec"]["template"]["spec"]["securityContext"]
+        if location == "container":
+            security = adversarial["spec"]["template"]["spec"]["containers"][0][
+                "securityContext"
+            ]
+        security["windowsOptions"] = {"hostProcess": True}
+        expect_rejected(
+            adversarial,
+            "hostProcess",
+            f"{location} Windows hostProcess was accepted",
+        )
+
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["livenessProbe"] = {
+        "httpGet": {"path": "/", "port": 8080, "host": "untrusted.example"}
+    }
+    expect_rejected(adversarial, ".host", "probe host was accepted")
+    adversarial = deployment("firemud-secret")
+    adversarial["spec"]["template"]["spec"]["containers"][0]["lifecycle"] = {
+        "preStop": {"httpGet": {"path": "/", "port": 8080, "host": "untrusted.example"}}
+    }
+    expect_rejected(adversarial, ".host", "lifecycle host was accepted")
 
 try:
     validator._validate_image_reference(

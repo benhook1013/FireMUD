@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$(dirname "$(dirname "$BASH_SOURCE")")")" && pwd)"
 MANIFEST_DIR="$ROOT_DIR/k8s/hosted-identity-controller"
 CONTROLLER_DIR="$ROOT_DIR/dev-tools/hosted/controller"
 PREVIEW_RBAC="$ROOT_DIR/k8s/preview/preview-deployer-rbac.yaml"
+FIREMUD_STATEFUL_CORE="$ROOT_DIR/k8s/helm/firemud/templates/stateful-core.yaml"
 
 fail() {
   echo "hosted identity controller manifest contract: $*" >&2
@@ -85,6 +86,14 @@ for namespace_label in \
 done
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-controller"
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-requester"
+for postgres_marker in \
+  "name: PGDATA" \
+  "/var/lib/postgresql/data/pgdata" \
+  "runAsUser: 999" \
+  "runAsGroup: 999" \
+  "fsGroup: 999"; do
+  require_literal "$FIREMUD_STATEFUL_CORE" "$postgres_marker"
+done
 for tracker_marker in \
   "Contract owners are [ADR 0182]" \
   "[Deployment Environments](../../architecture/infrastructure/deployment-environments.md)" \
@@ -214,6 +223,26 @@ assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression
 assert "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
+secret_expressions = [
+    validation["expression"]
+    for validation in policies["firemud-hosted-identity-secret-boundary"]["spec"]["validations"]
+]
+cert_manager_expression = next(
+    expression
+    for expression in secret_expressions
+    if "source-materialized" in expression
+)
+assert "ownerReferences.size() == 0" in cert_manager_expression
+assert "object.type == 'kubernetes.io/tls'" in cert_manager_expression
+assert "object.metadata.annotations['cert-manager.io/certificate-name'] == object.metadata.name" in cert_manager_expression
+assert "object.metadata.annotations['cert-manager.io/issuer-name'] == 'letsencrypt-prod'" in cert_manager_expression
+assert "object.metadata.annotations['cert-manager.io/issuer-kind'] == 'ClusterIssuer'" in cert_manager_expression
+assert "object.metadata.annotations['cert-manager.io/issuer-group'] == 'cert-manager.io'" in cert_manager_expression
+assert "object.metadata.name == 'dev-tls'" in cert_manager_expression
+assert "object.metadata.name == 'dev-telnet-tls'" in cert_manager_expression
+assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tls'" in cert_manager_expression
+assert "request.namespace.substring(0, request.namespace.size() - 9) + '-telnet-tls'" in cert_manager_expression
+assert any("object.metadata.name != 'firemud-grpc-tls'" in expression for expression in secret_expressions)
 PY
 for phase in Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying Ready Degraded Blocked Retiring Retired; do
   require_literal "$CRD" "- $phase"
@@ -315,9 +344,41 @@ forbid_literal "$DEPLOYMENT" "$forbidden_strategy"
 
 for text_value in \
   policyTypes: '- Egress' 'k8s-app: kube-dns' 'port: 53' 'port: 443' \
-  'endPort: 32016' 'cannot select the apiserver or a public hostname' \
+  'endPort: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
+  'firemud.dev/dev-demo: "true"' 'cannot select the apiserver or a public hostname' \
   'except:' '169.254.0.0/16' 'fe80::/10'; do
   require_literal "$NETWORKPOLICY" "$text_value"
+done
+NETWORKPOLICY="$NETWORKPOLICY" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+policy = yaml.safe_load(Path(os.environ["NETWORKPOLICY"]).read_text(encoding="utf-8"))
+grpc_targets = [
+    target
+    for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 6565 for port in rule.get("ports", []))
+    for target in rule.get("to", [])
+]
+assert grpc_targets, "controller gRPC egress rule is missing"
+for target in grpc_targets:
+    assert target.get("namespaceSelector", {}).get("matchLabels", {}).get(
+        "firemud.dev/preview"
+    ) == "true" or target.get("namespaceSelector", {}).get("matchLabels", {}).get(
+        "firemud.dev/dev-demo"
+    ) == "true", target
+    assert target.get("podSelector", {}).get("matchLabels") == {
+        "app": "account-service"
+    }, target
+PY
+for text_value in \
+  'name: account-service-controller-ingress' \
+  'app: account-service' \
+  'kubernetes.io/metadata.name: firemud-system' \
+  'port: 6565'; do
+  require_literal "$ROOT_DIR/k8s/helm/firemud/templates/network-policies.yaml" "$text_value"
 done
 
 for text_value in \

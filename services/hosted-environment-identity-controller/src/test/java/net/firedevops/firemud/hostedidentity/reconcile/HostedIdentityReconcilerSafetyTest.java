@@ -2,8 +2,10 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +13,8 @@ import static org.mockito.Mockito.when;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
@@ -26,6 +30,7 @@ import net.firedevops.firemud.hostedidentity.kubernetes.DeploymentRolloutService
 import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityScopeService;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
 import net.firedevops.firemud.hostedidentity.kubernetes.SecretProjectionService;
+import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus;
 import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
@@ -34,6 +39,76 @@ import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
 
 class HostedIdentityReconcilerSafetyTest {
+  @Test
+  void retirementPublishesTerminalStatusBeforeDeletionRemovesFinalizer() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("active");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(anyString())).thenReturn(namespace);
+    when(namespace.get()).thenReturn(null);
+    Context<HostedEnvironmentIdentity> context = mock(Context.class);
+    ResourceOperations<HostedEnvironmentIdentity> operations = mock(ResourceOperations.class);
+    when(context.resourceOperations()).thenReturn(operations);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            new EnvironmentIdentityPlanner(properties),
+            mock(CertificateMaterialService.class),
+            mock(SecretProjectionService.class),
+            mock(HostedIdentityScopeService.class),
+            mock(RuntimeProfileService.class),
+            mock(DeploymentRolloutService.class),
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
+            properties);
+    HostedEnvironmentIdentity resource = resource();
+    resource
+        .getSpec()
+        .setDesiredState(
+            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
+                .Retired);
+
+    UpdateControl<HostedEnvironmentIdentity> published = reconciler.reconcile(resource, context);
+
+    assertEquals(true, published.isPatchStatus());
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Retired,
+        published.getResource().orElseThrow().getStatus().getPhase());
+    verify(operations, never()).removeFinalizer(HostedIdentityContract.FINALIZER);
+
+    resource.getMetadata().setDeletionTimestamp(Instant.now().toString());
+    UpdateControl<HostedEnvironmentIdentity> deleted = reconciler.reconcile(resource, context);
+
+    assertEquals(true, deleted.isNoUpdate());
+    assertEquals(false, deleted.isPatchStatus());
+    verify(operations).removeFinalizer(HostedIdentityContract.FINALIZER);
+  }
+
+  @Test
+  void finalizerRemovalRequiresObservableGenerationBoundRetiredStatus() {
+    HostedEnvironmentIdentity resource = resource();
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setPhase(HostedEnvironmentIdentityStatus.Phase.Retired);
+    status.setObservedGeneration(1L);
+    HostedCondition ready =
+        new HostedCondition("Ready", "False", "Retired", "identity material removed");
+    ready.setObservedGeneration(1L);
+    status.setConditions(java.util.List.of(ready));
+    resource.setStatus(status);
+
+    assertEquals(true, HostedIdentityReconciler.retiredStatusIsCurrent(resource));
+
+    status.setObservedGeneration(0L);
+    assertEquals(false, HostedIdentityReconciler.retiredStatusIsCurrent(resource));
+    status.setObservedGeneration(1L);
+    ready.setStatus("True");
+    assertEquals(false, HostedIdentityReconciler.retiredStatusIsCurrent(resource));
+  }
+
   @Test
   void retirementNeverRequestsStatusPatchAfterFinalizerRemovalOrDeletionRace() {
     Context<HostedEnvironmentIdentity> context = mock(Context.class);

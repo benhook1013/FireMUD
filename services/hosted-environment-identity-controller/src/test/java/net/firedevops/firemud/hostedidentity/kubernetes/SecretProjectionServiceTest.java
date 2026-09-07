@@ -158,6 +158,62 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void serializedRotationContinuesPendingRoleBeforeStartingAnotherChange() {
+    var ingress = new CertificateMaterialService.RotationState("ingress", false, true, false);
+    var telnet = new CertificateMaterialService.RotationState("telnet", false, true, false);
+    var grpc = new CertificateMaterialService.RotationState("grpc", true, true, false);
+
+    assertEquals(
+        "grpc",
+        CertificateMaterialService.selectSerializedRole(java.util.List.of(ingress, telnet, grpc)));
+  }
+
+  @Test
+  void serializedRotationStartsOnlyTheFirstChangedRole() {
+    var ingress = new CertificateMaterialService.RotationState("ingress", false, false, false);
+    var telnet = new CertificateMaterialService.RotationState("telnet", false, true, false);
+    var grpc = new CertificateMaterialService.RotationState("grpc", false, true, false);
+
+    assertEquals(
+        "telnet",
+        CertificateMaterialService.selectSerializedRole(java.util.List.of(ingress, telnet, grpc)));
+    assertEquals(
+        null,
+        CertificateMaterialService.selectSerializedRole(
+            java.util.List.of(
+                ingress,
+                new CertificateMaterialService.RotationState("telnet", false, false, false),
+                new CertificateMaterialService.RotationState("grpc", false, false, false))));
+  }
+
+  @Test
+  void serializedRotationDoesNotGateInitialProjectionUntilEveryRoleIsAccepted() {
+    var ingress = new CertificateMaterialService.RotationState("ingress", true, true, false);
+    var telnet = new CertificateMaterialService.RotationState("telnet", false, false, true);
+    var grpc = new CertificateMaterialService.RotationState("grpc", true, true, false);
+
+    assertEquals(
+        null,
+        CertificateMaterialService.selectSerializedRole(java.util.List.of(ingress, telnet, grpc)));
+  }
+
+  @Test
+  void serializedRotationPinsAnInFlightProjectionAheadOfNewerSourceMaterial() {
+    assertEquals(
+        true,
+        CertificateMaterialService.pendingProjectionOwnsRotation(
+            true, "sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64)));
+    assertEquals(
+        false,
+        CertificateMaterialService.pendingProjectionOwnsRotation(
+            false, "sha256:" + "1".repeat(64), "sha256:" + "2".repeat(64)));
+    assertEquals(
+        false,
+        CertificateMaterialService.pendingProjectionOwnsRotation(
+            true, "sha256:" + "1".repeat(64), "sha256:" + "1".repeat(64)));
+  }
+
+  @Test
   void rolloutEditPreservesEveryFieldExceptTheSelectedTemplateAnnotation() {
     var deployment =
         new DeploymentBuilder()

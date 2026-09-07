@@ -58,3 +58,22 @@ spec:
         - protocol: TCP
           port: 32000
           endPort: 32016
+    # Ready additionally requires an mTLS handshake to the fixed Account gRPC
+    # Service using the current projected leaf. Runtime Namespace labels are
+    # externally owned and validated before the controller reaches this probe.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: account-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: account-service
+      ports:
+        - protocol: TCP
+          port: 6565

@@ -47,13 +47,20 @@ cert-manager ingress and Telnet Certificates/Secrets, retains the shared
 `firemud-grpc-tls` transport bundle without claiming per-workload identity,
 syncs source material to runtime with resource-version compare-and-swap, and
 rolls all eleven gRPC consumers before fixed-SNI/SAN/issuer endpoint probes.
+The final acceptance gate also performs a mutual-TLS handshake to the fixed
+Account gRPC Service with the current projected client certificate, fixed CA,
+exact in-cluster SNI/hostname, and current leaf fingerprint; rollout counters
+alone cannot make the identity Ready.
 Existing runtime Secret material is copied to its fixed `*-previous` snapshot
 before replacement. A clean destination may be created without a predecessor.
 Renewal repeats the same generation-safe sequence.
 
 Missing runtime namespaces retain identity material and report a blocked or
 degraded condition. Retirement waits for an exact runtime Namespace `404`, then
-removes the identity/runtime material and finalizer. Timeouts, non-404 API
+removes identity material and publishes generation-bound `Retired` with
+`Ready=False` while retaining the finalizer. The lifecycle requester observes
+that terminal status and deletes the request; only the subsequent deletion
+reconcile removes the finalizer. Timeouts, non-404 API
 errors, resource-version conflicts, unknown API responses, mismatched SAN/EKU,
 or failed rollout/probe evidence stop the state machine without destructive
 cleanup. Reconciliation is idempotent and retries after interruption.
@@ -98,7 +105,8 @@ policy-level constraints.
 The NetworkPolicy permits DNS and TCP/443 for the Kubernetes API plus fixed
 public HTTPS probes; its IPv4/IPv6 443 destinations exclude link-local
 `169.254.0.0/16` and `fe80::/10`. It also permits the allocator's 32000-32016
-Telnet range. Kubernetes NetworkPolicy cannot identify an API server or public
+Telnet range and TCP/6565 only to runtime Namespaces carrying the externally
+owned canonical preview or dev-demo label. Kubernetes NetworkPolicy cannot identify an API server or public
 hostname, so the controller must enforce the derived SNI/SAN/issuer allowlist
 itself; the 443 rule is an explicit infrastructure limitation, not
 unrestricted identity trust.

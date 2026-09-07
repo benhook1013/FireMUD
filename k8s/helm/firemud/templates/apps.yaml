@@ -21,6 +21,13 @@ spec:
         app: {{ $service.name }}
     spec:
       serviceAccountName: firemud-app
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       {{- with $.Values.previewStack.imagePullSecrets }}
       imagePullSecrets:
         {{- range $secret := . }}
@@ -33,6 +40,13 @@ spec:
       {{- end }}
       containers:
         - name: {{ $service.name }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
           image: "{{ $service.image.repository }}:{{ default $.Values.previewStack.defaultImageTag $service.image.tag }}"
           imagePullPolicy: Always
           {{- if $service.springProfile }}

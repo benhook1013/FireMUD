@@ -147,14 +147,44 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.operation in ['CREATE', 'UPDATE', 'PATCH'] &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
-         has(object.metadata.ownerReferences) &&
-         object.metadata.ownerReferences.exists(ref,
-           ref.apiVersion == 'cert-manager.io/v1' &&
-           ref.kind == 'Certificate' &&
-           ref.name == object.metadata.name))
+         object.type == 'kubernetes.io/tls' &&
+         has(object.metadata.labels) &&
+         object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+         object.metadata.labels['firemud.dev/retention'] == 'retained' &&
+         has(object.metadata.annotations) &&
+         object.metadata.annotations['firemud.dev/provenance'] == 'cert-manager' &&
+         object.metadata.annotations['firemud.dev/convergence-state'] == 'source-materialized' &&
+         object.metadata.annotations['cert-manager.io/certificate-name'] == object.metadata.name &&
+         object.metadata.annotations['cert-manager.io/issuer-name'] == 'letsencrypt-prod' &&
+         object.metadata.annotations['cert-manager.io/issuer-kind'] == 'ClusterIssuer' &&
+         object.metadata.annotations['cert-manager.io/issuer-group'] == 'cert-manager.io' &&
+         ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
+          object.metadata.ownerReferences.all(ref,
+            ref.apiVersion == 'cert-manager.io/v1' &&
+            ref.kind == 'Certificate' &&
+            ref.name == object.metadata.name)) &&
+         ((request.namespace == 'dev-identity' &&
+           object.metadata.labels['firemud.dev/identity-name'] == 'dev-demo' &&
+           ((object.metadata.name == 'dev-tls' && object.metadata.labels['firemud.dev/role'] == 'ingress') ||
+            (object.metadata.name == 'dev-telnet-tls' && object.metadata.labels['firemud.dev/role'] == 'telnet'))) ||
+          (request.namespace.matches('^pr-[1-9][0-9]*-identity$') &&
+           object.metadata.labels['firemud.dev/identity-name'] == request.namespace.substring(0, request.namespace.size() - 9) &&
+           ((object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-tls' &&
+             object.metadata.labels['firemud.dev/role'] == 'ingress') ||
+            (object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + '-telnet-tls' &&
+             object.metadata.labels['firemud.dev/role'] == 'telnet')))))
       message: managed identity and runtime TLS Secrets are writable only by the controller or cert-manager for its owned identity Secret
       reason: Forbidden
-    - expression: "request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' || (request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') && object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'cert-manager.io/v1' && ref.kind == 'Certificate' && ref.name == object.metadata.name))"
+    - expression: >-
+        request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' ||
+        (request.operation in ['CREATE', 'UPDATE', 'PATCH'] &&
+         request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
+         object.metadata.name != 'firemud-grpc-tls' &&
+         ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
+          object.metadata.ownerReferences.all(ref,
+            ref.apiVersion == 'cert-manager.io/v1' &&
+            ref.kind == 'Certificate' &&
+            ref.name == object.metadata.name)))
       message: cert-manager may not write a TLS Secret outside its exact Certificate ownership boundary
       reason: Forbidden
 ---

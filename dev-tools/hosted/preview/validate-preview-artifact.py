@@ -43,7 +43,11 @@ EXPECTED_NAMES = {
     "PersistentVolumeClaim": {"postgres-data", "redis-coord-data", "redis-cache-data", "minio-data"},
     "Job": {"firemud-seed"},
     "Ingress": {"firemud-preview"},
-    "NetworkPolicy": {"internal-services", "internal-services-egress"},
+    "NetworkPolicy": {
+        "internal-services",
+        "internal-services-egress",
+        "account-service-controller-ingress",
+    },
 }
 EXPECTED_OBJECTS = {
     (kind, name)
@@ -91,6 +95,23 @@ SANITIZER_SECRET_REFERENCE_SUFFIXES = ("-tls", "-telnet-tls")
 SANITIZER_SENSITIVE_KEY = re.compile(r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY)$")
 MIN_PREVIEW_TELNET_PORT = 32000
 MAX_PREVIEW_TELNET_PORT = 32015
+RESTRICTED_VOLUME_KEYS = {
+    "configMap",
+    "csi",
+    "downwardAPI",
+    "emptyDir",
+    "ephemeral",
+    "persistentVolumeClaim",
+    "projected",
+    "secret",
+}
+RESTRICTED_CAPABILITY_ADDITIONS = {"NET_BIND_SERVICE"}
+RESTRICTED_SELINUX_TYPES = {
+    "container_t",
+    "container_init_t",
+    "container_kvm_t",
+    "container_engine_t",
+}
 
 
 def fail(message: str) -> typing.NoReturn:
@@ -170,6 +191,128 @@ def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None
             _validate_sanitized_secret_refs(child, f"{path}[{index}]")
 
 
+def _validate_restricted_pod_security(pod: object, path: str) -> None:
+    """Require the explicit fields enforced by the runtime restricted PSA policy."""
+
+    if not isinstance(pod, dict):
+        fail(f"{path} is not a pod specification")
+    for field in ("hostNetwork", "hostPID", "hostIPC"):
+        if pod.get(field) is True:
+            fail(f"{path}.{field} is forbidden by restricted Pod Security Admission")
+    if pod.get("sysctls"):
+        fail(f"{path}.sysctls are not allowed in the preview runtime")
+
+    pod_security = pod.get("securityContext")
+    if not isinstance(pod_security, dict):
+        fail(f"{path}.securityContext is required by restricted Pod Security Admission")
+    if pod_security.get("runAsNonRoot") is not True:
+        fail(f"{path}.securityContext.runAsNonRoot must be true")
+    for field in ("runAsUser", "runAsGroup", "fsGroup"):
+        value = pod_security.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            fail(f"{path}.securityContext.{field} must be a positive numeric identity")
+    seccomp = pod_security.get("seccompProfile")
+    if not isinstance(seccomp, dict) or seccomp.get("type") != "RuntimeDefault":
+        fail(f"{path}.securityContext.seccompProfile.type must be RuntimeDefault")
+
+    def validate_extra_security_fields(security: dict, security_path: str) -> None:
+        apparmor = security.get("appArmorProfile")
+        if apparmor is not None and (
+            not isinstance(apparmor, dict)
+            or apparmor.get("type") not in {"RuntimeDefault", "Localhost"}
+        ):
+            fail(f"{security_path}.appArmorProfile is not restricted")
+        selinux = security.get("seLinuxOptions")
+        if selinux is not None:
+            if not isinstance(selinux, dict):
+                fail(f"{security_path}.seLinuxOptions is not restricted")
+            if selinux.get("user") or selinux.get("role"):
+                fail(f"{security_path}.seLinuxOptions user/role are forbidden")
+            if selinux.get("type") not in (None, *RESTRICTED_SELINUX_TYPES):
+                fail(f"{security_path}.seLinuxOptions.type is not restricted")
+
+    validate_extra_security_fields(pod_security, f"{path}.securityContext")
+
+    volumes = pod.get("volumes") or []
+    if not isinstance(volumes, list):
+        fail(f"{path}.volumes must be a list")
+    for index, volume in enumerate(volumes):
+        if not isinstance(volume, dict):
+            fail(f"{path}.volumes[{index}] is not an object")
+        if "hostPath" in volume:
+            fail(f"{path}.volumes[{index}].hostPath is forbidden")
+        unsupported = set(volume) - {"name"} - RESTRICTED_VOLUME_KEYS
+        if unsupported:
+            fail(
+                f"{path}.volumes[{index}] contains unsupported restricted volume fields: "
+                f"{sorted(unsupported)}"
+            )
+
+    containers = []
+    for field in ("initContainers", "containers", "ephemeralContainers"):
+        values = pod.get(field) or []
+        if not isinstance(values, list):
+            fail(f"{path}.{field} must be a list")
+        containers.extend((field, index, value) for index, value in enumerate(values))
+    if not any(field == "containers" for field, _, _ in containers):
+        fail(f"{path}.containers must contain at least one container")
+    for field, index, container in containers:
+        container_path = f"{path}.{field}[{index}]"
+        if not isinstance(container, dict):
+            fail(f"{container_path} is not an object")
+        security = container.get("securityContext")
+        if not isinstance(security, dict):
+            fail(f"{container_path}.securityContext is required by restricted Pod Security Admission")
+        if security.get("privileged") is True:
+            fail(f"{container_path}.securityContext.privileged is forbidden")
+        if security.get("allowPrivilegeEscalation") is not False:
+            fail(f"{container_path}.securityContext.allowPrivilegeEscalation must be false")
+        if security.get("runAsNonRoot") is False:
+            fail(f"{container_path}.securityContext.runAsNonRoot must not be false")
+        validate_extra_security_fields(security, f"{container_path}.securityContext")
+        for field, inherited in (
+            ("runAsUser", pod_security["runAsUser"]),
+            ("runAsGroup", pod_security["runAsGroup"]),
+        ):
+            value = security.get(field, inherited)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                fail(
+                    f"{container_path}.securityContext.{field} must be a positive numeric identity"
+                )
+        capabilities = security.get("capabilities")
+        if not isinstance(capabilities, dict) or "ALL" not in (capabilities.get("drop") or []):
+            fail(f"{container_path}.securityContext.capabilities must drop ALL")
+        additions = set(capabilities.get("add") or [])
+        if not additions <= RESTRICTED_CAPABILITY_ADDITIONS:
+            fail(
+                f"{container_path}.securityContext.capabilities adds unsafe capabilities: "
+                f"{sorted(additions - RESTRICTED_CAPABILITY_ADDITIONS)}"
+            )
+        if "procMount" in security and security["procMount"] != "Default":
+            fail(f"{container_path}.securityContext.procMount must be Default")
+        for mount_index, mount in enumerate(container.get("volumeMounts") or []):
+            if isinstance(mount, dict) and mount.get("mountPropagation") not in (None, "None"):
+                fail(
+                    f"{container_path}.volumeMounts[{mount_index}].mountPropagation is forbidden"
+                )
+        for port_index, port in enumerate(container.get("ports") or []):
+            if isinstance(port, dict) and "hostPort" in port:
+                fail(f"{container_path}.ports[{port_index}].hostPort is forbidden")
+        for field in ("livenessProbe", "readinessProbe", "startupProbe", "lifecycle"):
+            action = container.get(field)
+            if not isinstance(action, dict):
+                continue
+            for nested_path, nested in walk(action, f"{container_path}.{field}"):
+                if nested_path.endswith(".host"):
+                    fail(f"{nested_path} is forbidden in a probe/lifecycle action")
+        windows = security.get("windowsOptions")
+        if isinstance(windows, dict) and windows.get("hostProcess") is True:
+            fail(f"{container_path}.securityContext.windowsOptions.hostProcess is forbidden")
+    pod_windows = pod_security.get("windowsOptions")
+    if isinstance(pod_windows, dict) and pod_windows.get("hostProcess") is True:
+        fail(f"{path}.securityContext.windowsOptions.hostProcess is forbidden")
+
+
 def _strip_annotations(value: object) -> None:
     if isinstance(value, dict):
         metadata = value.get("metadata")
@@ -212,8 +355,16 @@ def sanitize(source: Path, destination: Path) -> None:
         metadata = raw.get("metadata")
         if not isinstance(metadata, dict) or not metadata.get("name"):
             fail(f"{kind} has no metadata.name")
+        if kind == "NetworkPolicy" and metadata["name"] not in EXPECTED_NAMES[kind]:
+            fail(f"NetworkPolicy/{metadata['name']} is not an approved runtime policy")
         if metadata.get("namespace") in {"firemud-system", "kube-system"}:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
+        if kind in {"Deployment", "Job"}:
+            pod = (raw.get("spec") or {}).get("template", {}).get("spec")
+            _validate_restricted_pod_security(
+                pod,
+                f"{kind}/{metadata['name']}.spec.template.spec",
+            )
         sanitized = _clean_config_map(copy.deepcopy(raw))
         if sanitized is None:
             continue
@@ -333,6 +484,43 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
 
 
+def validate_network_policies(documents: list[dict]) -> None:
+    """Keep runtime policy additions closed and the controller exception exact."""
+
+    policies = {
+        document.get("metadata", {}).get("name"): document
+        for document in documents
+        if document.get("kind") == "NetworkPolicy"
+    }
+    expected_names = EXPECTED_NAMES["NetworkPolicy"]
+    if set(policies) != expected_names:
+        fail(
+            "runtime NetworkPolicy set is not closed "
+            f"(missing={sorted(expected_names - set(policies))}, "
+            f"extra={sorted(set(policies) - expected_names)})"
+        )
+    controller_policy = policies["account-service-controller-ingress"]
+    spec = controller_policy.get("spec") or {}
+    if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
+        fail("NetworkPolicy/account-service-controller-ingress selects an unsafe workload")
+    if spec.get("policyTypes") != ["Ingress"]:
+        fail("NetworkPolicy/account-service-controller-ingress must only govern ingress")
+    expected_from = {
+        "namespaceSelector": {
+            "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+        },
+        "podSelector": {
+            "matchLabels": {
+                "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                "app.kubernetes.io/component": "controller",
+            }
+        },
+    }
+    expected_ingress = [{"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}]
+    if spec.get("ingress") != expected_ingress:
+        fail("NetworkPolicy/account-service-controller-ingress has an unsafe exception")
+
+
 def validate_manifest(
     path: Path,
     expected_namespace: str,
@@ -393,6 +581,12 @@ def validate_manifest(
             ]
             if ports != EXPECTED_SERVICE_PORTS[name]:
                 fail(f"Service/{name} has an unexpected port set")
+        if document["kind"] in {"Deployment", "Job"}:
+            pod = (document.get("spec") or {}).get("template", {}).get("spec")
+            _validate_restricted_pod_security(
+                pod,
+                f"{document['kind']}/{name}.spec.template.spec",
+            )
         if document["kind"] == "Ingress":
             spec = document.get("spec") or {}
             tls = spec.get("tls") or []
@@ -420,6 +614,7 @@ def validate_manifest(
         missing = sorted(EXPECTED_OBJECTS - seen)
         extra = sorted(seen - EXPECTED_OBJECTS)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
+    validate_network_policies(documents)
     validate_service_consumers(documents, expected_namespace)
 
 

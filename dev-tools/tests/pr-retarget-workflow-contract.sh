@@ -439,6 +439,8 @@ require_contains "$hosted_identity_workflow_path" 'kind: HostedEnvironmentIdenti
 require_contains "$hosted_identity_workflow_path" 'namespace: firemud-system'
 require_contains "$hosted_identity_workflow_path" 'desiredState: Active'
 require_contains "$hosted_identity_workflow_path" 'desiredState: Retired'
+require_contains "$hosted_identity_workflow_path" '--retired "$IDENTITY_NAME"'
+require_contains "$hosted_identity_workflow_path" 'delete hostedenvironmentidentity "$IDENTITY_NAME"'
 require_contains "$hosted_identity_workflow_path" 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG'
 require_contains "$hosted_identity_workflow_path" 'PREVIEW_RUNTIME_KUBECONFIG'
 assert_job_excludes hosted-identity-request.yml deploy-runtime 'pull-requests: write'

@@ -645,3 +645,11 @@ jobs:
           spec:
             desiredState: Retired
           EOF
+      - name: Observe terminal retirement and delete request
+        env:
+          IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
+        run: |
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            --retired "$IDENTITY_NAME"
+          kubectl -n firemud-system delete hostedenvironmentidentity "$IDENTITY_NAME" \
+            --wait=true --timeout=180s

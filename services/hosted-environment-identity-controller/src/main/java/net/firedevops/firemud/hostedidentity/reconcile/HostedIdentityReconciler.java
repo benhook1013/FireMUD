@@ -186,7 +186,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               plan,
               runtimeProfile.telnetPort(),
               ingress.summary().certificateFingerprint(),
-              telnet.summary().certificateFingerprint());
+              telnet.summary().certificateFingerprint(),
+              grpc.source(),
+              grpc.summary().certificateFingerprint());
       if (rollout.ready() && probes.ready()) {
         ingressProjection =
             projectionService.acknowledge(
@@ -294,7 +296,53 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null,
           null);
     }
+    if (client.namespaces().withName(plan.identityNamespace()).get() != null) {
+      return status(
+          resource,
+          HostedEnvironmentIdentityStatus.Phase.Retiring,
+          "IdentityCleanupPending",
+          "retirement waits for retained identity Namespace deletion",
+          false,
+          null,
+          null,
+          null,
+          null);
+    }
+    if (!retiredStatusIsCurrent(resource)) {
+      return status(
+          resource,
+          HostedEnvironmentIdentityStatus.Phase.Retired,
+          "Retired",
+          "runtime Namespace is absent and retained identity material was removed",
+          false,
+          null,
+          null,
+          null,
+          null);
+    }
+    if (resource.getMetadata().getDeletionTimestamp() == null) {
+      return UpdateControl.noUpdate();
+    }
     return finishRetirement(context);
+  }
+
+  static boolean retiredStatusIsCurrent(HostedEnvironmentIdentity resource) {
+    if (resource.getStatus() == null
+        || resource.getMetadata() == null
+        || !HostedEnvironmentIdentityStatus.Phase.Retired.equals(resource.getStatus().getPhase())
+        || !java.util.Objects.equals(
+            resource.getMetadata().getGeneration(), resource.getStatus().getObservedGeneration())) {
+      return false;
+    }
+    return resource.getStatus().getConditions() != null
+        && resource.getStatus().getConditions().stream()
+            .anyMatch(
+                condition ->
+                    "Ready".equals(condition.getType())
+                        && "False".equals(condition.getStatus())
+                        && java.util.Objects.equals(
+                            resource.getMetadata().getGeneration(),
+                            condition.getObservedGeneration()));
   }
 
   static UpdateControl<HostedEnvironmentIdentity> finishRetirement(
