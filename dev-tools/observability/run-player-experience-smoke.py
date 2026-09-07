@@ -630,6 +630,19 @@ def validate_telnet_transport_config(
             "TLS Telnet evidence requires --telnet-server-hostname or "
             "PLAYER_EXPERIENCE_TELNET_SERVER_HOSTNAME"
         )
+    if config.telnet_ca_file is not None:
+        telnet_ca_file = config.telnet_ca_file
+        if not isinstance(telnet_ca_file, Path) or not telnet_ca_file.is_file():
+            raise ValueError(
+                f"TLS Telnet CA file must be a readable regular file: {telnet_ca_file}"
+            )
+        try:
+            with telnet_ca_file.open("rb"):
+                pass
+        except OSError as exc:
+            raise ValueError(
+                f"TLS Telnet CA file must be a readable regular file: {telnet_ca_file}"
+            ) from exc
 
 
 def telnet_socket_options(config: SmokeConfig) -> dict[str, Any]:

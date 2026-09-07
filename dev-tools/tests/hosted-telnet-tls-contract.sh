@@ -162,6 +162,10 @@ if ! grep -Fq "$CERTIFICATE_IDENTITY_MODE_ERROR" "$TMP_DIR/invalid-certificate-m
   sed -n '1,20p' "$TMP_DIR/invalid-certificate-mode.err" >&2
   exit 1
 fi
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-json 'previewStack.certificateIdentity=null' \
+  --namespace pr-42 >"$TMP_DIR/rendered-null-certificate-identity.yaml"
 
 TELNET_TLS_CLUSTER_ISSUER_ERROR="previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
@@ -191,7 +195,7 @@ if ! grep -Fq "$PREVIEW_HOSTNAME_ERROR" "$TMP_DIR/missing-preview-hostname.err";
   exit 1
 fi
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" MANAGED_ENV_RENDERED="$TMP_DIR/rendered-managed-env.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" NULL_IDENTITY_RENDERED="$TMP_DIR/rendered-null-certificate-identity.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" MANAGED_ENV_RENDERED="$TMP_DIR/rendered-managed-env.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -214,6 +218,23 @@ controller_documents = list(
 )
 controller_issues = preflight.validate_hosted_telnet_tls_values(controller_documents)
 assert not controller_issues, controller_issues
+null_identity_documents = list(
+    yaml.safe_load_all(
+        Path(os.environ["NULL_IDENTITY_RENDERED"]).read_text(encoding="utf-8")
+    )
+)
+null_identity_issues = preflight.validate_hosted_telnet_tls_values(
+    null_identity_documents
+)
+assert not null_identity_issues, null_identity_issues
+for document in null_identity_documents:
+    if (
+        document.get("kind") in {"Deployment", "Service"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        assert document["metadata"]["labels"][
+            "firemud.dev/certificate-identity-mode"
+        ] == "standalone"
 assert not any(
     document.get("kind") == "Certificate"
     and document.get("metadata", {}).get("name", "").endswith("-telnet-tls")
@@ -244,6 +265,27 @@ controller_volume = next(
     if volume.get("name") == "telnet-tls"
 )
 assert controller_volume["secret"]["secretName"] == "preview-release-telnet-tls"
+
+controller_without_nodeport_service = [
+    deepcopy(document)
+    for document in controller_documents
+    if not (
+        document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+        and document.get("spec", {}).get("type") == "NodePort"
+    )
+]
+assert not preflight.validate_hosted_telnet_tls_values(
+    controller_without_nodeport_service
+), "optional hosted Telnet validation rejected an inapplicable render"
+missing_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    controller_without_nodeport_service,
+    required_identity_mode="hosted-controller",
+)
+assert any(
+    "requires exactly one tcp-proxy-service NodePort Service" in issue
+    for issue in missing_nodeport_issues
+), "required hosted identity mode accepted a missing TCP Proxy NodePort Service"
 
 controller_with_certificate = deepcopy(controller_documents)
 controller_with_certificate.append(

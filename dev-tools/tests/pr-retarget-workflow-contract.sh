@@ -387,6 +387,13 @@ if grep -Eq '^concurrency:' "$preview_path"; then
 fi
 assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+require_contains "$preview_path" '      - unlabeled'
+assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:priority'"
+assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:paused'"
+assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'"
+# shellcheck disable=SC2016 # Assert literal event expressions in workflow source.
+assert_job_contains preview.yml preview-plan '[ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "preview:paused" ]'
+assert_job_contains preview.yml preview-plan 'ACTION="destroy"'
 require_contains "$preview_path" 'preview:paused'
 require_contains "$preview_path" 'EVENT_LABELS_JSON:'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
@@ -510,7 +517,13 @@ fi
 assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
 assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
 assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
+assert_job_contains preview.yml preview-destroy 'const requiresPausedLabel ='
+assert_job_contains preview.yml preview-destroy 'context.payload.action === "labeled"'
+assert_job_contains preview.yml preview-destroy 'context.payload.label?.name === "preview:paused"'
+assert_job_contains preview.yml preview-destroy 'Array.isArray(currentPullRequest.labels)'
+assert_job_contains preview.yml preview-destroy 'currentPullRequest.labels.some(label => label?.name === "preview:paused")'
 assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
+assert_job_contains preview.yml preview-destroy '(requiresPausedLabel && !pauseStillPresent) ||'
 assert_job_contains preview.yml preview-destroy 'currentPullRequest.head?.sha !== expectedHeadSha'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal JavaScript template syntax.
 assert_job_contains preview.yml preview-destroy 'expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}'

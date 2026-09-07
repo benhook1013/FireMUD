@@ -36,7 +36,8 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{- define "firemud.certificateIdentityMode" -}}
-{{- $mode := default "standalone" .Values.previewStack.certificateIdentity.mode -}}
+{{- $certificateIdentity := .Values.previewStack.certificateIdentity | default (dict) -}}
+{{- $mode := default "standalone" $certificateIdentity.mode -}}
 {{- if or (eq $mode "standalone") (eq $mode "hosted-controller") -}}
 {{- $mode -}}
 {{- else -}}

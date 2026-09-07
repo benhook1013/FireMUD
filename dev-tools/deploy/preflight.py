@@ -4419,6 +4419,11 @@ def validate_hosted_telnet_tls_values(
     required_identity_mode: str | None = None,
 ) -> list[str]:
     """Validate the hosted NodePort Telnet direct-TLS binding."""
+    if required_identity_mode is not None and required_identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        raise ValueError("required certificate identity mode is invalid")
     issues: list[str] = []
     tcp_services = [
         document
@@ -4432,6 +4437,10 @@ def validate_hosted_telnet_tls_values(
         if (document.get("spec") or {}).get("type") == "NodePort"
     ]
     if not nodeport_services:
+        if required_identity_mode is not None:
+            issues.append(
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+            )
         return issues
     if len(nodeport_services) != 1:
         issues.append(
@@ -4502,8 +4511,6 @@ def validate_hosted_telnet_tls_values(
         )
         return issues
     if required_identity_mode is not None:
-        if required_identity_mode not in {"standalone", "hosted-controller"}:
-            raise ValueError("required certificate identity mode is invalid")
         if identity_mode != required_identity_mode:
             issues.append(
                 f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"

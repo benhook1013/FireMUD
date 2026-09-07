@@ -51,6 +51,7 @@ env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 root = Path(sys.argv[1]) / "dev-tools" / "observability"
 sys.path.insert(0, str(root))
@@ -96,20 +97,48 @@ except ValueError as exc:
 else:
     raise AssertionError("TLS Telnet config without hostname was accepted")
 
+readable_ca_file = root / "run-player-experience-smoke.py"
 tls_config = runner_module.SmokeConfig.from_env(
     "contract-test",
     "telnet",
     None,
     telnet_transport="tls",
     telnet_server_hostname="preview.example.test",
-    telnet_ca_file=runner_module.Path("ca.pem"),
+    telnet_ca_file=readable_ca_file,
 )
 runner_module.validate_telnet_transport_config(tls_config, {"telnet"}, simulate=False)
 assert runner_module.telnet_socket_options(tls_config) == {
     "tls_enabled": True,
     "tls_server_hostname": "preview.example.test",
-    "tls_ca_file": runner_module.Path("ca.pem"),
+    "tls_ca_file": readable_ca_file,
 }
+for invalid_ca_file in (root / "missing-ca.pem", root):
+    invalid_ca_config = runner_module.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport="tls",
+        telnet_server_hostname="preview.example.test",
+        telnet_ca_file=invalid_ca_file,
+    )
+    try:
+        runner_module.validate_telnet_transport_config(
+            invalid_ca_config, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "readable regular file" in str(exc)
+    else:
+        raise AssertionError(f"TLS Telnet accepted invalid CA path: {invalid_ca_file}")
+
+with patch.object(Path, "open", side_effect=PermissionError("contract denied")):
+    try:
+        runner_module.validate_telnet_transport_config(
+            tls_config, {"telnet"}, simulate=False
+        )
+    except ValueError as exc:
+        assert "readable regular file" in str(exc)
+    else:
+        raise AssertionError("TLS Telnet accepted an unreadable CA file")
 plaintext_config = runner_module.SmokeConfig.from_env(
     "contract-test", "telnet", None, telnet_transport="plaintext"
 )

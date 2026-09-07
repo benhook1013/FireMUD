@@ -3,6 +3,7 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 
 import io.netty.handler.ssl.SslContext;
@@ -13,10 +14,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -25,6 +29,9 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerP
 import net.firedevops.firemud.springcloudgateway.config.TcpProxyTlsListener;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
@@ -178,6 +185,86 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     }
   }
 
+  @ParameterizedTest(name = "{0} in {1} requiresClientCertificate={2}")
+  @MethodSource("enabledTrustProfiles")
+  void enabledTrustProfilesConfigureTheExpectedListenerClientAuthentication(
+      String profile, String environment, boolean requiresClientCertificate) throws Exception {
+    int port = freePort();
+    GatewayTcpProxyListenerProperties listenerProperties =
+        listenerProperties(port, profile, environment);
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    Set<String> activeProfiles =
+        profile.equals("development_cidr") ? Set.of("test") : Set.of("prod");
+    TcpProxyTrustPolicy trustPolicy =
+        new TcpProxyTrustPolicy(
+            listenerProperties, headerProperties, 8080, Clock.systemUTC(), activeProfiles);
+    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
+    GameplayHandshakeFilter handshakeFilter =
+        new GameplayHandshakeFilter(
+            mock(JwtUtil.class),
+            mock(RuntimeIdentity.class),
+            null,
+            new MockEnvironment().withProperty("spring.profiles.active", "test"),
+            GameplayWebSocketObservability.disabled());
+
+    WebSocketHandler gameplayHandler =
+        session -> session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted")));
+    GenericApplicationContext context = new GenericApplicationContext();
+    SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
+    mapping.setOrder(-1);
+    mapping.setUrlMap(Map.of("/ws/game", gameplayHandler));
+    context.getBeanFactory().registerSingleton("gameplayMapping", mapping);
+    context
+        .getBeanFactory()
+        .registerSingleton("gameplayWebSocketHandlerAdapter", new WebSocketHandlerAdapter());
+    context.refresh();
+    mapping.setApplicationContext(context);
+
+    HttpHandler filteredHandler =
+        WebHttpHandlerBuilder.webHandler(new DispatcherHandler(context))
+            .filter(headerTrustFilter, handshakeFilter)
+            .build();
+    AtomicInteger applicationRequests = new AtomicInteger();
+    HttpHandler handler =
+        (request, response) -> {
+          applicationRequests.incrementAndGet();
+          return filteredHandler.handle(request, response);
+        };
+    TcpProxyTlsListener listener =
+        new TcpProxyTlsListener(listenerProperties, trustPolicy, handler);
+
+    try {
+      listener.start();
+      assertThat(trustPolicy.requiresClientCertificate()).isEqualTo(requiresClientCertificate);
+      if (requiresClientCertificate) {
+        Throwable handshakeFailure =
+            catchThrowable(() -> connect(port, bridgeHeaders(), clientContextWithoutIdentity()));
+        assertThat(handshakeFailure).as("TLS handshake without a client certificate").isNotNull();
+        assertThat(isTlsHandshakeRejection(handshakeFailure))
+            .as("failure must be a TLS/client-certificate handshake rejection")
+            .isTrue();
+        assertThat(applicationRequests)
+            .as("missing client certificate must be rejected before HTTP filtering")
+            .hasValue(0);
+      } else {
+        assertThat(connect(port, bridgeHeaders(), clientContextWithoutIdentity()))
+            .isEqualTo("admitted");
+        assertThat(applicationRequests).hasValue(1);
+      }
+    } finally {
+      listener.stop();
+      context.close();
+    }
+  }
+
+  private static Stream<Arguments> enabledTrustProfiles() {
+    return Stream.of(
+        Arguments.of("production_uri", "production", true),
+        Arguments.of("migration_dns", "pr-preview", true),
+        Arguments.of("breakglass_fingerprint", "dev-demo-cluster", true),
+        Arguments.of("development_cidr", "isolated-test", false));
+  }
+
   private static HttpHeaders bridgeHeaders() {
     HttpHeaders headers = new HttpHeaders();
     headers.set("X-Proxy-Client-IP", "203.0.113.99");
@@ -214,7 +301,35 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         .build();
   }
 
+  private static SslContext clientContextWithoutIdentity() throws Exception {
+    return SslContextBuilder.forClient().trustManager(commonFixture("dev-ca.pem").toFile()).build();
+  }
+
+  private static boolean isTlsHandshakeRejection(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SSLException) {
+        return true;
+      }
+      String message = cause.getMessage();
+      if (message != null) {
+        String normalized = message.toLowerCase(Locale.ROOT);
+        if (normalized.contains("certificate_required")
+            || normalized.contains("bad_certificate")
+            || normalized.contains("empty client certificate chain")
+            || normalized.contains("connection prematurely closed before opening handshake")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private static GatewayTcpProxyListenerProperties listenerProperties(int port) {
+    return listenerProperties(port, "production_uri", "production");
+  }
+
+  private static GatewayTcpProxyListenerProperties listenerProperties(
+      int port, String profile, String environment) {
     GatewayTcpProxyListenerProperties properties = new GatewayTcpProxyListenerProperties();
     properties.setEnabled(true);
     properties.setBindAddress("127.0.0.1");
@@ -222,9 +337,27 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     properties.setCertificateChainPath(commonFixture("dev-cert.pem").toString());
     properties.setPrivateKeyPath(commonFixture("dev-key.pem").toString());
     properties.setTrustedClientCaPath(gatewayFixture("tcp-proxy-client-ca.pem").toString());
-    properties.setEnvironment("production");
-    properties.setTrustProfile("production_uri");
-    properties.getProductionUri().setUriSan(TCP_PROXY_URI);
+    properties.setEnvironment(environment);
+    properties.setTrustProfile(profile);
+    switch (profile) {
+      case "production_uri" -> properties.getProductionUri().setUriSan(TCP_PROXY_URI);
+      case "migration_dns" -> {
+        properties.getMigrationDns().setDnsSan("tcp-proxy.internal");
+        properties.getMigrationDns().setOwner("platform");
+        properties.getMigrationDns().setReason("listener client-auth integration proof");
+        properties.getMigrationDns().setExpiresAt("2999-01-01T00:00:00Z");
+      }
+      case "breakglass_fingerprint" -> {
+        properties.getBreakglassFingerprint().setSha256("0".repeat(64));
+        properties.getBreakglassFingerprint().setIncidentReference("INC-TEST");
+        properties.getBreakglassFingerprint().setExpiresAt("2999-01-01T00:00:00Z");
+      }
+      case "development_cidr" -> {
+        properties.setTrustedClientCaPath(null);
+        properties.getDevelopmentCidr().setTrustedCidr("127.0.0.1/32");
+      }
+      default -> throw new IllegalArgumentException("unsupported test profile " + profile);
+    }
     return properties;
   }
 

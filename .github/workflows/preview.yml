@@ -14,6 +14,7 @@ on:
       - synchronize
       - reopened
       - labeled
+      - unlabeled
       - closed
   workflow_dispatch:
     inputs:
@@ -55,7 +56,7 @@ jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'preview:priority')) }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'preview:priority' || github.event.label.name == 'preview:paused')) }}
     # Only supersede the non-mutating plan. Deploy, proof, and cleanup retain
     # their place in the shared non-cancelling lifecycle queue below.
     concurrency:
@@ -92,7 +93,8 @@ jobs:
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
-            if [ "${{ github.event.action }}" = "closed" ]; then
+            if [ "${{ github.event.action }}" = "closed" ] || \
+              { [ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "preview:paused" ]; }; then
               ACTION="destroy"
             else
               ACTION="deploy"
@@ -854,15 +856,25 @@ jobs:
             });
             const requiresClosedState =
               context.eventName === "pull_request" && context.payload.action === "closed";
+            const requiresPausedLabel =
+              context.eventName === "pull_request" &&
+              context.payload.action === "labeled" &&
+              context.payload.label?.name === "preview:paused";
+            const pauseStillPresent =
+              Array.isArray(currentPullRequest.labels) &&
+              currentPullRequest.labels.some(label => label?.name === "preview:paused");
 
             if (
               (requiresClosedState && currentPullRequest.state !== "closed") ||
+              (requiresPausedLabel && !pauseStillPresent) ||
               currentPullRequest.head?.sha !== expectedHeadSha
             ) {
               core.setFailed(
                 `Aborting stale preview cleanup for PR #${prNumber}: ` +
-                `expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}, current ` +
-                `${currentPullRequest.state}/${currentPullRequest.head?.sha}`
+                `expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}` +
+                `${requiresPausedLabel ? " with preview:paused" : ""}, current ` +
+                `${currentPullRequest.state}/${currentPullRequest.head?.sha}` +
+                `${requiresPausedLabel ? ` paused=${pauseStillPresent}` : ""}`
               );
               return;
             }
