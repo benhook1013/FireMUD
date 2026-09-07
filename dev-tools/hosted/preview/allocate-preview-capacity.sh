@@ -76,6 +76,7 @@ find_unsatisfied_priority_pr() {
   local is_priority
   local is_paused
   local labels_valid
+  local labels_json
   local namespace
   local namespace_owner
   local namespace_head
@@ -95,13 +96,14 @@ find_unsatisfied_priority_pr() {
           .state,
           (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
           (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
-          (if labels_valid then "valid" else "invalid" end)
+          (if labels_valid then "valid" else "invalid" end),
+          (if labels_valid then (.labels | tojson) else "null" end)
         ]
       | @tsv')"; then
     echo "Unable to query current priority pull requests" >&2
     return 1
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid; do
+  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid labels_json; do
     if [[ -z "$pr_number" ]]; then
       continue
     fi
@@ -120,7 +122,7 @@ find_unsatisfied_priority_pr() {
       --state "$pr_state" \
       --base-ref "$pr_base_ref" \
       --author "$pr_author" \
-      --labels-json '[]')"; then
+      --labels-json "$labels_json")"; then
       echo "Unable to evaluate preview eligibility for priority PR #${pr_number}" >&2
       return 1
     fi

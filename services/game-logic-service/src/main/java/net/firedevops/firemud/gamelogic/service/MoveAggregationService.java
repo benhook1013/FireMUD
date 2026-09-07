@@ -81,6 +81,10 @@ public class MoveAggregationService {
 
       try {
         String destinationGameInstanceId = resolveGameInstanceId(request, snapshot);
+        if (!StringUtils.hasText(destinationGameInstanceId)) {
+          throw new IllegalArgumentException(
+              "destination room_instance.game_instance_id must not be empty");
+        }
         RoomInstanceRef destinationRoom =
             RuntimeRoomInstanceRefs.requireCanonical(
                 RoomInstanceRef.newBuilder()

@@ -151,6 +151,43 @@ class MoveAggregationServiceTest {
   }
 
   @Test
+  void resolveRejectsDestinationWithoutGameInstanceAsWorldFailure() {
+    RoomSnapshot snapshot =
+        RoomSnapshot.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+            .addExits(
+                RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
+                    .setTargetRoomInstanceId("R-3042")
+                    .build())
+            .build();
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+
+    MoveResult result =
+        service.resolve(
+            MoveRequest.newBuilder()
+                .setTenantId(LookTestFixtures.TENANT)
+                .setSessionId("session-1")
+                .setCharacterId("player-1")
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId(LookTestFixtures.TENANT)
+                        .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                        .build())
+                .setDirection("north")
+                .build());
+
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.hasDestinationRoomInstance()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("WORLD_UNAVAILABLE");
+    assertThat(result.getError().getMessage())
+        .isEqualTo(
+            "WorldManagementService: destination room_instance.game_instance_id must not be empty");
+  }
+
+  @Test
   void resolveRejectsSnapshotTenantThatDiffersFromRequestTenant() {
     RoomSnapshot snapshot =
         RoomSnapshot.newBuilder()

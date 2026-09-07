@@ -6318,7 +6318,7 @@ def main() -> int:
             bridge_validation_failure_message(bridge_issues),
         ) or has_required_failure
     else:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge and direct Telnet TLS alignment is valid") or has_required_failure
 
     _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
     if redis_issues:

@@ -86,6 +86,34 @@ def read_latest_cursor_from_store(path, ready, start, results):
 
 
 class TelnetSessionDriverTest(unittest.TestCase):
+    def test_repeated_local_appends_reuse_observed_cursor_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            store = telnet_session.EvidenceStore(transcript)
+            first = store.append("system", "connect")
+
+            with patch.object(
+                store, "_scan_next_seq", wraps=store._scan_next_seq
+            ) as scan:
+                second = store.append("inbound", "received", text="room")
+                latest = store.latest_cursor()
+
+            self.assertEqual(second["cursor"], first["cursor"] + 1)
+            self.assertEqual(latest, second["cursor"])
+            scan.assert_not_called()
+            self.assertEqual(store._next_seq, second["cursor"] + 1)
+
+    def test_reopened_store_resumes_from_durable_cursor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            writer = telnet_session.EvidenceStore(transcript)
+            previous = writer.append("system", "connect")
+
+            reopened = telnet_session.EvidenceStore(transcript)
+            resumed = reopened.append("inbound", "received", text="resumed")
+
+            self.assertEqual(resumed["cursor"], previous["cursor"] + 1)
+
     def test_transcript_append_allocates_unique_cursors_across_processes(self):
         context = multiprocessing.get_context("fork")
         with tempfile.TemporaryDirectory() as directory:
@@ -553,6 +581,85 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertIn("LOGIN demo@example.com [REDACTED]", transcript_text)
             self.assertIn("LOGIN demo@example.com [REDACTED]", rendered)
 
+    def test_login_redaction_reassembles_room_text_across_socket_boundary(self):
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            connection.sendall(b"L")
+            time.sleep(0.02)
+            connection.sendall(b"antern light fills the room.\r\n")
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command("LOGIN demo@example.com secret-7")
+            records = wait_for(
+                session.store,
+                lambda rows: any(
+                    row.get("text") == "Lantern light fills the room.\r\n"
+                    for row in rows
+                ),
+            )
+            session.close("boundary_complete")
+            server.close_and_check()
+
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(received, ["Lantern light fills the room.\r\n"])
+
+    def test_login_redaction_drops_cross_socket_credential_near_match(self):
+        secret = "secret-7"
+
+        def handler(connection):
+            command = b""
+            while not command.endswith(b"\r\n"):
+                command += connection.recv(1)
+            echoed_command = command.removesuffix(b"\r\n")
+            connection.sendall(echoed_command[:-1])
+            time.sleep(0.02)
+            connection.sendall(b"X\r\n")
+            time.sleep(0.08)
+
+        server = FakeServer(handler)
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            output = []
+            session = telnet_session.TelnetSession(
+                "127.0.0.1",
+                server.port,
+                transcript,
+                output=output.append,
+                tls_enabled=False,
+            )
+            session.connect()
+            session.send_command(f"LOGIN demo@example.com {secret}")
+            records = wait_for(
+                session.store,
+                lambda rows: any(row.get("text") == "X\r\n" for row in rows),
+            )
+            session.close("boundary_complete")
+            server.close_and_check()
+
+            transcript_text = transcript.read_text(encoding="utf-8")
+            rendered = "\n".join(output)
+            received = [
+                row["text"] for row in records if row.get("event") == "received"
+            ]
+            self.assertEqual(received, ["X\r\n"])
+            self.assertNotIn(secret, transcript_text)
+            self.assertNotIn(secret, rendered)
+
     def test_login_redaction_drops_partial_prefix_on_unrelated_bytes(self):
         _, raw, replacement = telnet_session._login_redaction(
             "LOGIN demo@example.com secret-7"
@@ -596,6 +703,45 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual(partial, b"")
             self.assertEqual(trailing, b"")
             self.assertEqual(session.redaction_tail, b"")
+
+    def test_login_redaction_drops_disproved_in_chunk_credential_prefix(self):
+        _, raw, replacement = telnet_session._login_redaction(
+            "LOGIN demo@example.com secret-7"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.redaction_patterns.append((raw, replacement))
+
+            safe = session._redact_inbound(b"room: " + raw[:-1] + b"X\r\n")
+
+            self.assertEqual(safe, b"room: X\r\n")
+            self.assertNotIn(b"secret", safe)
+            self.assertNotIn(raw[:-1], safe)
+            self.assertEqual(session.redaction_tail, b"")
+
+    def test_login_redaction_preserves_unrelated_in_chunk_text(self):
+        _, raw, replacement = telnet_session._login_redaction(
+            "LOGIN demo@example.com secret-7"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.redaction_patterns.append((raw, replacement))
+
+            safe = session._redact_inbound(b"Lantern light fills the room.\r\n")
+
+            self.assertEqual(safe, b"Lantern light fills the room.\r\n")
 
     def test_login_redaction_handles_leading_whitespace_and_extra_tail(self):
         command = "\t LOGIN demo@example.com secret extra-token"

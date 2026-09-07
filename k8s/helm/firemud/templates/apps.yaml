@@ -47,7 +47,7 @@ spec:
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
-            {{- if ne $key "TCP_PROXY_TELNET_MODE" }}
+            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
@@ -66,7 +66,7 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}
-            {{- if ne $key "TCP_PROXY_TELNET_MODE" }}
+            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}

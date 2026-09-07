@@ -44,9 +44,14 @@ paused_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-re
 grep -q '^eligible=true$' <<<"$paused_destroy"
 grep -q '^reason=eligible$' <<<"$paused_destroy"
 
-malformed_labels="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
-grep -q '^eligible=false$' <<<"$malformed_labels"
-grep -q '^reason=malformed-label-metadata$' <<<"$malformed_labels"
+malformed_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+grep -q '^eligible=false$' <<<"$malformed_deploy"
+grep -q '^reason=malformed-label-metadata$' <<<"$malformed_deploy"
+
+malformed_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+grep -q '^eligible=false$' <<<"$malformed_retain"
+grep -q '^reason=malformed-label-metadata$' <<<"$malformed_retain"
+
 malformed_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
 grep -q '^eligible=true$' <<<"$malformed_destroy"
 grep -q '^reason=eligible$' <<<"$malformed_destroy"

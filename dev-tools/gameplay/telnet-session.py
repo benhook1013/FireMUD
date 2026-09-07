@@ -63,13 +63,39 @@ class EvidenceStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._next_seq = self._find_next_seq()
+        self._next_seq = 1
+        self._observed_file_state: tuple[int, int, int, int] | None = None
+        try:
+            fd = os.open(self.path, os.O_RDONLY)
+        except FileNotFoundError:
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            try:
+                self._refresh_next_seq(fd)
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
-    def _find_next_seq(self) -> int:
-        if not self.path.exists():
-            return 1
+    @staticmethod
+    def _file_state(fd: int) -> tuple[int, int, int, int]:
+        stat = os.fstat(fd)
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+    def _refresh_next_seq(self, fd: int) -> None:
+        observed = self._file_state(fd)
+        if observed == self._observed_file_state:
+            return
+
+        self._next_seq = self._scan_next_seq(fd)
+        self._observed_file_state = observed
+
+    @staticmethod
+    def _scan_next_seq(fd: int) -> int:
         last = 0
-        with self.path.open(encoding="utf-8") as stream:
+        with os.fdopen(os.dup(fd), encoding="utf-8") as stream:
+            stream.seek(0)
             for line in stream:
                 try:
                     last = max(last, int(json.loads(line)["seq"]))
@@ -81,12 +107,12 @@ class EvidenceStore:
         with self._lock:
             # The process-local lock protects threads; flock protects writers
             # sharing this transcript across processes.
-            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            fd = os.open(self.path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
             try:
                 os.fchmod(fd, 0o600)
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 try:
-                    self._next_seq = self._find_next_seq()
+                    self._refresh_next_seq(fd)
                     seq = self._next_seq
                     self._next_seq += 1
                     record = {
@@ -105,6 +131,7 @@ class EvidenceStore:
                         stream.write(line)
                         stream.flush()
                         os.fsync(stream.fileno())
+                    self._observed_file_state = self._file_state(fd)
                     return record
                 finally:
                     fcntl.flock(fd, fcntl.LOCK_UN)
@@ -137,11 +164,12 @@ class EvidenceStore:
                 # A missing transcript has no durable evidence. In particular,
                 # do not create it merely to answer a cursor query.
                 self._next_seq = 1
+                self._observed_file_state = None
                 return 0
             try:
                 fcntl.flock(fd, fcntl.LOCK_SH)
                 try:
-                    self._next_seq = self._find_next_seq()
+                    self._refresh_next_seq(fd)
                     return self._next_seq - 1
                 finally:
                     fcntl.flock(fd, fcntl.LOCK_UN)
@@ -337,19 +365,21 @@ class TelnetSession:
                 cursor = start + matched
                 continue
 
+            login_prefix = re.match(rb"(?i)^[ \t]*LOGIN[ \t]+\S+[ \t]+", pattern)
+            includes_credential = login_prefix is None or matched > login_prefix.end()
             if start + matched == len(combined):
                 if not final:
                     self.redaction_tail = combined[start:]
+                elif not includes_credential:
+                    safe.extend(combined[start : start + matched])
                 break
 
-            # A partial prefix inherited from an earlier receive must not be
-            # emitted when the next bytes disprove the command. Prefixes found
-            # entirely in this chunk are ordinary text once they mismatch.
-            if start < len(previous_tail):
-                cursor = start + matched
-            else:
+            # Never emit a disproved prefix once it includes credential bytes.
+            # Harmless prefixes are restored even when a socket boundary made
+            # them ambiguous in the preceding receive.
+            if not includes_credential:
                 safe.extend(combined[start : start + matched])
-                cursor = start + matched
+            cursor = start + matched
 
         if final:
             self.redaction_tail = b""
