@@ -89,7 +89,12 @@ public class TlsCertificateWatcher implements AutoCloseable {
           return;
         }
         logger.info("TLS certificate projection or file change detected; reloading credentials");
-        onChange.run();
+        try {
+          onChange.run();
+        } catch (RuntimeException e) {
+          logger.error(
+              "TLS certificate reload callback failed; continuing to watch credentials", e);
+        }
       }
     }
   }

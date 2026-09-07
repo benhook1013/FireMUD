@@ -2,12 +2,14 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.security.MessageDigest;
+import java.security.cert.CertificateExpiredException;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,6 +53,15 @@ class TcpProxyTrustPolicyTest {
     assertThat(policy.authenticatePeer(sslInfo(certificate(List.of(san(6, TCP_PROXY_URI)), false))))
         .isFalse();
     assertThat(policy.authenticatePeer(sslInfo(null))).isFalse();
+  }
+
+  @Test
+  void productionUriRejectsExpiredClientCertificate() throws Exception {
+    TcpProxyTrustPolicy policy = policy(properties("production_uri"), Set.of("prod"));
+    X509Certificate expired = certificate(List.of(san(6, TCP_PROXY_URI)), true);
+    doThrow(new CertificateExpiredException("expired")).when(expired).checkValidity(Date.from(NOW));
+
+    assertThat(policy.authenticatePeer(sslInfo(expired))).isFalse();
   }
 
   @Test
@@ -281,7 +292,6 @@ class TcpProxyTrustPolicyTest {
     when(certificate.getExtendedKeyUsage())
         .thenReturn(clientAuth ? List.of(TcpProxyTrustPolicy.CLIENT_AUTH_EKU) : List.of());
     when(certificate.getEncoded()).thenReturn(encoded);
-    certificate.checkValidity(Date.from(NOW));
     return certificate;
   }
 

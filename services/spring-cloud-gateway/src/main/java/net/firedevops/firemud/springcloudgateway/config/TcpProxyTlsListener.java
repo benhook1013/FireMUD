@@ -8,7 +8,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import java.io.File;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -204,17 +203,12 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     public reactor.core.publisher.Mono<Void> handle(
         org.springframework.http.server.reactive.ServerHttpRequest request,
         org.springframework.http.server.reactive.ServerHttpResponse response) {
-      String path;
-      try {
-        path = URI.create(request.getURI().toString()).getPath();
-      } catch (RuntimeException ex) {
-        response.setStatusCode(HttpStatus.NOT_FOUND);
-        return response.setComplete();
-      }
-      if (path.equals("/ws/game")
-          || path.startsWith("/ws/game/")
-          || path.equals("/actuator/health/readiness")
-          || path.equals("/actuator/health/liveness")) {
+      String path = request.getURI().getPath();
+      if (path != null
+          && (path.equals("/ws/game")
+              || path.startsWith("/ws/game/")
+              || path.equals("/actuator/health/readiness")
+              || path.equals("/actuator/health/liveness"))) {
         return delegate.handle(request, response);
       }
       response.setStatusCode(HttpStatus.NOT_FOUND);

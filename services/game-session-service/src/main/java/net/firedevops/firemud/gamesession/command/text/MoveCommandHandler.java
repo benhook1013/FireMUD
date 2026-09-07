@@ -227,7 +227,9 @@ public class MoveCommandHandler {
   private boolean matchesDestination(RoomInstanceRef destination, LookResult lookResult) {
     return lookResult != null
         && lookResult.hasRoomInstance()
-        && destination.equals(lookResult.getRoomInstance());
+        && destination.getTenantId().equals(lookResult.getRoomInstance().getTenantId())
+        && destination.getGameInstanceId().equals(lookResult.getRoomInstance().getGameInstanceId())
+        && destination.getRoomInstanceId().equals(lookResult.getRoomInstance().getRoomInstanceId());
   }
 
   private PreparedMoveCommandResult failureResult(

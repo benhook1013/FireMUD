@@ -180,6 +180,21 @@ class MoveCommandHandlerTest {
   }
 
   @Test
+  void moveRejectsSuccessfulResultWithoutDestinationIdentity() {
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(MoveResult.newBuilder().setSuccess(true).build());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
+    assertThat(result.updatedContext()).isNull();
+    verify(lookCommandHandler, never()).resolveLook(any(SessionContext.class));
+  }
+
+  @Test
   void moveRejectsNoncanonicalDestinationIdentity() {
     assertDestinationIdentityRejected(
         RoomInstanceRef.newBuilder()

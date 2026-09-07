@@ -32,7 +32,7 @@ class TelnetServerHandlerSpringBootTest {
             false,
             meterRegistry,
             () -> true,
-            TelnetServerHandler::createWebSocket,
+            TelnetServerHandler.webSocketConnector("ws://localhost/ws"),
             eventService,
             bufferDepth,
             sessionId,

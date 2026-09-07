@@ -153,7 +153,6 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   public CompletableFuture<WebSocket> connect(
-      String ignoredGatewayWsUrl,
       String clientIp,
       String proxyConnectionId,
       String gameInstanceId,

@@ -85,7 +85,6 @@ class GatewayWebSocketClientTest {
     WebSocket webSocket =
         client
             .connect(
-                "wss://ignored.invalid/ws/game",
                 "127.0.0.1",
                 "connection-1",
                 "instance-1",
@@ -240,16 +239,7 @@ class GatewayWebSocketClientTest {
             ExecutionException.class,
             () ->
                 client
-                    .connect(
-                        "ws://127.0.0.2:" + server.getPort() + "/ws/game",
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        new WebSocket.Listener() {})
+                    .connect(null, null, null, null, null, null, null, new WebSocket.Listener() {})
                     .get(5, TimeUnit.SECONDS));
 
     assertNotNull(failure.getCause());
@@ -304,8 +294,7 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
-  void transportSpecificLeavesMayShareTheCanonicalWorkloadPrincipal() throws Exception {
-    String canonicalPrincipal = "spiffe://firemud/ns/demo/sa/tcp-proxy-service";
+  void transportSpecificLeavesMustUseDistinctKeyMaterial() {
     X509Certificate websocketCertificate = mock(X509Certificate.class);
     X509Certificate grpcCertificate = mock(X509Certificate.class);
     PublicKey websocketKey = mock(PublicKey.class);
@@ -314,10 +303,6 @@ class GatewayWebSocketClientTest {
     when(grpcKey.getEncoded()).thenReturn(new byte[] {4, 5, 6});
     when(websocketCertificate.getPublicKey()).thenReturn(websocketKey);
     when(grpcCertificate.getPublicKey()).thenReturn(grpcKey);
-    when(websocketCertificate.getSubjectAlternativeNames())
-        .thenReturn(List.of(List.of(6, canonicalPrincipal)));
-    when(grpcCertificate.getSubjectAlternativeNames())
-        .thenReturn(List.of(List.of(6, canonicalPrincipal)));
 
     assertFalse(GatewayWebSocketClient.samePublicKey(websocketCertificate, grpcCertificate));
   }
@@ -356,7 +341,6 @@ class GatewayWebSocketClientTest {
     HttpClient oldGeneration = (HttpClient) client.clientIdentity();
     client
         .connect(
-            "wss://ignored.invalid/ws/game",
             null,
             null,
             null,
@@ -443,16 +427,7 @@ class GatewayWebSocketClientTest {
     awaitGenerationCount(client, 0);
     assertTrue(
         client
-            .connect(
-                "wss://localhost:8443/ws/game",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new WebSocket.Listener() {})
+            .connect(null, null, null, null, null, null, null, new WebSocket.Listener() {})
             .isCompletedExceptionally());
 
     Files.copy(
@@ -525,16 +500,7 @@ class GatewayWebSocketClientTest {
 
     WebSocket webSocket =
         client
-            .connect(
-                "wss://ignored.invalid/ws/game",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new WebSocket.Listener() {})
+            .connect(null, null, null, null, null, null, null, new WebSocket.Listener() {})
             .get(5, TimeUnit.SECONDS);
     var request = Objects.requireNonNull(server.takeRequest(5, TimeUnit.SECONDS));
     var handshake = Objects.requireNonNull(request.getHandshake());
@@ -605,10 +571,16 @@ class GatewayWebSocketClientTest {
     if (Files.isRegularFile(moduleSibling)) {
       return moduleSibling;
     }
-    return workingDirectory
-        .resolve("services/spring-cloud-gateway/src/test/resources/certs")
-        .resolve(name)
-        .normalize();
+    Path repositoryFixture =
+        workingDirectory
+            .resolve("services/spring-cloud-gateway/src/test/resources/certs")
+            .resolve(name)
+            .normalize();
+    if (Files.isRegularFile(repositoryFixture)) {
+      return repositoryFixture;
+    }
+    throw new IllegalStateException(
+        "Gateway TLS fixture not found at " + moduleSibling + " or " + repositoryFixture);
   }
 
   private Path copyResource(String resourceName, String fileName) throws Exception {

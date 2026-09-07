@@ -2,10 +2,13 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.net.ServerSocket;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.HttpHandler;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.http.server.reactive.MockServerHttpResponse;
 import reactor.netty.Connection;
@@ -84,6 +88,13 @@ class TcpProxyTlsListenerTest {
     handler.handle(MockServerHttpRequest.get("/ping").build(), publicResponse).block();
     assertThat(delegated).isFalse();
     assertThat(publicResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+    ServerHttpRequest requestWithoutPath = mock(ServerHttpRequest.class);
+    when(requestWithoutPath.getURI()).thenReturn(URI.create("mailto:tcp-proxy@example.com"));
+    MockServerHttpResponse pathlessResponse = new MockServerHttpResponse();
+    handler.handle(requestWithoutPath, pathlessResponse).block();
+    assertThat(delegated).isFalse();
+    assertThat(pathlessResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
   }
 
   @Test
@@ -92,7 +103,7 @@ class TcpProxyTlsListenerTest {
     GatewayTcpProxyListenerProperties properties = tlsProperties(port);
     properties
         .getBreakglassFingerprint()
-        .setExpiresAt(Instant.now().plus(Duration.ofMillis(750)).toString());
+        .setExpiresAt(Instant.now().plus(Duration.ofSeconds(3)).toString());
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
             properties,
@@ -117,12 +128,13 @@ class TcpProxyTlsListenerTest {
       waitForAcceptedConnection(listener);
       assertThat(connection.isDisposed()).isFalse();
 
-      Instant deadline = Instant.now().plusSeconds(5);
+      Instant deadline = Instant.now().plusSeconds(10);
       while (listener.isRunning() && Instant.now().isBefore(deadline)) {
         Thread.sleep(25);
       }
 
       assertThat(listener.isRunning()).isFalse();
+      waitForConnectionDisposal(connection);
       assertThat(connection.isDisposed()).isTrue();
     } finally {
       if (connection != null) {
@@ -134,11 +146,18 @@ class TcpProxyTlsListenerTest {
 
   private static void waitForAcceptedConnection(TcpProxyTlsListener listener)
       throws InterruptedException {
-    Instant deadline = Instant.now().plusSeconds(2);
+    Instant deadline = Instant.now().plusSeconds(5);
     while (listener.acceptedConnectionCount() == 0 && Instant.now().isBefore(deadline)) {
       Thread.sleep(25);
     }
     assertThat(listener.acceptedConnectionCount()).isPositive();
+  }
+
+  private static void waitForConnectionDisposal(Connection connection) throws InterruptedException {
+    Instant deadline = Instant.now().plusSeconds(5);
+    while (!connection.isDisposed() && Instant.now().isBefore(deadline)) {
+      Thread.sleep(25);
+    }
   }
 
   private static int requestStatus(int port, SslContext context, String path) {

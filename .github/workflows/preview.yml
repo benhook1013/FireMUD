@@ -355,10 +355,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
         run: |
           set -euo pipefail
           pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           test "$(jq -r '.state' <<<"$pull_request_json")" = open
+          test "$(jq -r '.head.sha' <<<"$pull_request_json")" = "$EXPECTED_HEAD_SHA"
+          test "$(jq -r '.head.repo.full_name' <<<"$pull_request_json")" = "$GITHUB_REPOSITORY"
           labels_valid="$(jq -r '
             if ((.labels? | type) == "array")
               and all(.labels[]?; (type == "object") and ((.name? | type) == "string"))
@@ -366,6 +369,13 @@ jobs:
           ' <<<"$pull_request_json")"
           [[ "$labels_valid" == true ]]
           [[ "$(jq -r 'any(.labels[]?; .name == "preview:paused")' <<<"$pull_request_json")" == false ]]
+          eligibility_output="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+            --operation deploy \
+            --state "$(jq -r '.state' <<<"$pull_request_json")" \
+            --base-ref "$(jq -r '.base.ref' <<<"$pull_request_json")" \
+            --author "$(jq -r '.user.login' <<<"$pull_request_json")" \
+            --labels-json "$(jq -c '.labels // null' <<<"$pull_request_json")")"
+          grep -qx 'eligible=true' <<<"$eligibility_output"
 
       - name: Enforce preview capacity
         if: ${{ steps.preview-access.outputs.available == 'true' }}

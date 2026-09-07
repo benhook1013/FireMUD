@@ -125,7 +125,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         advertiseMcp,
         meterRegistry,
         gameplayTrafficReady,
-        TelnetServerHandler::createWebSocket,
+        webSocketConnector(gatewayWsUrl),
         eventService,
         bufferDepth,
         null,
@@ -254,7 +254,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @FunctionalInterface
   interface WebSocketConnector {
     CompletableFuture<WebSocket> connect(
-        String gatewayWsUrl,
         String clientIp,
         String proxyConnectionId,
         String gameInstanceId,
@@ -263,6 +262,27 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         String realmSlug,
         String pointerVersion,
         Listener listener);
+  }
+
+  static WebSocketConnector webSocketConnector(String gatewayWsUrl) {
+    return (clientIp,
+        proxyConnectionId,
+        gameInstanceId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        listener) ->
+        createWebSocket(
+            gatewayWsUrl,
+            clientIp,
+            proxyConnectionId,
+            gameInstanceId,
+            tenantId,
+            worldSlug,
+            realmSlug,
+            pointerVersion,
+            listener);
   }
 
   static CompletableFuture<WebSocket> createWebSocket(
@@ -592,7 +612,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = true;
     webSocketConnector
         .connect(
-            gatewayWsUrl,
             clientIp,
             proxyConnectionId,
             sessionContext.gameInstanceId(),
