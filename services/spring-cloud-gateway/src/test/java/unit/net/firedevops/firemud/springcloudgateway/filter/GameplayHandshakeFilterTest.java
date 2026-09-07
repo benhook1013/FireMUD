@@ -472,7 +472,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -503,7 +503,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -555,7 +555,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -588,7 +588,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -622,7 +622,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),

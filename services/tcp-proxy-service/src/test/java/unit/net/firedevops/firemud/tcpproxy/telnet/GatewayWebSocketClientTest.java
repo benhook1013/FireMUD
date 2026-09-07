@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -63,12 +65,64 @@ class GatewayWebSocketClientTest {
 
   @AfterEach
   void closeResources() throws Exception {
+    Exception failure = null;
     for (GatewayWebSocketClient client : clients) {
-      client.close();
+      try {
+        client.close();
+      } catch (Exception error) {
+        failure = collectFailure(failure, error);
+      }
     }
     for (MockWebServer server : servers) {
-      server.close();
+      try {
+        server.close();
+      } catch (Exception error) {
+        failure = collectFailure(failure, error);
+      }
     }
+    if (failure != null) {
+      throw failure;
+    }
+  }
+
+  private static Exception collectFailure(Exception collected, Exception error) {
+    if (collected == null) {
+      return error;
+    }
+    collected.addSuppressed(error);
+    return collected;
+  }
+
+  @Test
+  void teardownAttemptsEveryResourceAndCollectsFailures() throws Exception {
+    GatewayWebSocketClient failingClient = mock(GatewayWebSocketClient.class);
+    GatewayWebSocketClient succeedingClient = mock(GatewayWebSocketClient.class);
+    MockWebServer failingServer = mock(MockWebServer.class);
+    MockWebServer succeedingServer = mock(MockWebServer.class);
+    Exception clientFailure = new java.io.IOException("client close failed");
+    Exception serverFailure = new java.io.IOException("server close failed");
+    doThrow(clientFailure).when(failingClient).close();
+    doThrow(serverFailure).when(failingServer).close();
+    clients.add(failingClient);
+    clients.add(succeedingClient);
+    servers.add(failingServer);
+    servers.add(succeedingServer);
+
+    Exception failure;
+    try {
+      failure = assertThrows(Exception.class, this::closeResources);
+    } finally {
+      clients.clear();
+      servers.clear();
+    }
+
+    assertSame(clientFailure, failure);
+    assertEquals(1, failure.getSuppressed().length);
+    assertSame(serverFailure, failure.getSuppressed()[0]);
+    verify(failingClient).close();
+    verify(succeedingClient).close();
+    verify(failingServer).close();
+    verify(succeedingServer).close();
   }
 
   @Test

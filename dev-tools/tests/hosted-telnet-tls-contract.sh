@@ -159,7 +159,11 @@ from pathlib import Path
 
 import yaml
 
-documents = yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
 deployment = next(
     document
     for document in documents
@@ -232,22 +236,23 @@ root = Path(os.environ["ROOT_DIR"])
 sys.path.insert(0, str(root / "dev-tools" / "deploy"))
 import preflight
 
-documents = list(yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8")))
+
+def load_yaml_mappings(path):
+    return [
+        document
+        for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+
+
+documents = load_yaml_mappings(Path(os.environ["RENDERED"]))
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
 
-controller_documents = list(
-    yaml.safe_load_all(
-        Path(os.environ["CONTROLLER_RENDERED"]).read_text(encoding="utf-8")
-    )
-)
+controller_documents = load_yaml_mappings(Path(os.environ["CONTROLLER_RENDERED"]))
 controller_issues = preflight.validate_hosted_telnet_tls_values(controller_documents)
 assert not controller_issues, controller_issues
-null_identity_documents = list(
-    yaml.safe_load_all(
-        Path(os.environ["NULL_IDENTITY_RENDERED"]).read_text(encoding="utf-8")
-    )
-)
+null_identity_documents = load_yaml_mappings(Path(os.environ["NULL_IDENTITY_RENDERED"]))
 null_identity_issues = preflight.validate_hosted_telnet_tls_values(
     null_identity_documents
 )
@@ -458,7 +463,7 @@ volumes = deployment["spec"]["template"]["spec"]["volumes"]
 volume = next(v for v in volumes if v["name"] == mount["name"])
 assert volume["secret"]["secretName"] == "preview-release-telnet-tls"
 
-omitted_documents = list(yaml.safe_load_all(Path(os.environ["OMITTED_RENDERED"]).read_text(encoding="utf-8")))
+omitted_documents = load_yaml_mappings(Path(os.environ["OMITTED_RENDERED"]))
 assert not any(d.get("kind") == "Certificate" for d in omitted_documents), "omitted TLS still renders a Certificate"
 omitted_deployment = next(
     d for d in omitted_documents
@@ -603,17 +608,19 @@ assert ambiguous_certificate_issues == [
     "hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate"
 ], ambiguous_certificate_issues
 
-disabled_documents = list(yaml.safe_load_all(Path(os.environ["DISABLED_RENDERED"]).read_text(encoding="utf-8")))
+disabled_documents = load_yaml_mappings(Path(os.environ["DISABLED_RENDERED"]))
 assert not any(d.get("kind") == "Certificate" for d in disabled_documents), "disabled TLS still renders a Certificate"
 disabled_deployment = next(d for d in disabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 disabled_env = {entry["name"]: entry.get("value") for entry in disabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert "TCP_PROXY_TLS_ENABLED" not in disabled_env, "disabled TLS still renders enablement"
 assert disabled_env["TCP_PROXY_TELNET_MODE"] == "PLAINTEXT", "disabled TLS discarded the configured Telnet mode"
-configured_enabled_documents = list(yaml.safe_load_all(Path(os.environ["CONFIGURED_ENABLED_RENDERED"]).read_text(encoding="utf-8")))
+configured_enabled_documents = load_yaml_mappings(
+    Path(os.environ["CONFIGURED_ENABLED_RENDERED"])
+)
 configured_enabled_deployment = next(d for d in configured_enabled_documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 configured_enabled_env = {entry["name"]: entry.get("value") for entry in configured_enabled_deployment["spec"]["template"]["spec"]["containers"][0].get("env", [])}
 assert configured_enabled_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS", "enabled TLS did not enforce canonical direct mode"
-managed_env_documents = list(yaml.safe_load_all(Path(os.environ["MANAGED_ENV_RENDERED"]).read_text(encoding="utf-8")))
+managed_env_documents = load_yaml_mappings(Path(os.environ["MANAGED_ENV_RENDERED"]))
 managed_env_deployment = next(
     d for d in managed_env_documents
     if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"
@@ -630,9 +637,11 @@ assert managed_env["TCP_PROXY_TLS_CERT"] == "/telnet-tls/tls.crt"
 assert managed_env["TCP_PROXY_TLS_KEY"] == "/telnet-tls/tls.key"
 assert managed_env["TCP_PROXY_TELNET_MODE"] == "DIRECT_TLS"
 assert managed_env["TELNET_CONTRACT_PASSTHROUGH"] == "preserved", "unrelated extraEnv entry was filtered"
-empty_pull_secret_documents = list(yaml.safe_load_all(Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"]).read_text(encoding="utf-8")))
+empty_pull_secret_documents = load_yaml_mappings(
+    Path(os.environ["EMPTY_PULL_SECRETS_RENDERED"])
+)
 assert sum(d.get("kind") == "Deployment" for d in empty_pull_secret_documents) > 0, "empty imagePullSecrets omitted Deployments"
-spring_profile_documents = list(yaml.safe_load_all(Path(os.environ["SPRING_PROFILE_RENDERED"]).read_text(encoding="utf-8")))
+spring_profile_documents = load_yaml_mappings(Path(os.environ["SPRING_PROFILE_RENDERED"]))
 spring_profile_deployment = next(
     d for d in spring_profile_documents
     if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service"

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,17 @@ import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
 import org.junit.jupiter.api.Test;
 
 class GatewayGameplayReadinessProbeTest {
+
+  @Test
+  void startsFailClosedAndDoesNotPollBeforeThePositiveInitialDelay() {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    when(client.isReadyAsync()).thenReturn(CompletableFuture.completedFuture(true));
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+      assertFalse(probe.isReady());
+      verify(client, never()).isReadyAsync();
+    }
+  }
 
   @Test
   void cachesReadinessWithoutWaitingForAnInFlightRequestOrStartingOverlappingPolls()

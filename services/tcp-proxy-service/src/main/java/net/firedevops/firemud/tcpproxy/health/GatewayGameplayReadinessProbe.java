@@ -42,9 +42,10 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
     pollExecutor =
         Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon(true).name("gateway-readiness-poll", 0).factory());
+    long pollIntervalNanos = pollInterval.toNanos();
     pollingTask =
         pollExecutor.scheduleWithFixedDelay(
-            this::refresh, 0, pollInterval.toMillis(), TimeUnit.MILLISECONDS);
+            this::refresh, pollIntervalNanos, pollIntervalNanos, TimeUnit.NANOSECONDS);
   }
 
   public boolean isReady() {

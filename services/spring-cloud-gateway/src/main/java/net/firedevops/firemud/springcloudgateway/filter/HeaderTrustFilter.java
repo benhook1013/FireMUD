@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
-import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,17 +48,6 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     this.tcpProxyTrustPolicy = Objects.requireNonNull(tcpProxyTrustPolicy);
     this.trustedForwardedProxies =
         new CidrSet(properties.getForwardedClientIp().getTrustedProxyCidrs());
-  }
-
-  HeaderTrustFilter(GatewayHeaderTrustProperties properties) {
-    this(
-        properties,
-        new TcpProxyTrustPolicy(
-            new GatewayTcpProxyListenerProperties(),
-            properties,
-            8080,
-            java.time.Clock.systemUTC(),
-            java.util.Set.of("test")));
   }
 
   @Override

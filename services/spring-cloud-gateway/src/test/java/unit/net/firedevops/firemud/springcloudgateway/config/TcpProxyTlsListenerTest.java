@@ -1,7 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -12,8 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -51,9 +53,13 @@ class TcpProxyTlsListenerTest {
 
       assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
           .isEqualTo(HttpStatus.NO_CONTENT.value());
-      assertThatThrownBy(
-              () -> requestStatus(port, clientContext(false), "/actuator/health/liveness"))
-          .isInstanceOf(RuntimeException.class);
+      Throwable handshakeFailure =
+          catchThrowable(
+              () -> requestStatus(port, clientContext(false), "/actuator/health/liveness"));
+      assertThat(handshakeFailure).as("TLS handshake without a client certificate").isNotNull();
+      assertThat(isTlsHandshakeRejection(handshakeFailure))
+          .as("failure must be a TLS/client-certificate handshake rejection")
+          .isTrue();
     } finally {
       listener.stop();
     }
@@ -166,6 +172,25 @@ class TcpProxyTlsListenerTest {
       builder.keyManager(fixture("dev-cert.pem").toFile(), fixture("dev-key.pem").toFile());
     }
     return builder.build();
+  }
+
+  private static boolean isTlsHandshakeRejection(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SSLException) {
+        return true;
+      }
+      String message = cause.getMessage();
+      if (message != null) {
+        String normalized = message.toLowerCase(Locale.ROOT);
+        if (normalized.contains("certificate_required")
+            || normalized.contains("bad_certificate")
+            || normalized.contains("empty client certificate chain")
+            || normalized.contains("connection prematurely closed before opening handshake")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private static GatewayTcpProxyListenerProperties tlsProperties(int port) {

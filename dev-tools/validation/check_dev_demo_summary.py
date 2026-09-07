@@ -440,6 +440,13 @@ def _heredoc_inputs(
                 yield command, body
 
 
+def _assert_parsable_shell(source: str, source_label: str = "shell source") -> None:
+    """Raise with source context when shell statement parsing fails."""
+
+    for _statement in _shell_statements(source, source_label):
+        pass
+
+
 def _shell_command_groups(tokens: list[str]) -> Iterable[list[str]]:
     start = 0
     for index, token in enumerate(tokens):
@@ -1028,7 +1035,7 @@ def discover_summary_writers(
         else:
             seen_helpers[traversal_key] = current.summary_reachable
         source_label = _workflow_run_source_label(current)
-        list(_shell_statements(current.source, source_label))
+        _assert_parsable_shell(current.source, source_label)
         direct_ranges = _summary_write_line_ranges(current.source, source_label)
         if direct_ranges or current.summary_reachable:
             existing_index = summary_writer_indexes.get(traversal_key)
