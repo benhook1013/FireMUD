@@ -8,7 +8,6 @@ import static org.mockito.Mockito.mock;
 
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -110,12 +109,12 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
   @Test
   void websocketUpgradePromotesOnlyTheConfiguredClientWorkload() throws Exception {
-    int port = freePort();
-    GatewayTcpProxyListenerProperties listenerProperties = listenerProperties(port);
+    GatewayTcpProxyListenerProperties listenerProperties = listenerProperties(8443);
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
     TcpProxyTrustPolicy trustPolicy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("prod"));
+    listenerProperties.setPort(0);
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
     GameplayHandshakeFilter handshakeFilter =
         new GameplayHandshakeFilter(
@@ -153,6 +152,8 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
     try {
       listener.start();
+      int port = listener.boundPort();
+      listenerProperties.setPort(port);
       HttpHeaders bridgeHeaders = bridgeHeaders();
 
       assertThat(
@@ -189,15 +190,15 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
   @MethodSource("enabledTrustProfiles")
   void enabledTrustProfilesConfigureTheExpectedListenerClientAuthentication(
       String profile, String environment, boolean requiresClientCertificate) throws Exception {
-    int port = freePort();
     GatewayTcpProxyListenerProperties listenerProperties =
-        listenerProperties(port, profile, environment);
+        listenerProperties(8443, profile, environment);
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
     Set<String> activeProfiles =
         profile.equals("development_cidr") ? Set.of("test") : Set.of("prod");
     TcpProxyTrustPolicy trustPolicy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), activeProfiles);
+    listenerProperties.setPort(0);
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
     GameplayHandshakeFilter handshakeFilter =
         new GameplayHandshakeFilter(
@@ -235,6 +236,8 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
     try {
       listener.start();
+      int port = listener.boundPort();
+      listenerProperties.setPort(port);
       assertThat(trustPolicy.requiresClientCertificate()).isEqualTo(requiresClientCertificate);
       if (requiresClientCertificate) {
         Throwable handshakeFailure =
@@ -388,11 +391,5 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         .resolve("services/common-test-support/src/testFixtures/resources/certs")
         .resolve(name)
         .normalize();
-  }
-
-  private static int freePort() throws Exception {
-    try (ServerSocket socket = new ServerSocket(0)) {
-      return socket.getLocalPort();
-    }
   }
 }

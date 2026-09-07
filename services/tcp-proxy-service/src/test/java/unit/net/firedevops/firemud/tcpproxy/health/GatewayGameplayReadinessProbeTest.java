@@ -2,11 +2,12 @@ package net.firedevops.firemud.tcpproxy.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
@@ -19,13 +20,27 @@ import org.junit.jupiter.api.Test;
 class GatewayGameplayReadinessProbeTest {
 
   @Test
-  void startsFailClosedAndDoesNotPollBeforeThePositiveInitialDelay() {
+  void rejectsOverflowingPollIntervalBeforePolling() {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
-    when(client.isReadyAsync()).thenReturn(CompletableFuture.completedFuture(true));
+
+    assertThrows(
+        ArithmeticException.class,
+        () -> new GatewayGameplayReadinessProbe(client, Duration.ofSeconds(Long.MAX_VALUE)));
+
+    verifyNoInteractions(client);
+  }
+
+  @Test
+  void startsFailClosedWhilePollingImmediately() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> pending = new CompletableFuture<>();
+    when(client.isReadyAsync()).thenReturn(pending);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
       assertFalse(probe.isReady());
-      verify(client, never()).isReadyAsync();
+      pending.complete(true);
+      awaitReadiness(probe, true);
     }
   }
 
@@ -127,24 +142,23 @@ class GatewayGameplayReadinessProbeTest {
   }
 
   @Test
-  void completionRacingCloseCannotRestoreReadinessAfterClose() throws Exception {
+  void completionAfterCloseCannotRestoreReadiness() throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
-    CompletableFuture<Boolean> pending = new CompletableFuture<>();
+    CompletableFuture<Boolean> pending =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            return false;
+          }
+        };
     when(client.isReadyAsync()).thenReturn(pending);
     GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(10));
     verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
 
-    Thread completionThread;
     try {
-      synchronized (probe) {
-        completionThread = Thread.ofPlatform().start(() -> pending.complete(true));
-        awaitBlocked(completionThread);
-        probe.close();
-        assertFalse(probe.isReady());
-      }
-      completionThread.join(1000);
-      assertFalse(completionThread.isAlive());
+      probe.close();
+      assertTrue(pending.complete(true));
       assertFalse(probe.isReady());
     } finally {
       probe.close();
@@ -158,15 +172,5 @@ class GatewayGameplayReadinessProbeTest {
       Thread.sleep(5);
     }
     assertEquals(expected, probe.isReady());
-  }
-
-  private static void awaitBlocked(Thread thread) throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-    while (thread.getState() != Thread.State.BLOCKED
-        && thread.isAlive()
-        && System.nanoTime() < deadline) {
-      Thread.sleep(1);
-    }
-    assertEquals(Thread.State.BLOCKED, thread.getState());
   }
 }

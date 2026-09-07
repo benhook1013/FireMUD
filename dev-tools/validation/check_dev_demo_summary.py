@@ -254,6 +254,9 @@ KUBECTL_VALUE_FLAGS = frozenset(
         "--output",
     }
 )
+KUBECTL_MANIFEST_STDIN_FILENAMES = frozenset(
+    {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
+)
 YAML_DOCUMENT_SEPARATOR = re.compile(r"^---[ \t]*(?:#.*)?$", re.MULTILINE)
 
 
@@ -690,11 +693,23 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
     if verb is None or verb[0] not in {"apply", "create", "replace"}:
         return False
     values = arguments[verb[1] + 1 :]
-    return any(
-        token in {"-f-", "-f=-", "--filename=-"}
-        or (token in {"-f", "--filename"} and index + 1 < len(values) and values[index + 1] == "-")
-        for index, token in enumerate(values)
-    )
+    for index, token in enumerate(values):
+        if token == "--":
+            break
+        if token in {"-f", "--filename"}:
+            if (
+                index + 1 < len(values)
+                and values[index + 1] in KUBECTL_MANIFEST_STDIN_FILENAMES
+            ):
+                return True
+            continue
+        for prefix in ("-f=", "-f", "--filename="):
+            if (
+                token.startswith(prefix)
+                and token[len(prefix) :] in KUBECTL_MANIFEST_STDIN_FILENAMES
+            ):
+                return True
+    return False
 
 
 def _contains_secret_manifest(value: object) -> bool:

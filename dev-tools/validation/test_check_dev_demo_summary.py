@@ -725,24 +725,28 @@ RESOURCES"""
                 self.validator.validate_workflow(root)
 
     def test_kubectl_reads_manifest_stdin_accepts_valid_filename_forms(self):
-        stdin_commands = (
-            ["apply", "-f-"],
-            ["apply", "-f=-"],
-            ["create", "-f", "-"],
-            ["replace", "--filename", "-"],
-            ["apply", "--filename=-"],
-        )
-        for arguments in stdin_commands:
-            with self.subTest(arguments=arguments):
-                self.assertTrue(
-                    self.validator._kubectl_reads_manifest_stdin(arguments)
+        for verb in ("apply", "create", "replace"):
+            for filename in ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"):
+                stdin_commands = (
+                    [verb, f"-f{filename}"],
+                    [verb, f"-f={filename}"],
+                    [verb, "-f", filename],
+                    [verb, f"--filename={filename}"],
+                    [verb, "--filename", filename],
                 )
+                for arguments in stdin_commands:
+                    with self.subTest(arguments=arguments):
+                        self.assertTrue(
+                            self.validator._kubectl_reads_manifest_stdin(arguments)
+                        )
 
     def test_kubectl_reads_manifest_stdin_rejects_non_stdin_filename_forms(self):
         non_stdin_commands = (
             ["apply", "-fmanifest.yaml"],
             ["apply", "-f=manifest.yaml"],
             ["apply", "--filename=manifest.yaml"],
+            ["apply", "-f", "/dev/stdout"],
+            ["apply", "--filename=/proc/self/fd/1"],
             ["get", "-f-"],
         )
         for arguments in non_stdin_commands:
@@ -750,6 +754,44 @@ RESOURCES"""
                 self.assertFalse(
                     self.validator._kubectl_reads_manifest_stdin(arguments)
                 )
+
+    def test_kubectl_reads_manifest_stdin_stops_at_option_terminator(self):
+        commands = (
+            ["apply", "--", "-f/dev/stdin"],
+            ["create", "--", "--filename=/proc/self/fd/0"],
+            ["replace", "--", "-f", "/dev/stdin"],
+        )
+        for arguments in commands:
+            with self.subTest(arguments=arguments):
+                self.assertFalse(
+                    self.validator._kubectl_reads_manifest_stdin(arguments)
+                )
+
+    def test_validate_workflow_rejects_secret_heredoc_from_stdin_filename_aliases(self):
+        commands = (
+            "kubectl apply -f/dev/stdin",
+            "kubectl create -f=/proc/self/fd/0",
+            "kubectl replace -f /dev/stdin",
+            "kubectl apply --filename=/proc/self/fd/0",
+            "kubectl create --filename /dev/stdin",
+            "kubectl replace --filename=/dev/fd/0",
+        )
+        for command in commands:
+            invalid_manifest = self._bootstrap_manifest_fixture() + f"""
+{command} <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {{}}
+RESOURCES"""
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_workflow_fixture(root, invalid_manifest)
+                with self.assertRaisesRegex(
+                    AssertionError, "must not create or mount credential Secret"
+                ):
+                    self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_secret_after_trailing_pipe_continuation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()

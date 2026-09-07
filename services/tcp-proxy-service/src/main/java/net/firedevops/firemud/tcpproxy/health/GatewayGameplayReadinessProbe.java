@@ -21,10 +21,8 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
   private static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
 
   private final GatewayWebSocketClient gatewayWebSocketClient;
+  private final PollState pollState;
   private final ScheduledExecutorService pollExecutor;
-  private final AtomicBoolean ready = new AtomicBoolean();
-  private final AtomicBoolean closed = new AtomicBoolean();
-  private final AtomicReference<CompletableFuture<Boolean>> inFlight = new AtomicReference<>();
   private final ScheduledFuture<?> pollingTask;
 
   @Autowired
@@ -39,59 +37,80 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
     if (pollInterval.isZero() || pollInterval.isNegative()) {
       throw new IllegalArgumentException("pollInterval must be positive");
     }
+    long pollIntervalNanos = pollInterval.toNanos();
+    pollState = new PollState(this.gatewayWebSocketClient);
     pollExecutor =
         Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon(true).name("gateway-readiness-poll", 0).factory());
-    long pollIntervalNanos = pollInterval.toNanos();
     pollingTask =
         pollExecutor.scheduleWithFixedDelay(
-            this::refresh, pollIntervalNanos, pollIntervalNanos, TimeUnit.NANOSECONDS);
+            pollState::refresh, 0L, pollIntervalNanos, TimeUnit.NANOSECONDS);
   }
 
   public boolean isReady() {
-    return ready.get();
+    return pollState.isReady();
   }
 
   public URI readinessUri() {
     return gatewayWebSocketClient.readinessUri();
   }
 
-  private synchronized void refresh() {
-    if (closed.get() || inFlight.get() != null) {
-      return;
-    }
-    CompletableFuture<Boolean> request;
-    try {
-      request =
-          Objects.requireNonNull(gatewayWebSocketClient.isReadyAsync(), "Gateway readiness future");
-    } catch (RuntimeException e) {
-      ready.set(false);
-      return;
-    }
-    inFlight.set(request);
-    request.whenComplete(
-        (result, error) -> {
-          synchronized (this) {
-            if (!closed.get()) {
-              ready.set(error == null && Boolean.TRUE.equals(result));
-            }
-            inFlight.compareAndSet(request, null);
-          }
-        });
-  }
-
   @Override
   @PreDestroy
-  public synchronized void close() {
-    if (!closed.compareAndSet(false, true)) {
-      return;
-    }
-    ready.set(false);
+  public void close() {
+    pollState.close();
     pollingTask.cancel(true);
-    CompletableFuture<Boolean> request = inFlight.getAndSet(null);
-    if (request != null) {
-      request.cancel(true);
-    }
     pollExecutor.shutdownNow();
+  }
+
+  private static final class PollState {
+    private final GatewayWebSocketClient gatewayWebSocketClient;
+    private final AtomicBoolean ready = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicReference<CompletableFuture<Boolean>> inFlight = new AtomicReference<>();
+
+    private PollState(GatewayWebSocketClient gatewayWebSocketClient) {
+      this.gatewayWebSocketClient = gatewayWebSocketClient;
+    }
+
+    private boolean isReady() {
+      return ready.get();
+    }
+
+    private synchronized void refresh() {
+      if (closed.get() || inFlight.get() != null) {
+        return;
+      }
+      CompletableFuture<Boolean> request;
+      try {
+        request =
+            Objects.requireNonNull(
+                gatewayWebSocketClient.isReadyAsync(), "Gateway readiness future");
+      } catch (RuntimeException e) {
+        ready.set(false);
+        return;
+      }
+      inFlight.set(request);
+      request.whenComplete(
+          (result, error) -> {
+            synchronized (this) {
+              if (!closed.get()) {
+                ready.set(error == null && Boolean.TRUE.equals(result));
+              }
+              inFlight.compareAndSet(request, null);
+            }
+          });
+    }
+
+    private synchronized void close() {
+      if (!closed.compareAndSet(false, true)) {
+        return;
+      }
+      ready.set(false);
+      CompletableFuture<Boolean> request = inFlight.getAndSet(null);
+      if (request != null) {
+        request.cancel(true);
+      }
+    }
   }
 }
