@@ -5,6 +5,7 @@ import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEvent
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRoll
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -140,6 +142,23 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
   }
 
+  @Test
+  void databaseEnforcesIngressPinTupleForPreInstanceAndInstanceRows() {
+    DSLContext dsl = migrateToLatest();
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-null-epoch", null, "owner-null-epoch", "event-rejected"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThat(insertIngressAudit(dsl, null, null, null, "event-pre-instance")).isEqualTo(1);
+    assertThat(insertIngressAudit(dsl, "instance-positive", 7L, "owner-positive", "event-instance"))
+        .isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(2);
+  }
+
   private DSLContext migrateToLatest() {
     schema = newSchemaName();
     Flyway.configure()
@@ -253,6 +272,32 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     return dsl.fetchValue(
         SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
         SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ID.eq(id));
+  }
+
+  private int insertIngressAudit(
+      DSLContext dsl,
+      String gameInstanceId,
+      Long scriptPinEpoch,
+      String requestId,
+      String eventId) {
+    return dsl.insertInto(SCRIPT_EVENT_INGRESS_AUDIT)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID, "tenant-direct-" + eventId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID, gameInstanceId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID, "script-direct")
+        .set(
+            SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE,
+            gameInstanceId == null ? "onLoad" : "onEnterRegion")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, "v1")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION, "patch-direct")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, scriptPinEpoch)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, requestId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID, eventId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE, "direct-test")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.TRIGGER_MODE, "EVENT")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMITTED, true)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_OUTCOME, "ADMITTED")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, "accepted")
+        .execute();
   }
 
   private DSLContext schemaDsl() {

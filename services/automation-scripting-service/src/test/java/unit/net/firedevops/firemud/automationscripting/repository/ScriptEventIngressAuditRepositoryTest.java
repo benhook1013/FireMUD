@@ -336,6 +336,79 @@ class ScriptEventIngressAuditRepositoryTest {
   }
 
   @Test
+  void insertIfAbsentByIdentityOnLoadFallbackIgnoresRuntimeScopeFields() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<Integer> calls = new AtomicReference<>(0);
+    AtomicReference<String> fallbackSql = new AtomicReference<>();
+    ScriptEventIngressAuditRecord existing = new ScriptEventIngressAuditRecord();
+    existing.setId(21L);
+    existing.setTenantId("tenant-1");
+    existing.setScriptId("script-1");
+    existing.setRegionId("stored-region");
+    existing.setRegionEpoch(9L);
+    existing.setEntityId("stored-entity");
+    existing.setPlayableStateScope("stored-scope");
+    existing.setEventType("onLoad");
+    existing.setEventSchemaVersion("v1");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setScriptEventId("event-1");
+    existing.setSourceService("automation-scripting-service");
+    existing.setScriptPinEpoch(null);
+    MockDataProvider provider =
+        context -> {
+          int call = calls.updateAndGet(value -> value + 1);
+          if (call == 1) {
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT))
+            };
+          }
+          fallbackSql.set(context.sql().toLowerCase(Locale.ROOT));
+          Result<ScriptEventIngressAuditRecord> result =
+              resultDsl.newResult(SCRIPT_EVENT_INGRESS_AUDIT);
+          result.add(existing);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptEventIngressAuditRepository repository =
+        new ScriptEventIngressAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    ScriptEventIngressAudit entity = new ScriptEventIngressAudit();
+    entity.setTenantId("tenant-1");
+    entity.setScriptId("script-1");
+    entity.setRegionId("submitted-region");
+    entity.setRegionEpoch(3L);
+    entity.setEntityId("submitted-entity");
+    entity.setPlayableStateScope("submitted-scope");
+    entity.setEventType("onLoad");
+    entity.setEventSchemaVersion("v1");
+    entity.setScriptPatchVersion("patch-1");
+    entity.setScriptEventId("event-1");
+    entity.setSourceService("automation-scripting-service");
+    entity.setRequestDigest(REQUEST_DIGEST);
+
+    ScriptEventIngressAuditRepository.IdempotentInsertResult result =
+        repository.insertIfAbsentByIdentity(entity);
+
+    assertThat(calls).hasValue(2);
+    assertThat(result.inserted()).isFalse();
+    assertThat(result.audit().getId()).isEqualTo(21L);
+    assertThat(result.audit().getRegionId()).isEqualTo("stored-region");
+    String whereClause = fallbackSql.get().substring(fallbackSql.get().indexOf(" where "));
+    assertThat(whereClause)
+        .contains(
+            "tenant_id",
+            "script_id",
+            "event_type",
+            "event_schema_version",
+            "script_patch_version",
+            "script_event_id",
+            "dry_run",
+            "source_service",
+            "game_instance_id\" is null",
+            "script_pin_epoch\" is null")
+        .doesNotContain("region_id", "region_epoch", "entity_id", "playable_state_scope");
+  }
+
+  @Test
   void insertIfAbsentByIdentityRejectsDifferentPinnedOwnerRequestOnConflict() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> sqlRef = new AtomicReference<>();
