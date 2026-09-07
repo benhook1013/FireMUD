@@ -153,6 +153,35 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_multiline_quoted_summary_secret(self):
+        summary_run = (
+            'printf "unsafe: $DEMO_SMOKE_PASSWORD\n'
+            'continued" >> "$GITHUB_STEP_SUMMARY"'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root, self._bootstrap_manifest_fixture(), summary_run
+            )
+            with self.assertRaisesRegex(
+                AssertionError,
+                "dev-demo summaries must not reference bootstrap credential material; "
+                "offending summary writers: dev-demo-verify/Summarize dev-demo access",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_multiline_quoted_harmless_summary(self):
+        summary_run = (
+            'printf "safe summary\n'
+            'continued" >> "$GITHUB_STEP_SUMMARY"'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(
+                root, self._bootstrap_manifest_fixture(), summary_run
+            )
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_accepts_credential_free_session_pod(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertNotIn("envFrom:", bootstrap_manifest)
@@ -1464,6 +1493,30 @@ RESOURCES"""
                     validator.has_forbidden_summary_reference(statements[0][0]),
                     unsafe,
                 )
+
+    def test_summary_write_regions_cover_multiline_quoted_writer(self):
+        validator = self.validator
+        unsafe = (
+            'printf "unsafe: $DEMO_SMOKE_PASSWORD\n'
+            'continued" >> "$GITHUB_STEP_SUMMARY"'
+        )
+        harmless = 'printf "safe summary\ncontinued" >> "$GITHUB_STEP_SUMMARY"'
+        unsafe_regions = validator.summary_write_regions(unsafe)
+        harmless_regions = validator.summary_write_regions(harmless)
+        self.assertEqual(unsafe_regions, [unsafe])
+        self.assertTrue(
+            any(
+                validator.has_forbidden_summary_reference(region)
+                for region in unsafe_regions
+            )
+        )
+        self.assertEqual(harmless_regions, [harmless])
+        self.assertFalse(
+            any(
+                validator.has_forbidden_summary_reference(region)
+                for region in harmless_regions
+            )
+        )
 
     def test_multiline_quote_does_not_absorb_following_secret_creation(self):
         validator = self.validator

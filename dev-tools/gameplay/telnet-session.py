@@ -274,6 +274,7 @@ class TelnetSession:
         self.parser = TelnetParser()
         self.redaction_patterns: list[tuple[bytes, bytes]] = []
         self.redaction_tail = b""
+        self.suppress_redaction_line = False
 
     def _show(self, record: dict) -> None:
         if record["event"] == "received":
@@ -325,6 +326,15 @@ class TelnetSession:
         self.receiver.start()
 
     def _redact_inbound(self, data: bytes, final: bool = False) -> bytes:
+        if self.suppress_redaction_line:
+            line_end = data.find(b"\n")
+            if line_end < 0:
+                if final:
+                    self.suppress_redaction_line = False
+                return b""
+            data = data[line_end + 1 :]
+            self.suppress_redaction_line = False
+
         previous_tail = self.redaction_tail
         combined = previous_tail + data
         self.redaction_tail = b""
@@ -375,11 +385,22 @@ class TelnetSession:
                 break
 
             # Never emit a disproved prefix once it includes credential bytes.
-            # Harmless prefixes are restored even when a socket boundary made
-            # them ambiguous in the preceding receive.
-            if not includes_credential:
+            # Once that boundary is crossed, discard the complete current line
+            # and resume only after its newline, even when it arrives later.
+            if includes_credential:
+                previous_line_end = safe.rfind(b"\n")
+                del safe[previous_line_end + 1 :]
+                line_end = combined.find(b"\n", start + matched)
+                if line_end < 0:
+                    if not final:
+                        self.suppress_redaction_line = True
+                    break
+                cursor = line_end + 1
+            else:
+                # Harmless prefixes are restored even when a socket boundary
+                # made them ambiguous in the preceding receive.
                 safe.extend(combined[start : start + matched])
-            cursor = start + matched
+                cursor = start + matched
 
         if final:
             self.redaction_tail = b""
