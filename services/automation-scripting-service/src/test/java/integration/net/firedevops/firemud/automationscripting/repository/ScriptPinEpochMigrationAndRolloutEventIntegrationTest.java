@@ -182,6 +182,16 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_audit_pin_tuple");
 
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, 7L, null, "event-audit-rejected-positive-null-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, 8L, "   ", "event-audit-rejected-positive-blank-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
     assertThat(insertEventAudit(dsl, null, null, "event-audit-unpinned")).isEqualTo(1);
     assertThat(insertEventAudit(dsl, 7L, "owner-positive", "event-audit-pinned")).isEqualTo(1);
     assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(2);
