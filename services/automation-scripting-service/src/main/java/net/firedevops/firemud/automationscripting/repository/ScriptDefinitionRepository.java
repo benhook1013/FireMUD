@@ -19,6 +19,11 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptDefinitionRepository {
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The mutable definition is the repository save result contract.")
+  public record SaveResult(ScriptDefinition definition, boolean created) {}
+
   private final DSLContext dsl;
 
   public ScriptDefinitionRepository(DSLContext dsl) {
@@ -69,9 +74,18 @@ public class ScriptDefinitionRepository {
   }
 
   public ScriptDefinition save(ScriptDefinition entity) {
+    return saveWithCreationResult(entity).definition();
+  }
+
+  /** Saves a definition and reports whether this invocation inserted its natural-identity row. */
+  public SaveResult saveWithCreationResult(ScriptDefinition entity) {
     if (entity.getId() == null) {
       return insertOrGetByIdentity(entity);
     }
+    return new SaveResult(saveWithExplicitId(entity), false);
+  }
+
+  private ScriptDefinition saveWithExplicitId(ScriptDefinition entity) {
     int updated =
         dsl.update(SCRIPTS)
             .set(SCRIPTS.DEFINITION, entity.getDefinition())
@@ -114,31 +128,52 @@ public class ScriptDefinitionRepository {
   }
 
   /** Atomically inserts or replaces the definition for its stable identity. */
-  private ScriptDefinition insertOrGetByIdentity(ScriptDefinition entity) {
+  private SaveResult insertOrGetByIdentity(ScriptDefinition entity) {
     ScriptsRecord record = dsl.newRecord(SCRIPTS);
     populate(record, entity);
-    ScriptDefinition winner =
+    Optional<ScriptDefinition> inserted =
         dsl.insertInto(SCRIPTS)
             .set(record)
             .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
-            .doUpdate()
-            .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
+            .doNothing()
+            .returning()
+            .fetchOptional(this::toEntity);
+    if (inserted.isPresent()) {
+      ScriptDefinition winner = inserted.get();
+      if (!sameIdentity(winner, entity)) {
+        throw new IllegalStateException(
+            "script definition identity insert returned an unexpected row");
+      }
+      return new SaveResult(winner, true);
+    }
+
+    Optional<ScriptDefinition> updated =
+        dsl.update(SCRIPTS)
+            .set(SCRIPTS.DEFINITION, entity.getDefinition())
             .set(
                 SCRIPTS.ROW_VERSION,
                 DSL.when(
-                        SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
+                        SCRIPTS.DEFINITION.isDistinctFrom(entity.getDefinition()),
                         SCRIPTS.ROW_VERSION.add(1))
                     .otherwise(SCRIPTS.ROW_VERSION))
+            .where(
+                SCRIPTS
+                    .TENANT_ID
+                    .eq(entity.getTenantId())
+                    .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
+                    .and(SCRIPTS.NAME.eq(entity.getName())))
             .returning()
-            .fetchOne(this::toEntity);
-    if (winner == null) {
-      throw new IllegalStateException("script definition identity upsert did not return a row");
-    }
+            .fetchOptional(this::toEntity);
+    ScriptDefinition winner =
+        updated.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "script definition identity conflict row disappeared during save"));
     if (!sameIdentity(winner, entity)) {
       throw new IllegalStateException(
-          "script definition identity upsert returned an unexpected row");
+          "script definition identity update returned an unexpected row");
     }
-    return winner;
+    return new SaveResult(winner, false);
   }
 
   public List<ScriptDefinition> saveAll(Collection<ScriptDefinition> entities) {

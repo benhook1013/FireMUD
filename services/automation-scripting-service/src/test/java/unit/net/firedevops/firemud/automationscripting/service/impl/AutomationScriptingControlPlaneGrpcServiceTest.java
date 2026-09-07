@@ -1002,15 +1002,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(admissionStateService.setMode(Mockito.any()))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1",
-                "game-1",
-                "region-1",
-                "PAUSED_FOR_ROLLBACK",
-                2L,
-                "req-2",
-                "admin",
-                "rollback",
-                300L));
+                "1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", 2L, "admin", "rollback", 300L));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),

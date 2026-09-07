@@ -120,7 +120,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(admissionService.getState("1", "7", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "7", "region-1", "CORRUPT", 1L, "", "", "", 100L));
+                "1", "7", "region-1", "CORRUPT", 1L, "", "", 100L));
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(new ScriptEventAudit()));
     ScriptGameplayCommandHandoffService service =
@@ -333,7 +333,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(service.getState("1", "7", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "7", "region-1", "NORMAL", 1L, "", "", "", 100L));
+                "1", "7", "region-1", "NORMAL", 1L, "", "", 100L));
     return service;
   }
 
@@ -1267,15 +1267,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(admissionStateService.getState("1", "7", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1",
-                "7",
-                "region-1",
-                "PAUSED_FOR_ROLLBACK",
-                2L,
-                "req-2",
-                "admin",
-                "rollback",
-                200L));
+                "1", "7", "region-1", "PAUSED_FOR_ROLLBACK", 2L, "admin", "rollback", 200L));
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -1322,7 +1314,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(admissionStateService.getState("1", "7", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "7", "region-1", "PAUSED_FOR_ROLLBACK", 1L, "req", "admin", "pause", 100L));
+                "1", "7", "region-1", "PAUSED_FOR_ROLLBACK", 1L, "admin", "pause", 100L));
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -1363,7 +1355,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     when(admissionStateService.getState("1", "7", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "7", "region-1", "NORMAL", 2L, "req", "admin", "resume", 100L));
+                "1", "7", "region-1", "NORMAL", 2L, "admin", "resume", 100L));
     ScriptGameplayCommandHandoffService service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,

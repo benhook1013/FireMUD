@@ -97,12 +97,11 @@ class ScriptScheduleInstanceServiceImplTest {
                     4L,
                     "",
                     "",
-                    "",
                     0L));
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "NORMAL", 4L, "", "", "", 0L));
+                "1", "game-1", "region-1", "NORMAL", 4L, "", "", 0L));
     when(workItemRepository.insertIfAbsentByTriggerIdentity(org.mockito.Mockito.any()))
         .thenAnswer(
             invocation ->
@@ -1332,7 +1331,7 @@ class ScriptScheduleInstanceServiceImplTest {
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", 5L, "", "", "", 0L));
+                "1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", 5L, "", "", 0L));
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(tickInstance));
@@ -1386,7 +1385,7 @@ class ScriptScheduleInstanceServiceImplTest {
     when(automationAdmissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "CORRUPT", 5L, "", "", "", 0L));
+                "1", "game-1", "region-1", "CORRUPT", 5L, "", "", 0L));
     when(scheduleInstanceRepository.findByTenantIdAndGameInstanceIdAndCadenceUnit(
             "1", "game-1", "TICKS"))
         .thenReturn(List.of(tickInstance));

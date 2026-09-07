@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
@@ -19,7 +20,7 @@ import org.junit.jupiter.api.Test;
 
 class ScriptDefinitionRepositoryTest {
   @Test
-  void identityUpsertReturnsDurableWinnerAndUsesStableIdentityConflictUpdate() {
+  void identityInsertReturnsDurableWinnerAndReportsCreation() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
@@ -31,14 +32,60 @@ class ScriptDefinitionRepositoryTest {
         };
     ScriptDefinitionRepository repository = repository(provider);
 
-    ScriptDefinition winner = repository.save(script(null, "{\"winner\":true}"));
+    ScriptDefinitionRepository.SaveResult saveResult =
+        repository.saveWithCreationResult(script(null, "{\"winner\":true}"));
+    ScriptDefinition winner = saveResult.definition();
 
     assertThat(winner.getId()).isEqualTo(17L);
     assertThat(winner.getRowVersion()).isEqualTo(4);
+    assertThat(saveResult.created()).isTrue();
     String normalizedSql = normalizeSql(sqlRef.get());
     assertThat(normalizedSql)
-        .contains("on conflict (tenant_id, version, name) do update set")
-        .contains("definition", "row_version", "is distinct from", "excluded", "returning");
+        .contains("on conflict (tenant_id, version, name) do nothing", "returning")
+        .doesNotContain("xmax");
+  }
+
+  @Test
+  void identityConflictUpdatesStableRowAndReportsNonCreation() {
+    AtomicReference<String> firstSql = new AtomicReference<>();
+    AtomicReference<String> conflictSql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicInteger callCount = new AtomicInteger();
+    MockDataProvider provider =
+        context -> {
+          if (callCount.getAndIncrement() == 0) {
+            firstSql.set(context.sql());
+            return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPTS))};
+          }
+          conflictSql.set(context.sql());
+          var result = resultDsl.newResult(SCRIPTS);
+          result.add(scriptRecord(17L, "{\"winner\":true}", 4));
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptDefinitionRepository repository = repository(provider);
+
+    ScriptDefinitionRepository.SaveResult saveResult =
+        repository.saveWithCreationResult(script(null, "{\"winner\":true}"));
+
+    assertThat(saveResult.created()).isFalse();
+    assertThat(saveResult.definition().getId()).isEqualTo(17L);
+    assertThat(normalizeSql(firstSql.get()))
+        .contains("on conflict (tenant_id, version, name) do nothing", "returning");
+    assertThat(normalizeSql(conflictSql.get()))
+        .contains("update", "definition", "row_version", "is distinct from", "returning")
+        .doesNotContain("on conflict", "xmax");
+  }
+
+  @Test
+  void identityConflictDisappearanceFailsClosed() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPTS))};
+    ScriptDefinitionRepository repository = repository(provider);
+
+    assertThatThrownBy(() -> repository.saveWithCreationResult(script(null, "{\"winner\":true}")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("script definition identity conflict row disappeared during save");
   }
 
   @Test
@@ -62,9 +109,11 @@ class ScriptDefinitionRepositoryTest {
     ScriptDefinition retry = script(17L, "{\"winner\":true}");
     retry.setRowVersion(9);
 
-    ScriptDefinition persisted = repository.save(retry);
+    ScriptDefinitionRepository.SaveResult saveResult = repository.saveWithCreationResult(retry);
+    ScriptDefinition persisted = saveResult.definition();
 
     assertThat(persisted.getRowVersion()).isEqualTo(9);
+    assertThat(saveResult.created()).isFalse();
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
         .contains("is distinct from", "row_version", "where");
     assertExpectedRowVersionBinding(updateSql.get(), updateBindings.get(), 9);
@@ -112,10 +161,14 @@ class ScriptDefinitionRepositoryTest {
         };
     ScriptDefinitionRepository repository = repository(provider);
 
-    ScriptDefinition replacement = repository.save(script(null, "{\"changed\":true}"));
+    ScriptDefinitionRepository.SaveResult saveResult =
+        repository.saveWithCreationResult(script(null, "{\"changed\":true}"));
+    ScriptDefinition replacement = saveResult.definition();
 
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
-        .contains("on conflict", "do update", "excluded", "returning", "row_version");
+        .contains("on conflict", "do nothing", "returning", "row_version")
+        .doesNotContain("xmax");
+    assertThat(saveResult.created()).isTrue();
     assertThat(replacement.getDefinition()).isEqualTo("{\"changed\":true}");
     assertThat(replacement.getRowVersion()).isEqualTo(5);
   }

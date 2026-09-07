@@ -282,7 +282,7 @@ class V1__baselineTest {
             "actor_principal VARCHAR(256) NOT NULL",
             "reason VARCHAR(256) NOT NULL",
             "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
-            "CONSTRAINT ck_automation_admission_request_history_fingerprint CHECK ( request_fingerprint ~ '^[0-9a-f]{64}$' )",
+            "CONSTRAINT ck_automation_admission_request_history_fingerprint CHECK ( NULLIF(BTRIM(control_plane_request_id), '') IS NOT NULL AND request_fingerprint ~ '^[0-9a-f]{64}$' )",
             "CONSTRAINT uq_automation_admission_request_history_identity UNIQUE ( tenant_id, game_instance_id, region_id, mode, control_plane_request_id )");
     assertIndexColumns(
         normalized,

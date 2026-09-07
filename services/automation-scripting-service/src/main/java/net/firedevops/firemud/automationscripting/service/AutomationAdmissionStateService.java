@@ -29,13 +29,18 @@ public interface AutomationAdmissionStateService {
       String outcome,
       String requestFingerprint,
       long acknowledgedAtMs) {
+    /**
+     * Builds a diagnostic summary when the durable acknowledgement cannot be verified.
+     *
+     * <p>This constructor intentionally has no request identity: callers must use the canonical
+     * constructor above when presenting a verified control-plane acknowledgement.
+     */
     public AdmissionStateSummary(
         String tenantId,
         String gameInstanceId,
         String regionId,
         String mode,
         long admissionEpoch,
-        String controlPlaneRequestId,
         String actorPrincipal,
         String reason,
         long updatedAtMs) {

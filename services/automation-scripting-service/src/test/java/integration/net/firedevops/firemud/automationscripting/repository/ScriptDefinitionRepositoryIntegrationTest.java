@@ -78,7 +78,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
-    List<Future<ScriptDefinition>> futures = new ArrayList<>();
+    List<Future<ScriptDefinitionRepository.SaveResult>> futures = new ArrayList<>();
     try {
       for (int i = 0; i < 2; i++) {
         futures.add(
@@ -86,17 +86,22 @@ class ScriptDefinitionRepositoryIntegrationTest {
                 () -> {
                   ready.countDown();
                   await(start);
-                  return new ScriptDefinitionRepository(dsl).save(script("{\"value\":1}"));
+                  return new ScriptDefinitionRepository(dsl)
+                      .saveWithCreationResult(script("{\"value\":1}"));
                 }));
       }
 
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
-      ScriptDefinition first = get(futures.get(0));
-      ScriptDefinition second = get(futures.get(1));
+      ScriptDefinitionRepository.SaveResult firstResult = get(futures.get(0));
+      ScriptDefinitionRepository.SaveResult secondResult = get(futures.get(1));
+      ScriptDefinition first = firstResult.definition();
+      ScriptDefinition second = secondResult.definition();
 
       assertThat(first.getId()).isNotNull();
       assertThat(second.getId()).isEqualTo(first.getId());
+      assertThat(List.of(firstResult.created(), secondResult.created()))
+          .containsExactlyInAnyOrder(true, false);
       assertThat(first.getRowVersion()).isZero();
       assertThat(second.getRowVersion()).isZero();
       assertThat(repository.findById(first.getId())).contains(first);
@@ -212,7 +217,7 @@ class ScriptDefinitionRepositoryIntegrationTest {
     return script;
   }
 
-  private static ScriptDefinition get(Future<ScriptDefinition> future)
+  private static <T> T get(Future<T> future)
       throws InterruptedException, ExecutionException, TimeoutException {
     return future.get(10, TimeUnit.SECONDS);
   }

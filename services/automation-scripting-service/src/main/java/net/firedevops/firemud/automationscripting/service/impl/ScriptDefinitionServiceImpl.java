@@ -49,12 +49,13 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
             .orElse(null);
     validateExistingIdentity(entity, previousDefinition);
     List<ScriptEventBinding> previousBindings = snapshotBindings(dto);
-    AtomicReference<ScriptDefinition> persisted = new AtomicReference<>(entity);
+    AtomicReference<ScriptDefinitionRepository.SaveResult> persisted =
+        new AtomicReference<>(new ScriptDefinitionRepository.SaveResult(entity, false));
     var saga =
         new SagaBuilder("updateScript")
             .step(
                 "persistScript",
-                () -> persisted.set(repository.save(entity)),
+                () -> persisted.set(repository.saveWithCreationResult(entity)),
                 () -> compensateDefinition(previousDefinition, persisted.get()))
             .step(
                 "replaceEventBindings",
@@ -71,7 +72,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
       }
       throw ex;
     }
-    return mapper.toDto(persisted.get());
+    return mapper.toDto(persisted.get().definition());
   }
 
   private void validateExistingIdentity(
@@ -105,12 +106,18 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   }
 
   private void compensateDefinition(
-      ScriptDefinition previousDefinition, ScriptDefinition persistedDefinition) {
+      ScriptDefinition previousDefinition, ScriptDefinitionRepository.SaveResult saveResult) {
+    if (saveResult == null) {
+      return;
+    }
+    ScriptDefinition persistedDefinition = saveResult.definition();
     if (persistedDefinition == null || persistedDefinition.getId() == null) {
       return;
     }
     if (previousDefinition == null) {
-      repository.delete(persistedDefinition);
+      if (saveResult.created()) {
+        repository.delete(persistedDefinition);
+      }
       return;
     }
     // A same-definition retry returned the durable winner; it must never delete that pre-existing

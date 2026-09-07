@@ -420,6 +420,91 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void concurrentDistinctAdmissionRequestsShareOnePauseEpochAndPersistBothResults()
+      throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    List<SetAdmissionModeCommand> commands =
+        List.of(
+            admissionCommand(
+                "PAUSED_FOR_ROLLBACK", "workflow-admission-distinct-1", "actor-1", "rollback"),
+            admissionCommand(
+                "PAUSED_FOR_ROLLBACK", "workflow-admission-distinct-2", "actor-1", "rollback"));
+    List<Future<AdmissionStateSummary>> futures = new ArrayList<>();
+    for (SetAdmissionModeCommand command : commands) {
+      futures.add(
+          executor.submit(
+              () -> {
+                DSLContext transactionRoot =
+                    newDsl("automation-admission-distinct-" + System.nanoTime());
+                ready.countDown();
+                await(start);
+                return transactionRoot.transactionResult(
+                    configuration -> admissionService(configuration.dsl()).setMode(command));
+              }));
+    }
+
+    assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+    start.countDown();
+    List<AdmissionStateSummary> summaries = List.of(get(futures.get(0)), get(futures.get(1)));
+
+    assertThat(
+            summaries.stream()
+                .filter(s -> AutomationAdmissionStateService.OUTCOME_APPLIED.equals(s.outcome()))
+                .count())
+        .isEqualTo(1);
+    assertThat(
+            summaries.stream()
+                .filter(
+                    s ->
+                        AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED.equals(s.outcome()))
+                .count())
+        .isEqualTo(1);
+    assertThat(summaries)
+        .allSatisfy(
+            summary -> {
+              assertThat(summary.targetMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+              assertThat(summary.admissionEpoch()).isEqualTo(2L);
+              assertThat(summary.requestFingerprint()).matches("[0-9a-f]{64}");
+            });
+
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_STATES)).isEqualTo(1);
+    assertThat(dsl.fetchCount(AUTOMATION_ADMISSION_REQUEST_HISTORY)).isEqualTo(2);
+    var historyRows =
+        dsl.selectFrom(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+            .where(
+                AUTOMATION_ADMISSION_REQUEST_HISTORY
+                    .TENANT_ID
+                    .eq("tenant-admission")
+                    .and(
+                        AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID.eq(
+                            "instance-admission"))
+                    .and(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID.eq("region-admission")))
+            .fetch();
+    assertThat(historyRows)
+        .hasSize(2)
+        .allSatisfy(
+            row -> {
+              assertThat(row.getMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
+              assertThat(row.getAdmissionEpoch()).isEqualTo(2L);
+              assertThat(row.getRequestFingerprint()).matches("[0-9a-f]{64}");
+              assertThat(row.getOutcome())
+                  .isIn(
+                      AutomationAdmissionStateService.OUTCOME_APPLIED,
+                      AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+            });
+    assertThat(historyRows)
+        .extracting(row -> row.getControlPlaneRequestId())
+        .containsExactlyInAnyOrder(
+            "workflow-admission-distinct-1", "workflow-admission-distinct-2");
+    assertThat(
+            dsl.fetchValue(
+                AUTOMATION_ADMISSION_STATES.ADMISSION_EPOCH,
+                AUTOMATION_ADMISSION_STATES.TENANT_ID.eq("tenant-admission")))
+        .isEqualTo(2L);
+  }
+
+  @Test
   void workflowRequestIdCanSpanModeKeysAndReadbackReturnsTheCurrentResult() {
     AdmissionStateSummary pause =
         dsl.transactionResult(
@@ -593,6 +678,66 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                 .set(AUTOMATION_ADMISSION_STATES.REGION_ID, "region-paired-identity")
                 .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID, "request-paired")
                 .set(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .execute())
+        .isEqualTo(1);
+
+    assertThatThrownBy(
+            () ->
+                dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-empty")
+                    .set(
+                        AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID,
+                        "instance-history-empty")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-empty")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
+                    .set(
+                        AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                        AutomationAdmissionStateService.OUTCOME_APPLIED)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_automation_admission_request_history_fingerprint");
+
+    assertThatThrownBy(
+            () ->
+                dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-space")
+                    .set(
+                        AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID,
+                        "instance-history-space")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-space")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "   ")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
+                    .set(
+                        AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                        AutomationAdmissionStateService.OUTCOME_APPLIED)
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
+                    .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
+                    .execute())
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_automation_admission_request_history_fingerprint");
+
+    assertThat(
+            dsl.insertInto(AUTOMATION_ADMISSION_REQUEST_HISTORY)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.TENANT_ID, "tenant-history-valid")
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.GAME_INSTANCE_ID, "instance-history-valid")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REGION_ID, "region-history-valid")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.MODE, "PAUSED_FOR_ROLLBACK")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.CONTROL_PLANE_REQUEST_ID, "request-valid")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REQUEST_FINGERPRINT, REQUEST_DIGEST)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ADMISSION_EPOCH, 2L)
+                .set(
+                    AUTOMATION_ADMISSION_REQUEST_HISTORY.OUTCOME,
+                    AutomationAdmissionStateService.OUTCOME_APPLIED)
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.ACTOR_PRINCIPAL, "actor-1")
+                .set(AUTOMATION_ADMISSION_REQUEST_HISTORY.REASON, "rollback")
                 .execute())
         .isEqualTo(1);
   }

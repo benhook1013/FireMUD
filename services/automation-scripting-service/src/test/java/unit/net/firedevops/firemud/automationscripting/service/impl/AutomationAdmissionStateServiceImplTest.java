@@ -287,6 +287,12 @@ class AutomationAdmissionStateServiceImplTest {
   }
 
   @Test
+  void refusesHalfAcknowledgementIdentityBeforeMutation() {
+    assertHalfAcknowledgementRejected("request-1", "");
+    assertHalfAcknowledgementRejected("", "a".repeat(64));
+  }
+
+  @Test
   void readOnlyLookupReportsMissingAndUnavailableAcknowledgementWithoutCreatingState() {
     AutomationAdmissionStateRepository repository =
         Mockito.mock(AutomationAdmissionStateRepository.class);
@@ -480,6 +486,27 @@ class AutomationAdmissionStateServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(expectedMessageField + " is required");
     verifyNoInteractions(repository, historyRepository);
+  }
+
+  private static void assertHalfAcknowledgementRejected(String requestId, String fingerprint) {
+    AutomationAdmissionStateRepository repository =
+        Mockito.mock(AutomationAdmissionStateRepository.class);
+    AutomationAdmissionRequestHistoryRepository historyRepository =
+        Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
+    AutomationAdmissionState state = state("tenant-1", "game-1", "region-1");
+    state.setMode("PAUSED_FOR_ROLLBACK");
+    state.setAdmissionEpoch(2L);
+    state.setControlPlaneRequestId(requestId);
+    state.setControlPlaneRequestFingerprint(fingerprint);
+    when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
+        .thenReturn(Optional.of(state));
+    AutomationAdmissionStateService service = service(repository, historyRepository);
+
+    assertThatThrownBy(() -> service.setMode(command("actor-1", "rollback")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("admission state has incomplete durable acknowledgement identity");
+    verify(repository, never()).save(any());
+    verify(historyRepository, never()).insertOrGet(any());
   }
 
   private static AutomationAdmissionStateService service(

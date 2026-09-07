@@ -13,6 +13,12 @@ import static org.mockito.Mockito.when;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
@@ -69,21 +75,23 @@ class ScriptDefinitionServiceImplTest {
   void updateScriptPersistsEntity() throws SagaException {
     ScriptDefinition saved = new ScriptDefinition();
     saved.setId(5L);
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(saved);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, true));
     ScriptDefinitionDto dto = new ScriptDefinitionDto(null, 1L, "test", "v1", "{}", List.of());
 
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertNotNull(result);
     assertEquals(5L, result.id());
-    verify(repository).save(any(ScriptDefinition.class));
+    verify(repository).saveWithCreationResult(any(ScriptDefinition.class));
   }
 
   @Test
   void updateScriptAllowsOnCommandActionTagBinding() throws SagaException {
     ScriptDefinition saved = new ScriptDefinition();
     saved.setId(6L);
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(saved);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, true));
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(
             null,
@@ -117,7 +125,8 @@ class ScriptDefinitionServiceImplTest {
     when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
     ScriptDefinition saved = script(5L, "test", "v1", "{\"changed\":true}");
     saved.setRowVersion(10);
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(saved);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, false));
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(5L, 1L, "test", "v1", "{\"changed\":true}", List.of());
 
@@ -125,7 +134,7 @@ class ScriptDefinitionServiceImplTest {
 
     assertEquals(5L, result.id());
     ArgumentCaptor<ScriptDefinition> savedEntity = ArgumentCaptor.forClass(ScriptDefinition.class);
-    verify(repository).save(savedEntity.capture());
+    verify(repository).saveWithCreationResult(savedEntity.capture());
     assertEquals(9, savedEntity.getValue().getRowVersion());
   }
 
@@ -138,7 +147,8 @@ class ScriptDefinitionServiceImplTest {
     when(repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "test"))
         .thenReturn(java.util.Optional.of(existing));
     when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(persisted);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(persisted, false));
     ScriptDefinitionDto dto =
         new ScriptDefinitionDto(5L, 1L, "test", "v1", "{\"original\":true}", List.of());
 
@@ -147,7 +157,7 @@ class ScriptDefinitionServiceImplTest {
     assertEquals(5L, result.id());
     assertEquals("{\"original\":true}", result.definition());
     ArgumentCaptor<ScriptDefinition> savedEntity = ArgumentCaptor.forClass(ScriptDefinition.class);
-    verify(repository).save(savedEntity.capture());
+    verify(repository).saveWithCreationResult(savedEntity.capture());
     assertEquals(9, savedEntity.getValue().getRowVersion());
   }
 
@@ -162,14 +172,15 @@ class ScriptDefinitionServiceImplTest {
         .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
         .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
 
-    verify(repository, never()).save(any(ScriptDefinition.class));
+    verify(repository, never()).saveWithCreationResult(any(ScriptDefinition.class));
     verifyNoBindingWrites();
   }
 
   @Test
   void bindingFailureDeletesOnlyTheNewlySavedDefinition() {
     ScriptDefinition saved = script(5L, "test", "v1", "{}");
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(saved);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(saved, true));
     doThrow(new IllegalStateException("binding write failed"))
         .when(bindingRepository)
         .saveAll(any());
@@ -194,7 +205,7 @@ class ScriptDefinitionServiceImplTest {
     assertThatThrownBy(() -> service.updateScript(dto)).isInstanceOf(SagaException.class);
 
     verify(repository).delete(saved);
-    verify(repository, times(1)).save(any(ScriptDefinition.class));
+    verify(repository, times(1)).saveWithCreationResult(any(ScriptDefinition.class));
   }
 
   @Test
@@ -202,7 +213,8 @@ class ScriptDefinitionServiceImplTest {
     ScriptDefinition existing = script(5L, "test", "v1", "{}");
     when(repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "test"))
         .thenReturn(java.util.Optional.of(existing));
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(existing);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(existing, false));
     doThrow(new IllegalStateException("binding write failed"))
         .when(bindingRepository)
         .saveAll(any());
@@ -227,7 +239,88 @@ class ScriptDefinitionServiceImplTest {
     assertThatThrownBy(() -> service.updateScript(dto)).isInstanceOf(SagaException.class);
 
     verify(repository, never()).delete(any(ScriptDefinition.class));
-    verify(repository, times(1)).save(any(ScriptDefinition.class));
+    verify(repository, times(1)).saveWithCreationResult(any(ScriptDefinition.class));
+  }
+
+  @Test
+  void bindingFailureDoesNotDeleteDurableWinnerOnNonOwnerFirstWrite() {
+    ScriptDefinition winner = script(5L, "test", "v1", "{}");
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(winner, false));
+    doThrow(new IllegalStateException("binding write failed"))
+        .when(bindingRepository)
+        .saveAll(any());
+    ScriptDefinitionDto dto =
+        new ScriptDefinitionDto(
+            null,
+            1L,
+            "test",
+            "v1",
+            "{}",
+            List.of(
+                new ScriptDefinitionDto.EventBindingDto(
+                    "onCommand",
+                    "v1",
+                    "ACTION_TAG",
+                    "COMMUNICATION",
+                    0,
+                    "normal",
+                    false,
+                    "binding-communication")));
+
+    assertThatThrownBy(() -> service.updateScript(dto)).isInstanceOf(SagaException.class);
+
+    verify(repository, never()).delete(any(ScriptDefinition.class));
+  }
+
+  @Test
+  void concurrentFirstWritesDoNotCompensateDurableWinnerWhenNonOwnerBindingFails()
+      throws Exception {
+    ScriptDefinition winner = script(5L, "test", "v1", "{\"winner\":true}");
+    AtomicInteger saveCalls = new AtomicInteger();
+    CountDownLatch bothFirstWrites = new CountDownLatch(2);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenAnswer(
+            invocation -> {
+              ScriptDefinition requested = invocation.getArgument(0);
+              bothFirstWrites.countDown();
+              if (!bothFirstWrites.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent first writes did not rendezvous");
+              }
+              boolean owner = "{\"owner\":true}".equals(requested.getDefinition());
+              saveCalls.incrementAndGet();
+              return new ScriptDefinitionRepository.SaveResult(winner, owner);
+            });
+    doAnswer(
+            invocation -> {
+              Collection<ScriptEventBinding> bindings = invocation.getArgument(0);
+              String bindingId = bindings.iterator().next().getBindingId();
+              if ("binding-non-owner".equals(bindingId)) {
+                throw new IllegalStateException("non-owner binding write failed");
+              }
+              return bindings.stream().toList();
+            })
+        .when(bindingRepository)
+        .saveAll(any());
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<ScriptDefinitionDto> owner =
+          executor.submit(
+              () -> service.updateScript(firstWriteDto("{\"owner\":true}", "binding-owner")));
+      Future<ScriptDefinitionDto> nonOwner =
+          executor.submit(
+              () ->
+                  service.updateScript(firstWriteDto("{\"non-owner\":true}", "binding-non-owner")));
+
+      assertNotNull(owner.get(10, TimeUnit.SECONDS));
+      assertThatThrownBy(() -> nonOwner.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(SagaException.class);
+      assertEquals(2, saveCalls.get());
+      verify(repository, never()).delete(winner);
+    } finally {
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -236,7 +329,8 @@ class ScriptDefinitionServiceImplTest {
     when(repository.findByTenantIdAndScriptVersionAndName(1L, "v1", "test"))
         .thenReturn(java.util.Optional.of(existing));
     when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
-    when(repository.save(any(ScriptDefinition.class))).thenReturn(existing);
+    when(repository.saveWithCreationResult(any(ScriptDefinition.class)))
+        .thenReturn(new ScriptDefinitionRepository.SaveResult(existing, false));
 
     ScriptEventBinding previousBinding = new ScriptEventBinding();
     previousBinding.setTenantId(1L);
@@ -388,6 +482,18 @@ class ScriptDefinitionServiceImplTest {
     script.setScriptVersion(version);
     script.setDefinition(definition);
     return script;
+  }
+
+  private static ScriptDefinitionDto firstWriteDto(String definition, String bindingId) {
+    return new ScriptDefinitionDto(
+        null,
+        1L,
+        "test",
+        "v1",
+        definition,
+        List.of(
+            new ScriptDefinitionDto.EventBindingDto(
+                "onCommand", "v1", "ACTION_TAG", "COMMUNICATION", 0, "normal", false, bindingId)));
   }
 
   private void verifyNoBindingWrites() {
