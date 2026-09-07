@@ -60,11 +60,15 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.telnetTlsSecretName" -}}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) -}}
 {{- if $telnetTls.enabled -}}
+{{- if eq (include "firemud.hostedControllerMode" . | trim) "true" -}}
+{{- printf "%s-telnet-tls" .Release.Name -}}
+{{- else -}}
 {{- $secretName := required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName -}}
 {{- if and (ne $secretName "__TELNET_TLS_SECRET_NAME__") (not (hasSuffix "-telnet-tls" $secretName)) -}}
 {{- fail "previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled" -}}
 {{- end -}}
 {{- $secretName -}}
+{{- end -}}
 {{- else -}}
 {{- $telnetTls.secretName | default "" -}}
 {{- end -}}
@@ -94,13 +98,18 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{- define "firemud.gatewayWsServerEnv" -}}
-{{- $preview := .Values.preview | default (dict) -}}
+{{- $root := .root -}}
+{{- $preview := $root.Values.preview | default (dict) -}}
+{{- $prNumber := get $preview "prNumber" -}}
+{{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
+{{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
+{{- end -}}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
   value: "true"
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
   value: "0.0.0.0"
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT
-  value: {{ .Values.previewStack.gatewayWsTls.targetPort | quote }}
+  value: {{ .targetPort | quote }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH
   value: /gateway-ws-server-tls/tls.crt
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH
@@ -108,11 +117,11 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
   value: /gateway-ws-server-tls/ca.crt
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
-  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $preview.prNumber) "0") }}
+  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
   value: production_uri
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN
-  value: {{ printf "spiffe://firemud/ns/%s/sa/tcp-proxy-service" .Release.Namespace | quote }}
+  value: {{ printf "spiffe://firemud/ns/%s/sa/tcp-proxy-service" $root.Release.Namespace | quote }}
 {{- end -}}
 
 {{- define "firemud.gatewayWsClientEnv" -}}

@@ -177,6 +177,10 @@ spec:
         - protocol: TCP
           port: 9000
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := "" }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- end }}
 {{- if $gatewayWsTls.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -198,7 +202,7 @@ spec:
               app: tcp-proxy-service
       ports:
         - protocol: TCP
-          port: {{ $gatewayWsTls.targetPort }}
+          port: {{ $gatewayWsTlsTargetPort }}
     - from:
         - namespaceSelector:
             matchLabels:
@@ -248,7 +252,7 @@ spec:
               app: spring-cloud-gateway
       ports:
         - protocol: TCP
-          port: {{ $gatewayWsTls.targetPort }}
+          port: {{ $gatewayWsTlsTargetPort }}
     - to:
         - podSelector:
             matchLabels:

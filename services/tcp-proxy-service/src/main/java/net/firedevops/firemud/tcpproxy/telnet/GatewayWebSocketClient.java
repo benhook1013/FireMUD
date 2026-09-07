@@ -201,7 +201,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
             recordFailure(classifyFailure(error));
           }
         });
-    return connection;
+    return connection.thenApply(releasingListener::wrap);
   }
 
   public CompletableFuture<Boolean> isReadyAsync() {
@@ -630,12 +630,13 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     }
   }
 
-  private static final class ReleasingWebSocketListener implements WebSocket.Listener {
+  static final class ReleasingWebSocketListener implements WebSocket.Listener {
     private final WebSocket.Listener delegate;
     private final Runnable releaseAction;
     private final AtomicBoolean released = new AtomicBoolean();
+    private volatile GenerationReleasingWebSocket releasingWebSocket;
 
-    private ReleasingWebSocketListener(WebSocket.Listener delegate, Runnable releaseAction) {
+    ReleasingWebSocketListener(WebSocket.Listener delegate, Runnable releaseAction) {
       this.delegate = Objects.requireNonNull(delegate, "listener");
       this.releaseAction = releaseAction;
     }
@@ -643,7 +644,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     @Override
     public void onOpen(WebSocket webSocket) {
       try {
-        delegate.onOpen(webSocket);
+        delegate.onOpen(wrap(webSocket));
       } catch (RuntimeException e) {
         release();
         throw e;
@@ -653,32 +654,32 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     @Override
     public java.util.concurrent.CompletionStage<?> onText(
         WebSocket webSocket, CharSequence data, boolean last) {
-      return delegate.onText(webSocket, data, last);
+      return delegate.onText(wrap(webSocket), data, last);
     }
 
     @Override
     public java.util.concurrent.CompletionStage<?> onBinary(
         WebSocket webSocket, java.nio.ByteBuffer data, boolean last) {
-      return delegate.onBinary(webSocket, data, last);
+      return delegate.onBinary(wrap(webSocket), data, last);
     }
 
     @Override
     public java.util.concurrent.CompletionStage<?> onPing(
         WebSocket webSocket, java.nio.ByteBuffer message) {
-      return delegate.onPing(webSocket, message);
+      return delegate.onPing(wrap(webSocket), message);
     }
 
     @Override
     public java.util.concurrent.CompletionStage<?> onPong(
         WebSocket webSocket, java.nio.ByteBuffer message) {
-      return delegate.onPong(webSocket, message);
+      return delegate.onPong(wrap(webSocket), message);
     }
 
     @Override
     public java.util.concurrent.CompletionStage<?> onClose(
         WebSocket webSocket, int statusCode, String reason) {
       try {
-        return delegate.onClose(webSocket, statusCode, reason);
+        return delegate.onClose(wrap(webSocket), statusCode, reason);
       } finally {
         release();
       }
@@ -687,14 +688,98 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     @Override
     public void onError(WebSocket webSocket, Throwable error) {
       try {
-        delegate.onError(webSocket, error);
+        delegate.onError(wrap(webSocket), error);
       } finally {
         release();
       }
     }
 
-    private void release() {
+    WebSocket wrap(WebSocket webSocket) {
+      GenerationReleasingWebSocket current = releasingWebSocket;
+      if (current != null) {
+        return current;
+      }
+      synchronized (this) {
+        if (releasingWebSocket == null) {
+          releasingWebSocket = new GenerationReleasingWebSocket(webSocket, this::release);
+        }
+        return releasingWebSocket;
+      }
+    }
+
+    void release() {
       if (released.compareAndSet(false, true)) {
+        releaseAction.run();
+      }
+    }
+  }
+
+  private static final class GenerationReleasingWebSocket implements WebSocket {
+    private final WebSocket delegate;
+    private final Runnable releaseAction;
+
+    private GenerationReleasingWebSocket(WebSocket delegate, Runnable releaseAction) {
+      this.delegate = Objects.requireNonNull(delegate, "webSocket");
+      this.releaseAction = releaseAction;
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
+      return delegate.sendText(data, last).thenApply(ignored -> this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendBinary(java.nio.ByteBuffer data, boolean last) {
+      return delegate.sendBinary(data, last).thenApply(ignored -> this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPing(java.nio.ByteBuffer message) {
+      return delegate.sendPing(message).thenApply(ignored -> this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendPong(java.nio.ByteBuffer message) {
+      return delegate.sendPong(message).thenApply(ignored -> this);
+    }
+
+    @Override
+    public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
+      CompletableFuture<WebSocket> close;
+      try {
+        close = delegate.sendClose(statusCode, reason);
+      } catch (RuntimeException error) {
+        releaseAction.run();
+        throw error;
+      }
+      return close.whenComplete((ignored, error) -> releaseAction.run()).thenApply(ignored -> this);
+    }
+
+    @Override
+    public void request(long n) {
+      delegate.request(n);
+    }
+
+    @Override
+    public String getSubprotocol() {
+      return delegate.getSubprotocol();
+    }
+
+    @Override
+    public boolean isOutputClosed() {
+      return delegate.isOutputClosed();
+    }
+
+    @Override
+    public boolean isInputClosed() {
+      return delegate.isInputClosed();
+    }
+
+    @Override
+    public void abort() {
+      try {
+        delegate.abort();
+      } finally {
         releaseAction.run();
       }
     }

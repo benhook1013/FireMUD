@@ -149,6 +149,31 @@ do
   fi
 done
 
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values-controller.yaml" \
+  --set-string 'previewStack.telnetTls.secretName=other-release-telnet-tls' \
+  --namespace pr-42 >"$TMP_DIR/rendered-mismatched-hosted-secret.yaml"
+python3 - "$TMP_DIR/rendered-mismatched-hosted-secret.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+deployment = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+telnet_volume = next(
+    volume
+    for volume in deployment["spec"]["template"]["spec"]["volumes"]
+    if volume.get("name") == "telnet-tls"
+)
+assert telnet_volume["secret"]["secretName"] == "preview-release-telnet-tls"
+PY
+
 CERTIFICATE_IDENTITY_MODE_ERROR="previewStack.certificateIdentity.mode must be standalone or hosted-controller"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" \
@@ -227,14 +252,20 @@ null_identity_issues = preflight.validate_hosted_telnet_tls_values(
     null_identity_documents
 )
 assert not null_identity_issues, null_identity_issues
-for document in null_identity_documents:
+null_identity_resources = [
+    document
+    for document in null_identity_documents
     if (
         document.get("kind") in {"Deployment", "Service"}
         and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-    ):
-        assert document["metadata"]["labels"][
-            "firemud.dev/certificate-identity-mode"
-        ] == "standalone"
+    )
+]
+assert len(null_identity_resources) == 2, null_identity_resources
+assert all(
+    document["metadata"]["labels"]["firemud.dev/certificate-identity-mode"]
+    == "standalone"
+    for document in null_identity_resources
+)
 assert not any(
     document.get("kind") == "Certificate"
     and document.get("metadata", {}).get("name", "").endswith("-telnet-tls")

@@ -470,9 +470,11 @@ def open_telnet_socket(
     if not tls_enabled:
         return raw_socket
     try:
-        context = ssl.create_default_context()
-        if tls_ca_file:
-            context.load_verify_locations(cafile=str(tls_ca_file))
+        context = (
+            ssl.create_default_context(cafile=str(tls_ca_file))
+            if tls_ca_file is not None
+            else ssl.create_default_context()
+        )
         context.check_hostname = True
         context.verify_mode = ssl.CERT_REQUIRED
         return context.wrap_socket(

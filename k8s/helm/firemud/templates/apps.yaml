@@ -2,6 +2,10 @@
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := "" }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- end }}
 {{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
@@ -76,7 +80,7 @@ spec:
 {{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
             {{- if $mountGatewayWsServerTls }}
-{{ include "firemud.gatewayWsServerEnv" $ | nindent 12 }}
+{{ include "firemud.gatewayWsServerEnv" (dict "root" $ "targetPort" $gatewayWsTlsTargetPort) | nindent 12 }}
             {{- end }}
             {{- if $mountGatewayWsClientTls }}
 {{ include "firemud.gatewayWsClientEnv" $ | nindent 12 }}
@@ -126,7 +130,7 @@ spec:
             - containerPort: {{ $port.targetPort }}
             {{- end }}
             {{- if $mountGatewayWsServerTls }}
-            - containerPort: {{ $gatewayWsTls.targetPort }}
+            - containerPort: {{ $gatewayWsTlsTargetPort }}
               name: gateway-ws-mtls
             {{- end }}
           readinessProbe:
@@ -229,6 +233,12 @@ spec:
 {{- end }}
 {{- end }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
+{{- $gatewayWsTlsTargetPort := "" }}
+{{- $gatewayWsTlsServicePort := "" }}
+{{- if $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
+{{- end }}
 {{- if and .Values.previewStack.enabled $gatewayWsTls.enabled }}
 ---
 apiVersion: v1
@@ -243,7 +253,7 @@ spec:
     app: spring-cloud-gateway
   ports:
     - name: wss-mtls
-      port: {{ $gatewayWsTls.servicePort }}
-      targetPort: {{ $gatewayWsTls.targetPort }}
+      port: {{ $gatewayWsTlsServicePort }}
+      targetPort: {{ $gatewayWsTlsTargetPort }}
       protocol: TCP
 {{- end }}

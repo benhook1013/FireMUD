@@ -32,6 +32,70 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
 
+PREVIEW_PR_NUMBER_ERROR="preview.prNumber is required when Gateway WebSocket TLS is enabled"
+for invalid_pr_number in missing empty; do
+  INVALID_PR_VALUES="$TMP_DIR/preview-values-pr-number-$invalid_pr_number.yaml"
+  cp "$TMP_DIR/preview-values.yaml" "$INVALID_PR_VALUES"
+  python3 - "$INVALID_PR_VALUES" "$invalid_pr_number" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+if sys.argv[2] == "missing":
+    values["preview"].pop("prNumber")
+else:
+    values["preview"]["prNumber"] = ""
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_PR_VALUES" \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-pr-number-$invalid_pr_number.err"; then
+    echo "Gateway WebSocket TLS rendered with $invalid_pr_number preview.prNumber" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$PREVIEW_PR_NUMBER_ERROR" "$TMP_DIR/invalid-pr-number-$invalid_pr_number.err"; then
+    echo "chart did not report the expected $invalid_pr_number preview.prNumber diagnostic" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-pr-number-$invalid_pr_number.err" >&2
+    exit 1
+  fi
+done
+
+GATEWAY_WS_TARGET_PORT_ERROR="previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled"
+for template in templates/apps.yaml templates/network-policies.yaml; do
+  error_file="$TMP_DIR/missing-gateway-target-port-$(basename "$template").err"
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$TMP_DIR/preview-values.yaml" \
+    --set-string 'previewStack.gatewayWsTls.targetPort=' \
+    --show-only "$template" \
+    --namespace pr-123 >/dev/null 2>"$error_file"; then
+    echo "$template rendered Gateway WebSocket TLS with no targetPort" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$GATEWAY_WS_TARGET_PORT_ERROR" "$error_file"; then
+    echo "$template did not report the expected missing targetPort diagnostic" >&2
+    sed -n '1,20p' "$error_file" >&2
+    exit 1
+  fi
+done
+
+GATEWAY_WS_SERVICE_PORT_ERROR="previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled"
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string 'previewStack.gatewayWsTls.servicePort=' \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/missing-gateway-service-port.err"; then
+  echo "apps template rendered Gateway WebSocket TLS with no servicePort" >&2
+  exit 1
+fi
+if ! grep -Fq "$GATEWAY_WS_SERVICE_PORT_ERROR" "$TMP_DIR/missing-gateway-service-port.err"; then
+  echo "apps template did not report the expected missing servicePort diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/missing-gateway-service-port.err" >&2
+  exit 1
+fi
+
 for context in ci-static operator; do
   set +e
   invalid_output="$(

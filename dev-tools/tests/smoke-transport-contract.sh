@@ -89,7 +89,7 @@ wrapped_tls_socket = FakeSession()
 tls_context = FakeTlsContext(wrapped=wrapped_tls_socket)
 with patch("smoke_common.socket.create_connection", return_value=raw_tls_socket) as connect, patch(
     "smoke_common.ssl.create_default_context", return_value=tls_context
-):
+) as create_context:
     result = open_telnet_socket(
         "203.0.113.10",
         2323,
@@ -100,7 +100,8 @@ with patch("smoke_common.socket.create_connection", return_value=raw_tls_socket)
     )
 assert result is wrapped_tls_socket
 assert connect.call_count == 1
-assert tls_context.loaded_ca_files == ["ca.pem"]
+create_context.assert_called_once_with(cafile="ca.pem")
+assert tls_context.loaded_ca_files == []
 assert tls_context.wrap_calls == [(raw_tls_socket, "preview.example.test")]
 assert tls_context.check_hostname is True
 assert tls_context.verify_mode == ssl.CERT_REQUIRED
@@ -113,7 +114,7 @@ with patch(
     "smoke_common.socket.create_connection", return_value=failed_raw_tls_socket
 ) as connect, patch(
     "smoke_common.ssl.create_default_context", return_value=failed_tls_context
-):
+) as create_context:
     try:
         open_telnet_socket(
             "203.0.113.10",
@@ -128,6 +129,7 @@ with patch(
         raise AssertionError("TLS failure unexpectedly succeeded")
 assert failed_raw_tls_socket.closed is True
 assert connect.call_count == 1
+create_context.assert_called_once_with()
 
 
 try:

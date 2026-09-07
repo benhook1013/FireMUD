@@ -31,9 +31,11 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLHandshakeException;
 import okhttp3.Response;
@@ -383,6 +385,30 @@ class GatewayWebSocketClientTest {
     assertTrue(clientClosed.await(5, TimeUnit.SECONDS));
     awaitTermination(oldGeneration);
     awaitGenerationCount(client, 1);
+  }
+
+  @Test
+  void localBridgeCloseReleasesGenerationWithoutWaitingForPeerClose() {
+    AtomicInteger releases = new AtomicInteger();
+    WebSocket delegate = mock(WebSocket.class);
+    CompletableFuture<WebSocket> closeWrite = new CompletableFuture<>();
+    when(delegate.sendClose(WebSocket.NORMAL_CLOSURE, "bye")).thenReturn(closeWrite);
+    GatewayWebSocketClient.ReleasingWebSocketListener listener =
+        new GatewayWebSocketClient.ReleasingWebSocketListener(
+            new WebSocket.Listener() {}, releases::incrementAndGet);
+    WebSocket bridge = listener.wrap(delegate);
+
+    CompletableFuture<WebSocket> close = bridge.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    assertEquals(0, releases.get());
+
+    closeWrite.complete(delegate);
+
+    assertSame(bridge, close.join());
+    assertEquals(1, releases.get());
+
+    listener.onClose(delegate, WebSocket.NORMAL_CLOSURE, "peer close arrived late");
+    listener.onError(delegate, new IllegalStateException("late transport callback"));
+    assertEquals(1, releases.get());
   }
 
   @Test
