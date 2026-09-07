@@ -67,6 +67,10 @@ BOOTSTRAP_MANIFEST_REQUIRED_MARKERS = (
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
 )
+BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK = (
+    'kubectl auth can-i create pods --subresource=portforward '
+    '-n "${PREVIEW_NAMESPACE}" >/dev/null'
+)
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
     "BOOTSTRAP_PORT_FORWARD_PID=$!",
@@ -81,7 +85,6 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
     '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
     'value: session',
-    'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null',
     'if bootstrap_mode == "account":',
     'email = os.environ["DEMO_SMOKE_EMAIL"]',
     'password = os.environ["DEMO_SMOKE_PASSWORD"]',
@@ -1215,6 +1218,19 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 "dev-demo player bootstrap must use the authenticated Kubernetes "
                 f"port-forward transport; missing: {expected}"
             )
+    authorization_lines = [
+        line.strip()
+        for line in bootstrap_manifest.splitlines()
+        if re.search(r"\bkubectl\s+auth\s+can-i\b", line)
+    ]
+    expected_authorization_line = (
+        f"if ! {BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}; then"
+    )
+    if authorization_lines != [expected_authorization_line]:
+        raise AssertionError(
+            "dev-demo port-forward authorization must use exactly: "
+            f"{BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}"
+        )
     normalized_lines = normalize_nonempty_lines(bootstrap_manifest)
     credential_validation = normalize_nonempty_lines(BOOTSTRAP_CREDENTIAL_VALIDATION)
     if credential_validation not in normalized_lines:

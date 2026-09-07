@@ -570,8 +570,8 @@ jobs:
           trap cleanup_bootstrap_resources EXIT
           trap 'exit 130' INT
           trap 'exit 143' TERM
-          if ! kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null; then
-            echo "::error::Preview deployer lacks pods/portforward permission; refusing credential bootstrap" >&2
+          if ! kubectl auth can-i create pods --subresource=portforward -n "${PREVIEW_NAMESPACE}" >/dev/null; then
+            echo "::error::Preview deployer lacks pods port-forward subresource permission; refusing credential bootstrap" >&2
             exit 1
           fi
           for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do

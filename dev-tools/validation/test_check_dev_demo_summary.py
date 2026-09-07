@@ -999,35 +999,86 @@ RESOURCES"""
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_unscoped_port_forward_authorization(self):
+    def test_validate_workflow_accepts_explicit_port_forward_subresource_authorization(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        scoped_check = 'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null'
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
+        self.assertIn(scoped_check, bootstrap_manifest)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_slash_form_port_forward_authorization(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
         self.assertIn(scoped_check, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            scoped_check, "kubectl auth can-i create pods/portforward >/dev/null", 1
+            scoped_check,
+            'kubectl auth can-i create pods/portforward '
+            '-n "${PREVIEW_NAMESPACE}" >/dev/null',
+            1,
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
                 AssertionError,
-                re.escape(f"port-forward transport; missing: {scoped_check}"),
+                re.escape(f"authorization must use exactly: {scoped_check}"),
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_port_forward_namespace_scope(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
+        self.assertIn(scoped_check, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            scoped_check,
+            "kubectl auth can-i create pods --subresource=portforward >/dev/null",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"authorization must use exactly: {scoped_check}"),
             ):
                 self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_wrong_port_forward_namespace_scope(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        scoped_check = 'kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null'
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
         self.assertIn(scoped_check, bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace(
-            scoped_check, 'kubectl auth can-i create pods/portforward -n default >/dev/null', 1
+            scoped_check,
+            "kubectl auth can-i create pods --subresource=portforward "
+            "-n default >/dev/null",
+            1,
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
                 AssertionError,
-                re.escape(f"port-forward transport; missing: {scoped_check}"),
+                re.escape(f"authorization must use exactly: {scoped_check}"),
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_port_forward_subresource(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
+        self.assertIn(scoped_check, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            scoped_check,
+            'kubectl auth can-i create pods -n "${PREVIEW_NAMESPACE}" >/dev/null',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"authorization must use exactly: {scoped_check}"),
             ):
                 self.validator.validate_workflow(root)
 
