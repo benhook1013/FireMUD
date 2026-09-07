@@ -37,6 +37,48 @@ assert_job_contains() {
   fi
 }
 
+assert_step_contains() {
+  local workflow="$1"
+  local job="$2"
+  local step="$3"
+  local expected="$4"
+  local path="$ROOT_DIR/.github/workflows/$workflow"
+
+  if ! awk -v job="$job" -v step="$step" -v expected="$expected" '
+    $0 == "  " job ":" { in_job = 1; found_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && $0 == "      - name: " step { in_step = 1; found_step = 1; next }
+    in_step && /^      - name:/ { exit }
+    in_step && index($0, expected) { matched = 1 }
+    END { exit !(found_job && found_step && matched) }
+  ' "$path"; then
+    echo "$workflow job $job step $step must contain: $expected" >&2
+    exit 1
+  fi
+}
+
+assert_step_immediately_followed_by() {
+  local workflow="$1"
+  local job="$2"
+  local step="$3"
+  local following_step="$4"
+  local path="${5:-$ROOT_DIR/.github/workflows/$workflow}"
+
+  if ! awk -v job="$job" -v step="$step" -v following_step="$following_step" '
+    $0 == "  " job ":" { in_job = 1; found_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && $0 == "      - name: " step { in_step = 1; found_step = 1; next }
+    in_step && /^      - / {
+      matched = ($0 == "      - name: " following_step)
+      exit
+    }
+    END { exit !(found_job && found_step && matched) }
+  ' "$path"; then
+    echo "$workflow job $job step $step must be immediately followed by: $following_step" >&2
+    return 1
+  fi
+}
+
 assert_job_excludes() {
   local workflow="$1"
   local job="$2"
@@ -349,6 +391,24 @@ require_contains "$preview_path" 'EVENT_LABELS_JSON:'
 require_contains "$preview_path" '--labels-json "$LABELS_JSON"'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy'
 assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels immediately before helm deploy'
+assert_step_immediately_followed_by preview.yml preview-deploy \
+  'Revalidate preview target labels immediately before helm deploy' \
+  'Deploy preview release'
+assert_step_contains preview.yml preview-deploy 'Deploy preview release' 'helm upgrade --install'
+mutated_preview_path="$(mktemp)"
+trap 'rm -f "$mutated_preview_path"' EXIT
+awk '
+  $0 == "      - name: Deploy preview release" {
+    print "      - uses: actions/checkout@0000000000000000000000000000000000000000"
+  }
+  { print }
+' "$preview_path" > "$mutated_preview_path"
+if assert_step_immediately_followed_by preview.yml preview-deploy \
+  'Revalidate preview target labels immediately before helm deploy' \
+  'Deploy preview release' "$mutated_preview_path"; then
+  echo "preview adjacency contract accepted an unnamed intervening step" >&2
+  exit 1
+fi
 require_contains "$preview_reconciler_path" 'preview:paused'
 require_contains "$preview_reconciler_path" 'malformed label metadata'
 for job in preview-deploy preview-destroy; do

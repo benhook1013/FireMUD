@@ -2740,6 +2740,21 @@ if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
         "combined bridge failure was emitted with a misleading transport subject: "
         f"{bridge_failure_results}"
     )
+bridge_pass_results = []
+module.append_result(
+    bridge_pass_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    "pass",
+    "Gateway bridge and direct Telnet TLS alignment is valid",
+)
+if len(bridge_pass_results) != 1 or bridge_pass_results[0].message != (
+    "Gateway bridge and direct Telnet TLS alignment is valid"
+):
+    raise SystemExit(
+        "successful bridge diagnostic must name both Gateway and direct Telnet TLS scope: "
+        f"{bridge_pass_results}"
+    )
 invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)

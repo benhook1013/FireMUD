@@ -171,6 +171,320 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_reordered_secret_create_command(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            "\nkubectl create \\\n"
+            '  --namespace "${PREVIEW_NAMESPACE}" \\\n'
+            "  secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_behind_env_wrapper(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = (
+            bootstrap_manifest
+            + "\nenv FOO=bar kubectl create secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_inside_shell_group(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = (
+            bootstrap_manifest
+            + "\n{ kubectl create secret generic unrelated-resource; }"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_behind_command_wrapper(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = (
+            bootstrap_manifest
+            + "\ncommand -- kubectl create secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_configmap_named_secret(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + "\nkubectl create configmap secret"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_configmap_with_secret_literal_value(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + (
+            "\nkubectl create configmap notes "
+            "--from-literal=message=secret"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_ignores_secret_commands_in_quotes_and_comments(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + r"""
+printf '%s\n' 'kubectl create secret generic documentation-only'
+echo "heredoc example: kubectl apply -f - <<EXAMPLE"
+# kubectl apply -f - <<COMMENTED_SECRET
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_from_short_equals_stdin_flag(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+kubectl apply -f=- <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_after_trailing_pipe_continuation(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+cat <<'RESOURCES' |
+  kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_associates_secret_first_of_two_pipeline_heredocs(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+kubectl apply -f - <<'SECRET_RESOURCE' |
+  cat <<'HARMLESS_RESOURCE'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+SECRET_RESOURCE
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-resource
+HARMLESS_RESOURCE"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_separately_applied_secret_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+kubectl apply -f - <<'YAML-END'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+stringData:
+  password: ${DEMO_SMOKE_PASSWORD}
+YAML-END"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_in_additional_yaml_document(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+cat <<'RESOURCES' | kubectl create -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-resource
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_in_backslash_quoted_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + r"""
+kubectl apply -f - <<\CREDENTIALS
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+stringData:
+  password: value
+CREDENTIALS"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_templated_secret_from_consumed_stdin(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+kubectl apply \\
+  -f - <<'RESOURCES'
+{{ invalid-template }}
+kind: Secret
+metadata:
+  name: unrelated-resource
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_in_second_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+cat <<CONFIG <<CREDENTIALS | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-resource
+CONFIG
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+stringData:
+  password: value
+CREDENTIALS"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_separate_configmap_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + """
+cat <<'RESOURCES' | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-resource
+data:
+  mode: session
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_configmap_with_secret_documentation(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + """
+kubectl apply -f - <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-documentation
+data:
+  example.yaml: |
+    kind: Secret
+YAML"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_unconsumed_secret_example_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + """
+cat <<'EXAMPLE'
+kind: Secret
+EXAMPLE"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_harmless_multiple_and_backslash_heredocs(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + r"""
+cat <<CONFIG <<\RESOURCES | kubectl apply -f -
+diagnostic input that is superseded by the second heredoc
+CONFIG
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harmless-resource
+data:
+  mode: session
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_accepts_image_pull_secret_reference(self):
         bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(
             lambda pod: pod["spec"].update(

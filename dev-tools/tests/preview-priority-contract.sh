@@ -490,7 +490,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
@@ -586,7 +586,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -594,9 +594,9 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
-  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n' \
-  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\n' \
-  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\n'
+  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n' \
+  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n' \
+  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -631,13 +631,22 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\n'
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\t[{"name":"preview:priority"},{"name":"preview:paused"}]\n'
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\n'
+# Keep the derived priority/paused columns intentionally inconsistent with the
+# actual label JSON so this proves eligibility receives the trusted labels,
+# rather than the allocator's old fabricated [] value.
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:paused"}]\n'
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
@@ -668,6 +677,7 @@ grep -q 'malformed-label-metadata' "$eligibility_script"
 grep -q 'labels_valid' "$reconciler_workflow"
 grep -q 'preview:paused' "$reconciler_workflow"
 grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- '--labels-json "$labels_json"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'preview:paused' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3

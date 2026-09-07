@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ast
 import re
+import shlex
 import sys
+import textwrap
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,9 +50,10 @@ SUMMARY_TARGET = re.compile(
     r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
 )
 HEREDOC_OPEN = re.compile(
-    r"<<(?P<strip_tabs>-)?[ \t]*(?P<quote>['\"]?)"
-    r"(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)"
-    r"(?P=quote)"
+    r"<<(?P<strip_tabs>-)?[ \t]*(?P<delimiter>"
+    r"'[^'\r\n]*'|"
+    r'\"(?:\\.|[^\"\\\r\n])*\"|'
+    r"(?:\\[^\r\n]|[^\s;&|<>'\"])+)"
 )
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
 PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
@@ -98,10 +101,34 @@ BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
     "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
 )
 NON_CREDENTIAL_SECRET_KEYS = frozenset({"imagepullsecrets"})
-BOOTSTRAP_SECRET_CREATE_COMMAND = re.compile(
-    r"\bkubectl\b[^;&|]*\bcreate\s+secret(?:\s|$)",
-    re.IGNORECASE,
+KUBERNETES_SECRET_KIND = re.compile(
+    r"^kind[ \t]*:[ \t]*['\"]?Secret['\"]?[ \t]*(?:#.*)?$",
+    re.IGNORECASE | re.MULTILINE,
 )
+SHELL_CONTROL_OPERATORS = frozenset({";", "&", "&&", "||"})
+SHELL_COMMAND_PREFIXES = frozenset({"!", "if", "then", "{", "("})
+KUBECTL_VALUE_FLAGS = frozenset(
+    {
+        "-n",
+        "--namespace",
+        "--context",
+        "--cluster",
+        "--user",
+        "--kubeconfig",
+        "--request-timeout",
+        "--server",
+        "--as",
+        "--as-group",
+        "--token",
+        "--certificate-authority",
+        "--client-certificate",
+        "--client-key",
+        "--tls-server-name",
+        "--cache-dir",
+        "--dry-run",
+    }
+)
+YAML_DOCUMENT_SEPARATOR = re.compile(r"^---[ \t]*(?:#.*)?$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -120,6 +147,281 @@ def normalize_script(script: str) -> str:
 def normalize_nonempty_lines(script: str) -> str:
     return "\n".join(
         " ".join(line.split()) for line in script.splitlines() if line.strip()
+    )
+
+
+def _heredoc_delimiter(opener: re.Match[str]) -> str:
+    token = opener["delimiter"]
+    if token.startswith("'") and token.endswith("'"):
+        return token[1:-1]
+    if token.startswith('"') and token.endswith('"'):
+        return re.sub(r'\\([$`"\\])', r"\1", token[1:-1])
+    return re.sub(r"\\(.)", r"\1", token)
+
+
+def _shell_tokens(source: str) -> list[str]:
+    lexer = shlex.shlex(source, posix=True, punctuation_chars=";&|<>")
+    lexer.commenters = "#"
+    lexer.whitespace_split = True
+    try:
+        return [token for token in lexer if token not in {"\n", "\r\n"}]
+    except ValueError as error:
+        raise AssertionError("dev-demo bootstrap step contains invalid shell syntax") from error
+
+
+def _shell_line_continues(line: str) -> bool:
+    quote: str | None = None
+    escaped = False
+    word_started = False
+    for character in line:
+        if escaped:
+            escaped = False
+            word_started = True
+            continue
+        if character == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+            continue
+        if character in "'\"":
+            quote = character
+            word_started = True
+            continue
+        if character == "#" and not word_started:
+            break
+        word_started = not (character.isspace() or character in ";|&<>()")
+    if escaped and quote is None:
+        return True
+    tokens = _shell_tokens(line)
+    return bool(tokens) and tokens[-1] in {"|", "||", "&&"}
+
+
+def _heredoc_specs(command: str) -> list[tuple[str, bool, bool]]:
+    tokens = _shell_tokens(command)
+    feeds_manifest_stdin: dict[int, bool] = {}
+    group_start = 0
+    group_ranges: list[tuple[int, int]] = []
+    for index, token in enumerate(tokens):
+        if token in SHELL_CONTROL_OPERATORS:
+            group_ranges.append((group_start, index))
+            group_start = index + 1
+    group_ranges.append((group_start, len(tokens)))
+    for start, end in group_ranges:
+        pipeline_start = start
+        pipeline_ranges: list[tuple[int, int]] = []
+        for index in range(start, end):
+            if tokens[index] == "|":
+                pipeline_ranges.append((pipeline_start, index))
+                pipeline_start = index + 1
+        pipeline_ranges.append((pipeline_start, end))
+        for pipeline_index, (command_start, command_end) in enumerate(pipeline_ranges):
+            openers = [
+                index
+                for index in range(command_start, command_end)
+                if tokens[index] == "<<" and index + 1 < command_end
+            ]
+            if not openers:
+                continue
+            downstream = pipeline_ranges[pipeline_index:]
+            feeds_manifest_stdin[openers[-1]] = any(
+                arguments is not None and _kubectl_reads_manifest_stdin(arguments)
+                for downstream_start, downstream_end in downstream
+                for arguments in (
+                    _kubectl_arguments(tokens[downstream_start:downstream_end]),
+                )
+            )
+            for opener in openers[:-1]:
+                feeds_manifest_stdin[opener] = False
+
+    result: list[tuple[str, bool, bool]] = []
+    for index, token in enumerate(tokens):
+        if token != "<<" or index + 1 >= len(tokens):
+            continue
+        delimiter = tokens[index + 1]
+        strip_tabs = delimiter.startswith("-")
+        result.append(
+            (
+                delimiter[1:] if strip_tabs else delimiter,
+                strip_tabs,
+                feeds_manifest_stdin.get(index, False),
+            )
+        )
+    return result
+
+
+def _shell_statements(source: str) -> Iterable[tuple[str, list[tuple[str, bool]]]]:
+    """Yield shell statements separately from any attached heredoc bodies."""
+    lines = source.splitlines()
+    index = 0
+    while index < len(lines):
+        command_end = index
+        while command_end + 1 < len(lines) and _shell_line_continues(lines[command_end]):
+            command_end += 1
+        command = "\n".join(lines[index : command_end + 1])
+        heredocs = _heredoc_specs(command)
+        if not heredocs:
+            index = command_end + 1
+            yield command, []
+            continue
+        index = command_end + 1
+        bodies: list[tuple[str, bool]] = []
+        for delimiter, strip_tabs, feeds_manifest_stdin in heredocs:
+            body_start = index
+            while index < len(lines):
+                candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
+                if candidate == delimiter:
+                    body_lines = lines[body_start:index]
+                    if strip_tabs:
+                        body_lines = [line.lstrip("\t") for line in body_lines]
+                    bodies.append(("\n".join(body_lines), feeds_manifest_stdin))
+                    break
+                index += 1
+            else:
+                raise AssertionError(
+                    f"dev-demo bootstrap step contains unterminated heredoc {delimiter!r}"
+                )
+            index += 1
+        yield command, bodies
+
+
+def _heredoc_inputs(source: str) -> Iterable[tuple[str, str]]:
+    """Yield each command and the heredoc body that supplies its effective stdin."""
+
+    for command, bodies in _shell_statements(source):
+        for body, feeds_manifest_stdin in bodies:
+            if feeds_manifest_stdin:
+                yield command, body
+
+
+def _shell_command_groups(tokens: list[str]) -> Iterable[list[str]]:
+    start = 0
+    for index, token in enumerate(tokens):
+        if token in SHELL_CONTROL_OPERATORS:
+            if start < index:
+                yield tokens[start:index]
+            start = index + 1
+    if start < len(tokens):
+        yield tokens[start:]
+
+
+def _pipeline_commands(tokens: list[str]) -> Iterable[list[str]]:
+    start = 0
+    for index, token in enumerate(tokens):
+        if token == "|":
+            if start < index:
+                yield tokens[start:index]
+            start = index + 1
+    if start < len(tokens):
+        yield tokens[start:]
+
+
+def _kubectl_arguments(command: list[str]) -> list[str] | None:
+    index = 0
+    while index < len(command):
+        token = command[index]
+        if token in SHELL_COMMAND_PREFIXES or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
+            index += 1
+            continue
+        if token == "env":
+            index += 1
+            while index < len(command) and (
+                command[index] == "--"
+                or command[index].startswith("-")
+                or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", command[index])
+            ):
+                index += 1
+            continue
+        if token == "command":
+            index += 1
+            while index < len(command) and command[index].startswith("-"):
+                index += 1
+            continue
+        return command[index + 1 :] if token.rsplit("/", 1)[-1] == "kubectl" else None
+    return None
+
+
+def _next_kubectl_positional(arguments: list[str], start: int = 0) -> tuple[str, int] | None:
+    index = start
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--":
+            index += 1
+            return (arguments[index], index) if index < len(arguments) else None
+        if token.startswith("-"):
+            if "=" not in token and token in KUBECTL_VALUE_FLAGS:
+                index += 2
+            else:
+                index += 1
+            continue
+        return token, index
+    return None
+
+
+def _kubectl_creates_secret(arguments: list[str]) -> bool:
+    verb = _next_kubectl_positional(arguments)
+    if verb is None or verb[0] != "create":
+        return False
+    resource = _next_kubectl_positional(arguments, verb[1] + 1)
+    return resource is not None and resource[0] == "secret"
+
+
+def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
+    verb = _next_kubectl_positional(arguments)
+    if verb is None or verb[0] not in {"apply", "create", "replace"}:
+        return False
+    values = arguments[verb[1] + 1 :]
+    return any(
+        token in {"-f=-", "--filename=-"}
+        or (token in {"-f", "--filename"} and index + 1 < len(values) and values[index + 1] == "-")
+        for index, token in enumerate(values)
+    )
+
+
+def _contains_secret_manifest(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    kind = value.get("kind")
+    if kind == "Secret":
+        return True
+    if not isinstance(kind, str) or not kind.endswith("List"):
+        return False
+    items = value.get("items")
+    return isinstance(items, list) and any(
+        _contains_secret_manifest(item) for item in items
+    )
+
+
+def _heredoc_contains_secret_manifest(body: str) -> bool:
+    """Recognize Secret documents, including multi-document and templated YAML."""
+
+    try:
+        if any(
+            _contains_secret_manifest(document)
+            for document in yaml.safe_load_all(body)
+        ):
+            return True
+    except yaml.YAMLError:
+        # A shell-expanded value may not be valid YAML until execution. Keep the
+        # resource-kind check fail closed without treating ordinary text as a Secret.
+        pass
+    return any(
+        KUBERNETES_SECRET_KIND.search(textwrap.dedent(document)) is not None
+        for document in YAML_DOCUMENT_SEPARATOR.split(body)
+    )
+
+
+def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
+    for statement, _ in _shell_statements(bootstrap_manifest):
+        for group in _shell_command_groups(_shell_tokens(statement)):
+            for command in _pipeline_commands(group):
+                arguments = _kubectl_arguments(command)
+                if arguments is not None and _kubectl_creates_secret(arguments):
+                    return True
+    return any(
+        _heredoc_contains_secret_manifest(body)
+        for command, body in _heredoc_inputs(bootstrap_manifest)
     )
 
 
@@ -251,7 +553,7 @@ def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
         end = index
         heredoc_match = _summary_heredoc(lines, start, index)
         if heredoc_match is not None:
-            delimiter = heredoc_match.group("delimiter")
+            delimiter = _heredoc_delimiter(heredoc_match)
             strip_tabs = heredoc_match.group("strip_tabs") is not None
             for candidate in range(index + 1, len(lines)):
                 candidate_line = lines[candidate]
@@ -684,7 +986,9 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo account bootstrap must reject empty credentials"
         )
-    if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or BOOTSTRAP_SECRET_CREATE_COMMAND.search(normalized):
+    if "BOOTSTRAP_SECRET_DIR" in bootstrap_manifest or _bootstrap_creates_secret(
+        bootstrap_manifest
+    ):
         raise AssertionError("dev-demo session pod must not create or mount credential Secret material")
     post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
     if post_log_cleanup not in normalized_lines:
