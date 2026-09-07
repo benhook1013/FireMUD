@@ -4,6 +4,69 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 
+revalidate_deploy() {
+  local pull_request_json="$1"
+  printf '%s' "$pull_request_json" | python3 "$SCRIPT" \
+    --revalidate-deploy \
+    --expected-repository example/FireMUD \
+    --expected-head-sha head-123
+}
+
+assert_revalidation_refused() {
+  local pull_request_json="$1"
+  local expected_reason="$2"
+  local output
+
+  if output="$(revalidate_deploy "$pull_request_json")"; then
+    echo "Revalidation unexpectedly accepted: $pull_request_json" >&2
+    exit 1
+  fi
+  if [[ "$output" != "$expected_reason" ]]; then
+    echo "Expected refusal '$expected_reason', got '$output'" >&2
+    exit 1
+  fi
+}
+
+valid_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+revalidate_deploy "$valid_pull_request"
+valid_automation_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
+revalidate_deploy "$valid_automation_pull_request"
+
+assert_revalidation_refused \
+  '{not-json' \
+  'current pull request metadata is malformed'
+assert_revalidation_refused \
+  '{"state":"closed","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  'pull request is not open (state=closed)'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-stale","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  'head is stale (expected=head-123, current=head-stale)'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
+  'label metadata is malformed'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[{"name":"preview:paused"}]}' \
+  'preview:paused is present'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
+  'target is not preview-eligible (reason=unsupported-base-branch)'
+assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"dependabot[bot]"},"labels":[]}' \
+  'target is not preview-eligible (reason=dependency-bot)'
+for malformed_author_pull_request in \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":null,"labels":[]}' \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":42},"labels":[]}' \
+  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":""},"labels":[]}'
+do
+  assert_revalidation_refused \
+    "$malformed_author_pull_request" \
+    'current pull request metadata is malformed (user.login must be a non-empty string)'
+done
+
 inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]')"
 grep -q '^labels_valid=true$' <<<"$inspect_priority"
 grep -q '^priority=true$' <<<"$inspect_priority"

@@ -204,27 +204,41 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     return connection;
   }
 
-  public boolean isReady() {
+  public CompletableFuture<Boolean> isReadyAsync() {
     ClientGeneration generation = acquireCurrentGeneration();
     if (generation == null) {
-      return false;
+      return CompletableFuture.completedFuture(false);
     }
     HttpRequest request =
         HttpRequest.newBuilder(readinessUri).GET().timeout(READINESS_TIMEOUT).build();
+    CompletableFuture<HttpResponse<Void>> responseFuture;
     try {
-      HttpResponse<Void> response =
-          generation.client().send(request, HttpResponse.BodyHandlers.discarding());
-      return response.statusCode() >= 200 && response.statusCode() < 300;
-    } catch (IOException e) {
-      recordFailure(classifyFailure(e));
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      recordFailure("unknown");
-      return false;
-    } finally {
+      responseFuture =
+          generation.client().sendAsync(request, HttpResponse.BodyHandlers.discarding());
+    } catch (RuntimeException e) {
       generation.release();
+      recordFailure(classifyFailure(e));
+      return CompletableFuture.completedFuture(false);
     }
+    CompletableFuture<Boolean> readiness = new CompletableFuture<>();
+    responseFuture.whenComplete(
+        (response, error) -> {
+          boolean ready = false;
+          if (error == null) {
+            ready = response.statusCode() >= 200 && response.statusCode() < 300;
+          } else {
+            recordFailure(classifyFailure(error));
+          }
+          generation.release();
+          readiness.complete(ready);
+        });
+    readiness.whenComplete(
+        (ignored, error) -> {
+          if (readiness.isCancelled()) {
+            responseFuture.cancel(true);
+          }
+        });
+    return readiness;
   }
 
   public URI readinessUri() {

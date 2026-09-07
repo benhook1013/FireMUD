@@ -683,12 +683,6 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${paused_labels_base64}\n"
-bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
-test ! -e "$FAKE_DELETE_LOG"
-
-reset_case
-export FAKE_TARGET_PRIORITY=false
 # The centralized authority must derive pause state from the transported labels.
 export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${paused_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
@@ -853,8 +847,7 @@ grep -q 'preview:paused' "$preview_workflow"
 grep -Fq "EVENT_LABELS_JSON: \${{ toJSON(github.event.pull_request.labels) }}" "$preview_workflow"
 grep -q 'preview:paused' "$eligibility_script"
 grep -q 'malformed-label-metadata' "$eligibility_script"
-# shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
-grep -q -- '--inspect-labels --labels-json "$labels_json"' "$preview_workflow"
+test "$(grep -Fc -- '--revalidate-deploy' "$preview_workflow")" -eq 2
 # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
 grep -q -- '--inspect-labels --labels-json "$labels_json"' "$reconciler_workflow"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.

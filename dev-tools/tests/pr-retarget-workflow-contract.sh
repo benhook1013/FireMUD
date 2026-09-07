@@ -409,6 +409,10 @@ require_ordered_sequence "$preview_path" \
 assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels before deploy' \
   'Enforce preview capacity'
+# shellcheck disable=SC2016 # This assertion intentionally matches a literal workflow expression.
+assert_step_contains preview.yml preview-deploy \
+  'Revalidate preview target labels before deploy' \
+  "if: \${{ steps.preview-access.outputs.available == 'true' }}"
 for revalidation_step in \
   'Revalidate preview target labels before deploy' \
   'Revalidate preview target labels immediately before helm deploy'; do
@@ -417,23 +421,22 @@ for revalidation_step in \
     'EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}'
   # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '--inspect-labels --labels-json "$labels_json"'
+    '--expected-repository "$GITHUB_REPOSITORY"'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '--operation deploy'
+    '--expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json"'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    '--revalidate-deploy'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'current pull request metadata is unavailable'
   # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'pull request is not open (state=${current_state})'
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})'
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})'
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'label metadata is malformed'
-  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'preview:paused is present'
+    '${refusal_reason:-preview eligibility evaluation failed}'
 done
+if [[ "$(grep -Fc -- '--revalidate-deploy' "$preview_path")" -ne 2 ]]; then
+  echo "Preview workflow must use the centralized deploy revalidation exactly twice" >&2
+  exit 1
+fi
 if grep -Fq 'def labels_valid:' "$preview_path"; then
   echo "Preview workflow must use the centralized label authority" >&2
   exit 1

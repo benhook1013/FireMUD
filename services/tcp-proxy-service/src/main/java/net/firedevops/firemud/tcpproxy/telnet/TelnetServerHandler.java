@@ -10,8 +10,6 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
-import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.ByteBuffer;
@@ -104,37 +102,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
-
-  public TelnetServerHandler(
-      String gatewayWsUrl,
-      Runnable onConnect,
-      Runnable onDisconnect,
-      io.micrometer.core.instrument.Counter connectionCounter,
-      io.micrometer.core.instrument.Counter discardedCommandCounter,
-      boolean advertiseMcp,
-      MeterRegistry meterRegistry,
-      BooleanSupplier gameplayTrafficReady,
-      TcpProxyEventService eventService,
-      AtomicInteger bufferDepth) {
-    this(
-        gatewayWsUrl,
-        onConnect,
-        onDisconnect,
-        connectionCounter,
-        discardedCommandCounter,
-        advertiseMcp,
-        meterRegistry,
-        gameplayTrafficReady,
-        webSocketConnector(gatewayWsUrl),
-        eventService,
-        bufferDepth,
-        null,
-        null,
-        null,
-        null,
-        null,
-        DEFAULT_RUNTIME_IDENTITY);
-  }
 
   TelnetServerHandler(
       String gatewayWsUrl,
@@ -262,63 +229,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         String realmSlug,
         String pointerVersion,
         Listener listener);
-  }
-
-  static WebSocketConnector webSocketConnector(String gatewayWsUrl) {
-    return (clientIp,
-        proxyConnectionId,
-        gameInstanceId,
-        tenantId,
-        worldSlug,
-        realmSlug,
-        pointerVersion,
-        listener) ->
-        createWebSocket(
-            gatewayWsUrl,
-            clientIp,
-            proxyConnectionId,
-            gameInstanceId,
-            tenantId,
-            worldSlug,
-            realmSlug,
-            pointerVersion,
-            listener);
-  }
-
-  static CompletableFuture<WebSocket> createWebSocket(
-      String gatewayWsUrl,
-      String clientIp,
-      String proxyConnectionId,
-      String gameInstanceId,
-      String tenantId,
-      String worldSlug,
-      String realmSlug,
-      String pointerVersion,
-      Listener listener) {
-    var builder = SHARED_HTTP_CLIENT.newWebSocketBuilder();
-    if (clientIp != null) {
-      builder.header("X-Client-IP", clientIp);
-      builder.header("X-Proxy-Client-IP", clientIp);
-    }
-    if (proxyConnectionId != null && !proxyConnectionId.isBlank()) {
-      builder.header("X-Proxy-Connection-Id", proxyConnectionId);
-    }
-    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
-      builder.header("X-Game-Instance-Id", gameInstanceId);
-      builder.header("X-Proxy-Game-Instance-Id", gameInstanceId);
-    }
-    if (tenantId != null && !tenantId.isBlank()) {
-      builder.header("X-Tenant-Id", tenantId);
-      builder.header("X-Proxy-Tenant-Id", tenantId);
-    }
-    TelnetRoutingBundle routingBundle =
-        TelnetRoutingBundle.normalize(worldSlug, realmSlug, pointerVersion);
-    if (routingBundle != null) {
-      builder.header("X-World-Slug", routingBundle.worldSlug());
-      builder.header("X-Realm-Slug", routingBundle.realmSlug());
-      builder.header("X-Pointer-Version", routingBundle.pointerVersion());
-    }
-    return builder.buildAsync(URI.create(gatewayWsUrl), listener);
   }
 
   void setWebSocket(WebSocket webSocket) {
@@ -988,7 +898,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       Set.of((byte) 240, (byte) 241, (byte) 249, (byte) 251, (byte) 252, (byte) 253, (byte) 254);
 
   private static final Set<Byte> SUPPORTED_OPTIONS = Set.of((byte) 1, (byte) 3);
-  private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder().build();
 
   private record GatewayCloseClassification(
       String reasonToken, String message, String shutdownClass) {}

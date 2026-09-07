@@ -18,12 +18,15 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import java.net.InetAddress;
+import java.net.URI;
+import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.PublicKey;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,9 +54,9 @@ class GatewayWebSocketClientTest {
 
   @BeforeEach
   void copyTlsMaterial() throws Exception {
-    certificate = copyResource("/certs/dev-cert.pem", "dev-cert.pem");
-    privateKey = copyResource("/certs/dev-key.pem", "dev-key.pem");
-    caCertificate = copyResource("/certs/dev-ca.pem", "dev-ca.pem");
+    certificate = copyResource("/certs/client.crt", "client.crt");
+    privateKey = copyResource("/certs/client.key", "client.key");
+    caCertificate = copyResource("/certs/ca.crt", "ca.crt");
   }
 
   @AfterEach
@@ -95,11 +98,21 @@ class GatewayWebSocketClientTest {
                 new WebSocket.Listener() {})
             .get(5, TimeUnit.SECONDS);
 
-    assertTrue(client.isReady());
+    assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     assertSame(configuredClient, client.clientIdentity());
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
     webSocket.abort();
+  }
+
+  @Test
+  void non2xxReadinessResponseFailsClosed() throws Exception {
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.enqueue(new MockResponse().setResponseCode(503));
+    GatewayWebSocketClient client = newClient("localhost", server.getPort(), caCertificate);
+
+    assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
   }
 
   @Test
@@ -422,7 +435,7 @@ class GatewayWebSocketClientTest {
         certificate, rotatedCaCertificate, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     assertFalse(client.reloadNow());
     assertNull(client.clientIdentity());
-    assertFalse(client.isReady());
+    assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     awaitTermination(initialClient);
     awaitGenerationCount(client, 0);
     assertTrue(
@@ -448,9 +461,13 @@ class GatewayWebSocketClientTest {
     Files.createSymbolicLink(projection.resolve("tls.key"), Path.of("..data/tls.key"));
     Files.createSymbolicLink(projection.resolve("ca.crt"), Path.of("..data/ca.crt"));
 
-    Path rotatedCertificate = gatewayFixture("tcp-proxy-client.pem");
-    Path rotatedPrivateKey = gatewayFixture("tcp-proxy-client-key.pem");
-    Path rotatedClientCa = gatewayFixture("tcp-proxy-client-ca.pem");
+    TlsMaterial rotatedMaterial = copyDistinctClasspathTlsMaterial();
+    Path rotatedCertificate = rotatedMaterial.certificate();
+    Path rotatedPrivateKey = rotatedMaterial.privateKey();
+    Path rotatedClientCa = rotatedMaterial.caCertificate();
+    assertFalse(
+        GatewayWebSocketClient.samePublicKey(
+            readCertificate(certificate), readCertificate(rotatedCertificate)));
     Path serverTrust = materialDirectory.resolve("server-trust.pem");
     Files.writeString(
         serverTrust,
@@ -505,7 +522,8 @@ class GatewayWebSocketClientTest {
     var request = Objects.requireNonNull(server.takeRequest(5, TimeUnit.SECONDS));
     var handshake = Objects.requireNonNull(request.getHandshake());
     X509Certificate peerCertificate = (X509Certificate) handshake.peerCertificates().getFirst();
-    assertEquals("CN=tcp-proxy-service", peerCertificate.getSubjectX500Principal().getName());
+    assertTrue(
+        GatewayWebSocketClient.samePublicKey(readCertificate(rotatedCertificate), peerCertificate));
     webSocket.abort();
   }
 
@@ -561,26 +579,25 @@ class GatewayWebSocketClientTest {
     return generation;
   }
 
-  private static Path gatewayFixture(String name) {
-    Path workingDirectory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
-    Path moduleSibling =
-        workingDirectory
-            .resolve("../spring-cloud-gateway/src/test/resources/certs")
-            .resolve(name)
-            .normalize();
-    if (Files.isRegularFile(moduleSibling)) {
-      return moduleSibling;
+  private TlsMaterial copyDistinctClasspathTlsMaterial() throws Exception {
+    X509Certificate initialCertificate = readCertificate(certificate);
+    var resources = getClass().getClassLoader().getResources("certs/dev-cert.pem");
+    while (resources.hasMoreElements()) {
+      URL certificateResource = resources.nextElement();
+      X509Certificate candidate;
+      try (var input = certificateResource.openStream()) {
+        candidate =
+            (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+      }
+      if (GatewayWebSocketClient.samePublicKey(initialCertificate, candidate)) {
+        continue;
+      }
+      return new TlsMaterial(
+          copyResource(certificateResource, "rotated-client.crt"),
+          copyResource(siblingResource(certificateResource, "dev-key.pem"), "rotated-client.key"),
+          copyResource(siblingResource(certificateResource, "dev-ca.pem"), "rotated-ca.crt"));
     }
-    Path repositoryFixture =
-        workingDirectory
-            .resolve("services/spring-cloud-gateway/src/test/resources/certs")
-            .resolve(name)
-            .normalize();
-    if (Files.isRegularFile(repositoryFixture)) {
-      return repositoryFixture;
-    }
-    throw new IllegalStateException(
-        "Gateway TLS fixture not found at " + moduleSibling + " or " + repositoryFixture);
+    throw new IllegalStateException("Distinct common test-support TLS material not found");
   }
 
   private Path copyResource(String resourceName, String fileName) throws Exception {
@@ -590,6 +607,25 @@ class GatewayWebSocketClientTest {
       Files.copy(input, target);
     }
     return target;
+  }
+
+  private Path copyResource(URL resource, String fileName) throws Exception {
+    Path target = materialDirectory.resolve(fileName);
+    try (var input = resource.openStream()) {
+      Files.copy(input, target);
+    }
+    return target;
+  }
+
+  private static URL siblingResource(URL resource, String fileName) throws Exception {
+    String location = resource.toExternalForm();
+    return URI.create(location.substring(0, location.lastIndexOf('/') + 1) + fileName).toURL();
+  }
+
+  private static X509Certificate readCertificate(Path path) throws Exception {
+    try (var input = Files.newInputStream(path)) {
+      return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+    }
   }
 
   private static void awaitTermination(HttpClient client) throws Exception {
@@ -618,4 +654,6 @@ class GatewayWebSocketClientTest {
     assertNotSame(initialIdentity, currentIdentity);
     return currentIdentity;
   }
+
+  private record TlsMaterial(Path certificate, Path privateKey, Path caCertificate) {}
 }

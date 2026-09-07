@@ -354,6 +354,7 @@ jobs:
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
       - name: Revalidate preview target labels before deploy
+        if: ${{ steps.preview-access.outputs.available == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
@@ -367,28 +368,12 @@ jobs:
           if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
             refuse_preview "current pull request metadata is unavailable"
           fi
-          current_state="$(jq -r '.state' <<<"$pull_request_json")"
-          current_head_sha="$(jq -r '.head.sha' <<<"$pull_request_json")"
-          current_head_repository="$(jq -r '.head.repo.full_name' <<<"$pull_request_json")"
-          [[ "$current_state" == open ]] || refuse_preview "pull request is not open (state=${current_state})"
-          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_preview "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_preview "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
-          labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
-          label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --inspect-labels --labels-json "$labels_json")"
-          labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
-          is_paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
-          [[ "$labels_valid" == true ]] || refuse_preview "label metadata is malformed"
-          [[ "$is_paused" == false ]] || refuse_preview "preview:paused is present"
-          eligibility_output="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --operation deploy \
-            --state "$current_state" \
-            --base-ref "$(jq -r '.base.ref' <<<"$pull_request_json")" \
-            --author "$(jq -r '.user.login' <<<"$pull_request_json")" \
-            --labels-json "$labels_json")"
-          eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-          reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
-          [[ "$eligible" == true ]] || refuse_preview "target is not preview-eligible (reason=${reason})"
+          if ! refusal_reason="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+            --revalidate-deploy \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json")"; then
+            refuse_preview "${refusal_reason:-preview eligibility evaluation failed}"
+          fi
 
       - name: Enforce preview capacity
         if: ${{ steps.preview-access.outputs.available == 'true' }}
@@ -578,28 +563,12 @@ jobs:
           if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
             refuse_preview "current pull request metadata is unavailable"
           fi
-          current_state="$(jq -r '.state' <<<"$pull_request_json")"
-          current_head_sha="$(jq -r '.head.sha' <<<"$pull_request_json")"
-          current_head_repository="$(jq -r '.head.repo.full_name' <<<"$pull_request_json")"
-          [[ "$current_state" == open ]] || refuse_preview "pull request is not open (state=${current_state})"
-          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_preview "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_preview "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
-          labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
-          label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --inspect-labels --labels-json "$labels_json")"
-          labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
-          is_paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
-          [[ "$labels_valid" == true ]] || refuse_preview "label metadata is malformed"
-          [[ "$is_paused" == false ]] || refuse_preview "preview:paused is present"
-          eligibility_output="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --operation deploy \
-            --state "$current_state" \
-            --base-ref "$(jq -r '.base.ref' <<<"$pull_request_json")" \
-            --author "$(jq -r '.user.login' <<<"$pull_request_json")" \
-            --labels-json "$labels_json")"
-          eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-          reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
-          [[ "$eligible" == true ]] || refuse_preview "target is not preview-eligible (reason=${reason})"
+          if ! refusal_reason="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+            --revalidate-deploy \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json")"; then
+            refuse_preview "${refusal_reason:-preview eligibility evaluation failed}"
+          fi
 
       - name: Deploy preview release
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}

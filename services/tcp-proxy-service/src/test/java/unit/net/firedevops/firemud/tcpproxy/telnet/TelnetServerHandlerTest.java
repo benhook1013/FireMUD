@@ -1243,7 +1243,7 @@ class TelnetServerHandlerTest {
             false,
             registry,
             () -> true,
-            TelnetServerHandler.webSocketConnector("ws://localhost/ws"),
+            new RecordingConnector(),
             eventService,
             new AtomicInteger(),
             "1",

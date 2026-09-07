@@ -77,7 +77,7 @@ class WorldManagementStubServerTest {
         GetRoomSnapshotResponse response =
             stub.getRoomSnapshot(
                 GetRoomSnapshotRequest.newBuilder()
-                    .setTenantId("1")
+                    .setTenantId("outer-tenant")
                     .setRoomInstance(requestedRoom)
                     .build());
 
