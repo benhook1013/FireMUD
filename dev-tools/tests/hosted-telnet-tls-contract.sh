@@ -44,7 +44,10 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-configured-mode.yaml" --namespace pr-42 >"$TMP_DIR/rendered-configured-enabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/values-configured-mode.yaml" --set previewStack.telnetTls.enabled=false --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
+  -f "$TMP_DIR/values-configured-mode.yaml" \
+  --set previewStack.telnetTls.enabled=false \
+  --set-string 'previewStack.telnetTls.clusterIssuer=' \
+  --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-spring-profile.yaml"
@@ -78,6 +81,20 @@ fi
 if ! grep -Fq "$TELNET_TLS_SECRET_NAME_ERROR" "$TMP_DIR/missing-secret.err"; then
   echo "chart did not report the expected missing Secret name diagnostic" >&2
   sed -n '1,20p' "$TMP_DIR/missing-secret.err" >&2
+  exit 1
+fi
+
+TELNET_TLS_CLUSTER_ISSUER_ERROR="previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate"
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string 'previewStack.telnetTls.clusterIssuer=' \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/missing-cluster-issuer.err"; then
+  echo "chart rendered a standalone Telnet TLS Certificate with no ClusterIssuer" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_TLS_CLUSTER_ISSUER_ERROR" "$TMP_DIR/missing-cluster-issuer.err"; then
+  echo "chart did not report the expected missing ClusterIssuer diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/missing-cluster-issuer.err" >&2
   exit 1
 fi
 
@@ -189,6 +206,7 @@ assert certificate["spec"]["secretName"] == "preview-release-telnet-tls"
 assert certificate["spec"]["privateKey"]["algorithm"] == "RSA"
 assert certificate["spec"]["privateKey"]["encoding"] == "PKCS8"
 assert certificate["spec"]["dnsNames"] == ["preview-42.preview.example.test"]
+assert certificate["spec"]["issuerRef"]["name"] == "letsencrypt-prod"
 ingress = next(d for d in documents if d.get("kind") == "Ingress")
 assert ingress["spec"]["tls"][0]["secretName"] == "preview-release-tls"
 assert certificate["spec"]["secretName"] != ingress["spec"]["tls"][0]["secretName"]

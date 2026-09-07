@@ -202,7 +202,15 @@ def _login_redaction(command: str) -> tuple[str, bytes, bytes] | None:
 
 def _display_text(text: str) -> str:
     """Make received control characters visible without changing evidence."""
-    return "".join(char if char in "\r\n" or char.isprintable() else f"\\x{ord(char):02x}" for char in text)
+    rendered = []
+    for index, char in enumerate(text):
+        if char == "\r":
+            rendered.append("\r" if text[index + 1 : index + 2] == "\n" else r"\x0d")
+        elif char == "\n" or char.isprintable():
+            rendered.append(char)
+        else:
+            rendered.append(f"\\x{ord(char):02x}")
+    return "".join(rendered)
 
 
 class TelnetParser:

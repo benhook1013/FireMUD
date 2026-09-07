@@ -500,6 +500,7 @@ jobs:
           BOOTSTRAP_ACCOUNT_ID_FILE=/tmp/dev-demo-account-id
           BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log
           BOOTSTRAP_PORT_FORWARD_PID=
+          BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS=15
           cleanup_bootstrap_port_forward() {
             if [[ -z "${BOOTSTRAP_PORT_FORWARD_PID:-}" ]]; then
               return 0
@@ -507,6 +508,26 @@ jobs:
             kill "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
             wait "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
             BOOTSTRAP_PORT_FORWARD_PID=
+          }
+          wait_for_bootstrap_port_forward() {
+            local attempt
+            for (( attempt = 1; attempt <= BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS; attempt++ )); do
+              if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+                echo "::error::Dev-demo Gateway port-forward exited before confirming its loopback listener" >&2
+                return 1
+              fi
+              if grep -Eq '^Forwarding from (127\.0\.0\.1|localhost):18080 -> [0-9]+$' \
+                "${BOOTSTRAP_PORT_FORWARD_LOG}"; then
+                if kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+                  return 0
+                fi
+                echo "::error::Dev-demo Gateway port-forward exited after confirming its loopback listener" >&2
+                return 1
+              fi
+              sleep 1
+            done
+            echo "::error::Dev-demo Gateway port-forward did not confirm the expected loopback listener within the bounded wait" >&2
+            return 1
           }
           cleanup_bootstrap_account_id_file() {
             if [[ -z "${BOOTSTRAP_ACCOUNT_ID_FILE:-}" ]]; then
@@ -569,12 +590,14 @@ jobs:
             "${BOOTSTRAP_GATEWAY_PORT}:80" \
             >"${BOOTSTRAP_PORT_FORWARD_LOG}" 2>&1 &
           BOOTSTRAP_PORT_FORWARD_PID=$!
+          if ! wait_for_bootstrap_port_forward; then
+            exit 1
+          fi
           if ! BOOTSTRAP_MODE=account \
             BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
             BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
             python3 "${BOOTSTRAP_SCRIPT}"; then
-            echo "Dev-demo Gateway port-forward account bootstrap failed."
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+            echo "::error::Dev-demo Gateway port-forward account bootstrap failed" >&2
             exit 1
           fi
           cleanup_bootstrap_port_forward

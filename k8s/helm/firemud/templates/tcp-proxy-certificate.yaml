@@ -4,6 +4,7 @@
 {{- $telnetTlsSecretName = required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName }}
 {{- end }}
 {{- if and .Values.previewStack.enabled $telnetTls.enabled }}
+{{- $telnetTlsClusterIssuer := required "previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate" $telnetTls.clusterIssuer }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -18,6 +19,6 @@ spec:
   dnsNames:
     - {{ .Values.preview.hostname | quote }}
   issuerRef:
-    name: {{ $telnetTls.clusterIssuer | quote }}
+    name: {{ $telnetTlsClusterIssuer | quote }}
     kind: ClusterIssuer
 {{- end }}

@@ -255,6 +255,60 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_secret_create_after_output_option(self):
+        output_options = (
+            "--output json",
+            "--output=json",
+            "-o json",
+            "-ojson",
+        )
+        for output_option in output_options:
+            with self.subTest(output_option=output_option):
+                bootstrap_manifest = self._bootstrap_manifest_fixture()
+                invalid_manifest = bootstrap_manifest + (
+                    f"\nkubectl {output_option} create secret generic unrelated-resource"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "must not create or mount credential Secret",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_output_options_before_non_secret_command(self):
+        output_options = (
+            "--output json",
+            "--output=json",
+            "-o json",
+            "-ojson",
+        )
+        for output_option in output_options:
+            with self.subTest(output_option=output_option):
+                bootstrap_manifest = self._bootstrap_manifest_fixture()
+                valid_manifest = bootstrap_manifest + (
+                    f"\nkubectl {output_option} get configmap harmless-resource"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, valid_manifest)
+                    self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_unknown_pre_verb_kubectl_option(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            "\nkubectl --unknown-output json get configmap harmless-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "unsupported kubectl option syntax: '--unknown-output'",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_secret_create_behind_env_wrapper(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         invalid_manifest = (

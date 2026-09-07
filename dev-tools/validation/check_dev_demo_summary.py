@@ -194,6 +194,8 @@ KUBECTL_VALUE_FLAGS = frozenset(
         "--tls-server-name",
         "--cache-dir",
         "--dry-run",
+        "-o",
+        "--output",
     }
 )
 YAML_DOCUMENT_SEPARATOR = re.compile(r"^---[ \t]*(?:#.*)?$", re.MULTILINE)
@@ -490,7 +492,12 @@ def _kubectl_arguments(command: list[str]) -> list[str] | None:
     return None
 
 
-def _next_kubectl_positional(arguments: list[str], start: int = 0) -> tuple[str, int] | None:
+def _next_kubectl_positional(
+    arguments: list[str],
+    start: int = 0,
+    *,
+    reject_unknown_options: bool = False,
+) -> tuple[str, int] | None:
     index = start
     while index < len(arguments):
         token = arguments[index]
@@ -498,9 +505,31 @@ def _next_kubectl_positional(arguments: list[str], start: int = 0) -> tuple[str,
             index += 1
             return (arguments[index], index) if index < len(arguments) else None
         if token.startswith("-"):
-            if "=" not in token and token in KUBECTL_VALUE_FLAGS:
+            option = token.split("=", 1)[0]
+            attached_short_value = next(
+                (
+                    flag
+                    for flag in KUBECTL_VALUE_FLAGS
+                    if flag.startswith("-")
+                    and not flag.startswith("--")
+                    and token.startswith(flag)
+                    and len(token) > len(flag)
+                ),
+                None,
+            )
+            if option in KUBECTL_VALUE_FLAGS and "=" in token:
+                if not token.split("=", 1)[1]:
+                    raise AssertionError(f"kubectl option {option!r} requires a value")
+                index += 1
+            elif attached_short_value is not None:
+                index += 1
+            elif token in KUBECTL_VALUE_FLAGS:
+                if index + 1 >= len(arguments):
+                    raise AssertionError(f"kubectl option {token!r} requires a value")
                 index += 2
             else:
+                if reject_unknown_options:
+                    raise AssertionError(f"unsupported kubectl option syntax: {token!r}")
                 index += 1
             continue
         return token, index
@@ -508,7 +537,7 @@ def _next_kubectl_positional(arguments: list[str], start: int = 0) -> tuple[str,
 
 
 def _kubectl_creates_secret(arguments: list[str]) -> bool:
-    verb = _next_kubectl_positional(arguments)
+    verb = _next_kubectl_positional(arguments, reject_unknown_options=True)
     if verb is None or verb[0] != "create":
         return False
     resource = _next_kubectl_positional(arguments, verb[1] + 1)
@@ -516,7 +545,7 @@ def _kubectl_creates_secret(arguments: list[str]) -> bool:
 
 
 def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
-    verb = _next_kubectl_positional(arguments)
+    verb = _next_kubectl_positional(arguments, reject_unknown_options=True)
     if verb is None or verb[0] not in {"apply", "create", "replace"}:
         return False
     values = arguments[verb[1] + 1 :]

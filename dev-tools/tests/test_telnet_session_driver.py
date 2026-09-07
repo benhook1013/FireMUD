@@ -550,7 +550,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertFalse(any(record["event"] == "error" for record in records))
 
     def test_received_display_escapes_terminal_controls_without_mutating_evidence(self):
-        raw = "room \x1b[31mred\x1b]8;;https://example.test\x07\x01\r\n"
+        raw = "room\roverwrite \x1b[31mred\x1b]8;;https://example.test\x07\x01\r\n"
         with tempfile.TemporaryDirectory() as directory:
             output = []
             session = telnet_session.TelnetSession(
@@ -566,10 +566,45 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertNotIn("\x1b", rendered)
             self.assertNotIn("\x07", rendered)
             self.assertNotIn("\x01", rendered)
+            self.assertIn(r"room\x0doverwrite", rendered)
             self.assertIn(r"\x1b[31m", rendered)
             self.assertIn(r"\x1b]8;;https://example.test\x07", rendered)
             self.assertTrue(rendered.endswith("\r\n"))
             self.assertEqual(session.store.read()[0]["text"], raw)
+
+    def test_received_display_preserves_crlf_and_lf_newlines(self):
+        self.assertEqual(
+            telnet_session._display_text("first\r\nsecond\n"),
+            "first\r\nsecond\n",
+        )
+
+    def test_received_display_escapes_lone_carriage_returns(self):
+        self.assertEqual(
+            telnet_session._display_text("before\rmiddle\r"),
+            r"before\x0dmiddle\x0d",
+        )
+
+    def test_received_display_escapes_crlf_split_across_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+
+            session._append("inbound", "received", text="partial\r")
+            session._append("inbound", "received", text="\ncontinued")
+
+            self.assertTrue(output[0].endswith(r"partial\x0d"))
+            self.assertNotIn("\r", output[0])
+            self.assertTrue(output[1].endswith("\ncontinued"))
+            self.assertEqual(
+                [record["text"] for record in session.store.read()],
+                ["partial\r", "\ncontinued"],
+            )
 
     def test_login_echo_redacts_password_in_output_and_transcript(self):
         secret = "secret-7"
