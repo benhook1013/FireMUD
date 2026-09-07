@@ -35,6 +35,25 @@ public class ScriptEventBindingRepository {
   }
 
   public List<ScriptEventBinding>
+      findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
+          Long tenantId, String scriptPatchVersion, String scriptId) {
+    return dsl.selectFrom(SCRIPT_EVENT_BINDINGS)
+        .where(
+            SCRIPT_EVENT_BINDINGS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+                .and(SCRIPT_EVENT_BINDINGS.SCRIPT_ID.eq(scriptId)))
+        .orderBy(
+            SCRIPT_EVENT_BINDINGS.EVENT_TYPE.asc(),
+            SCRIPT_EVENT_BINDINGS.EVENT_SCHEMA_VERSION.asc(),
+            SCRIPT_EVENT_BINDINGS.PRIORITY.asc(),
+            SCRIPT_EVENT_BINDINGS.BINDING_ID.asc(),
+            SCRIPT_EVENT_BINDINGS.ID.asc())
+        .fetch(this::toEntity);
+  }
+
+  public List<ScriptEventBinding>
       findByTenantIdAndScriptPatchVersionAndEventTypeAndEventSchemaVersionAndEnabledTrueOrderByPriorityAscScriptIdAsc(
           Long tenantId, String scriptPatchVersion, String eventType, String eventSchemaVersion) {
     return dsl.selectFrom(SCRIPT_EVENT_BINDINGS)

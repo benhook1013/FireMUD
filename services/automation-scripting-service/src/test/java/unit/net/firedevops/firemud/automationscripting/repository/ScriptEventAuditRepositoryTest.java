@@ -28,6 +28,50 @@ import org.springframework.data.domain.PageRequest;
 
 class ScriptEventAuditRepositoryTest {
   @Test
+  void constrainedExistenceUsesNullSafePluginBindingIdentityMatching() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptEventAuditRepository repository =
+        new ScriptEventAuditRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .existsByTenantIdAndGameInstanceIdAndRegionIdAndRegionEpochAndEntityIdAndPlayableStateScopeAndWorldSlugAndRealmSlugAndPointerVersionAndScriptIdAndPluginIdAndPluginVersionIdAndBindingIdAndEventTypeAndEventSchemaVersionAndScriptPatchVersionAndScriptPinEpochAndScriptPinControlPlaneRequestIdAndScriptEventIdAndDryRun(
+                    "tenant-1",
+                    "game-1",
+                    "region-1",
+                    7L,
+                    "entity-1",
+                    "SHARED",
+                    "world-1",
+                    "realm-1",
+                    "pointer-1",
+                    "script-1",
+                    null,
+                    null,
+                    null,
+                    "onCommand",
+                    "v1",
+                    "patch-1",
+                    null,
+                    null,
+                    "event-1",
+                    false))
+        .isFalse();
+
+    assertThat(whereClause(sql.get()))
+        .contains(
+            "\"plugin_id\" is not distinct from",
+            "\"plugin_version_id\" is not distinct from",
+            "\"binding_id\" is not distinct from");
+  }
+
+  @Test
   void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
     AtomicReference<String> sql = new AtomicReference<>();
     MockDataProvider provider =
@@ -67,7 +111,13 @@ class ScriptEventAuditRepositoryTest {
     int whereStart = sql.get().indexOf(" where ");
     assertThat(whereStart).isGreaterThanOrEqualTo(0);
     assertThat(sql.get().substring(whereStart))
-        .contains("script_pin_epoch", "script_pin_control_plane_request_id", "script_event_id");
+        .contains(
+            "plugin_id",
+            "plugin_version_id",
+            "binding_id",
+            "script_pin_epoch",
+            "script_pin_control_plane_request_id",
+            "script_event_id");
   }
 
   @Test

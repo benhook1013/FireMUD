@@ -524,6 +524,11 @@ message SetAutomationAdmissionModeResponse {
   int64 admission_epoch = 5;
   int64 updated_at_ms = 6;
   shared.v1.ErrorDetail error = 7;
+  string control_plane_request_id = 8;
+  AutomationAdmissionMode target_mode = 9;
+  string outcome = 10;
+  string request_fingerprint = 11;
+  int64 acknowledged_at_ms = 12;
 }
 
 message GetAutomationDrainStatusResponse {
@@ -538,6 +543,12 @@ message GetAutomationDrainStatusResponse {
   int64 observed_at_ms = 9;
   bool is_stale = 10;
   shared.v1.ErrorDetail error = 11;
+  bool state_present = 12;
+  string control_plane_request_id = 13;
+  AutomationAdmissionMode target_mode = 14;
+  string outcome = 15;
+  string request_fingerprint = 16;
+  int64 acknowledged_at_ms = 17;
 }
 
 message GetAutomationPinConvergenceRequest {

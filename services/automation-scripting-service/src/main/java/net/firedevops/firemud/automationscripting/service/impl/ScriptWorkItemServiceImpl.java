@@ -271,9 +271,26 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     requireText(normalizedGameInstanceId, "game_instance_id");
     String normalizedRegionId = normalizeRegionId(regionId);
     Instant now = Instant.now();
-    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
-        automationAdmissionStateService.getState(
+    Optional<AutomationAdmissionStateService.AdmissionStateSummary> admissionStateLookup =
+        automationAdmissionStateService.findState(
             normalizedTenantId, normalizedGameInstanceId, normalizedRegionId);
+    AutomationAdmissionStateService.AdmissionStateSummary admissionState =
+        admissionStateLookup.orElseGet(
+            () ->
+                new AutomationAdmissionStateService.AdmissionStateSummary(
+                    normalizedTenantId,
+                    normalizedGameInstanceId,
+                    normalizedRegionId,
+                    "NORMAL",
+                    0L,
+                    "",
+                    "",
+                    "",
+                    0L,
+                    "",
+                    AutomationAdmissionStateService.OUTCOME_NOT_FOUND,
+                    "",
+                    0L));
     List<ScriptWorkItem> scopedWorkItems =
         workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             normalizedTenantId,
@@ -308,8 +325,14 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         normalizedTenantId,
         normalizedGameInstanceId,
         normalizedRegionId,
+        admissionStateLookup.isPresent(),
         admissionState.mode(),
         admissionState.admissionEpoch(),
+        admissionState.controlPlaneRequestId(),
+        admissionState.targetMode(),
+        admissionState.outcome(),
+        admissionState.requestFingerprint(),
+        admissionState.acknowledgedAtMs(),
         activeExecutionCount,
         oldestActiveExecutionStartedAtMs,
         pendingCancelableWorkItemCount,
