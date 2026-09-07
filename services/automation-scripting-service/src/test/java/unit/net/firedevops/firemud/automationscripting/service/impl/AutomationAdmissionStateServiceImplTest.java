@@ -74,10 +74,26 @@ class AutomationAdmissionStateServiceImplTest {
     when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
         .thenReturn(Optional.of(state));
     when(repository.save(state)).thenReturn(state);
+    AtomicReference<AutomationAdmissionRequestHistory> durableResult = new AtomicReference<>();
     when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
-        .thenReturn(Optional.empty());
+        .thenAnswer(
+            invocation -> {
+              AutomationAdmissionRequestHistory history = durableResult.get();
+              return history != null
+                      && invocation.getArgument(3, String.class).equals(history.getMode())
+                      && invocation
+                          .getArgument(4, String.class)
+                          .equals(history.getControlPlaneRequestId())
+                  ? Optional.of(history)
+                  : Optional.empty();
+            });
     when(historyRepository.insertOrGet(any(AutomationAdmissionRequestHistory.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              AutomationAdmissionRequestHistory history = invocation.getArgument(0);
+              durableResult.set(history);
+              return history;
+            });
     AutomationAdmissionStateService service = service(repository, historyRepository);
 
     AutomationAdmissionStateService.AdmissionStateSummary paused =
@@ -114,8 +130,8 @@ class AutomationAdmissionStateServiceImplTest {
     AutomationAdmissionStateService service = service(repository, historyRepository);
 
     assertThatThrownBy(() -> service.setMode(command("actor-1", "rollback")))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("different admission-mode request");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no matching durable successful acknowledgement");
     verify(repository, never()).save(any());
     verify(historyRepository, never()).insertOrGet(any());
   }
@@ -158,7 +174,35 @@ class AutomationAdmissionStateServiceImplTest {
     assertThatThrownBy(
             () -> service(repository, historyRepository).setMode(command("actor-1", "rollback")))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("without a durable acknowledgement");
+        .hasMessageContaining("no matching durable successful acknowledgement");
+    verify(repository, never()).save(any());
+    verify(historyRepository, never()).insertOrGet(any());
+  }
+
+  @Test
+  void refusesModeChangeWhenCurrentStateHasNoMatchingDurableAcknowledgement() {
+    AutomationAdmissionStateRepository repository =
+        Mockito.mock(AutomationAdmissionStateRepository.class);
+    AutomationAdmissionRequestHistoryRepository historyRepository =
+        Mockito.mock(AutomationAdmissionRequestHistoryRepository.class);
+    AutomationAdmissionState orphanedState = state("tenant-1", "game-1", "region-1");
+    orphanedState.setMode("PAUSED_FOR_ROLLBACK");
+    orphanedState.setAdmissionEpoch(2L);
+    orphanedState.setControlPlaneRequestId("pause-request");
+    orphanedState.setControlPlaneRequestFingerprint("fingerprint-1");
+    when(repository.findByTenantIdAndGameInstanceIdAndRegionId("tenant-1", "game-1", "region-1"))
+        .thenReturn(Optional.of(orphanedState));
+    when(historyRepository.find(anyString(), anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(Optional.empty());
+
+    AutomationAdmissionStateService.SetAdmissionModeCommand resume =
+        new AutomationAdmissionStateService.SetAdmissionModeCommand(
+            "tenant-1", "game-1", "region-1", "NORMAL", "resume-request", "actor-1", "resume");
+
+    assertThatThrownBy(() -> service(repository, historyRepository).setMode(resume))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("no matching durable successful acknowledgement");
+    assertThat(orphanedState.getMode()).isEqualTo("PAUSED_FOR_ROLLBACK");
     verify(repository, never()).save(any());
     verify(historyRepository, never()).insertOrGet(any());
   }
@@ -290,7 +334,7 @@ class AutomationAdmissionStateServiceImplTest {
   @NullAndEmptySource
   @ValueSource(strings = {"   ", "\u2003"})
   void rejectsBlankSetActorBeforeAnyLookup(String actor) {
-    assertBlankSetField("tenant-1", "game-1", "request-1", actor, "reason", "actor");
+    assertBlankSetField("tenant-1", "game-1", "request-1", actor, "reason", "actor_principal");
   }
 
   @ParameterizedTest

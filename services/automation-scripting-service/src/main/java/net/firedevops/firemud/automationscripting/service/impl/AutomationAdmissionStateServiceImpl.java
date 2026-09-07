@@ -85,7 +85,7 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     String mode = normalizeMode(command.mode());
     String requestId =
         requireNormalizedText(command.controlPlaneRequestId(), "control_plane_request_id");
-    String actorPrincipal = requireNormalizedText(command.actorPrincipal(), "actor");
+    String actorPrincipal = requireNormalizedText(command.actorPrincipal(), "actor_principal");
     String reason = requireNormalizedText(command.reason(), "reason");
     String fingerprint =
         requestFingerprint(
@@ -101,13 +101,7 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
     }
 
     AutomationAdmissionState state = findOrCreate(tenantId, gameInstanceId, regionId);
-    if (state.getMode().equals(mode)
-        && requestId.equals(normalize(state.getControlPlaneRequestId()))
-        && !normalize(state.getControlPlaneRequestFingerprint()).isBlank()) {
-      verifyRequestFingerprint(state.getControlPlaneRequestFingerprint(), fingerprint);
-      throw new IllegalStateException(
-          "admission state records the request without a durable acknowledgement");
-    }
+    verifyCurrentAcknowledgement(state);
 
     Instant now = Instant.now();
     String outcome = state.getMode().equals(mode) ? OUTCOME_ALREADY_APPLIED : OUTCOME_APPLIED;
@@ -213,6 +207,30 @@ public class AutomationAdmissionStateServiceImpl implements AutomationAdmissionS
         && stateFingerprint.equals(normalize(history.getRequestFingerprint()))
         && (OUTCOME_APPLIED.equals(history.getOutcome())
             || OUTCOME_ALREADY_APPLIED.equals(history.getOutcome()));
+  }
+
+  private void verifyCurrentAcknowledgement(AutomationAdmissionState state) {
+    String currentRequestId = normalize(state.getControlPlaneRequestId());
+    String currentFingerprint = normalize(state.getControlPlaneRequestFingerprint());
+    if (currentRequestId.isBlank() && currentFingerprint.isBlank()) {
+      return;
+    }
+    if (currentRequestId.isBlank() || currentFingerprint.isBlank()) {
+      throw new IllegalStateException(
+          "admission state has incomplete durable acknowledgement identity");
+    }
+    Optional<AutomationAdmissionRequestHistory> currentHistory =
+        requestHistoryRepository.find(
+            state.getTenantId(),
+            state.getGameInstanceId(),
+            state.getRegionId(),
+            state.getMode(),
+            currentRequestId);
+    if (currentHistory.isEmpty()
+        || !isCurrentSuccessfulAcknowledgement(state, currentHistory.orElseThrow())) {
+      throw new IllegalStateException(
+          "admission state has no matching durable successful acknowledgement");
+    }
   }
 
   private static AutomationAdmissionRequestHistory toHistory(

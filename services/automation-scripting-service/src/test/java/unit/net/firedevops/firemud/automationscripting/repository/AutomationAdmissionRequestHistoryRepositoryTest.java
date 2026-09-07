@@ -17,7 +17,7 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class AutomationAdmissionRequestHistoryRepositoryTest {
-  private static final String LONG_ACTOR_PRINCIPAL = "x".repeat(129);
+  private static final String LONG_ACTOR_PRINCIPAL = "x".repeat(256);
 
   @Test
   void insertOrGetReturnsDurableWinnerWithoutOverwritingImmutableEvidence() {

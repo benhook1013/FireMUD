@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptsRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -68,27 +69,64 @@ public class ScriptDefinitionRepository {
 
   public ScriptDefinition save(ScriptDefinition entity) {
     if (entity.getId() == null) {
-      ScriptsRecord record = dsl.newRecord(SCRIPTS);
-      populate(record, entity);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      return insertOrGetByIdentity(entity);
     }
-    int nextRowVersion = entity.getRowVersion() + 1;
     int updated =
         dsl.update(SCRIPTS)
-            .set(SCRIPTS.TENANT_ID, entity.getTenantId())
-            .set(SCRIPTS.NAME, entity.getName())
-            .set(SCRIPTS.VERSION, entity.getScriptVersion())
             .set(SCRIPTS.DEFINITION, entity.getDefinition())
-            .set(SCRIPTS.ROW_VERSION, nextRowVersion)
+            .set(
+                SCRIPTS.ROW_VERSION,
+                DSL.when(
+                        SCRIPTS.DEFINITION.isDistinctFrom(entity.getDefinition()),
+                        SCRIPTS.ROW_VERSION.add(1))
+                    .otherwise(SCRIPTS.ROW_VERSION))
             .where(
-                SCRIPTS.ID.eq(entity.getId()).and(SCRIPTS.ROW_VERSION.eq(entity.getRowVersion())))
+                SCRIPTS
+                    .ID
+                    .eq(entity.getId())
+                    .and(SCRIPTS.ROW_VERSION.eq(entity.getRowVersion()))
+                    .and(SCRIPTS.TENANT_ID.eq(entity.getTenantId()))
+                    .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
+                    .and(SCRIPTS.NAME.eq(entity.getName())))
             .execute();
     if (updated != 1) {
+      ScriptDefinition current = findById(entity.getId()).orElse(null);
+      if (current != null && !sameIdentity(current, entity)) {
+        throw identityConflict(current, entity);
+      }
       throw AutomationScriptingJooqRepositorySupport.staleWrite("scripts", entity.getId());
     }
-    entity.setRowVersion(nextRowVersion);
-    return findById(entity.getId()).orElseThrow();
+    ScriptDefinition persisted = findById(entity.getId()).orElseThrow();
+    entity.setRowVersion(persisted.getRowVersion());
+    return persisted;
+  }
+
+  /** Atomically inserts or replaces the definition for its stable identity. */
+  private ScriptDefinition insertOrGetByIdentity(ScriptDefinition entity) {
+    ScriptsRecord record = dsl.newRecord(SCRIPTS);
+    populate(record, entity);
+    ScriptDefinition winner =
+        dsl.insertInto(SCRIPTS)
+            .set(record)
+            .onConflict(SCRIPTS.TENANT_ID, SCRIPTS.VERSION, SCRIPTS.NAME)
+            .doUpdate()
+            .set(SCRIPTS.DEFINITION, DSL.excluded(SCRIPTS.DEFINITION))
+            .set(
+                SCRIPTS.ROW_VERSION,
+                DSL.when(
+                        SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
+                        SCRIPTS.ROW_VERSION.add(1))
+                    .otherwise(SCRIPTS.ROW_VERSION))
+            .returning()
+            .fetchOne(this::toEntity);
+    if (winner == null) {
+      throw new IllegalStateException("script definition identity upsert did not return a row");
+    }
+    if (!sameIdentity(winner, entity)) {
+      throw new IllegalStateException(
+          "script definition identity upsert returned an unexpected row");
+    }
+    return winner;
   }
 
   public List<ScriptDefinition> saveAll(Collection<ScriptDefinition> entities) {
@@ -105,8 +143,37 @@ public class ScriptDefinitionRepository {
     dsl.deleteFrom(SCRIPTS).where(SCRIPTS.ID.eq(entity.getId())).execute();
   }
 
-  private Optional<ScriptDefinition> findById(Long id) {
+  public Optional<ScriptDefinition> findById(Long id) {
+    if (id == null) {
+      return Optional.empty();
+    }
     return dsl.selectFrom(SCRIPTS).where(SCRIPTS.ID.eq(id)).fetchOptional(this::toEntity);
+  }
+
+  private static boolean sameIdentity(ScriptDefinition left, ScriptDefinition right) {
+    return java.util.Objects.equals(left.getTenantId(), right.getTenantId())
+        && java.util.Objects.equals(left.getScriptVersion(), right.getScriptVersion())
+        && java.util.Objects.equals(left.getName(), right.getName());
+  }
+
+  private static IllegalArgumentException identityConflict(
+      ScriptDefinition existing, ScriptDefinition requested) {
+    return new IllegalArgumentException(
+        "SCRIPT_DEFINITION_CONFLICT: immutable stable identity cannot be changed for id="
+            + requested.getId()
+            + "; existing=(tenantId="
+            + existing.getTenantId()
+            + ", version="
+            + existing.getScriptVersion()
+            + ", name="
+            + existing.getName()
+            + "), requested=(tenantId="
+            + requested.getTenantId()
+            + ", version="
+            + requested.getScriptVersion()
+            + ", name="
+            + requested.getName()
+            + ")");
   }
 
   private void populate(ScriptsRecord record, ScriptDefinition entity) {

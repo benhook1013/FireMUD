@@ -49,7 +49,12 @@ class V1__baselineTest {
             "NOT VALID",
             "VALIDATE CONSTRAINT",
             "IF NOT EXISTS",
-            "uq_script_event_ingress_audit_runtime_unpinned_identity");
+            "uq_script_event_ingress_audit_runtime_unpinned_identity",
+            "CONCURRENTLY",
+            "script_handoff_event_identity_repairs");
+
+    assertThat(tableBlock(normalized, "scripts"))
+        .contains("CONSTRAINT uq_scripts_definition_identity UNIQUE (tenant_id, version, name)");
 
     String ingress = tableBlock(normalized, "script_event_ingress_audit");
     assertThat(ingress)
@@ -131,6 +136,7 @@ class V1__baselineTest {
             "binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
             "target_scope_id VARCHAR(128) NOT NULL DEFAULT ''",
+            "CONSTRAINT uq_script_work_items_tenant_id UNIQUE (tenant_id, id)",
             "CONSTRAINT ck_script_work_items_pin_tuple CHECK ( (script_pin_epoch = 0 AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch > 0 AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
     assertIndexColumns(
         normalized,
@@ -179,7 +185,6 @@ class V1__baselineTest {
         "dry_run");
     assertThat(indexStatement(normalized, "uq_script_work_item_trigger_identity_unpinned"))
         .endsWith(") WHERE script_pin_epoch = 0");
-
     String eventAudit = tableBlock(normalized, "script_event_audit");
     assertThat(eventAudit)
         .contains(
@@ -187,7 +192,7 @@ class V1__baselineTest {
             "script_pin_control_plane_request_id VARCHAR(256)",
             "binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
-            "work_item_id BIGINT REFERENCES script_work_items(id)",
+            "CONSTRAINT fk_script_event_audit_work_item FOREIGN KEY (tenant_id, work_item_id) REFERENCES script_work_items (tenant_id, id)",
             "CONSTRAINT ck_script_event_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch IS NOT NULL AND script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
     assertIndexColumns(
         normalized,
@@ -239,7 +244,6 @@ class V1__baselineTest {
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity_unpinned"))
         .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch IS NULL");
     assertJooqIgnored(normalized, "uq_script_event_audit_handler_identity_unpinned");
-
     String pinProjection = tableBlock(normalized, "script_patch_pin_projections");
     assertThat(pinProjection)
         .contains(
@@ -296,7 +300,7 @@ class V1__baselineTest {
             "script_pin_epoch BIGINT NOT NULL DEFAULT 0",
             "script_pin_control_plane_request_id VARCHAR(256)",
             "binding_id VARCHAR(128) NOT NULL DEFAULT ''",
-            "work_item_id BIGINT NOT NULL REFERENCES script_work_items(id)",
+            "CONSTRAINT fk_script_handoff_events_work_item FOREIGN KEY (tenant_id, work_item_id) REFERENCES script_work_items (tenant_id, id)",
             "CONSTRAINT ck_script_handoff_events_pin_tuple CHECK");
 
     String schedules = tableBlock(normalized, "script_schedule_instances");
