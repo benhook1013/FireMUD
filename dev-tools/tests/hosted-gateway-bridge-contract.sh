@@ -96,6 +96,47 @@ if ! grep -Fq "$GATEWAY_WS_SERVICE_PORT_ERROR" "$TMP_DIR/missing-gateway-service
   exit 1
 fi
 
+NON_DEFAULT_SERVICE_PORT_RENDERED="$TMP_DIR/non-default-service-port.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.gatewayWsTls.servicePort=444 \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >"$NON_DEFAULT_SERVICE_PORT_RENDERED"
+python3 - "$NON_DEFAULT_SERVICE_PORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+proxy = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+proxy_env = {
+    entry["name"]: entry.get("value")
+    for entry in proxy["spec"]["template"]["spec"]["containers"][0]["env"]
+}
+assert proxy_env["GATEWAY_WS_URL"] == (
+    "wss://spring-cloud-gateway-mtls.pr-123.svc.cluster.local:444/ws/game"
+)
+gateway_service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+)
+assert gateway_service["spec"]["ports"] == [
+    {"name": "wss-mtls", "port": 444, "targetPort": 8443, "protocol": "TCP"}
+]
+PY
+
 for context in ci-static operator; do
   set +e
   invalid_output="$(
@@ -171,7 +212,7 @@ for environment, rendered_documents in (
 expected = module.hosted_bridge_expected_bindings("pr-123", "pr-123")
 values, issues = module.validate_gateway_ws_values(documents, expected)
 if issues or values != [
-    "wss://spring-cloud-gateway-mtls.pr-123.svc.cluster.local/ws/game"
+    "wss://spring-cloud-gateway-mtls.pr-123.svc.cluster.local:443/ws/game"
 ]:
     raise SystemExit(f"canonical hosted bridge render failed validation: {issues}")
 

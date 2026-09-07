@@ -194,6 +194,10 @@ class TestDataSeederTest {
         exitCaptor.getAllValues().stream().map(RoomExit::getDirection).toList());
     assertEquals(
         List.of(40L, 41L), exitCaptor.getAllValues().stream().map(RoomExit::getId).toList());
+    assertEquals(30L, exitCaptor.getAllValues().get(0).getFromRoom().getId());
+    assertEquals(31L, exitCaptor.getAllValues().get(0).getToRoom().getId());
+    assertEquals(31L, exitCaptor.getAllValues().get(1).getFromRoom().getId());
+    assertEquals(30L, exitCaptor.getAllValues().get(1).getToRoom().getId());
     verify(regionRepository, never()).count();
   }
 

@@ -125,8 +125,9 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end -}}
 
 {{- define "firemud.gatewayWsClientEnv" -}}
+{{- $root := .root -}}
 - name: GATEWAY_WS_URL
-  value: {{ printf "wss://spring-cloud-gateway-mtls.%s.svc.cluster.local/ws/game" .Release.Namespace | quote }}
+  value: {{ printf "wss://spring-cloud-gateway-mtls.%s.svc.cluster.local:%v/ws/game" $root.Release.Namespace .servicePort | quote }}
 - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
   value: /gateway-ws-client-tls/tls.crt
 - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH

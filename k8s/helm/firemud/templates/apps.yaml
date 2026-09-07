@@ -3,8 +3,10 @@
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
 {{- $gatewayWsTlsTargetPort := "" }}
+{{- $gatewayWsTlsServicePort := "" }}
 {{- if $gatewayWsTls.enabled }}
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
+{{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
 {{- end }}
 {{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
@@ -83,7 +85,7 @@ spec:
 {{ include "firemud.gatewayWsServerEnv" (dict "root" $ "targetPort" $gatewayWsTlsTargetPort) | nindent 12 }}
             {{- end }}
             {{- if $mountGatewayWsClientTls }}
-{{ include "firemud.gatewayWsClientEnv" $ | nindent 12 }}
+{{ include "firemud.gatewayWsClientEnv" (dict "root" $ "servicePort" $gatewayWsTlsServicePort) | nindent 12 }}
             {{- end }}
           {{- if $service.envFromShared }}
           envFrom:
@@ -231,15 +233,7 @@ spec:
     {{- end }}
   type: {{ default "ClusterIP" $service.serviceType }}
 {{- end }}
-{{- end }}
-{{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
-{{- $gatewayWsTlsTargetPort := "" }}
-{{- $gatewayWsTlsServicePort := "" }}
 {{- if $gatewayWsTls.enabled }}
-{{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
-{{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
-{{- end }}
-{{- if and .Values.previewStack.enabled $gatewayWsTls.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -256,4 +250,5 @@ spec:
       port: {{ $gatewayWsTlsServicePort }}
       targetPort: {{ $gatewayWsTlsTargetPort }}
       protocol: TCP
+{{- end }}
 {{- end }}

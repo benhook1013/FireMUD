@@ -52,6 +52,9 @@ class TlsCertificateWatcherTest {
     assertTrue(
         TlsCertificateWatcher.isReloadEvent(
             files, directory, pathEvent(StandardWatchEventKinds.ENTRY_MODIFY, Path.of("tls.crt"))));
+    assertTrue(
+        TlsCertificateWatcher.isReloadEvent(
+            files, directory, pathEvent(StandardWatchEventKinds.ENTRY_DELETE, Path.of("tls.crt"))));
     assertFalse(
         TlsCertificateWatcher.isReloadEvent(
             files,
