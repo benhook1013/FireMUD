@@ -248,6 +248,8 @@ KUBECTL_VALUE_FLAGS = frozenset(
         "--tls-server-name",
         "--cache-dir",
         "--dry-run",
+        "-f",
+        "--filename",
         "-o",
         "--output",
     }
@@ -670,7 +672,9 @@ def _kubectl_creates_secret(arguments: list[str]) -> bool:
     verb = _next_kubectl_positional(arguments, reject_unknown_options=True)
     if verb is None or verb[0] != "create":
         return False
-    resource = _next_kubectl_positional(arguments, verb[1] + 1)
+    resource = _next_kubectl_positional(
+        arguments, verb[1] + 1, reject_unknown_options=True
+    )
     return resource is not None and resource[0] == "secret"
 
 
