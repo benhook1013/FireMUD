@@ -410,7 +410,21 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
         .thenReturn(
             new ScriptWorkItemService.AutomationDrainStatusSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
+                "1",
+                "game-1",
+                "region-1",
+                true,
+                "NORMAL",
+                1L,
+                "request-1",
+                "NORMAL",
+                AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
+                "fingerprint-1",
+                100L,
+                2L,
+                123L,
+                4L,
+                observedAtMs));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             workItemService,
@@ -433,6 +447,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     assertThat(ref.get().getRegionId()).isEqualTo("region-1");
     assertThat(ref.get().getAdmissionMode().name()).isEqualTo("AUTOMATION_ADMISSION_MODE_NORMAL");
     assertThat(ref.get().getAdmissionEpoch()).isEqualTo(1L);
+    assertThat(ref.get().getStatePresent()).isTrue();
+    assertThat(ref.get().getControlPlaneRequestId()).isEqualTo("request-1");
+    assertThat(ref.get().getOutcome())
+        .isEqualTo(AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+    assertThat(ref.get().getRequestFingerprint()).isEqualTo("fingerprint-1");
+    assertThat(ref.get().getAcknowledgedAtMs()).isEqualTo(100L);
     assertThat(ref.get().getActiveExecutionCount()).isEqualTo(2L);
     assertThat(ref.get().getOldestActiveExecutionStartedAtMs()).isEqualTo(123L);
     assertThat(ref.get().getPendingCancelableWorkItemCount()).isEqualTo(4L);
@@ -448,7 +468,21 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(workItemService.getAutomationDrainStatus("1", "game-1", "region-1"))
         .thenReturn(
             new ScriptWorkItemService.AutomationDrainStatusSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, 2L, 123L, 4L, observedAtMs));
+                "1",
+                "game-1",
+                "region-1",
+                true,
+                "NORMAL",
+                1L,
+                "request-1",
+                "NORMAL",
+                AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
+                "fingerprint-1",
+                100L,
+                2L,
+                123L,
+                4L,
+                observedAtMs));
     ScriptRuntimeProperties runtimeProperties = new ScriptRuntimeProperties();
     runtimeProperties.setDrainStatusStaleThresholdMs(1L);
     AutomationScriptingControlPlaneGrpcService service =
@@ -968,15 +1002,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.when(admissionStateService.setMode(Mockito.any()))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1",
-                "game-1",
-                "region-1",
-                "PAUSED_FOR_ROLLBACK",
-                2L,
-                "req-2",
-                "admin",
-                "rollback",
-                300L));
+                "1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", 2L, "admin", "rollback", 300L));
     AutomationScriptingControlPlaneGrpcService service =
         newService(
             Mockito.mock(ScriptWorkItemService.class),
@@ -1002,6 +1028,62 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         .isEqualTo(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK);
     assertThat(ref.get().getAdmissionEpoch()).isEqualTo(2L);
     assertThat(ref.get().getUpdatedAtMs()).isEqualTo(300L);
+  }
+
+  @Test
+  void mapsAdmissionStateConflictToFailedPrecondition() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    Mockito.when(admissionStateService.setMode(Mockito.any()))
+        .thenThrow(new IllegalStateException("admission state conflict"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<SetAutomationAdmissionModeResponse> ref = new AtomicReference<>();
+
+    service.setAutomationAdmissionMode(
+        SetAutomationAdmissionModeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setMode(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(ref.get().getError().getMessage()).isEqualTo("admission state conflict");
+  }
+
+  @Test
+  void preservesInvalidArgumentMappingForAdmissionMode() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    Mockito.when(admissionStateService.setMode(Mockito.any()))
+        .thenThrow(new IllegalArgumentException("invalid admission mode"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            Mockito.mock(ScriptWorkItemService.class),
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<SetAutomationAdmissionModeResponse> ref = new AtomicReference<>();
+
+    service.setAutomationAdmissionMode(
+        SetAutomationAdmissionModeRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setMode(AutomationAdmissionMode.AUTOMATION_ADMISSION_MODE_NORMAL)
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getMessage()).isEqualTo("invalid admission mode");
   }
 
   @Test

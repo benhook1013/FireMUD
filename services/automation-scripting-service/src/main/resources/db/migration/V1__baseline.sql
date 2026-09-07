@@ -4,7 +4,8 @@ CREATE TABLE scripts (
     name VARCHAR(100) NOT NULL,
     version VARCHAR(20) NOT NULL,
     definition TEXT NOT NULL,
-    row_version INT NOT NULL DEFAULT 0
+    row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT uq_scripts_definition_identity UNIQUE (tenant_id, version, name)
 );
 
 CREATE INDEX idx_scripts_tenant_id ON scripts(tenant_id);
@@ -237,6 +238,7 @@ CREATE TABLE script_work_items (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT uq_script_work_items_tenant_id UNIQUE (tenant_id, id),
     CONSTRAINT ck_script_work_items_pin_tuple CHECK (
         (script_pin_epoch = 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
@@ -296,7 +298,6 @@ CREATE INDEX idx_script_work_items_scope_epoch_status
     ON script_work_items(tenant_id, game_instance_id, region_id, admission_epoch, status);
 CREATE INDEX idx_script_work_items_plugin_version
     ON script_work_items(tenant_id, game_instance_id, plugin_id, plugin_version_id);
-
 CREATE TABLE script_event_audit (
     id BIGSERIAL PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
@@ -328,13 +329,16 @@ CREATE TABLE script_event_audit (
     source_ordinal BIGINT,
     source_due_tick_id BIGINT,
     source_due_at_ms BIGINT,
-    work_item_id BIGINT REFERENCES script_work_items(id),
+    work_item_id BIGINT,
     final_stage VARCHAR(64) NOT NULL,
     final_outcome VARCHAR(128) NOT NULL,
     final_reason VARCHAR(256) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_script_event_audit_work_item
+        FOREIGN KEY (tenant_id, work_item_id)
+        REFERENCES script_work_items (tenant_id, id),
     CONSTRAINT ck_script_event_audit_pin_tuple CHECK (
         (script_pin_epoch IS NULL
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
@@ -396,7 +400,6 @@ CREATE INDEX idx_script_event_audit_script_created
     ON script_event_audit(tenant_id, script_id, created_at);
 CREATE INDEX idx_script_event_audit_outcome
     ON script_event_audit(final_stage, final_outcome);
-
 CREATE TABLE plugin_runtime_states (
     id BIGSERIAL PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
@@ -483,16 +486,57 @@ CREATE TABLE automation_admission_states (
     mode VARCHAR(64) NOT NULL DEFAULT 'NORMAL',
     admission_epoch BIGINT NOT NULL DEFAULT 1,
     control_plane_request_id VARCHAR(128),
-    actor_principal VARCHAR(128),
+    control_plane_request_fingerprint VARCHAR(64) NOT NULL DEFAULT '',
+    actor_principal VARCHAR(256),
     reason VARCHAR(256),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT ck_automation_admission_state_request_identity CHECK (
+        (
+            control_plane_request_id IS NULL
+            AND control_plane_request_fingerprint = ''
+        )
+        OR (
+            NULLIF(BTRIM(control_plane_request_id), '') IS NOT NULL
+            AND control_plane_request_fingerprint ~ '^[0-9a-f]{64}$'
+        )
+    ),
     CONSTRAINT uq_automation_admission_scope UNIQUE (tenant_id, game_instance_id, region_id)
 );
 
 CREATE INDEX idx_automation_admission_scope
     ON automation_admission_states(tenant_id, game_instance_id, region_id);
+
+-- Admission-mode request identity and result are immutable, append-only history.
+-- Current acknowledgement history must be preserved as the mutable admission state row
+-- changes; that row is only the current barrier and cannot be the deduplication authority
+-- after later mode transitions.
+CREATE TABLE automation_admission_request_history (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    game_instance_id VARCHAR(64) NOT NULL,
+    region_id VARCHAR(64) NOT NULL,
+    mode VARCHAR(64) NOT NULL,
+    control_plane_request_id VARCHAR(128) NOT NULL,
+    request_fingerprint VARCHAR(64) NOT NULL,
+    admission_epoch BIGINT NOT NULL,
+    outcome VARCHAR(32) NOT NULL,
+    actor_principal VARCHAR(256) NOT NULL,
+    reason VARCHAR(256) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_automation_admission_request_history_fingerprint CHECK (
+        NULLIF(BTRIM(control_plane_request_id), '') IS NOT NULL
+        AND request_fingerprint ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT uq_automation_admission_request_history_identity UNIQUE (
+        tenant_id, game_instance_id, region_id, mode, control_plane_request_id
+    )
+);
+
+CREATE INDEX idx_automation_admission_request_history_scope
+    ON automation_admission_request_history
+       (tenant_id, game_instance_id, region_id, created_at);
 
 CREATE TABLE script_patch_instance_rollout_events (
     id BIGSERIAL PRIMARY KEY,
@@ -551,7 +595,7 @@ CREATE TABLE script_handoff_events (
     script_pin_epoch BIGINT NOT NULL DEFAULT 0,
     script_pin_control_plane_request_id VARCHAR(256),
     binding_id VARCHAR(128) NOT NULL DEFAULT '',
-    work_item_id BIGINT NOT NULL REFERENCES script_work_items(id),
+    work_item_id BIGINT NOT NULL,
     command_ordinal INT NOT NULL,
     automation_dispatch_id VARCHAR(128) NOT NULL,
     game_session_command_id VARCHAR(128),
@@ -575,6 +619,9 @@ CREATE TABLE script_handoff_events (
     handoff_reason VARCHAR(256) NOT NULL,
     observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     row_version INT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_script_handoff_events_work_item
+        FOREIGN KEY (tenant_id, work_item_id)
+        REFERENCES script_work_items (tenant_id, id),
     CONSTRAINT ck_script_handoff_events_pin_tuple CHECK (
         (script_pin_epoch = 0
             AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL)
@@ -610,7 +657,6 @@ CREATE INDEX idx_script_handoff_events_origin_identity
         automation_dispatch_id,
         observed_at DESC
     );
-
 CREATE TABLE script_schedule_definitions (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,

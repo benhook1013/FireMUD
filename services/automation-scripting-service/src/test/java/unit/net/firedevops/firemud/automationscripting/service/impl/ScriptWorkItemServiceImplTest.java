@@ -52,10 +52,23 @@ class ScriptWorkItemServiceImplTest {
 
   private static AutomationAdmissionStateService admissionStateService() {
     AutomationAdmissionStateService service = Mockito.mock(AutomationAdmissionStateService.class);
-    when(service.getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(service.findState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "NORMAL", 1L, "", "", "", 100L));
+            Optional.of(
+                new AutomationAdmissionStateService.AdmissionStateSummary(
+                    "1",
+                    "game-1",
+                    "region-1",
+                    "NORMAL",
+                    1L,
+                    "request-1",
+                    "actor",
+                    "reason",
+                    101L,
+                    "NORMAL",
+                    AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED,
+                    "fingerprint-1",
+                    202L)));
     return service;
   }
 
@@ -729,8 +742,15 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.tenantId()).isEqualTo("1");
     assertThat(summary.gameInstanceId()).isEqualTo("game-1");
     assertThat(summary.regionId()).isEqualTo("region-1");
+    assertThat(summary.statePresent()).isTrue();
     assertThat(summary.admissionMode()).isEqualTo("NORMAL");
     assertThat(summary.admissionEpoch()).isEqualTo(1L);
+    assertThat(summary.controlPlaneRequestId()).isEqualTo("request-1");
+    assertThat(summary.targetMode()).isEqualTo("NORMAL");
+    assertThat(summary.outcome())
+        .isEqualTo(AutomationAdmissionStateService.OUTCOME_ALREADY_APPLIED);
+    assertThat(summary.requestFingerprint()).isEqualTo("fingerprint-1");
+    assertThat(summary.acknowledgedAtMs()).isEqualTo(202L);
     assertThat(summary.activeExecutionCount()).isEqualTo(2L);
     assertThat(summary.oldestActiveExecutionStartedAtMs()).isEqualTo(120L);
     assertThat(summary.pendingCancelableWorkItemCount()).isEqualTo(1L);
@@ -766,6 +786,46 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.pendingCancelableWorkItemCount()).isZero();
   }
 
+  @Test
+  void reportsMissingAdmissionStateWithoutCreatingIt() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionStateService.findState("1", "game-1", "region-1")).thenReturn(Optional.empty());
+    when(workItemRepository.findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
+            "1",
+            "game-1",
+            "region-1",
+            List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT")))
+        .thenReturn(List.of());
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService,
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    ScriptWorkItemService.AutomationDrainStatusSummary summary =
+        service.getAutomationDrainStatus("1", "game-1", "region-1");
+
+    assertThat(summary.statePresent()).isFalse();
+    assertThat(summary.admissionMode()).isEqualTo("NORMAL");
+    assertThat(summary.admissionEpoch()).isZero();
+    assertThat(summary.outcome()).isEqualTo(AutomationAdmissionStateService.OUTCOME_NOT_FOUND);
+    assertThat(summary.controlPlaneRequestId()).isEmpty();
+    assertThat(summary.targetMode()).isEmpty();
+    assertThat(summary.requestFingerprint()).isEmpty();
+    assertThat(summary.acknowledgedAtMs()).isZero();
+    verify(admissionStateService).findState("1", "game-1", "region-1");
+    Mockito.verifyNoMoreInteractions(admissionStateService);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"   ", "\u2003"})
   void normalizesBlankAutomationDrainRegionToExactUnscopedRow(String regionId) {
@@ -792,7 +852,7 @@ class ScriptWorkItemServiceImplTest {
         service.getAutomationDrainStatus("1", "game-1", regionId);
 
     assertThat(summary.regionId()).isEmpty();
-    verify(admissionStateService).getState("1", "game-1", "");
+    verify(admissionStateService).findState("1", "game-1", "");
     verify(workItemRepository)
         .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             "1", "game-1", "", List.of("PENDING_EVALUATION", "EVALUATING", "HANDOFF_IN_FLIGHT"));
@@ -826,7 +886,7 @@ class ScriptWorkItemServiceImplTest {
         service.getAutomationDrainStatus("1", "game-1", " region-1 ");
 
     assertThat(summary.regionId()).isEqualTo("region-1");
-    verify(admissionStateService).getState("1", "game-1", "region-1");
+    verify(admissionStateService).findState("1", "game-1", "region-1");
     verify(workItemRepository)
         .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             "1",
@@ -863,7 +923,7 @@ class ScriptWorkItemServiceImplTest {
         service.getAutomationDrainStatus("1", " game-1 ", "region-1");
 
     assertThat(summary.gameInstanceId()).isEqualTo("game-1");
-    verify(admissionStateService).getState("1", "game-1", "region-1");
+    verify(admissionStateService).findState("1", "game-1", "region-1");
     verify(workItemRepository)
         .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             "1",
@@ -902,7 +962,7 @@ class ScriptWorkItemServiceImplTest {
     assertThat(summary.tenantId()).isEqualTo("1");
     assertThat(summary.gameInstanceId()).isEqualTo("game-1");
     assertThat(summary.regionId()).isEqualTo("region-1");
-    verify(admissionStateService).getState("1", "game-1", "region-1");
+    verify(admissionStateService).findState("1", "game-1", "region-1");
     verify(workItemRepository)
         .findByScopeAndStatusesOrderByCreatedAtAscIdAsc(
             "1",
@@ -935,7 +995,7 @@ class ScriptWorkItemServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("game_instance_id is required");
     verify(admissionStateService, never())
-        .getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .findState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
     verifyNoInteractions(workItemRepository);
   }
 
@@ -963,7 +1023,7 @@ class ScriptWorkItemServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("tenant_id is required");
     verify(admissionStateService, never())
-        .getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+        .findState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
     verifyNoInteractions(workItemRepository);
   }
 

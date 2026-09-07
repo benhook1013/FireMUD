@@ -2,13 +2,17 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventBinding;
 import net.firedevops.firemud.automationscripting.mapper.ScriptDefinitionMapper;
+import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentityConflictException;
 import net.firedevops.firemud.automationscripting.repository.ScriptDefinitionRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptEventBindingRepository;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
@@ -34,23 +38,169 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private final ScriptEventRegistryService eventRegistryService;
 
   @Override
-  @Transactional
+  @Transactional(rollbackFor = SagaException.class)
   @Timed(value = "script.update")
   public ScriptDefinitionDto updateScript(ScriptDefinitionDto dto) throws SagaException {
     validateBindings(dto);
     ScriptDefinition entity = mapper.toEntity(dto);
+    ScriptDefinition previousDefinition =
+        repository
+            .findByTenantIdAndScriptVersionAndName(dto.tenantId(), dto.version(), dto.name())
+            .orElse(null);
+    validateExistingIdentity(entity, previousDefinition);
+    List<ScriptEventBinding> previousBindings = snapshotBindings(dto);
+    AtomicReference<ScriptDefinitionRepository.SaveResult> persisted =
+        new AtomicReference<>(new ScriptDefinitionRepository.SaveResult(entity, false));
     var saga =
         new SagaBuilder("updateScript")
-            .step("persistScript", () -> repository.save(entity), () -> repository.delete(entity))
+            .step(
+                "persistScript",
+                () -> persisted.set(repository.saveWithCreationResult(entity)),
+                () -> compensateDefinition(previousDefinition, persisted.get()))
             .step(
                 "replaceEventBindings",
                 () -> replaceEventBindings(dto),
-                () ->
-                    bindingRepository.deleteByTenantIdAndScriptPatchVersionAndScriptId(
-                        dto.tenantId(), dto.version(), dto.name()))
+                () -> restoreBindings(dto, previousBindings))
             .build();
-    sagaRunner.run(saga);
-    return mapper.toDto(entity);
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException ex) {
+      // Keep the current gRPC boundary's INVALID_ARGUMENT mapping for a stable-identity conflict;
+      // SagaRunner wraps the repository exception so it would otherwise be reported as INTERNAL.
+      if (isIdentityConflict(ex.getCause())) {
+        throw (IllegalArgumentException) ex.getCause();
+      }
+      throw ex;
+    }
+    return mapper.toDto(persisted.get().definition());
+  }
+
+  private void validateExistingIdentity(
+      ScriptDefinition requested, ScriptDefinition stableIdentityRow) {
+    if (requested.getId() == null) {
+      return;
+    }
+    ScriptDefinition idRow = repository.findById(requested.getId()).orElse(null);
+    if (idRow != null && !sameIdentity(idRow, requested)) {
+      throw identityConflict(idRow, requested);
+    }
+    if (stableIdentityRow != null
+        && !Objects.equals(stableIdentityRow.getId(), requested.getId())) {
+      throw identityConflict(stableIdentityRow, requested);
+    }
+    ScriptDefinition durableRow = idRow != null ? idRow : stableIdentityRow;
+    if (durableRow != null) {
+      requested.setRowVersion(durableRow.getRowVersion());
+    }
+  }
+
+  private List<ScriptEventBinding> snapshotBindings(ScriptDefinitionDto dto) {
+    List<ScriptEventBinding> bindings =
+        bindingRepository
+            .findByTenantIdAndScriptPatchVersionAndScriptIdOrderByEventTypeAscEventSchemaVersionAscPriorityAscBindingIdAscIdAsc(
+                dto.tenantId(), dto.version(), dto.name());
+    if (bindings == null || bindings.isEmpty()) {
+      return List.of();
+    }
+    return bindings;
+  }
+
+  private void compensateDefinition(
+      ScriptDefinition previousDefinition, ScriptDefinitionRepository.SaveResult saveResult) {
+    if (saveResult == null) {
+      return;
+    }
+    ScriptDefinition persistedDefinition = saveResult.definition();
+    if (persistedDefinition == null || persistedDefinition.getId() == null) {
+      return;
+    }
+    if (previousDefinition == null) {
+      if (saveResult.created()) {
+        repository.delete(persistedDefinition);
+      }
+      return;
+    }
+    // A same-definition retry returned the durable winner; it must never delete that pre-existing
+    // row when a later binding write fails. An explicit existing-ID definition replacement can be
+    // restored for non-transactional callers; the service transaction also rolls it back.
+    if (sameDefinition(previousDefinition, persistedDefinition)) {
+      return;
+    }
+    ScriptDefinition restored = copyDefinition(previousDefinition);
+    restored.setId(persistedDefinition.getId());
+    restored.setRowVersion(persistedDefinition.getRowVersion());
+    repository.save(restored);
+  }
+
+  private void restoreBindings(ScriptDefinitionDto dto, List<ScriptEventBinding> previousBindings) {
+    bindingRepository.deleteByTenantIdAndScriptPatchVersionAndScriptId(
+        dto.tenantId(), dto.version(), dto.name());
+    if (previousBindings.isEmpty()) {
+      return;
+    }
+    bindingRepository.saveAll(
+        previousBindings.stream().map(ScriptDefinitionServiceImpl::copyBindingForInsert).toList());
+  }
+
+  private static ScriptDefinition copyDefinition(ScriptDefinition source) {
+    ScriptDefinition copy = new ScriptDefinition();
+    copy.setTenantId(source.getTenantId());
+    copy.setName(source.getName());
+    copy.setScriptVersion(source.getScriptVersion());
+    copy.setDefinition(source.getDefinition());
+    copy.setRowVersion(source.getRowVersion());
+    return copy;
+  }
+
+  private static ScriptEventBinding copyBindingForInsert(ScriptEventBinding source) {
+    ScriptEventBinding copy = new ScriptEventBinding();
+    copy.setTenantId(source.getTenantId());
+    copy.setScriptPatchVersion(source.getScriptPatchVersion());
+    copy.setEventType(source.getEventType());
+    copy.setEventSchemaVersion(source.getEventSchemaVersion());
+    copy.setScriptId(source.getScriptId());
+    copy.setBindingId(source.getBindingId());
+    copy.setTargetScopeType(source.getTargetScopeType());
+    copy.setTargetScopeId(source.getTargetScopeId());
+    copy.setPriority(source.getPriority());
+    copy.setPriorityTag(source.getPriorityTag());
+    copy.setRequiresExclusiveEvent(source.isRequiresExclusiveEvent());
+    copy.setEnabled(source.isEnabled());
+    return copy;
+  }
+
+  private static boolean sameIdentity(ScriptDefinition left, ScriptDefinition right) {
+    return Objects.equals(left.getTenantId(), right.getTenantId())
+        && Objects.equals(left.getName(), right.getName())
+        && Objects.equals(left.getScriptVersion(), right.getScriptVersion());
+  }
+
+  private static boolean sameDefinition(ScriptDefinition left, ScriptDefinition right) {
+    return Objects.equals(left.getDefinition(), right.getDefinition());
+  }
+
+  private static ScriptDefinitionIdentityConflictException identityConflict(
+      ScriptDefinition existing, ScriptDefinition requested) {
+    return new ScriptDefinitionIdentityConflictException(
+        "SCRIPT_DEFINITION_CONFLICT: immutable stable identity cannot be changed for id="
+            + requested.getId()
+            + "; existing=(tenantId="
+            + existing.getTenantId()
+            + ", version="
+            + existing.getScriptVersion()
+            + ", name="
+            + existing.getName()
+            + "), requested=(tenantId="
+            + requested.getTenantId()
+            + ", version="
+            + requested.getScriptVersion()
+            + ", name="
+            + requested.getName()
+            + ")");
+  }
+
+  private static boolean isIdentityConflict(Throwable throwable) {
+    return throwable instanceof ScriptDefinitionIdentityConflictException;
   }
 
   private void validateBindings(ScriptDefinitionDto dto) {

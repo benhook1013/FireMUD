@@ -53,6 +53,9 @@ public class AutomationAdmissionStateRepository {
             .set(
                 AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID,
                 entity.getControlPlaneRequestId())
+            .set(
+                AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT,
+                entity.getControlPlaneRequestFingerprint())
             .set(AUTOMATION_ADMISSION_STATES.ACTOR_PRINCIPAL, entity.getActorPrincipal())
             .set(AUTOMATION_ADMISSION_STATES.REASON, entity.getReason())
             .set(AUTOMATION_ADMISSION_STATES.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
@@ -85,6 +88,7 @@ public class AutomationAdmissionStateRepository {
     record.setMode(entity.getMode());
     record.setAdmissionEpoch(entity.getAdmissionEpoch());
     record.setControlPlaneRequestId(entity.getControlPlaneRequestId());
+    record.setControlPlaneRequestFingerprint(entity.getControlPlaneRequestFingerprint());
     record.setActorPrincipal(entity.getActorPrincipal());
     record.setReason(entity.getReason());
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
@@ -103,6 +107,8 @@ public class AutomationAdmissionStateRepository {
     entity.setAdmissionEpoch(admissionEpoch == null ? 0L : admissionEpoch);
     entity.setControlPlaneRequestId(
         record.get(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_ID));
+    entity.setControlPlaneRequestFingerprint(
+        record.get(AUTOMATION_ADMISSION_STATES.CONTROL_PLANE_REQUEST_FINGERPRINT));
     entity.setActorPrincipal(record.get(AUTOMATION_ADMISSION_STATES.ACTOR_PRINCIPAL));
     entity.setReason(record.get(AUTOMATION_ADMISSION_STATES.REASON));
     entity.setCreatedAt(toInstant(record.get(AUTOMATION_ADMISSION_STATES.CREATED_AT)));

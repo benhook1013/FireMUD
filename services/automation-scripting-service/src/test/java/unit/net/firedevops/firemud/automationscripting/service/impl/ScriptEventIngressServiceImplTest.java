@@ -62,7 +62,7 @@ class ScriptEventIngressServiceImplTest {
     when(service.getState(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "NORMAL", 42L, "", "", "", 100L));
+                "1", "game-1", "region-1", "NORMAL", 42L, "", "", 100L));
     return service;
   }
 
@@ -3312,15 +3312,7 @@ class ScriptEventIngressServiceImplTest {
     when(admissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1",
-                "game-1",
-                "region-1",
-                "PAUSED_FOR_ROLLBACK",
-                2L,
-                "req-2",
-                "admin",
-                "rollback",
-                200L));
+                "1", "game-1", "region-1", "PAUSED_FOR_ROLLBACK", 2L, "admin", "rollback", 200L));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,
@@ -3386,7 +3378,7 @@ class ScriptEventIngressServiceImplTest {
     when(admissionStateService.getState("1", "game-1", "region-1"))
         .thenReturn(
             new AutomationAdmissionStateService.AdmissionStateSummary(
-                "1", "game-1", "region-1", "CORRUPT", 2L, "", "", "", 200L));
+                "1", "game-1", "region-1", "CORRUPT", 2L, "", "", 200L));
     ScriptEventIngressService service =
         new ScriptEventIngressServiceImpl(
             repository,

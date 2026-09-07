@@ -454,8 +454,6 @@ Outputs:
 
 #### `SetAutomationAdmissionMode`
 
-Implementation note: the current Automation proto/runtime exposes this mutation and supports `regionId`, but its state row and response do not provide the target request-result/acknowledgement record or request-id deduplication. Current normalization may turn blank `controlPlaneRequestId`, actor, and reason values into empty strings, and repeated requests can overwrite state-row request metadata; these are explicit implementation drift and do not relax the target validation below.
-
 Inputs:
 
 - `tenantId`
@@ -484,8 +482,6 @@ Outputs:
 - explicit target `mode`, bounded `outcome`, immutable request fingerprint, and acknowledgement/result timestamp
 
 #### `GetAutomationDrainStatus`
-
-Implementation note: the current Automation & Scripting implementation persists a scope-local `automation_admission_states` record keyed by `(tenantId, gameInstanceId, regionId)`, exposes `SetAutomationAdmissionMode`, stamps admitted `script_work_items` with the current `admissionEpoch`, and serves this read from admission state plus durable work-item truth. Its current `findOrCreate` path writes a missing state row during a read, and the live response omits the durable request ID/outcome acknowledgement fields; these are implementation drift and do not establish the target read-only behavior. While paused for rollback, the entire counted set is limited to rows whose `workItem.admissionEpoch <= 0` or `workItem.admissionEpoch < current admissionEpoch`, excluding positive current-epoch rows; `activeExecutionCount` and `pendingCancelableWorkItemCount` are then derived from that set. This current projection is distinct from the target mapping's current-epoch pre-DSL and evaluated-descriptor counts.
 
 Inputs:
 
