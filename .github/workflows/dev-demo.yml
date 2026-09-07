@@ -307,9 +307,10 @@ jobs:
           tenant_id = 1
           game_template_id = 1
           bootstrap_mode = os.environ["BOOTSTRAP_MODE"]
-          email = os.environ["DEMO_SMOKE_EMAIL"]
-          password = os.environ["DEMO_SMOKE_PASSWORD"]
-          username = os.environ["DEMO_SMOKE_USERNAME"]
+          if bootstrap_mode == "account":
+            email = os.environ["DEMO_SMOKE_EMAIL"]
+            password = os.environ["DEMO_SMOKE_PASSWORD"]
+            username = os.environ["DEMO_SMOKE_USERNAME"]
           control_plane_request_id = f"dev-demo-smoke-bootstrap-{int(time.time())}"
 
           def readiness_ok(url):
@@ -496,7 +497,6 @@ jobs:
           status, session_body = bootstrap_session(account_id)
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
-          BOOTSTRAP_SECRET_DIR=
           BOOTSTRAP_ACCOUNT_ID_FILE=/tmp/dev-demo-account-id
           BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log
           BOOTSTRAP_PORT_FORWARD_PID=
@@ -517,17 +517,6 @@ jobs:
               return 0
             fi
             echo "::error::Failed to remove dev-demo bootstrap account id file" >&2
-            return 1
-          }
-          cleanup_bootstrap_temp_dir() {
-            if [[ -z "${BOOTSTRAP_SECRET_DIR}" ]]; then
-              return 0
-            fi
-            if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
-              BOOTSTRAP_SECRET_DIR=
-              return 0
-            fi
-            echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
             return 1
           }
           cleanup_bootstrap_secret() {
@@ -551,9 +540,6 @@ jobs:
             if ! cleanup_bootstrap_account_id_file; then
               status=1
             fi
-            if ! cleanup_bootstrap_temp_dir; then
-              status=1
-            fi
             if ! cleanup_bootstrap_secret; then
               status=1
             fi
@@ -563,47 +549,26 @@ jobs:
           trap cleanup_bootstrap_resources EXIT
           trap 'exit 130' INT
           trap 'exit 143' TERM
+          if ! kubectl auth can-i create pods/portforward -n "${PREVIEW_NAMESPACE}" >/dev/null; then
+            echo "::error::Preview deployer lacks pods/portforward permission; refusing credential bootstrap" >&2
+            exit 1
+          fi
           for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
             if [[ -z "${!credential:-}" ]]; then
-              echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+              echo "::error::${credential} is empty; refusing account bootstrap" >&2
               exit 1
             fi
           done
-          BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
-          BOOTSTRAP_GATEWAY_PORT=
+          if ! cleanup_bootstrap_secret; then
+            exit 1
+          fi
+          BOOTSTRAP_GATEWAY_PORT=18080
           kubectl -n "${PREVIEW_NAMESPACE}" port-forward \
             --address 127.0.0.1 \
             service/spring-cloud-gateway \
-            :80 \
+            "${BOOTSTRAP_GATEWAY_PORT}:80" \
             >"${BOOTSTRAP_PORT_FORWARD_LOG}" 2>&1 &
           BOOTSTRAP_PORT_FORWARD_PID=$!
-          for attempt in {1..30}; do
-            if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-              echo "::error::Dev-demo Gateway port-forward exited before binding" >&2
-              cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-              exit 1
-            fi
-            BOOTSTRAP_GATEWAY_PORT="$({
-              sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80$/\1/p' \
-                "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            } | head -n1)"
-            if [[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-              && (( BOOTSTRAP_GATEWAY_PORT > 0 && BOOTSTRAP_GATEWAY_PORT <= 65535 )); then
-              break
-            fi
-            sleep 1
-          done
-          if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-            echo "::error::Dev-demo Gateway port-forward exited before account bootstrap" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
-          if [[ ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-            || (( BOOTSTRAP_GATEWAY_PORT < 1 || BOOTSTRAP_GATEWAY_PORT > 65535 )); then
-            echo "::error::Dev-demo Gateway port-forward did not report a valid local port" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
           if ! BOOTSTRAP_MODE=account \
             BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
             BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
@@ -621,22 +586,6 @@ jobs:
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
             --dry-run=client -o yaml | kubectl apply -f -
-          (
-            umask 077
-            printf '%s' "${DEMO_SMOKE_EMAIL}" >"${BOOTSTRAP_SECRET_DIR}/email"
-            printf '%s' "${DEMO_SMOKE_PASSWORD}" >"${BOOTSTRAP_SECRET_DIR}/password"
-            printf '%s' "${DEMO_SMOKE_USERNAME}" >"${BOOTSTRAP_SECRET_DIR}/username"
-          )
-          if ! cleanup_bootstrap_secret; then
-            exit 1
-          fi
-          kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \
-            --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \
-            --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
-            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"
-          if ! cleanup_bootstrap_temp_dir; then
-            exit 1
-          fi
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
           apiVersion: v1
@@ -646,6 +595,7 @@ jobs:
           spec:
             restartPolicy: Never
             terminationGracePeriodSeconds: 0
+            automountServiceAccountToken: false
             containers:
               - name: dev-demo-bootstrap
                 image: python:3.12-alpine
@@ -653,9 +603,6 @@ jobs:
                 env:
                   - name: BOOTSTRAP_MODE
                     value: session
-                envFrom:
-                  - secretRef:
-                      name: dev-demo-bootstrap-env
                 volumeMounts:
                   - name: bootstrap-script
                     mountPath: /tmp

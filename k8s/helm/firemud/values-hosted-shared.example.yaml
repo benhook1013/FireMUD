@@ -23,6 +23,11 @@ previewStack:
     clusterIssuer: letsencrypt-prod
     tlsSecretName: __TLS_SECRET_NAME__
 
+  telnetTls:
+    enabled: true
+    clusterIssuer: letsencrypt-prod
+    secretName: __TELNET_TLS_SECRET_NAME__
+
   seed:
     enabled: true
     image: postgres:16
@@ -392,6 +397,7 @@ previewStack:
       springProfile: false
       envFromShared: true
       mountGrpcTls: true
+      mountTelnetTls: true
       healthPort: 8080
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game

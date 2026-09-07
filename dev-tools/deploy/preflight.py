@@ -4072,6 +4072,162 @@ def validate_gateway_ws_values(
     return values, issues
 
 
+def validate_hosted_telnet_tls_values(
+    documents: list[dict[str, Any]],
+) -> list[str]:
+    """Validate the hosted NodePort Telnet direct-TLS binding."""
+    issues: list[str] = []
+    tcp_services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "tcp-proxy-service"
+    ]
+    nodeport_services = [
+        document
+        for document in tcp_services
+        if (document.get("spec") or {}).get("type") == "NodePort"
+    ]
+    if not nodeport_services:
+        return issues
+    if len(nodeport_services) != 1:
+        issues.append(
+            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+        )
+        return issues
+    tcp_namespace = workload_namespace(nodeport_services[0])
+
+    certificates = {
+        metadata_name(document): document
+        for document in documents
+        if document.get("kind") == "Certificate"
+        and metadata_name(document)
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+    }
+    ingress_secrets = {
+        tls_entry.get("secretName")
+        for document in documents
+        if document.get("kind") == "Ingress"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+        for tls_entry in ((document.get("spec") or {}).get("tls") or [])
+        if isinstance(tls_entry, dict)
+    }
+    tcp_certificate_names = {
+        name for name in certificates if name and name.endswith("-telnet-tls")
+    }
+    if len(tcp_certificate_names) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate")
+        return issues
+    telnet_secret = next(iter(tcp_certificate_names), None)
+    certificate = certificates[telnet_secret]
+    certificate_secret = (certificate.get("spec") or {}).get("secretName")
+    if certificate_secret != telnet_secret:
+        issues.append("TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name")
+    if certificate_secret in ingress_secrets or telnet_secret in ingress_secrets:
+        issues.append("TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret")
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+    ]
+    if len(deployments) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one tcp-proxy-service Deployment")
+        return issues
+    pod_spec = (((deployments[0].get("spec") or {}).get("template") or {}).get("spec") or {})
+    containers = [container for container in pod_spec.get("containers") or [] if isinstance(container, dict)]
+    if len(containers) != 1:
+        issues.append("hosted TCP Proxy TLS requires one primary tcp-proxy-service container")
+        return issues
+    container = containers[0]
+    env, env_issues = effective_container_env(
+        documents,
+        deployments[0],
+        container,
+        relevant_names={
+            "TCP_PROXY_TLS_ENABLED",
+            "TCP_PROXY_TLS_CERT",
+            "TCP_PROXY_TLS_KEY",
+            "TCP_PROXY_TELNET_MODE",
+            *GRPC_TLS_PATH_NAMES,
+        },
+    )
+    issues.extend(env_issues)
+    if env.get("TCP_PROXY_TLS_ENABLED") != "true":
+        issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TLS_ENABLED=true")
+    if env.get("TCP_PROXY_TELNET_MODE") != "DIRECT_TLS":
+        issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TELNET_MODE=DIRECT_TLS")
+    if env.get("TCP_PROXY_TLS_CERT") != "/telnet-tls/tls.crt":
+        issues.append("TCP_PROXY_TLS_CERT must be /telnet-tls/tls.crt")
+    if env.get("TCP_PROXY_TLS_KEY") != "/telnet-tls/tls.key":
+        issues.append("TCP_PROXY_TLS_KEY must be /telnet-tls/tls.key")
+    volumes = {
+        volume.get("name"): volume
+        for volume in pod_spec.get("volumes") or []
+        if isinstance(volume, dict) and volume.get("name")
+    }
+    mount = next(
+        (mount for mount in container.get("volumeMounts") or []
+         if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"),
+        None,
+    )
+    if not mount or mount.get("readOnly") is not True:
+        issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
+    else:
+        volume = volumes.get(mount.get("name")) or {}
+        secret_name = ((volume.get("secret") or {}).get("secretName"))
+        if secret_name != certificate_secret:
+            issues.append("/telnet-tls must reference the dedicated Telnet TLS Secret")
+    grpc_paths = {
+        path
+        for path in (env.get(name) for name in GRPC_TLS_PATH_NAMES)
+        if isinstance(path, str) and path.startswith("/")
+    }
+
+    def path_is_under(path: str, mount_path: str) -> bool:
+        return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+    grpc_secret_names: set[str] = set()
+    for mount in container.get("volumeMounts") or []:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("readOnly") is not True
+            or not isinstance(mount.get("mountPath"), str)
+            or not any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+        ):
+            continue
+        volume = volumes.get(mount.get("name"))
+        secret = volume.get("secret") if isinstance(volume, dict) else None
+        secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        if isinstance(secret_name, str) and secret_name:
+            grpc_secret_names.add(secret_name)
+    if certificate_secret == "firemud-grpc-tls" or certificate_secret in grpc_secret_names:
+        issues.append("TCP Proxy Telnet TLS Secret must not reuse the gRPC TLS Secret")
+    return issues
+
+
+def label_bridge_validation_issues(
+    gateway_issues: list[str], telnet_tls_issues: list[str]
+) -> list[str]:
+    """Keep the shared bridge policy while identifying each failing transport."""
+    return [
+        *(f"Gateway bridge: {issue}" for issue in gateway_issues),
+        *(f"Hosted Telnet TLS: {issue}" for issue in telnet_tls_issues),
+    ]
+
+
+def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
+    """Describe either transport without making a Telnet-only failure look like Gateway-only."""
+    return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+
+
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
     if document.get("kind") not in {"Deployment", "StatefulSet", "DaemonSet"}:
         return []
@@ -6148,13 +6304,21 @@ def main() -> int:
                 check.policy_id, check.required, check.status, check.message,
             ) or has_required_failure
 
-    _, bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    _, gateway_bridge_issues = validate_gateway_ws_values(documents, expected_bindings)
+    telnet_tls_issues = validate_hosted_telnet_tls_values(documents)
+    bridge_issues = label_bridge_validation_issues(
+        gateway_bridge_issues, telnet_tls_issues
+    )
     if bridge_issues:
         has_required_failure = append_result(
-            check_results, "PREFLIGHT-BRIDGE-001", True, "fail", "Gateway bridge validation failed: " + "; ".join(bridge_issues)
+            check_results,
+            "PREFLIGHT-BRIDGE-001",
+            True,
+            "fail",
+            bridge_validation_failure_message(bridge_issues),
         ) or has_required_failure
     else:
-        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge alignment is valid") or has_required_failure
+        has_required_failure = append_result(check_results, "PREFLIGHT-BRIDGE-001", True, "pass", "Gateway bridge and direct Telnet TLS alignment is valid") or has_required_failure
 
     _, redis_issues = effective_redis_endpoints(documents, expected_bindings)
     if redis_issues:

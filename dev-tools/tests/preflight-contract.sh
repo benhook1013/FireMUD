@@ -2714,6 +2714,47 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+labeled_bridge_issues = module.label_bridge_validation_issues(
+    ["certificate-backed Gateway bridge is unavailable"],
+    ["dedicated Telnet TLS certificate is unavailable"],
+)
+if labeled_bridge_issues != [
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable",
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable",
+]:
+    raise SystemExit(f"bridge transport failures were not labeled separately: {labeled_bridge_issues}")
+bridge_failure_results = []
+module.append_result(
+    bridge_failure_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    "fail",
+    module.bridge_validation_failure_message(labeled_bridge_issues),
+)
+if len(bridge_failure_results) != 1 or bridge_failure_results[0].message != (
+    "Bridge and Telnet transport validation failed: "
+    "Gateway bridge: certificate-backed Gateway bridge is unavailable; "
+    "Hosted Telnet TLS: dedicated Telnet TLS certificate is unavailable"
+):
+    raise SystemExit(
+        "combined bridge failure was emitted with a misleading transport subject: "
+        f"{bridge_failure_results}"
+    )
+bridge_pass_results = []
+module.append_result(
+    bridge_pass_results,
+    "PREFLIGHT-BRIDGE-001",
+    True,
+    "pass",
+    "Gateway bridge and direct Telnet TLS alignment is valid",
+)
+if len(bridge_pass_results) != 1 or bridge_pass_results[0].message != (
+    "Gateway bridge and direct Telnet TLS alignment is valid"
+):
+    raise SystemExit(
+        "successful bridge diagnostic must name both Gateway and direct Telnet TLS scope: "
+        f"{bridge_pass_results}"
+    )
 invalid_listener_expected = yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))
 invalid_listener_expected["internalBindings"]["certificates"]["gatewayInternalWsListenerRef"] = "secret://firemud/not-a-cert-manager-binding"
 _, invalid_listener_issues = module.validate_gateway_ws_values(rendered_documents, invalid_listener_expected)
@@ -3067,6 +3108,89 @@ _, bridge_namespace_issues = module.validate_gateway_ws_values(
 )
 if not any("namespace does not match" in issue for issue in bridge_namespace_issues):
     raise SystemExit(f"bridge workload namespace mismatch was accepted: {bridge_namespace_issues}")
+
+telnet_documents = [
+    {
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "firemud"},
+        "spec": {"type": "NodePort"},
+    },
+    {
+        "kind": "Certificate",
+        "metadata": {"name": "hobby-telnet-tls", "namespace": "firemud"},
+        "spec": {"secretName": "hobby-telnet-tls"},
+    },
+    {
+        "kind": "Ingress",
+        "metadata": {"name": "hobby-ingress", "namespace": "firemud"},
+        "spec": {"tls": [{"secretName": "hobby-http-tls"}]},
+    },
+    {
+        "kind": "Deployment",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "firemud"},
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "tcp-proxy-service",
+                            "env": [
+                                {"name": "TCP_PROXY_TLS_ENABLED", "value": "true"},
+                                {"name": "TCP_PROXY_TLS_CERT", "value": "/telnet-tls/tls.crt"},
+                                {"name": "TCP_PROXY_TLS_KEY", "value": "/telnet-tls/tls.key"},
+                                {"name": "TCP_PROXY_TELNET_MODE", "value": "DIRECT_TLS"},
+                            ],
+                            "volumeMounts": [
+                                {"name": "telnet-tls", "mountPath": "/telnet-tls", "readOnly": True}
+                            ],
+                        }
+                    ],
+                    "volumes": [
+                        {"name": "telnet-tls", "secret": {"secretName": "hobby-telnet-tls"}}
+                    ],
+                }
+            }
+        },
+    },
+]
+if module.validate_hosted_telnet_tls_values(telnet_documents):
+    raise SystemExit("canonical hosted Telnet TLS fixture did not pass")
+telnet_cross_namespace_decoys = copy.deepcopy(telnet_documents)
+telnet_cross_namespace_decoys.extend(
+    [
+        {
+            "kind": "Certificate",
+            "metadata": {"name": "hobby-telnet-tls", "namespace": "other"},
+            "spec": {"secretName": "wrong-cross-namespace-secret"},
+        },
+        {
+            "kind": "Ingress",
+            "metadata": {"name": "other-ingress", "namespace": "other"},
+            "spec": {"tls": [{"secretName": "hobby-telnet-tls"}]},
+        },
+        {
+            "kind": "Deployment",
+            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "spec": {"template": {"spec": {"containers": []}}},
+        },
+    ]
+)
+if module.validate_hosted_telnet_tls_values(telnet_cross_namespace_decoys):
+    raise SystemExit("same-name Telnet TLS resources in another namespace affected validation")
+telnet_ambiguous_nodeports = copy.deepcopy(telnet_documents)
+telnet_ambiguous_nodeports.append(
+    {
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+        "spec": {"type": "NodePort"},
+    }
+)
+telnet_ambiguity_issues = module.validate_hosted_telnet_tls_values(telnet_ambiguous_nodeports)
+if not any(
+    "exactly one tcp-proxy-service NodePort Service" in issue
+    for issue in telnet_ambiguity_issues
+):
+    raise SystemExit("multiple cross-namespace tcp-proxy-service NodePorts were accepted")
 
 redis_endpoints, redis_issues = module.effective_redis_endpoints(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))

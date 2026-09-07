@@ -1,16 +1,21 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -82,10 +87,10 @@ public class MoveCommandHandler {
               null);
         }
 
-        if (!response.hasDestinationLook()) {
+        if (!response.hasDestinationRoomInstance()) {
           return failureResult(
               "MOVE_UNAVAILABLE",
-              "Move destination unavailable",
+              "Move destination identity unavailable",
               "error.move.destination-unavailable",
               Map.of(),
               tenantTag,
@@ -94,16 +99,76 @@ public class MoveCommandHandler {
               null);
         }
 
-        SessionContext updatedContext = updatedContext(context, response);
+        RoomInstanceRef destinationRoom = response.getDestinationRoomInstance();
+        if (!validDestination(context, destinationRoom)) {
+          return failureResult(
+              "MOVE_UNAVAILABLE",
+              "Move destination identity is invalid",
+              "error.move.destination-unavailable",
+              Map.of(),
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              null);
+        }
+
+        SessionContext updatedContext = updatedContext(context, destinationRoom);
         if (!settingsResolver.movement(updatedContext).postMoveLookEnabled()) {
           return new PreparedMoveCommandResult(
               CommandEnqueueResult.success(), null, updatedContext);
+        }
+        LookResult destinationLook;
+        try {
+          destinationLook = lookCommandHandler.resolveLook(updatedContext);
+        } catch (StatusRuntimeException ex) {
+          String code = LookCommandHandler.mapStatusToError(ex);
+          String message =
+              StringUtils.hasText(ex.getStatus().getDescription())
+                  ? ex.getStatus().getDescription()
+                  : "Move destination unavailable";
+          return failureResult(
+              code,
+              message,
+              moveErrorMessageKey(code),
+              Map.of(),
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              ex);
+        }
+        if (destinationLook.hasError()) {
+          ErrorDetail error = destinationLook.getError();
+          String code = StringUtils.hasText(error.getCode()) ? error.getCode() : "MOVE_UNAVAILABLE";
+          String message =
+              StringUtils.hasText(error.getMessage())
+                  ? error.getMessage()
+                  : "Move destination unavailable";
+          return failureResult(
+              code,
+              message,
+              moveErrorMessageKey(code),
+              Map.of(),
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              null);
+        }
+        if (!matchesDestination(destinationRoom, destinationLook)) {
+          return failureResult(
+              "MOVE_UNAVAILABLE",
+              "Move destination LOOK identity is invalid",
+              "error.move.destination-unavailable",
+              Map.of(),
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              null);
         }
         return new PreparedMoveCommandResult(
             CommandEnqueueResult.success(),
             lookCommandHandler.toPlayerOutput(
                 updatedContext,
-                response.getDestinationLook(),
+                destinationLook,
                 true,
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .MOVE_REFRESH,
@@ -128,8 +193,8 @@ public class MoveCommandHandler {
     return command.directionalPayload().map(TextCommandPayload.Directional::direction).orElse("");
   }
 
-  private SessionContext updatedContext(SessionContext current, MoveResult response) {
-    String destinationRoomId = response.getDestinationLook().getRoomInstance().getRoomInstanceId();
+  private SessionContext updatedContext(SessionContext current, RoomInstanceRef destinationRoom) {
+    String destinationRoomId = destinationRoom.getRoomInstanceId();
     return new SessionContext(
         current.sessionId(),
         current.tenantId(),
@@ -148,6 +213,21 @@ public class MoveCommandHandler {
         current.playableStateScope(),
         current.connectScopeId(),
         current.connectRequestId());
+  }
+
+  private boolean validDestination(SessionContext current, RoomInstanceRef destination) {
+    if (destination == null
+        || !GameplayRuntimeRoomIds.isCanonical(destination.getRoomInstanceId())) {
+      return false;
+    }
+    return Long.toString(current.tenantId()).equals(destination.getTenantId())
+        && Long.toString(current.gameInstanceId()).equals(destination.getGameInstanceId());
+  }
+
+  private boolean matchesDestination(RoomInstanceRef destination, LookResult lookResult) {
+    return lookResult != null
+        && lookResult.hasRoomInstance()
+        && destination.equals(lookResult.getRoomInstance());
   }
 
   private PreparedMoveCommandResult failureResult(
@@ -194,6 +274,7 @@ public class MoveCommandHandler {
       case "WORLD_UNAVAILABLE" -> "error.move.world-unavailable";
       case "ENTITY_UNAVAILABLE" -> "error.move.entity-unavailable";
       case "NOT_AUTHORIZED" -> "error.move.not-authorized";
+      case "ROOM_NOT_FOUND", "LOOK_UNAVAILABLE" -> "error.move.destination-unavailable";
       case "MOVE_UNAVAILABLE" -> "error.move.unavailable";
       default -> null;
     };

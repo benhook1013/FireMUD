@@ -124,7 +124,7 @@ async function publishPreviewComment({
   if (includeDemoCredentials) {
     bodyLines.push(`- Demo login username: ${process.env.DEMO_SMOKE_USERNAME}`);
     bodyLines.push(`- Demo login email: ${process.env.DEMO_SMOKE_EMAIL}`);
-    bodyLines.push(`- Demo login password: ${process.env.DEMO_SMOKE_PASSWORD}`);
+    bodyLines.push("- Demo login password: repository smoke default (not printed)");
   }
   const body = `${bodyLines.join("\n")}\n`;
 

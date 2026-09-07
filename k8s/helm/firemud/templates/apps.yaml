@@ -1,6 +1,7 @@
 {{- if .Values.previewStack.enabled }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- range $service := .Values.previewStack.services }}
+{{- $mountTelnetTls := and $service.mountTelnetTls $.Values.previewStack.telnetTls.enabled }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -42,34 +43,36 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+{{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
+            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $mountTelnetTls }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
           {{- else }}
           env:
             {{- if $service.mountGrpcTls }}
-            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
-              value: /tls/client.crt
-            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
-              value: /tls/client.key
-            - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+{{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_schema_history_%s" (default (replace "-" "_" $service.name) $service.schema) | quote }}
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}
+            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $mountTelnetTls }}
+{{ include "firemud.telnetTlsEnv" $ | nindent 12 }}
+{{ include "firemud.telnetTlsModeEnv" $ | nindent 12 }}
             {{- end }}
           {{- end }}
           {{- if $service.envFromShared }}
@@ -79,7 +82,7 @@ spec:
             - secretRef:
                 name: firemud-secret
           {{- end }}
-          {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+          {{- if or $service.mountGrpcTls $mountTelnetTls (and $previewJwt.enabled $service.envFromShared) }}
           volumeMounts:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
@@ -95,6 +98,11 @@ spec:
               mountPath: /var/run/secrets/firemud/jwks
               readOnly: true
             {{- end }}
+            {{- end }}
+            {{- if $mountTelnetTls }}
+            - name: telnet-tls
+              mountPath: /telnet-tls
+              readOnly: true
             {{- end }}
           {{- end }}
           ports:
@@ -126,7 +134,7 @@ spec:
             limits:
               cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
               memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
-      {{- if or $service.mountGrpcTls (and $previewJwt.enabled $service.envFromShared) }}
+      {{- if or $service.mountGrpcTls $mountTelnetTls (and $previewJwt.enabled $service.envFromShared) }}
       volumes:
         {{- if $service.mountGrpcTls }}
         - name: grpc-tls
@@ -142,6 +150,11 @@ spec:
           configMap:
             name: jwt-jwks
         {{- end }}
+        {{- end }}
+        {{- if $mountTelnetTls }}
+        - name: telnet-tls
+          secret:
+            secretName: {{ $.Values.previewStack.telnetTls.secretName }}
         {{- end }}
       {{- end }}
 ---

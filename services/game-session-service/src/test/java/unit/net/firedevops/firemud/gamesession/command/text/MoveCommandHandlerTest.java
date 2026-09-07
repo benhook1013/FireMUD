@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -26,6 +28,8 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class MoveCommandHandlerTest {
@@ -58,20 +62,24 @@ class MoveCommandHandlerTest {
   }
 
   @Test
-  void moveSuccessPreparesUpdatedSessionAndStructuredDestinationLook() {
+  void moveSuccessResolvesDestinationLookWithDestinationContext() {
     LookResult destinationLook =
         LookResult.newBuilder()
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId("22")
-                    .setGameInstanceId("game-inst-7")
+                    .setGameInstanceId("7")
                     .setRoomInstanceId("R-2045")
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
     when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
-            MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationLook.getRoomInstance())
+                .build());
+    when(lookCommandHandler.resolveLook(any(SessionContext.class))).thenReturn(destinationLook);
     PlayerOutput destinationOutput =
         PlayerOutput.view(
             new LookViewOutput(
@@ -105,6 +113,7 @@ class MoveCommandHandlerTest {
     assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
     assertThat(result.updatedContext().loginName()).isEqualTo("emberline@example.com");
     assertThat(result.updatedContext().characterName()).isEqualTo("Emberline");
+    verify(lookCommandHandler).resolveLook(result.updatedContext());
     verify(lookCommandHandler)
         .toPlayerOutput(
             result.updatedContext(),
@@ -140,7 +149,99 @@ class MoveCommandHandlerTest {
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.responseOutput(), "fr"))
         .isEqualTo("ERROR INVALID_EXIT Aucune sortie WEST depuis la salle R-1021.");
-    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+  }
+
+  @Test
+  void moveRejectsDestinationLookWithoutRoomIdentity() {
+    RoomInstanceRef destinationRoom =
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("R-2045")
+            .build();
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationRoom)
+                .build());
+    when(lookCommandHandler.resolveLook(any(SessionContext.class)))
+        .thenReturn(LookResult.newBuilder().build());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
+    assertThat(result.updatedContext()).isNull();
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+  }
+
+  @Test
+  void moveRejectsNoncanonicalDestinationIdentity() {
+    assertDestinationIdentityRejected(
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("room-2045")
+            .build());
+  }
+
+  @Test
+  void moveRejectsDestinationIdentityFromAnotherTenant() {
+    assertDestinationIdentityRejected(
+        RoomInstanceRef.newBuilder()
+            .setTenantId("23")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("R-2045")
+            .build());
+  }
+
+  @Test
+  void moveRejectsDestinationIdentityFromAnotherGame() {
+    assertDestinationIdentityRejected(
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("8")
+            .setRoomInstanceId("R-2045")
+            .build());
+  }
+
+  @Test
+  void moveRejectsDestinationLookForDifferentRoomIdentity() {
+    RoomInstanceRef destinationRoom =
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("R-2045")
+            .build();
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationRoom)
+                .build());
+    when(lookCommandHandler.resolveLook(any(SessionContext.class)))
+        .thenReturn(
+            LookResult.newBuilder()
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId("22")
+                        .setGameInstanceId("7")
+                        .setRoomInstanceId("R-3042")
+                        .build())
+                .build());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
+    assertThat(result.updatedContext()).isNull();
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
   }
 
   @Test
@@ -161,14 +262,17 @@ class MoveCommandHandlerTest {
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId("22")
-                    .setGameInstanceId("game-inst-7")
+                    .setGameInstanceId("7")
                     .setRoomInstanceId("R-2045")
                     .build())
             .setRoomName("Crafting Hall of Ember")
             .build();
     when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
         .thenReturn(
-            MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationLook.getRoomInstance())
+                .build());
 
     PreparedMoveCommandResult result =
         handler.prepare(
@@ -178,6 +282,96 @@ class MoveCommandHandlerTest {
     assertThat(result.responseOutput()).isNull();
     assertThat(result.updatedContext()).isNotNull();
     assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
-    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+    verify(lookCommandHandler, never()).resolveLook(any(SessionContext.class));
+  }
+
+  @Test
+  void movePreservesDestinationLookGrpcErrorMapping() {
+    RoomInstanceRef destinationRoom =
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("R-2045")
+            .build();
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationRoom)
+                .build());
+    when(lookCommandHandler.resolveLook(any(SessionContext.class)))
+        .thenThrow(
+            Status.UNAVAILABLE.withDescription("WorldManagement: down").asRuntimeException());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("WorldManagement: down");
+    assertThat(result.updatedContext()).isNull();
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ROOM_NOT_FOUND", "LOOK_UNAVAILABLE"})
+  void moveRejectsDestinationLookErrorWithCodeAndNoUpdatedContext(String code) {
+    RoomInstanceRef destinationRoom =
+        RoomInstanceRef.newBuilder()
+            .setTenantId("22")
+            .setGameInstanceId("7")
+            .setRoomInstanceId("R-2045")
+            .build();
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationRoom)
+                .build());
+    when(lookCommandHandler.resolveLook(any(SessionContext.class)))
+        .thenReturn(
+            LookResult.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode(code)
+                        .setMessage("destination " + code)
+                        .build())
+                .build());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo(code);
+    assertThat(result.commandResult().errorMessage()).isEqualTo("destination " + code);
+    assertThat(result.updatedContext()).isNull();
+    assertThat(result.responseOutput().payload()).isInstanceOf(ErrorOutput.class);
+    assertThat(((ErrorOutput) result.responseOutput().payload()).messageKey())
+        .isEqualTo("error.move.destination-unavailable");
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any(), any());
+  }
+
+  private void assertDestinationIdentityRejected(RoomInstanceRef destinationRoom) {
+    when(gameLogicClient.resolveMove(context, "R-1021", "north", ""))
+        .thenReturn(
+            MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationRoomInstance(destinationRoom)
+                .build());
+
+    PreparedMoveCommandResult result =
+        handler.prepare(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MOVE_UNAVAILABLE");
+    assertThat(result.updatedContext()).isNull();
+    assertThat(result.responseOutput().payload()).isInstanceOf(ErrorOutput.class);
+    assertThat(((ErrorOutput) result.responseOutput().payload()).messageKey())
+        .isEqualTo("error.move.destination-unavailable");
+    verify(lookCommandHandler, never()).resolveLook(any(SessionContext.class));
   }
 }

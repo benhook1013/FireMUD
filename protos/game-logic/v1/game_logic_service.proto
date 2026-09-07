@@ -128,8 +128,10 @@ message MoveRequest {
 
 message MoveResult {
   bool success = 1;
-  LookResult destination_look = 2;
+  reserved 2;
+  reserved "destination_look";
   shared.v1.ErrorDetail error = 3;
+  shared.v1.RoomInstanceRef destination_room_instance = 4;
 }
 
 message PickupVisibleRoomItemRequest {

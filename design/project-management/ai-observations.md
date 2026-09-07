@@ -130,6 +130,20 @@ Entry format:
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
 
+- `2026-09-06`: Unit mocks can miss destination-bound gameplay identity failures
+  - Context: hosted movement reached the destination room read with an attestation issued for the source room, while unit tests mocked World and Entity boundaries independently.
+  - Observation: passing participant mocks do not prove that a cross-service identity remains valid across a room transition.
+  - Expected pattern: assert the attestation or equivalent scoped identity at destination transitions in cross-service proof, while keeping room-bound validation fail-closed.
+
+- `2026-09-06`: CI bootstrap should use an authorized in-cluster path
+  - Context: the dev-demo account bootstrap used a local Gateway port-forward and failed because the deployer identity lacked `pods/portforward`, although the hosted application was reachable.
+  - Observation: granting port-forward solely to CI expands cluster privilege for a setup hop that can run inside the existing namespace.
+  - Expected pattern: perform account and session bootstrap through one short-lived in-cluster pod with the minimum existing access, and require a hosted rerun before claiming deployment proof.
+
+- `2026-09-06`: Assign bounded operational ownership before bulk investigation
+  - Context: the gameplay implementation lane repeatedly kept substantial CI diagnosis and preview-allocation review in the main task until the human redirected it to Workers.
+  - Observation: late delegation consumes the main integration context and makes model/tier routing invisible at checkpoints, even when the eventual Worker assignments are disjoint and useful.
+  - Expected pattern: apply the [AI delegation and review](../developer-workflows/ai-delegation-and-review.md) workflow before bulk operational work; give Workers bounded ownership, retain integration and targeted verification in the main task, and make model/tier routing visible in checkpoint summaries.
 - `2026-09-05`: Automation source type alone does not identify the local command path
   - Context: reconciling local exact-pin admission and final execution with the existing remote Automation follow-up path.
   - Observation: local and remote commands both use the `AUTOMATION` source type, so applying local tuple requirements by source type alone breaks the remote legacy path before its separate source/target tuple contract is implemented.
@@ -175,6 +189,15 @@ Entry format:
   - Observation: stopping one automation does not pause its parent task, coordination input does not replace unfinished work, and an orientation-only pause expires when the human authorizes implementation. A progress report alone does not transfer execution ownership.
   - Expected pattern: before ending while authorized work remains, identify the concrete blocker and the actual continuation owner or durable wakeup. Otherwise continue the lane autonomously within its existing scope; do not add recurring monitors or acknowledgement loops to compensate for an unclear stop boundary.
 
+- `2026-09-06`: Credential bootstrap requires the bounded Kubernetes port-forward hop
+  - Context: an earlier dev-demo correction preferred an in-cluster bootstrap pod for all account and session setup, but player credentials were thereby sent over an internal plaintext service path.
+  - Observation: until internal HTTPS/mTLS exists, credential-bearing account bootstrap must use the already-declared `pods/portforward` capability over the Kubernetes API, bound to runner loopback; only non-credential session/world setup should remain in-cluster.
+  - Expected pattern: fail closed with `kubectl auth can-i create pods/portforward`, use `--address 127.0.0.1`, keep readiness/PID/log/account-id cleanup bounded, and never emit credential material.
+
+- `2026-09-07`: Keep credential-free and credential-bearing bootstrap paths separate
+  - Context: the dev-demo workflow needs an in-cluster setup path for session/world state while account bootstrap still crosses an internal plaintext hop.
+  - Observation: only credential-free session/world setup belongs in the in-cluster pod; account bootstrap must use the existing loopback-bound Kubernetes port-forward path until an authenticated internal account transport exists.
+  - Expected pattern: preserve the append-only history of the earlier guidance, but apply the split explicitly: in-cluster setup may not receive account credentials, and credential-bearing bootstrap must fail closed on port-forward authorization/readiness errors without emitting secrets.
 - `2026-09-06`: Redis logical identity checks must retain exact stored bytes
   - Context: tick queue scripts accepted raw and JDK-serialized payloads as the same logical command, but removal paths discarded the indexed byte representation before removing it from list projections.
   - Observation: parsing two encodings to one logical identity does not make Redis byte comparisons interchangeable; `LREM` can leave the indexed representation behind and a later enqueue can duplicate that command after the index is deleted.

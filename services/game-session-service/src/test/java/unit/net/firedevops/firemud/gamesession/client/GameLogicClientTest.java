@@ -2,7 +2,9 @@ package net.firedevops.firemud.gamesession.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
@@ -34,6 +36,7 @@ import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
@@ -74,6 +77,51 @@ class GameLogicClientTest {
     LookResult result = client.resolveLook(SESSION_CONTEXT, "R-1021", "fr");
 
     assertThat(result.getRoomInstance().getGameInstanceId()).isEqualTo("1");
+  }
+
+  @Test
+  void resolveLookIssuesAttestationBoundToDestinationRoomContext() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.resolveLook(any(LookRequest.class)))
+        .thenReturn(
+            LookResult.newBuilder()
+                .setRoomInstance(
+                    RoomInstanceRef.newBuilder()
+                        .setTenantId("22")
+                        .setGameInstanceId("1")
+                        .setRoomInstanceId("R-2045")
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    SessionContext destinationContext =
+        new SessionContext(
+            SESSION_CONTEXT.sessionId(),
+            SESSION_CONTEXT.tenantId(),
+            SESSION_CONTEXT.accountId(),
+            SESSION_CONTEXT.loginName(),
+            SESSION_CONTEXT.characterId(),
+            SESSION_CONTEXT.characterName(),
+            SESSION_CONTEXT.gameInstanceId(),
+            "R-2045",
+            SESSION_CONTEXT.jwt(),
+            SESSION_CONTEXT.localeTag(),
+            SESSION_CONTEXT.bootstrapGameInstanceId(),
+            SESSION_CONTEXT.worldSlug(),
+            SESSION_CONTEXT.realmSlug(),
+            SESSION_CONTEXT.pointerVersion(),
+            SESSION_CONTEXT.playableStateScope());
+
+    client.resolveLook(destinationContext, "R-2045", "");
+
+    ArgumentCaptor<LookRequest> requestCaptor = ArgumentCaptor.forClass(LookRequest.class);
+    verify(stub).resolveLook(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getRoomInstance().getRoomInstanceId()).isEqualTo("R-2045");
+    assertThat(requestCaptor.getValue().getSessionAttestation())
+        .isEqualTo("destination-attestation");
   }
 
   @Test
@@ -481,6 +529,9 @@ class GameLogicClientTest {
     when(attestationService.issueGameplaySessionAttestation(
             "22", "41", "0", "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
+    when(attestationService.issueGameplaySessionAttestation(
+            "22", "41", "0", "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
+        .thenReturn("destination-attestation");
     when(attestationService.issueInternalProbeAttestation("22", "1", "R-1021"))
         .thenReturn("probe-attestation");
     return new GameLogicClient(

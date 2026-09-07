@@ -51,9 +51,18 @@ for row in "${namespace_rows[@]}"; do
   pr_metadata=""
   if pr_metadata="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-      --jq '[.state, .base.ref, .user.login] | @tsv' 2>/dev/null
+      --jq '
+        def labels_valid:
+          ((.labels? | type) == "array")
+          and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
+        [
+          .state,
+          .base.ref,
+          .user.login,
+          (if labels_valid then (.labels | tojson) else "malformed" end)
+        ] | @tsv' 2>/dev/null
   )"; then
-    IFS=$'\t' read -r pr_state pr_base_ref pr_author <<<"$pr_metadata"
+    IFS=$'\t' read -r pr_state pr_base_ref pr_author pr_labels_json <<<"$pr_metadata"
   else
     pr_state="missing"
   fi
@@ -61,10 +70,11 @@ for row in "${namespace_rows[@]}"; do
   if [[ "$pr_state" != "missing" ]]; then
     eligibility_output="$(
       python3 "$eligibility_script" \
-        --operation retain \
-        --state "$pr_state" \
-        --base-ref "$pr_base_ref" \
-        --author "$pr_author"
+      --operation retain \
+      --state "$pr_state" \
+      --base-ref "$pr_base_ref" \
+      --author "$pr_author" \
+      --labels-json "$pr_labels_json"
     )"
     eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
     reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
