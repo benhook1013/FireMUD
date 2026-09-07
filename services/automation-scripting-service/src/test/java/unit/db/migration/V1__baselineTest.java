@@ -187,11 +187,54 @@ class V1__baselineTest {
             "binding_id VARCHAR(128) NOT NULL DEFAULT ''",
             "target_scope_type VARCHAR(32) NOT NULL DEFAULT ''",
             "work_item_id BIGINT REFERENCES script_work_items(id)",
-            "CONSTRAINT ck_script_event_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
+            "CONSTRAINT ck_script_event_audit_pin_tuple CHECK ( (script_pin_epoch IS NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NULL) OR (script_pin_epoch IS NOT NULL AND script_pin_epoch > 0 AND game_instance_id IS NOT NULL AND NULLIF(BTRIM(script_pin_control_plane_request_id), '') IS NOT NULL) )");
+    assertIndexColumns(
+        normalized,
+        "uq_script_event_audit_handler_identity",
+        "tenant_id",
+        "game_instance_id",
+        "region_id",
+        "region_epoch",
+        "entity_id",
+        "playable_state_scope",
+        "world_slug",
+        "realm_slug",
+        "pointer_version",
+        "script_id",
+        "plugin_id",
+        "plugin_version_id",
+        "binding_id",
+        "event_type",
+        "event_schema_version",
+        "script_patch_version",
+        "script_pin_epoch",
+        "script_event_id",
+        "dry_run");
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity"))
         .doesNotContain("script_pin_control_plane_request_id")
         .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch > 0");
     assertJooqIgnored(normalized, "uq_script_event_audit_handler_identity");
+    assertIndexColumns(
+        normalized,
+        "uq_script_event_audit_handler_identity_unpinned",
+        "tenant_id",
+        "game_instance_id",
+        "region_id",
+        "region_epoch",
+        "entity_id",
+        "playable_state_scope",
+        "world_slug",
+        "realm_slug",
+        "pointer_version",
+        "script_id",
+        "plugin_id",
+        "plugin_version_id",
+        "binding_id",
+        "event_type",
+        "event_schema_version",
+        "script_patch_version",
+        "script_event_id",
+        "dry_run");
     assertThat(indexStatement(normalized, "uq_script_event_audit_handler_identity_unpinned"))
         .endsWith(") NULLS NOT DISTINCT WHERE script_pin_epoch IS NULL");
     assertJooqIgnored(normalized, "uq_script_event_audit_handler_identity_unpinned");

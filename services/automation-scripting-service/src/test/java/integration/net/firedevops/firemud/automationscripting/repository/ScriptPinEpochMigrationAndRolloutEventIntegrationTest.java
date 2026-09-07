@@ -153,10 +153,38 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
 
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-positive-null-owner", 7L, null, "event-rejected-null-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-positive-blank-owner", 8L, "   ", "event-rejected-blank-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
     assertThat(insertIngressAudit(dsl, null, null, null, "event-pre-instance")).isEqualTo(1);
     assertThat(insertIngressAudit(dsl, "instance-positive", 7L, "owner-positive", "event-instance"))
         .isEqualTo(1);
     assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(2);
+  }
+
+  @Test
+  void databaseEnforcesEventAuditPinTupleForUnpinnedAndPinnedRows() {
+    DSLContext dsl = migrateToLatest();
+
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, null, "owner-null-epoch", "event-audit-rejected"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
+    assertThat(insertEventAudit(dsl, null, null, "event-audit-unpinned")).isEqualTo(1);
+    assertThat(insertEventAudit(dsl, 7L, "owner-positive", "event-audit-pinned")).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(2);
   }
 
   private DSLContext migrateToLatest() {
@@ -297,6 +325,29 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMITTED, true)
         .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_OUTCOME, "ADMITTED")
         .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, "accepted")
+        .execute();
+  }
+
+  private int insertEventAudit(
+      DSLContext dsl, Long scriptPinEpoch, String requestId, String eventId) {
+    return dsl.insertInto(SCRIPT_EVENT_AUDIT)
+        .set(SCRIPT_EVENT_AUDIT.TENANT_ID, "tenant-direct-" + eventId)
+        .set(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID, "instance-direct")
+        .set(SCRIPT_EVENT_AUDIT.REGION_ID, "region-direct")
+        .set(SCRIPT_EVENT_AUDIT.REGION_EPOCH, 1L)
+        .set(SCRIPT_EVENT_AUDIT.ENTITY_ID, "entity-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, "script-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, scriptPinEpoch)
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, requestId)
+        .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, "onEnterRegion")
+        .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, "v1")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, "patch-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID, eventId)
+        .set(SCRIPT_EVENT_AUDIT.SOURCE_SERVICE, "direct-test")
+        .set(SCRIPT_EVENT_AUDIT.TRIGGER_MODE, "EVENT")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_STAGE, "HANDOFF")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_OUTCOME, "HANDED_OFF")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_REASON, "accepted")
         .execute();
   }
 
