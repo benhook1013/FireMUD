@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONTRACT_TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$CONTRACT_TEMP_DIR"' EXIT
 
 assert_job_condition() {
   local workflow="$1"
@@ -394,13 +396,33 @@ assert_job_contains preview.yml preview-deploy 'Revalidate preview target labels
 assert_job_contains preview.yml preview-deploy 'Set up GitHub CLI'
 require_ordered_sequence "$preview_path" \
   '      - name: Set up GitHub CLI' \
-  '      - name: Revalidate preview target labels before deploy'
+  '      - name: Revalidate preview target labels before deploy' \
+  '      - name: Enforce preview capacity' \
+  '      - name: Reset preview namespace for clean deploy'
+assert_step_immediately_followed_by preview.yml preview-deploy \
+  'Revalidate preview target labels before deploy' \
+  'Enforce preview capacity'
+for revalidation_step in \
+  'Revalidate preview target labels before deploy' \
+  'Revalidate preview target labels immediately before helm deploy'; do
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'test "$(jq -r '\''.state'\'' <<<"$pull_request_json")" = open'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    '((.labels? | type) == "array")'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'all(.labels[]?; (type == "object") and ((.name? | type) == "string"))'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    '[[ "$labels_valid" == true ]]'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'any(.labels[]?; .name == "preview:paused")'
+done
 assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
   'Deploy preview release'
 assert_step_contains preview.yml preview-deploy 'Deploy preview release' 'helm upgrade --install'
-mutated_preview_path="$(mktemp)"
-trap 'rm -f "$mutated_preview_path"' EXIT
+mutated_preview_path="$CONTRACT_TEMP_DIR/mutated-preview.yml"
 awk '
   $0 == "      - name: Deploy preview release" {
     print "      - uses: actions/checkout@0000000000000000000000000000000000000000"
@@ -618,8 +640,8 @@ require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_P
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher deadline.
 require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publisher_timeout_seconds))'
 
-contract_fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$contract_fixture_dir"' EXIT
+contract_fixture_dir="$CONTRACT_TEMP_DIR/fixtures"
+mkdir -p "$contract_fixture_dir"
 cat >"$contract_fixture_dir/unnamed-step-boundary.yml" <<'EOF'
 jobs:
   preview-deploy:

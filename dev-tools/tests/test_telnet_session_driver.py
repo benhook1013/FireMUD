@@ -306,6 +306,66 @@ class TelnetSessionDriverTest(unittest.TestCase):
         )
         self.assertTrue(args.allow_insecure)
 
+    def test_allow_insecure_rejects_tls_only_options(self):
+        parser = telnet_session.build_parser()
+        base_args = [
+            "connect",
+            "--host",
+            "localhost",
+            "--port",
+            "32000",
+            "--transcript",
+            "/tmp/session.jsonl",
+            "--allow-insecure",
+        ]
+
+        for tls_options, expected_options in (
+            (["--ca-file", "/tmp/test-ca.pem"], "--ca-file"),
+            (["--server-hostname", "preview.example"], "--server-hostname"),
+            (
+                [
+                    "--ca-file",
+                    "/tmp/test-ca.pem",
+                    "--server-hostname",
+                    "preview.example",
+                ],
+                "--ca-file or --server-hostname",
+            ),
+        ):
+            with self.subTest(tls_options=tls_options):
+                stderr = io.StringIO()
+                with (
+                    contextlib.redirect_stderr(stderr),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    parser.parse_args([*base_args, *tls_options])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(
+                    f"--allow-insecure cannot be combined with {expected_options}",
+                    stderr.getvalue(),
+                )
+
+    def test_tls_parser_accepts_ca_file_and_server_hostname_together(self):
+        args = telnet_session.build_parser().parse_args(
+            [
+                "connect",
+                "--host",
+                "localhost",
+                "--port",
+                "32000",
+                "--transcript",
+                "/tmp/session.jsonl",
+                "--ca-file",
+                "/tmp/test-ca.pem",
+                "--server-hostname",
+                "preview.example",
+            ]
+        )
+
+        self.assertFalse(args.allow_insecure)
+        self.assertEqual(args.ca_file, Path("/tmp/test-ca.pem"))
+        self.assertEqual(args.server_hostname, "preview.example")
+
     def test_connect_and_receive_timeouts_are_distinct_positive_cli_values(self):
         parser = telnet_session.build_parser()
         base_args = [
@@ -1026,7 +1086,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
         self.assertEqual(replacement, safe.encode("iso-8859-1", errors="replace"))
         self.assertEqual(safe, "LOGIN snowman? [REDACTED]")
 
-    def test_interactive_send_failure_stops_cleanly(self):
+    def test_interactive_send_failure_returns_nonzero_after_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"
             for failure_type in (OSError, RuntimeError):
@@ -1038,6 +1098,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                         def __init__(self, host, port, transcript_path, timeout, **_kwargs):
                             self.store = telnet_session.EvidenceStore(transcript_path)
                             self.closed = False
+                            self.close_reasons = []
 
                         def connect(self):
                             return None
@@ -1047,20 +1108,84 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
                         def close(self, reason):
                             self.closed = True
+                            self.close_reasons.append(reason)
 
                     args = argparse.Namespace(
                         host="localhost", port=32000, transcript=transcript, timeout=0.25
                     )
                     output = io.StringIO()
+                    sessions = []
+
+                    def create_session(*args, _sessions=sessions, **kwargs):
+                        session = StubSession(*args, **kwargs)
+                        _sessions.append(session)
+                        return session
+
                     with (
-                        patch.object(telnet_session, "TelnetSession", StubSession),
+                        patch.object(
+                            telnet_session,
+                            "TelnetSession",
+                            side_effect=create_session,
+                        ),
                         patch("sys.stdin", io.StringIO("LOOK\n")),
                         contextlib.redirect_stdout(output),
                         contextlib.redirect_stderr(output),
                     ):
-                        self.assertEqual(telnet_session.run_connect(args), 0)
+                        self.assertEqual(telnet_session.run_connect(args), 1)
 
                     self.assertIn("Unable to send command: session closed", output.getvalue())
+                    session = sessions[0]
+                    self.assertTrue(session.closed)
+                    self.assertEqual(session.close_reasons, ["stdin_eof"])
+
+    def test_interactive_normal_endings_return_success_after_cleanup(self):
+        for stdin, expected_reason in (
+            ("", "stdin_eof"),
+            (":close done\n", "done"),
+            (":quit\n", "local_quit"),
+        ):
+            with self.subTest(stdin=stdin):
+
+                class StubSession:
+                    def __init__(self, *_args, **_kwargs):
+                        self.store = unittest.mock.Mock()
+                        self.closed = False
+                        self.close_reasons = []
+
+                    def connect(self):
+                        return None
+
+                    def close(self, reason):
+                        self.closed = True
+                        self.close_reasons.append(reason)
+
+                args = argparse.Namespace(
+                    host="localhost",
+                    port=32000,
+                    transcript=Path("/tmp/session.jsonl"),
+                    timeout=0.25,
+                )
+                sessions = []
+
+                def create_session(*args, _sessions=sessions, **kwargs):
+                    session = StubSession(*args, **kwargs)
+                    _sessions.append(session)
+                    return session
+
+                with (
+                    patch.object(
+                        telnet_session,
+                        "TelnetSession",
+                        side_effect=create_session,
+                    ),
+                    patch("sys.stdin", io.StringIO(stdin)),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(telnet_session.run_connect(args), 0)
+
+                session = sessions[0]
+                self.assertTrue(session.closed)
+                self.assertEqual(session.close_reasons, [expected_reason])
 
     def test_read_subcommand_returns_events_after_cursor(self):
         with tempfile.TemporaryDirectory() as directory:

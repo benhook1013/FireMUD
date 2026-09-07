@@ -2,6 +2,7 @@
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $telnetTlsSecretName := $telnetTls.secretName | default "" }}
+{{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- if $telnetTls.enabled }}
 {{- $telnetTlsSecretName = required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName }}
 {{- end }}
@@ -51,7 +52,7 @@ spec:
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
-            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
+            {{- if or (not $mountTelnetTls) (not (has $key $managedTelnetEnv)) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
@@ -70,7 +71,7 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}
-            {{- if or (ne $key "TCP_PROXY_TELNET_MODE") (not $mountTelnetTls) }}
+            {{- if or (not $mountTelnetTls) (not (has $key $managedTelnetEnv)) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}

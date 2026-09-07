@@ -271,22 +271,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           gh --version
 
-      - name: Revalidate preview target labels before deploy
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
-        run: |
-          set -euo pipefail
-          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          test "$(jq -r '.state' <<<"$pull_request_json")" = open
-          labels_valid="$(jq -r '
-            if ((.labels? | type) == "array")
-              and all(.labels[]?; (type == "object") and ((.name? | type) == "string"))
-            then "true" else "false" end
-          ' <<<"$pull_request_json")"
-          [[ "$labels_valid" == true ]]
-          [[ "$(jq -r 'any(.labels[]?; .name == "preview:paused")' <<<"$pull_request_json")" == false ]]
-
       - name: Publish preview lifecycle state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
@@ -366,6 +350,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
+
+      - name: Revalidate preview target labels before deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(jq -r '.state' <<<"$pull_request_json")" = open
+          labels_valid="$(jq -r '
+            if ((.labels? | type) == "array")
+              and all(.labels[]?; (type == "object") and ((.name? | type) == "string"))
+            then "true" else "false" end
+          ' <<<"$pull_request_json")"
+          [[ "$labels_valid" == true ]]
+          [[ "$(jq -r 'any(.labels[]?; .name == "preview:paused")' <<<"$pull_request_json")" == false ]]
 
       - name: Enforce preview capacity
         if: ${{ steps.preview-access.outputs.available == 'true' }}

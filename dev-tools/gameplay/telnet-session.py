@@ -68,6 +68,28 @@ def _argparse_timeout(name: str) -> Callable[[str], float]:
     return parse
 
 
+class _TransportArgumentParser(argparse.ArgumentParser):
+    """Reject raw-socket mode combined with TLS-only configuration."""
+
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args, namespace)
+        if getattr(parsed, "mode", None) != "connect" or not getattr(
+            parsed, "allow_insecure", False
+        ):
+            return parsed
+
+        tls_options = []
+        if getattr(parsed, "ca_file", None) is not None:
+            tls_options.append("--ca-file")
+        if getattr(parsed, "server_hostname", None) is not None:
+            tls_options.append("--server-hostname")
+        if tls_options:
+            self.error(
+                "--allow-insecure cannot be combined with " + " or ".join(tls_options)
+            )
+        return parsed
+
+
 class EvidenceStore:
     """Append-only JSONL evidence with an unambiguous integer cursor."""
 
@@ -611,7 +633,7 @@ def run_connect(args: argparse.Namespace) -> int:
                     session.send_command(line)
                 except (OSError, RuntimeError) as exc:
                     print(f"Unable to send command: {exc}", file=sys.stderr)
-                    break
+                    return 1
     finally:
         if not session.closed:
             session.close("stdin_eof")
@@ -619,7 +641,7 @@ def run_connect(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _TransportArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="mode", required=True)
     connect = subparsers.add_parser("connect", help="maintain an interactive Telnet session")
     connect.add_argument("--host", required=True)

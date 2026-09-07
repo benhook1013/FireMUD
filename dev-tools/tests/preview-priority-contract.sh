@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
@@ -97,6 +98,13 @@ case "$resource" in
     printf 'open\t%s\t%s\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority" "$paused" "$labels_valid"
     ;;
   */pulls/101)
+    if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" || "${FAKE_PRUNE_JQ_FAIL:-false}" == "true" ]]; then
+      exit 1
+    fi
+    if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
+      printf '%b' "$FAKE_PRUNE_METADATA"
+      exit 0
+    fi
     count=0
     if [[ -f "$FAKE_PR_101_CALLS" ]]; then
       count="$(<"$FAKE_PR_101_CALLS")"
@@ -193,6 +201,12 @@ EOF
 cat > "$TEMP_DIR/eligibility-fail.py" <<'EOF'
 raise SystemExit(1)
 EOF
+cat > "$TEMP_DIR/eligibility-output.py" <<'EOF'
+import os
+import sys
+
+sys.stdout.write(os.environ["FAKE_ELIGIBILITY_OUTPUT"])
+EOF
 chmod +x "$TEMP_DIR/bin/kubectl" "$TEMP_DIR/bin/gh" "$TEMP_DIR/delete" "$TEMP_DIR/publish"
 
 export PATH="$TEMP_DIR/bin:$PATH"
@@ -213,6 +227,10 @@ export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
+paused_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"preview:paused"}]' | base64 | tr -d '\n')"
+adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
+adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
 
 reset_case() {
   rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
@@ -243,6 +261,10 @@ reset_case() {
   export FAKE_EXISTING_COMMENT_ID=''
   export FAKE_COMMENT_JSON=''
   export FAKE_PREVIOUS_COMMENT_BODY=''
+  export FAKE_PRUNE_METADATA=''
+  export FAKE_PRUNE_QUERY_FAIL=false
+  export FAKE_PRUNE_JQ_FAIL=false
+  export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
@@ -490,7 +512,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
@@ -586,7 +608,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -594,9 +616,9 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
-  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n' \
-  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n' \
-  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
+  "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -631,7 +653,7 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\t[{"name":"preview:priority"},{"name":"preview:paused"}]\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\t${paused_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
@@ -640,18 +662,98 @@ export FAKE_TARGET_PRIORITY=false
 # Keep the derived priority/paused columns intentionally inconsistent with the
 # actual label JSON so this proves eligibility receives the trusted labels,
 # rather than the allocator's old fabricated [] value.
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:paused"}]\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${paused_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t[{"name":"preview:priority"}]\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
   exit 1
 fi
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${adversarial_priority_labels_base64}\n"
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation ignored a priority label alongside quoted and backslashed label data" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_paused_labels_base64}\n"
+bash "$PRUNER" --apply
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+
+for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export "$prune_failure"=true
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after ${prune_failure}" >&2
+    exit 1
+  fi
+done
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA=$'open\tdevelop\thuman\tnot-valid-base64!\n'
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after malformed label transport" >&2
+  exit 1
+fi
+
+for malformed_pr_metadata in \
+  $'open\tdevelop\thuman\n' \
+  "open\tdevelop\thuman\t${priority_labels_base64}\textra\n" \
+  "open\tdevelop\thuman\t${priority_labels_base64}\nclosed\tdevelop\thuman\t${priority_labels_base64}\n"
+do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="$malformed_pr_metadata"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after malformed metadata record framing" >&2
+    exit 1
+  fi
+done
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after eligibility evaluation failed" >&2
+  exit 1
+fi
+
+for malformed_eligibility_output in \
+  'eligible=false' \
+  $'eligible=false\nreason=preview-paused\neligible=false' \
+  $'eligible=false\nreason=preview-paused\nextra=value' \
+  $'reason=preview-paused\neligible=false' \
+  $'eligible=maybe\nreason=preview-paused' \
+  $'eligible=false\nreason='
+do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="$malformed_eligibility_output"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after malformed eligibility output" >&2
+    exit 1
+  fi
+done
 
 reset_case
 if bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"; then
@@ -680,7 +782,7 @@ grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capa
 grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-grep -Fq '(.labels | tojson)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"

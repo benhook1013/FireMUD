@@ -76,6 +76,7 @@ find_unsatisfied_priority_pr() {
   local is_priority
   local is_paused
   local labels_valid
+  local labels_base64
   local labels_json
   local namespace
   local namespace_owner
@@ -97,13 +98,13 @@ find_unsatisfied_priority_pr() {
           (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
           (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
           (if labels_valid then "valid" else "invalid" end),
-          (if labels_valid then (.labels | tojson) else "null" end)
+          (if labels_valid then (.labels | tojson | @base64) else "invalid" end)
         ]
       | @tsv')"; then
     echo "Unable to query current priority pull requests" >&2
     return 1
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid labels_json; do
+  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid labels_base64; do
     if [[ -z "$pr_number" ]]; then
       continue
     fi
@@ -116,6 +117,10 @@ find_unsatisfied_priority_pr() {
     fi
     if [[ "$is_priority" != true || "$is_paused" == true ]]; then
       continue
+    fi
+    if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
+      echo "Unable to evaluate priority PR #${pr_number}: malformed label transport" >&2
+      return 1
     fi
     if ! eligibility_output="$(python3 "$eligibility_script" \
       --operation deploy \
