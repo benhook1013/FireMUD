@@ -109,6 +109,72 @@ SHELL_CONTROL_OPERATORS = frozenset({";", "&", "&&", "||"})
 SHELL_COMMAND_PREFIXES = frozenset(
     {"!", "if", "then", "for", "while", "until", "do", "done", "{", "("}
 )
+SUDO_FLAG_OPTIONS = frozenset(
+    {
+        "-A",
+        "--askpass",
+        "-b",
+        "--background",
+        "-B",
+        "--bell",
+        "-E",
+        "--preserve-env",
+        "-e",
+        "--edit",
+        "-H",
+        "--set-home",
+        "-i",
+        "--login",
+        "-K",
+        "--remove-timestamp",
+        "-k",
+        "--reset-timestamp",
+        "-l",
+        "--list",
+        "-n",
+        "--non-interactive",
+        "-P",
+        "--preserve-groups",
+        "-S",
+        "--stdin",
+        "-s",
+        "--shell",
+        "-V",
+        "--version",
+        "-v",
+        "--validate",
+    }
+)
+SUDO_VALUE_OPTIONS = frozenset(
+    {
+        "-C",
+        "--close-from",
+        "-D",
+        "--chdir",
+        "-g",
+        "--group",
+        "-h",
+        "--host",
+        "-p",
+        "--prompt",
+        "-R",
+        "--chroot",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-U",
+        "--other-user",
+        "-u",
+        "--user",
+    }
+)
+TIMEOUT_FLAG_OPTIONS = frozenset(
+    {"--foreground", "--preserve-status", "-v", "--verbose"}
+)
+TIMEOUT_VALUE_OPTIONS = frozenset({"-k", "--kill-after", "-s", "--signal"})
 KUBECTL_VALUE_FLAGS = frozenset(
     {
         "-n",
@@ -338,6 +404,47 @@ def _pipeline_commands(tokens: list[str]) -> Iterable[list[str]]:
         yield tokens[start:]
 
 
+def _wrapped_executable_index(
+    command: list[str],
+    start: int,
+    wrapper: str,
+    flag_options: frozenset[str],
+    value_options: frozenset[str],
+) -> int:
+    index = start
+    while index < len(command):
+        token = command[index]
+        if token == "--":
+            return index + 1
+        if token == "-" or not token.startswith("-"):
+            return index
+
+        option = token.split("=", 1)[0]
+        if option in value_options:
+            if "=" in token:
+                index += 1
+                continue
+            if len(token) > 2 and not token.startswith("--"):
+                index += 1
+                continue
+            if index + 1 >= len(command):
+                raise AssertionError(f"{wrapper} option {token!r} requires a value")
+            index += 2
+            continue
+        if option in flag_options:
+            index += 1
+            continue
+        if (
+            not token.startswith("--")
+            and len(token) > 2
+            and all(f"-{flag}" in flag_options for flag in token[1:])
+        ):
+            index += 1
+            continue
+        raise AssertionError(f"unsupported {wrapper} option syntax: {token!r}")
+    return index
+
+
 def _kubectl_arguments(command: list[str]) -> list[str] | None:
     index = 0
     while index < len(command):
@@ -359,7 +466,27 @@ def _kubectl_arguments(command: list[str]) -> list[str] | None:
             while index < len(command) and command[index].startswith("-"):
                 index += 1
             continue
-        return command[index + 1 :] if token.rsplit("/", 1)[-1] == "kubectl" else None
+        executable = token.rsplit("/", 1)[-1]
+        if executable == "sudo":
+            index = _wrapped_executable_index(
+                command,
+                index + 1,
+                "sudo",
+                SUDO_FLAG_OPTIONS,
+                SUDO_VALUE_OPTIONS,
+            )
+            continue
+        if executable == "timeout":
+            duration_index = _wrapped_executable_index(
+                command,
+                index + 1,
+                "timeout",
+                TIMEOUT_FLAG_OPTIONS,
+                TIMEOUT_VALUE_OPTIONS,
+            )
+            index = duration_index + 1
+            continue
+        return command[index + 1 :] if executable == "kubectl" else None
     return None
 
 

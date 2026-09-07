@@ -1,13 +1,17 @@
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
+{{- $telnetTlsSecretName := $telnetTls.secretName | default "" }}
+{{- if $telnetTls.enabled }}
+{{- $telnetTlsSecretName = required "previewStack.telnetTls.secretName is required when Telnet TLS is enabled" $telnetTls.secretName }}
+{{- end }}
 {{- if and .Values.previewStack.enabled $telnetTls.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ $telnetTls.secretName }}
+  name: {{ $telnetTlsSecretName }}
   labels:
 {{ include "firemud.commonLabels" . | indent 4 }}
 spec:
-  secretName: {{ $telnetTls.secretName }}
+  secretName: {{ $telnetTlsSecretName }}
   privateKey:
     algorithm: RSA
     encoding: PKCS8

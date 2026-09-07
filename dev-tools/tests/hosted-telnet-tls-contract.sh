@@ -67,6 +67,20 @@ PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-spring-profile.yaml" --namespace pr-42 >"$TMP_DIR/rendered-spring-profile.yaml"
 
+TELNET_TLS_SECRET_NAME_ERROR="previewStack.telnetTls.secretName is required when Telnet TLS is enabled"
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string 'previewStack.telnetTls.secretName=' \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/missing-secret.err"; then
+  echo "chart rendered with Telnet TLS enabled and no Secret name" >&2
+  exit 1
+fi
+if ! grep -Fq "$TELNET_TLS_SECRET_NAME_ERROR" "$TMP_DIR/missing-secret.err"; then
+  echo "chart did not report the expected missing Secret name diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/missing-secret.err" >&2
+  exit 1
+fi
+
 ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys

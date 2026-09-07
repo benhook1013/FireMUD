@@ -359,6 +359,77 @@ done"""
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_secret_create_behind_sudo(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = (
+            bootstrap_manifest
+            + "\nsudo kubectl create secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_behind_sudo_options(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            "\nsudo --non-interactive --user root -- "
+            "kubectl create secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_apply_behind_timeout_options(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+timeout --foreground --kill-after=2s 30s kubectl apply -f - <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_behind_nested_wrappers(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            "\nsudo -n timeout --signal TERM 30s command -- "
+            "kubectl create secret generic unrelated-resource"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_accepts_non_kubectl_wrapper_commands(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + r"""
+sudo --non-interactive --user nobody printf '%s\n' 'safe summary'
+timeout --foreground 5s printf '%s\n' 'safe summary'
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
+
     def test_validate_workflow_accepts_configmap_named_secret(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         valid_manifest = bootstrap_manifest + "\nkubectl create configmap secret"
