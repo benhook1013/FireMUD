@@ -533,6 +533,53 @@ RESOURCES"""
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_secret_from_attached_short_stdin_flag_behind_nested_wrappers(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+sudo -n timeout 30s command -- kubectl apply -f- <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_kubectl_reads_manifest_stdin_accepts_valid_filename_forms(self):
+        stdin_commands = (
+            ["apply", "-f-"],
+            ["apply", "-f=-"],
+            ["create", "-f", "-"],
+            ["replace", "--filename", "-"],
+            ["apply", "--filename=-"],
+        )
+        for arguments in stdin_commands:
+            with self.subTest(arguments=arguments):
+                self.assertTrue(
+                    self.validator._kubectl_reads_manifest_stdin(arguments)
+                )
+
+    def test_kubectl_reads_manifest_stdin_rejects_non_stdin_filename_forms(self):
+        non_stdin_commands = (
+            ["apply", "-fmanifest.yaml"],
+            ["apply", "-f=manifest.yaml"],
+            ["apply", "--filename=manifest.yaml"],
+            ["get", "-f-"],
+        )
+        for arguments in non_stdin_commands:
+            with self.subTest(arguments=arguments):
+                self.assertFalse(
+                    self.validator._kubectl_reads_manifest_stdin(arguments)
+                )
+
     def test_validate_workflow_rejects_secret_after_trailing_pipe_continuation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         invalid_manifest = bootstrap_manifest + """

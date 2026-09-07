@@ -47,6 +47,7 @@ helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-configured-mode.yaml" \
   --set previewStack.telnetTls.enabled=false \
   --set-string 'previewStack.telnetTls.clusterIssuer=' \
+  --set-string 'preview.hostname=' \
   --namespace pr-42 >"$TMP_DIR/rendered-disabled.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" --set-json 'previewStack.imagePullSecrets=[]' --namespace pr-42 >"$TMP_DIR/rendered-empty-pull-secrets.yaml"
@@ -95,6 +96,20 @@ fi
 if ! grep -Fq "$TELNET_TLS_CLUSTER_ISSUER_ERROR" "$TMP_DIR/missing-cluster-issuer.err"; then
   echo "chart did not report the expected missing ClusterIssuer diagnostic" >&2
   sed -n '1,20p' "$TMP_DIR/missing-cluster-issuer.err" >&2
+  exit 1
+fi
+
+PREVIEW_HOSTNAME_ERROR="preview.hostname is required when rendering the standalone Telnet TLS Certificate"
+if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string 'preview.hostname=' \
+  --namespace pr-42 >/dev/null 2>"$TMP_DIR/missing-preview-hostname.err"; then
+  echo "chart rendered a standalone Telnet TLS Certificate with no preview hostname" >&2
+  exit 1
+fi
+if ! grep -Fq "$PREVIEW_HOSTNAME_ERROR" "$TMP_DIR/missing-preview-hostname.err"; then
+  echo "chart did not report the expected missing preview hostname diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/missing-preview-hostname.err" >&2
   exit 1
 fi
 

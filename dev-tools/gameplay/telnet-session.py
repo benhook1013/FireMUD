@@ -432,9 +432,10 @@ class TelnetSession:
             try:
                 chunk = self.socket.recv(4096)
             except TimeoutError:
-                if not self.closed and not self.idle_timeout_recorded:
-                    self._append("inbound", "timeout", reason="read_idle")
-                    self.idle_timeout_recorded = True
+                with self.state_lock:
+                    if not self.closed and not self.idle_timeout_recorded:
+                        self._append("inbound", "timeout", reason="read_idle")
+                        self.idle_timeout_recorded = True
                 continue
             except OSError as exc:
                 self._record_disconnect(
@@ -454,7 +455,8 @@ class TelnetSession:
                     )
                 self._append("system", "disconnect", reason="remote_eof")
                 return
-            self.idle_timeout_recorded = False
+            with self.state_lock:
+                self.idle_timeout_recorded = False
             payload, negotiations = self.parser.feed(chunk)
             for command, option, response in negotiations:
                 self._append("inbound", "telnet_negotiation", command=command, option=option)
@@ -500,8 +502,9 @@ class TelnetSession:
             display = command
         # Record before send so an immediate asynchronous server response cannot
         # acquire a lower cursor than the command that caused it.
-        self.idle_timeout_recorded = False
-        self._append("outbound", "command", text=display)
+        with self.state_lock:
+            self.idle_timeout_recorded = False
+            self._append("outbound", "command", text=display)
         try:
             with self.send_lock:
                 self.socket.sendall(_iso88591_bytes(command) + b"\r\n")

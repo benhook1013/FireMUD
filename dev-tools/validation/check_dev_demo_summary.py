@@ -550,7 +550,7 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
         return False
     values = arguments[verb[1] + 1 :]
     return any(
-        token in {"-f=-", "--filename=-"}
+        token in {"-f-", "-f=-", "--filename=-"}
         or (token in {"-f", "--filename"} and index + 1 < len(values) and values[index + 1] == "-")
         for index, token in enumerate(values)
     )

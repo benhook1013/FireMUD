@@ -477,6 +477,156 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual([r["seq"] for r in session.store.read()], sorted(r["seq"] for r in session.store.read()))
             self.assertEqual(stat.S_IMODE(transcript.stat().st_mode), 0o600)
 
+    def test_idle_timeout_record_and_command_reset_are_serialized(self):
+        class CoordinatedSocket:
+            def __init__(self):
+                self.command_sent = threading.Event()
+                self.recv_count = 0
+                self.sent = []
+
+            def recv(self, _size):
+                self.recv_count += 1
+                if self.recv_count == 1:
+                    raise TimeoutError
+                if self.recv_count == 2:
+                    if not self.command_sent.wait(2):
+                        raise OSError("command was not sent")
+                    raise TimeoutError
+                return b""
+
+            def sendall(self, data):
+                self.sent.append(data)
+                self.command_sent.set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            fake_socket = CoordinatedSocket()
+            session.socket = fake_socket
+            timeout_append_started = threading.Event()
+            release_timeout_append = threading.Event()
+            command_append_started = threading.Event()
+            original_append = session._append
+
+            def coordinated_append(direction, event, **fields):
+                if event == "timeout" and not timeout_append_started.is_set():
+                    timeout_append_started.set()
+                    if not release_timeout_append.wait(2):
+                        raise RuntimeError("timed out releasing timeout append")
+                elif event == "command":
+                    command_append_started.set()
+                return original_append(direction, event, **fields)
+
+            session._append = coordinated_append
+            receiver = threading.Thread(target=session._receive_loop, daemon=True)
+            sender = threading.Thread(target=session.send_command, args=("LOOK",), daemon=True)
+            receiver.start()
+            self.assertTrue(timeout_append_started.wait(2))
+            self.assertTrue(session.state_lock.locked())
+            sender.start()
+            try:
+                self.assertFalse(command_append_started.wait(0.1))
+            finally:
+                release_timeout_append.set()
+
+            sender.join(2)
+            receiver.join(2)
+            self.assertFalse(sender.is_alive())
+            self.assertFalse(receiver.is_alive())
+            self.assertEqual(fake_socket.sent, [b"LOOK\r\n"])
+            self.assertEqual(
+                [
+                    record["event"]
+                    for record in session.store.read()
+                    if record["event"] in {"timeout", "command"}
+                ],
+                ["timeout", "command", "timeout"],
+            )
+
+    def test_close_waits_for_in_flight_idle_timeout_record(self):
+        class ClosingSocket:
+            def __init__(self):
+                self.closed = threading.Event()
+                self.recv_count = 0
+
+            def recv(self, _size):
+                self.recv_count += 1
+                if self.recv_count == 1:
+                    raise TimeoutError
+                if not self.closed.wait(2):
+                    raise OSError("socket was not closed")
+                raise OSError("closed by test")
+
+            def shutdown(self, _how):
+                self.closed.set()
+
+            def close(self):
+                self.closed.set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.socket = ClosingSocket()
+            timeout_append_started = threading.Event()
+            release_timeout_append = threading.Event()
+            close_append_started = threading.Event()
+            original_append = session._append
+
+            def coordinated_append(direction, event, **fields):
+                if event == "timeout":
+                    timeout_append_started.set()
+                    if not release_timeout_append.wait(2):
+                        raise RuntimeError("timed out releasing timeout append")
+                elif event == "close":
+                    close_append_started.set()
+                return original_append(direction, event, **fields)
+
+            session._append = coordinated_append
+            receiver = threading.Thread(target=session._receive_loop, daemon=True)
+            closer = threading.Thread(
+                target=session.close, args=("test_complete",), daemon=True
+            )
+            session.receiver = receiver
+            receiver.start()
+            self.assertTrue(timeout_append_started.wait(2))
+            self.assertTrue(session.state_lock.locked())
+            closer.start()
+            try:
+                self.assertFalse(close_append_started.wait(0.1))
+            finally:
+                release_timeout_append.set()
+
+            closer.join(2)
+            receiver.join(2)
+            self.assertFalse(closer.is_alive())
+            self.assertFalse(receiver.is_alive())
+            records = session.store.read()
+            timeout_seq = next(
+                record["seq"] for record in records if record["event"] == "timeout"
+            )
+            close_seq = next(
+                record["seq"] for record in records if record["event"] == "close"
+            )
+            self.assertLess(timeout_seq, close_seq)
+            self.assertEqual(
+                [
+                    record["reason"]
+                    for record in records
+                    if record["event"] == "disconnect"
+                ],
+                ["test_complete"],
+            )
+
     def test_telnet_negotiation_is_refused_and_not_rendered(self):
         def handler(connection):
             connection.sendall(bytes((255, 251, 42)) + b"READY\r\n")
