@@ -345,33 +345,40 @@ public class ScriptEventIngressAuditRepository {
   }
 
   private static Condition identityCondition(ScriptEventIngressAudit entity) {
-    Condition condition =
-        SCRIPT_EVENT_INGRESS_AUDIT
-            .TENANT_ID
-            .eq(entity.getTenantId())
-            .and(
-                SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNotDistinctFrom(
-                    entity.getGameInstanceId()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.isNotDistinctFrom(entity.getRegionId()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.isNotDistinctFrom(entity.getRegionEpoch()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entity.getEntityId()))
-            .and(
-                SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.isNotDistinctFrom(
-                    canonicalPlayableStateScope(
-                        entity.getGameInstanceId(), entity.getPlayableStateScope())))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(entity.getEventSchemaVersion()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(entity.isDryRun()))
-            .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(entity.getSourceService()));
     if (entity.getGameInstanceId() == null) {
-      return condition
+      return SCRIPT_EVENT_INGRESS_AUDIT
+          .TENANT_ID
+          .eq(entity.getTenantId())
           .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID.eq(entity.getScriptId()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(entity.getEventSchemaVersion()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(entity.isDryRun()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(entity.getSourceService()))
+          .and(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNull())
           .and(nullScriptPinEpochCondition());
     }
-    return condition.and(
-        SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()));
+    return SCRIPT_EVENT_INGRESS_AUDIT
+        .TENANT_ID
+        .eq(entity.getTenantId())
+        .and(
+            SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID.isNotDistinctFrom(
+                entity.getGameInstanceId()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_ID.isNotDistinctFrom(entity.getRegionId()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.REGION_EPOCH.isNotDistinctFrom(entity.getRegionEpoch()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.ENTITY_ID.isNotDistinctFrom(entity.getEntityId()))
+        .and(
+            SCRIPT_EVENT_INGRESS_AUDIT.PLAYABLE_STATE_SCOPE.isNotDistinctFrom(
+                canonicalPlayableStateScope(
+                    entity.getGameInstanceId(), entity.getPlayableStateScope())))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE.eq(entity.getEventType()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION.eq(entity.getEventSchemaVersion()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION.eq(entity.getScriptPatchVersion()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH.eq(entity.getScriptPinEpoch()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID.eq(entity.getScriptEventId()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.DRY_RUN.eq(entity.isDryRun()))
+        .and(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE.eq(entity.getSourceService()));
   }
 
   private static void requireMatchingPinOwnerEvidence(

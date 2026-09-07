@@ -230,19 +230,22 @@ public final class GameplayWebSocketDriver implements AutoCloseable {
       throws Exception {
     long deadline = System.currentTimeMillis() + waitTimeout.toMillis();
     while (System.currentTimeMillis() < deadline) {
-      String transcript = String.join("\n", responses.subList(responseCount, responses.size()));
+      List<String> responseSnapshot = List.copyOf(responses);
+      String transcript =
+          String.join("\n", responseSnapshot.subList(responseCount, responseSnapshot.size()));
       if (containsAll(transcript, expectedSubstrings)) {
         return transcript;
       }
       Thread.sleep(50);
     }
+    List<String> responseSnapshot = List.copyOf(responses);
     throw new AssertionError(
         "Expected new transcript after response "
             + responseCount
             + " containing "
             + List.of(expectedSubstrings)
             + ", got "
-            + responses.subList(responseCount, responses.size()));
+            + responseSnapshot.subList(responseCount, responseSnapshot.size()));
   }
 
   public void awaitMatching(Predicate<String> predicate, String description) throws Exception {

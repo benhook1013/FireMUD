@@ -1,2 +1,0 @@
-ALTER TABLE script_event_ingress_audit
-    ADD COLUMN IF NOT EXISTS quota_class VARCHAR(64) NOT NULL DEFAULT 'STANDARD_RUNTIME';
