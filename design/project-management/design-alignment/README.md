@@ -82,7 +82,7 @@ The completed decision-family imports consolidated related normative duplication
 
 The selective ADR-family imports are complete. The next alignment phase is the planned whole-corpus authority pass: preserve one canonical owner for each contract, retain useful local consequences and explanatory context, and remove only competing normative authority. During PR review, follow the [PR lifecycle review completion criteria](../../developer-workflows/pr-lifecycle.md#review-completion-criteria).
 
-Keep the authority pass focused on design review. When a review unit exposes an unambiguous, bounded implementation or proof correction, prefer landing that correction with its focused tests in a precursor implementation PR before publishing the affected corpus PR; an intentionally accepted, tightly bounded correction may accompany the corpus PR when that is the coherent review boundary. If the implementation is broad, decision-sensitive, or cannot be completed safely within that boundary, retain an explicit tracker gap for the later implementation phase instead. Do not mix code into a corpus PR merely to avoid recording truthful current status, and do not repeatedly reshuffle an already-reviewed hybrid PR solely to optimize reviewer attention.
+Keep the authority pass focused on design review, but carry unambiguous implementation and proof corrections with the selected domain when that produces one coherent boundary. Grow the active PR across the natural whole domain while it remains within practical hosted-review headroom; a small independently reviewable capability is not, by itself, a reason to create a precursor PR. Split only for concrete size or hosted-review pressure, or when a substantial dependency or invariant requires an independently ordered checkpoint. When a split is necessary, keep every valid finding active in an identified domain contribution rather than silently discarding or indefinitely deferring it. If implementation is decision-sensitive or cannot be completed safely within the selected domain, retain an explicit tracker gap and state the blocking decision or dependency. Do not mix unrelated code into a corpus PR merely to avoid recording truthful current status, and do not repeatedly reshuffle an already-reviewed hybrid PR solely to optimize reviewer attention.
 
 ### Domain review operating model
 
@@ -101,7 +101,9 @@ PR closure follows the hosted review evidence and judgment described by the [PR 
 - Split by responsibility and contract, not arbitrary file lists or service boundaries that cut across an invariant.
 - Independent portions may target `develop`; dependent portions stack with their parent contribution explicit.
 - Keep the owning design, affected implementation/call sites, and necessary proof coherent.
-- Prefer reasonably balanced natural splits with review headroom over tiny artificial extractions.
+- Default to one natural whole-domain PR while it retains practical hosted-review headroom; do not extract a small capability merely because it can stand alone.
+- Split only for concrete size/headroom pressure or a substantial dependency/invariant that requires its own ordered checkpoint, and record that reason explicitly.
+- Keep every worthwhile finding owned by an active domain contribution across a split; narrow review scope must not silently discard or defer known work.
 - Preserve useful front-PR review progress and check fixes already downstream.
 - Make integration and deployment dependencies explicit using existing controls. File limits and mechanics follow the [PR lifecycle](../../developer-workflows/pr-lifecycle.md).
 
