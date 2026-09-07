@@ -107,7 +107,21 @@ KUBERNETES_SECRET_KIND = re.compile(
 )
 SHELL_CONTROL_OPERATORS = frozenset({";", "&", "&&", "||"})
 SHELL_COMMAND_PREFIXES = frozenset(
-    {"!", "if", "then", "for", "while", "until", "do", "done", "{", "("}
+    {
+        "!",
+        "if",
+        "then",
+        "elif",
+        "else",
+        "fi",
+        "for",
+        "while",
+        "until",
+        "do",
+        "done",
+        "{",
+        "(",
+    }
 )
 SUDO_FLAG_OPTIONS = frozenset(
     {

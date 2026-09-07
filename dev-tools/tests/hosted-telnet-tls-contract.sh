@@ -130,6 +130,8 @@ issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
 
 deployment = next(d for d in documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
+target_namespace = preflight.workload_namespace(deployment)
+foreign_namespace = f"{target_namespace}-foreign"
 container = deployment["spec"]["template"]["spec"]["containers"][0]
 expected_telnet_env_order = [
     "TCP_PROXY_TLS_ENABLED",
@@ -253,18 +255,21 @@ cross_namespace_decoys.extend(
             "kind": "Certificate",
             "metadata": {
                 "name": "preview-release-telnet-tls",
-                "namespace": "other",
+                "namespace": foreign_namespace,
             },
             "spec": {"secretName": "wrong-cross-namespace-secret"},
         },
         {
             "kind": "Ingress",
-            "metadata": {"name": "other-ingress", "namespace": "other"},
+            "metadata": {"name": "other-ingress", "namespace": foreign_namespace},
             "spec": {"tls": [{"secretName": "preview-release-telnet-tls"}]},
         },
         {
             "kind": "Deployment",
-            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "metadata": {
+                "name": "tcp-proxy-service",
+                "namespace": foreign_namespace,
+            },
             "spec": {"template": {"spec": {"containers": []}}},
         },
     ]
@@ -277,20 +282,20 @@ ambiguous_nodeports = deepcopy(documents)
 ambiguous_nodeports.append(
     {
         "kind": "Service",
-        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+        "metadata": {"name": "tcp-proxy-service", "namespace": target_namespace},
         "spec": {"type": "NodePort"},
     }
 )
 ambiguous_issues = preflight.validate_hosted_telnet_tls_values(ambiguous_nodeports)
 assert any("exactly one tcp-proxy-service NodePort Service" in issue for issue in ambiguous_issues), (
-    "multiple cross-namespace tcp-proxy-service NodePorts were accepted"
+    "multiple target-namespace tcp-proxy-service NodePorts were accepted"
 )
 
 ambiguous_certificates = deepcopy(documents)
 ambiguous_certificates.append(
     {
         "kind": "Certificate",
-        "metadata": {"name": "other-telnet-tls", "namespace": "firemud"},
+        "metadata": {"name": "other-telnet-tls", "namespace": target_namespace},
         "spec": {"secretName": "wrong-telnet-secret"},
     }
 )

@@ -356,6 +356,60 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                     ):
                         self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_secret_create_inside_else_branch(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+if false; then
+  :
+else sudo -n timeout 30s command -- kubectl create secret generic unrelated-resource
+fi"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_apply_inside_elif_condition(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+if false; then
+  :
+elif sudo -n timeout 30s command -- kubectl apply -f - <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES
+then
+  :
+else
+  :
+fi"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_after_fi_prefix(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + """
+if true; then
+  :
+fi sudo -n timeout 30s command -- kubectl create secret generic unrelated-resource"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_secret_apply_inside_loop_body(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         invalid_manifest = bootstrap_manifest + """
