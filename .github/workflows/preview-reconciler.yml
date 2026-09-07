@@ -71,35 +71,48 @@ jobs:
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+          if ! raw_pr_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
             --jq '
-              def labels_valid:
-                ((.labels? | type) == "array")
-                and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
               .[]
               | [
-                  (if (labels_valid and any(.labels[]?; .name == "preview:priority")) then 0 else 1 end),
                   .number,
                   .head.ref,
                   .head.sha,
                   .user.login,
                   .base.ref,
                   .state,
-                  (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
-                  (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
-                  (if labels_valid then "valid" else "invalid" end)
+                  (.labels | tojson | @base64)
                 ]
-              | @tsv' \
-            | sort -t $'\t' -k1,1n -k2,2n |
-          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority is_paused labels_valid; do
-            if [[ "$labels_valid" != valid ]]; then
+              | @tsv')"; then
+            echo "::error::Unable to query current pull requests for preview reconciliation" >&2
+            exit 1
+          fi
+          normalized_pr_rows=""
+          while IFS=$'\t' read -r pr_number head_ref head_sha pr_author pr_base_ref pr_state labels_base64; do
+            [[ -n "$pr_number" ]] || continue
+            if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
+              echo "Skipping preview reconcile for PR #${pr_number}: malformed label transport"
+              continue
+            fi
+            if ! label_metadata="$(python3 "$eligibility_script" --inspect-labels --labels-json "$labels_json")"; then
+              echo "::error::Unable to inspect label metadata for PR #${pr_number}" >&2
+              exit 1
+            fi
+            labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
+            is_priority="$(sed -n 's/^priority=//p' <<<"$label_metadata")"
+            if [[ "$labels_valid" != true ]]; then
               echo "Skipping preview reconcile for PR #${pr_number}: malformed label metadata"
               continue
             fi
-            labels_json='[]'
-            if [[ "$is_paused" == true ]]; then
-              labels_json='[{"name":"preview:paused"}]'
-            fi
+            priority_rank=1
+            [[ "$is_priority" != true ]] || priority_rank=0
+            normalized_pr_rows+="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+              "$priority_rank" "$pr_number" "$head_ref" "$head_sha" "$pr_author" \
+              "$pr_base_ref" "$pr_state" "$is_priority" "$labels_base64")"$'\n'
+          done <<<"$raw_pr_rows"
+          while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority labels_base64; do
+            [[ -n "$pr_number" ]] || continue
+            labels_json="$(printf '%s' "$labels_base64" | base64 --decode)"
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \
@@ -166,4 +179,4 @@ jobs:
               -f "inputs[head_sha]=${head_sha}" \
               -f 'inputs[preview_domain]=preview.firedevops.net'
             dispatch_sent=true
-          done
+          done < <(printf '%s' "$normalized_pr_rows" | sort -t $'\t' -k1,1n -k2,2n)

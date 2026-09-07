@@ -1,6 +1,7 @@
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
-{{- if and .Values.previewStack.enabled $telnetTls.enabled }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
+{{- if and .Values.previewStack.enabled $telnetTls.enabled (ne $hostedControllerMode "true") }}
 {{- $telnetTlsClusterIssuer := required "previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate" $telnetTls.clusterIssuer }}
 {{- $previewHostname := required "preview.hostname is required when rendering the standalone Telnet TLS Certificate" .Values.preview.hostname }}
 apiVersion: cert-manager.io/v1

@@ -52,14 +52,11 @@ for row in "${namespace_rows[@]}"; do
   if ! pr_metadata="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
       --jq '
-        def labels_valid:
-          ((.labels? | type) == "array")
-          and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
         [
           .state,
           .base.ref,
           .user.login,
-          (if labels_valid then (.labels | tojson | @base64) else "malformed" end)
+          (.labels | tojson | @base64)
         ] | @tsv' 2>/dev/null
   )"; then
     echo "Keeping ${namespace}: PR #${pr_number} metadata is unavailable or malformed"
@@ -76,11 +73,6 @@ for row in "${namespace_rows[@]}"; do
     echo "Keeping ${namespace}: PR #${pr_number} metadata transport is incomplete"
     continue
   fi
-  if [[ "$pr_labels_base64" == "malformed" ]]; then
-    echo "Keeping ${namespace}: PR #${pr_number} label metadata is malformed"
-    continue
-  fi
-
   if ! pr_labels_json="$(printf '%s' "$pr_labels_base64" | base64 --decode 2>/dev/null)"; then
     echo "Keeping ${namespace}: PR #${pr_number} label transport is malformed"
     continue

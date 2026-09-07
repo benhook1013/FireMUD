@@ -402,42 +402,35 @@ require_ordered_sequence "$preview_path" \
 assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels before deploy' \
   'Enforce preview capacity'
-# shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  'EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  'test "$(jq -r '\''.head.sha'\'' <<<"$pull_request_json")" = "$EXPECTED_HEAD_SHA"'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  'test "$(jq -r '\''.head.repo.full_name'\'' <<<"$pull_request_json")" = "$GITHUB_REPOSITORY"'
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  './dev-tools/hosted/preview/preview-eligibility.py'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  '--base-ref "$(jq -r '\''.base.ref'\'' <<<"$pull_request_json")"'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  '--author "$(jq -r '\''.user.login'\'' <<<"$pull_request_json")"'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
-assert_step_contains preview.yml preview-deploy 'Revalidate preview target labels before deploy' \
-  'grep -qx '\''eligible=true'\'' <<<"$eligibility_output"'
 for revalidation_step in \
   'Revalidate preview target labels before deploy' \
   'Revalidate preview target labels immediately before helm deploy'; do
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+  # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'test "$(jq -r '\''.state'\'' <<<"$pull_request_json")" = open'
+    'EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '((.labels? | type) == "array")'
+    '--inspect-labels --labels-json "$labels_json"'
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'all(.labels[]?; (type == "object") and ((.name? | type) == "string"))'
-  # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+    '--operation deploy'
+  # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    '[[ "$labels_valid" == true ]]'
+    'pull request is not open (state=${current_state})'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
   assert_step_contains preview.yml preview-deploy "$revalidation_step" \
-    'any(.labels[]?; .name == "preview:paused")'
+    'head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'label metadata is malformed'
+  assert_step_contains preview.yml preview-deploy "$revalidation_step" \
+    'preview:paused is present'
 done
+if grep -Fq 'def labels_valid:' "$preview_path"; then
+  echo "Preview workflow must use the centralized label authority" >&2
+  exit 1
+fi
 assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
   'Deploy preview release'
@@ -455,7 +448,8 @@ if assert_step_immediately_followed_by preview.yml preview-deploy \
   echo "preview adjacency contract accepted an unnamed intervening step" >&2
   exit 1
 fi
-require_contains "$preview_reconciler_path" 'preview:paused'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
+require_contains "$preview_reconciler_path" '--inspect-labels --labels-json "$labels_json"'
 require_contains "$preview_reconciler_path" 'malformed label metadata'
 for job in preview-deploy preview-destroy; do
   assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'

@@ -1051,6 +1051,26 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 row["text"] for row in records if row.get("event") == "received"
             ]
             self.assertEqual(received, ["A later room line.\r\n"])
+            suppression_events = [
+                row for row in records if row.get("event") == "redaction_suppressed"
+            ]
+            self.assertEqual(
+                [row.get("phase") for row in suppression_events], ["start", "end"]
+            )
+            self.assertTrue(
+                all(
+                    set(row)
+                    == {
+                        "timestamp",
+                        "seq",
+                        "cursor",
+                        "direction",
+                        "event",
+                        "phase",
+                    }
+                    for row in suppression_events
+                )
+            )
             for forbidden in (secret, "Xcret-7", "sXcret-7"):
                 self.assertNotIn(forbidden, transcript_text)
                 self.assertNotIn(forbidden, rendered)
@@ -1100,6 +1120,49 @@ class TelnetSessionDriverTest(unittest.TestCase):
             self.assertEqual(partial, b"")
             self.assertEqual(trailing, b"")
             self.assertEqual(session.redaction_tail, b"")
+            suppression_events = [
+                row
+                for row in session.store.read()
+                if row.get("event") == "redaction_suppressed"
+            ]
+            self.assertEqual(
+                [row.get("phase") for row in suppression_events], ["start", "end"]
+            )
+            self.assertNotIn("secret-7", session.store.path.read_text(encoding="utf-8"))
+
+    def test_login_redaction_closes_active_suppression_at_eof_without_newline(self):
+        _, raw, replacement = telnet_session._login_redaction(
+            "LOGIN demo@example.com secret-7"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.redaction_patterns.append((raw, replacement))
+
+            partial = session._redact_inbound(raw[:-2])
+            mismatch = session._redact_inbound(b"X")
+            self.assertTrue(session.suppress_redaction_line)
+            trailing = session._redact_inbound(b"", final=True)
+
+            self.assertEqual(partial + mismatch + trailing, b"")
+            self.assertFalse(session.suppress_redaction_line)
+            records = session.store.read()
+            self.assertEqual(
+                [
+                    row.get("phase")
+                    for row in records
+                    if row.get("event") == "redaction_suppressed"
+                ],
+                ["start", "end"],
+            )
+            transcript_text = session.store.path.read_text(encoding="utf-8")
+            self.assertNotIn("secret-7", transcript_text)
+            self.assertNotIn("X", transcript_text)
 
     def test_login_redaction_drops_disproved_in_chunk_credential_prefix(self):
         _, raw, replacement = telnet_session._login_redaction(

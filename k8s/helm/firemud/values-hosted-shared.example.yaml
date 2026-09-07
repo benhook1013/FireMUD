@@ -12,6 +12,8 @@ preview:
 
 previewStack:
   enabled: true
+  certificateIdentity:
+    mode: hosted-controller
   networkPolicies:
     enabled: true
   defaultImageTag: __IMAGE_TAG__

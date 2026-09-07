@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.http.server.reactive.ReactorHttpHandlerAdapter;
@@ -49,7 +50,7 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
   public TcpProxyTlsListener(
       GatewayTcpProxyListenerProperties properties,
       TcpProxyTrustPolicy trustPolicy,
-      @Qualifier("httpHandler") HttpHandler httpHandler) {
+      @Lazy @Qualifier("httpHandler") HttpHandler httpHandler) {
     this.properties = Objects.requireNonNull(properties);
     this.trustPolicy = Objects.requireNonNull(trustPolicy);
     this.httpHandler = Objects.requireNonNull(httpHandler);

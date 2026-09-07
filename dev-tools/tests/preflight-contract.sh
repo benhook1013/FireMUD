@@ -3260,8 +3260,9 @@ telnet_documents = [
         },
     },
 ]
-if module.validate_hosted_telnet_tls_values(telnet_documents):
-    raise SystemExit("canonical hosted Telnet TLS fixture did not pass")
+telnet_issues = module.validate_hosted_telnet_tls_values(telnet_documents)
+if telnet_issues:
+    raise SystemExit(f"canonical hosted Telnet TLS fixture did not pass: {telnet_issues}")
 telnet_cross_namespace_decoys = copy.deepcopy(telnet_documents)
 telnet_cross_namespace_decoys.extend(
     [
@@ -3282,8 +3283,14 @@ telnet_cross_namespace_decoys.extend(
         },
     ]
 )
-if module.validate_hosted_telnet_tls_values(telnet_cross_namespace_decoys):
-    raise SystemExit("same-name Telnet TLS resources in another namespace affected validation")
+telnet_cross_namespace_issues = module.validate_hosted_telnet_tls_values(
+    telnet_cross_namespace_decoys
+)
+if telnet_cross_namespace_issues:
+    raise SystemExit(
+        "same-name Telnet TLS resources in another namespace affected validation: "
+        f"{telnet_cross_namespace_issues}"
+    )
 telnet_ambiguous_nodeports = copy.deepcopy(telnet_documents)
 telnet_ambiguous_nodeports.append(
     {

@@ -373,9 +373,11 @@ class TelnetSession:
             if line_end < 0:
                 if final:
                     self.suppress_redaction_line = False
+                    self._append("inbound", "redaction_suppressed", phase="end")
                 return b""
             data = data[line_end + 1 :]
             self.suppress_redaction_line = False
+            self._append("inbound", "redaction_suppressed", phase="end")
 
         previous_tail = self.redaction_tail
         combined = previous_tail + data
@@ -424,19 +426,26 @@ class TelnetSession:
                     self.redaction_tail = combined[start:]
                 elif not includes_credential:
                     safe.extend(combined[start : start + matched])
+                else:
+                    self._append("inbound", "redaction_suppressed", phase="start")
+                    self._append("inbound", "redaction_suppressed", phase="end")
                 break
 
             # Never emit a disproved prefix once it includes credential bytes.
             # Once that boundary is crossed, discard the complete current line
             # and resume only after its newline, even when it arrives later.
             if includes_credential:
+                self._append("inbound", "redaction_suppressed", phase="start")
                 previous_line_end = safe.rfind(b"\n")
                 del safe[previous_line_end + 1 :]
                 line_end = combined.find(b"\n", start + matched)
                 if line_end < 0:
                     if not final:
                         self.suppress_redaction_line = True
+                    else:
+                        self._append("inbound", "redaction_suppressed", phase="end")
                     break
+                self._append("inbound", "redaction_suppressed", phase="end")
                 cursor = line_end + 1
             else:
                 # Harmless prefixes are restored even when a socket boundary

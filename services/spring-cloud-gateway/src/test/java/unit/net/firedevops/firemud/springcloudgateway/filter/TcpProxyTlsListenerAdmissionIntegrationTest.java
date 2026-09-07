@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -18,15 +19,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import net.firedevops.firemud.springcloudgateway.config.TcpProxyTlsListener;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.mock.env.MockEnvironment;
+import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.DispatcherHandler;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
@@ -38,6 +46,60 @@ import reactor.netty.http.client.HttpClient;
 
 class TcpProxyTlsListenerAdmissionIntegrationTest {
   private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
+
+  @Test
+  void productionConfigurationMapsHealthAndReadinessWhenInternalTlsIsDisabled() {
+    SpringApplication application = new SpringApplication(SpringCloudGatewayApplication.class);
+    application.setWebApplicationType(WebApplicationType.REACTIVE);
+
+    try (ConfigurableApplicationContext context =
+        application.run(
+            "--server.port=0",
+            "--spring.config.additional-location=file:src/main/resources/application.yml",
+            "--spring.flyway.enabled=false",
+            "--spring.cloud.gateway.server.webflux.default-filters=",
+            "--firemud.database.enabled=false",
+            "--firemud.gateway.gameplay.bridge.upstream-url=ws://127.0.0.1:0/ws/game",
+            "--firemud.gateway.tcp-proxy-listener.enabled=false",
+            "--management.endpoint.health.show-details=always",
+            "--firemud.auth.jwt-secret=test-secret-for-gateway-health-mapping",
+            "--spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration")) {
+      int port = requireNonNull(((WebServerApplicationContext) context).getWebServer()).getPort();
+      WebTestClient client =
+          WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + port).build();
+
+      client
+          .get()
+          .uri("/actuator/health")
+          .accept(MediaType.APPLICATION_JSON)
+          .exchange()
+          .expectStatus()
+          .isEqualTo(503)
+          .expectHeader()
+          .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+          .expectBody()
+          .jsonPath("$.status")
+          .exists();
+      client
+          .get()
+          .uri("/actuator/health/readiness")
+          .accept(MediaType.APPLICATION_JSON)
+          .exchange()
+          .expectStatus()
+          .isEqualTo(503)
+          .expectHeader()
+          .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+          .expectBody()
+          .jsonPath("$.status")
+          .isEqualTo("OUT_OF_SERVICE")
+          .jsonPath("$.components.gameplayRouteReadiness.status")
+          .isEqualTo("OUT_OF_SERVICE")
+          .jsonPath("$.components.tcpProxyTlsListenerReadiness.status")
+          .isEqualTo("UP")
+          .jsonPath("$.components.tcpProxyTlsListenerReadiness.details.listener")
+          .isEqualTo("disabled");
+    }
+  }
 
   @Test
   void websocketUpgradePromotesOnlyTheConfiguredClientWorkload() throws Exception {

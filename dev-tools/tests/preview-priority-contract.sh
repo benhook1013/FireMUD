@@ -75,6 +75,22 @@ for arg in "$@"; do
     break
   fi
 done
+encode_fake_labels() {
+  local priority="$1"
+  local paused="$2"
+  local labels_valid="$3"
+  local labels_json='[]'
+  if [[ "$labels_valid" != valid ]]; then
+    labels_json='{}'
+  elif [[ "$priority" == true && "$paused" == true ]]; then
+    labels_json='[{"name":"preview:priority"},{"name":"preview:paused"}]'
+  elif [[ "$priority" == true ]]; then
+    labels_json='[{"name":"preview:priority"}]'
+  elif [[ "$paused" == true ]]; then
+    labels_json='[{"name":"preview:paused"}]'
+  fi
+  printf '%s' "$labels_json" | base64 | tr -d '\n'
+}
 case "$resource" in
   */pulls\?state=*)
     if [[ "${FAKE_PRIORITY_QUERY_FAIL:-false}" == "true" ]]; then
@@ -95,7 +111,7 @@ case "$resource" in
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
-    printf 'open\t%s\t%s\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority" "$paused" "$labels_valid"
+    printf 'open\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$(encode_fake_labels "$priority" "$paused" "$labels_valid")"
     ;;
   */pulls/101)
     if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then
@@ -130,9 +146,9 @@ case "$resource" in
     if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=true
     fi
-    printf 'open\thead-101\t%s\t%s\t%s\n' "$priority" "$paused" "$labels_valid"
+    printf 'open\thead-101\t%s\n' "$(encode_fake_labels "$priority" "$paused" "$labels_valid")"
   ;;
-  */pulls/102) printf 'open\thead-102\t%s\t%s\tvalid\n' "${FAKE_PR_102_PRIORITY:-true}" "${FAKE_PR_102_PAUSED:-false}" ;;
+  */pulls/102) printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" "${FAKE_PR_102_PAUSED:-false}" valid)" ;;
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
@@ -526,7 +542,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
@@ -622,7 +638,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -630,9 +646,9 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
-  "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n" \
-  "901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n" \
-  "901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
+  "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -667,22 +683,20 @@ test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\ttrue\tvalid\t${paused_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${paused_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-# Keep the derived priority/paused columns intentionally inconsistent with the
-# actual label JSON so this proves eligibility receives the trusted labels,
-# rather than the allocator's old fabricated [] value.
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${paused_labels_base64}\n"
+# The centralized authority must derive pause state from the transported labels.
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${paused_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
@@ -691,7 +705,7 @@ fi
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\ttrue\tfalse\tvalid\t${adversarial_priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation ignored a priority label alongside quoted and backslashed label data" >&2
   exit 1
@@ -833,14 +847,24 @@ grep -q 'preview:paused' "$preview_workflow"
 grep -Fq "EVENT_LABELS_JSON: \${{ toJSON(github.event.pull_request.labels) }}" "$preview_workflow"
 grep -q 'preview:paused' "$eligibility_script"
 grep -q 'malformed-label-metadata' "$eligibility_script"
-grep -q 'labels_valid' "$reconciler_workflow"
-grep -q 'preview:paused' "$reconciler_workflow"
-grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+# shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
+grep -q -- '--inspect-labels --labels-json "$labels_json"' "$preview_workflow"
+# shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
+grep -q -- '--inspect-labels --labels-json "$labels_json"' "$reconciler_workflow"
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+grep -q -- '--inspect-labels --labels-json "$labels_json"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
-grep -q 'labels_valid' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
+  "$preview_workflow" \
+  "$reconciler_workflow" \
+  "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
+  echo "A live preview callsite duplicates the centralized label predicate" >&2
+  exit 1
+fi
 test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"

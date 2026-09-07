@@ -19,21 +19,21 @@ DEPENDENCY_BOT_AUTHORS = {
 SUPPORTED_BASE_REFS = {"main", "develop"}
 
 
-def parse_labels(labels_json: str) -> tuple[bool, bool]:
-    """Return (metadata_valid, is_paused) for the GitHub labels array."""
+def parse_labels(labels_json: str) -> tuple[bool, bool, bool]:
+    """Return (metadata_valid, is_priority, is_paused) for GitHub labels."""
 
     try:
         labels = json.loads(labels_json)
     except json.JSONDecodeError:
-        return False, False
+        return False, False, False
     if not isinstance(labels, list):
-        return False, False
+        return False, False, False
     names: list[str] = []
     for label in labels:
         if not isinstance(label, dict) or not isinstance(label.get("name"), str):
-            return False, False
+            return False, False, False
         names.append(label["name"])
-    return True, "preview:paused" in names
+    return True, "preview:priority" in names, "preview:paused" in names
 
 
 def evaluate(
@@ -43,7 +43,7 @@ def evaluate(
     author: str,
     labels_json: str,
 ) -> tuple[bool, str]:
-    labels_valid, paused = parse_labels(labels_json)
+    labels_valid, _, paused = parse_labels(labels_json)
     if operation in {"deploy", "retain"}:
         if not labels_valid:
             return False, "malformed-label-metadata"
@@ -60,12 +60,33 @@ def evaluate(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--operation", required=True, choices=("deploy", "destroy", "retain"))
-    parser.add_argument("--state", required=True)
-    parser.add_argument("--base-ref", required=True)
-    parser.add_argument("--author", required=True)
+    parser.add_argument("--inspect-labels", action="store_true")
+    parser.add_argument("--operation", choices=("deploy", "destroy", "retain"))
+    parser.add_argument("--state")
+    parser.add_argument("--base-ref")
+    parser.add_argument("--author")
     parser.add_argument("--labels-json", required=True)
     args = parser.parse_args()
+
+    if args.inspect_labels:
+        labels_valid, priority, paused = parse_labels(args.labels_json)
+        print(f"labels_valid={'true' if labels_valid else 'false'}")
+        print(f"priority={'true' if priority else 'false'}")
+        print(f"paused={'true' if paused else 'false'}")
+        return 0
+
+    missing = [
+        name
+        for name, value in (
+            ("--operation", args.operation),
+            ("--state", args.state),
+            ("--base-ref", args.base_ref),
+            ("--author", args.author),
+        )
+        if value is None
+    ]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
 
     eligible, reason = evaluate(
         args.operation,

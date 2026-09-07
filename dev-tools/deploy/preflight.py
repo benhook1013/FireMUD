@@ -4416,6 +4416,7 @@ def validate_gateway_ws_network_policy(
 
 def validate_hosted_telnet_tls_values(
     documents: list[dict[str, Any]],
+    required_identity_mode: str | None = None,
 ) -> list[str]:
     """Validate the hosted NodePort Telnet direct-TLS binding."""
     issues: list[str] = []
@@ -4437,7 +4438,84 @@ def validate_hosted_telnet_tls_values(
             "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
         )
         return issues
-    tcp_namespace = workload_namespace(nodeport_services[0])
+    tcp_service = nodeport_services[0]
+    tcp_namespace = workload_namespace(tcp_service)
+
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+    ]
+    if len(deployments) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one tcp-proxy-service Deployment")
+        return issues
+    deployment = deployments[0]
+
+    identity_mode_label = "firemud.dev/certificate-identity-mode"
+
+    def labeled_identity_mode(document: dict[str, Any]) -> Any:
+        metadata = document.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        return labels.get(identity_mode_label) if isinstance(labels, dict) else None
+
+    service_mode = labeled_identity_mode(tcp_service)
+    deployment_mode = labeled_identity_mode(deployment)
+    if (service_mode is None) != (deployment_mode is None) or (
+        service_mode is not None and service_mode != deployment_mode
+    ):
+        issues.append(
+            "TCP Proxy Service and Deployment certificate identity mode labels must match"
+        )
+        return issues
+    if service_mode is None:
+
+        def helm_owned(document: dict[str, Any]) -> bool:
+            labels = (document.get("metadata") or {}).get("labels")
+            return isinstance(labels, dict) and (
+                labels.get("app.kubernetes.io/managed-by") == "Helm"
+                or "app.kubernetes.io/instance" in labels
+                or "helm.sh/chart" in labels
+            )
+
+        if (
+            tcp_namespace != "firemud"
+            or helm_owned(tcp_service)
+            or helm_owned(deployment)
+        ):
+            issues.append(
+                "Helm-rendered TCP Proxy Service and Deployment require explicit certificate identity mode labels"
+            )
+            return issues
+        identity_mode = "standalone"
+    else:
+        identity_mode = service_mode
+    if not isinstance(identity_mode, str) or identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        issues.append(
+            "TCP Proxy certificate identity mode must be standalone or hosted-controller"
+        )
+        return issues
+    if required_identity_mode is not None:
+        if required_identity_mode not in {"standalone", "hosted-controller"}:
+            raise ValueError("required certificate identity mode is invalid")
+        if identity_mode != required_identity_mode:
+            issues.append(
+                f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"
+            )
+        identity_mode = required_identity_mode
+    if identity_mode == "hosted-controller" and any(
+        isinstance(port, dict) and "nodePort" in port
+        for port in ((tcp_service.get("spec") or {}).get("ports") or [])
+    ):
+        issues.append(
+            "hosted-controller TCP Proxy Service must not declare an explicit nodePort"
+        )
 
     certificates = {
         metadata_name(document): document
@@ -4461,29 +4539,55 @@ def validate_hosted_telnet_tls_values(
     tcp_certificate_names = {
         name for name in certificates if name and name.endswith("-telnet-tls")
     }
-    if len(tcp_certificate_names) != 1:
-        issues.append("hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate")
-        return issues
-    telnet_secret = next(iter(tcp_certificate_names), None)
-    certificate = certificates[telnet_secret]
-    certificate_secret = (certificate.get("spec") or {}).get("secretName")
-    if certificate_secret != telnet_secret:
-        issues.append("TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name")
+    if identity_mode == "standalone":
+        if len(tcp_certificate_names) != 1:
+            issues.append("hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate")
+            return issues
+        telnet_secret = next(iter(tcp_certificate_names), None)
+        certificate = certificates[telnet_secret]
+        certificate_secret = (certificate.get("spec") or {}).get("secretName")
+        if certificate_secret != telnet_secret:
+            issues.append("TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name")
+    else:
+        if tcp_certificate_names:
+            issues.append(
+                "hosted-controller TCP Proxy TLS must not render a chart-owned -telnet-tls Certificate"
+            )
+            return issues
+        service_labels = (tcp_service.get("metadata") or {}).get("labels") or {}
+        deployment_labels = (deployment.get("metadata") or {}).get("labels") or {}
+        service_release = (
+            service_labels.get("app.kubernetes.io/instance")
+            if isinstance(service_labels, dict)
+            else None
+        )
+        deployment_release = (
+            deployment_labels.get("app.kubernetes.io/instance")
+            if isinstance(deployment_labels, dict)
+            else None
+        )
+        if (
+            not isinstance(service_release, str)
+            or not service_release
+            or service_release != deployment_release
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service and Deployment must share one Helm release identity"
+            )
+            return issues
+        telnet_secret = f"{service_release}-telnet-tls"
+        certificate_secret = telnet_secret
+        if any(
+            (certificate.get("spec") or {}).get("secretName") == telnet_secret
+            for certificate in certificates.values()
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy TLS must not render a Certificate for its projected Telnet Secret"
+            )
+            return issues
     if certificate_secret in ingress_secrets or telnet_secret in ingress_secrets:
         issues.append("TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret")
-    deployments = [
-        document
-        for document in documents
-        if document.get("kind") == "Deployment"
-        and metadata_name(document) == "tcp-proxy-service"
-        and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
-        )
-    ]
-    if len(deployments) != 1:
-        issues.append("hosted TCP Proxy TLS requires exactly one tcp-proxy-service Deployment")
-        return issues
-    pod_spec = (((deployments[0].get("spec") or {}).get("template") or {}).get("spec") or {})
+    pod_spec = (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {})
     containers = [container for container in pod_spec.get("containers") or [] if isinstance(container, dict)]
     if len(containers) != 1:
         issues.append("hosted TCP Proxy TLS requires one primary tcp-proxy-service container")
@@ -4491,7 +4595,7 @@ def validate_hosted_telnet_tls_values(
     container = containers[0]
     env, env_issues = effective_container_env(
         documents,
-        deployments[0],
+        deployment,
         container,
         relevant_names={
             "TCP_PROXY_TLS_ENABLED",
@@ -6547,14 +6651,28 @@ def hosted_bridge_preflight(
         if isinstance(metadata, dict) and not metadata.get("namespace"):
             metadata["namespace"] = namespace
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
-    telnet_issues = validate_hosted_telnet_tls_values(documents)
+    telnet_issues = validate_hosted_telnet_tls_values(
+        documents, required_identity_mode="hosted-controller"
+    )
     issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
     if context == "operator":
-        required_keys = {"tls.crt", "tls.key", "ca.crt"}
-        for secret_name in (
-            f"{release_name}-gateway-internal-ws",
-            f"{release_name}-tcp-proxy-bridge",
-        ):
+        secret_requirements = [
+            (
+                f"{release_name}-gateway-internal-ws",
+                {"tls.crt", "tls.key", "ca.crt"},
+            ),
+            (
+                f"{release_name}-tcp-proxy-bridge",
+                {"tls.crt", "tls.key", "ca.crt"},
+            ),
+        ]
+        # Hosted CLI identities are controller-owned regardless of mutable
+        # artifact labels. Public ACME TLS Secrets may carry their complete
+        # chain in tls.crt without a separate ca.crt entry.
+        secret_requirements.append(
+            (f"{release_name}-telnet-tls", {"tls.crt", "tls.key"})
+        )
+        for secret_name, required_keys in secret_requirements:
             issue = secret_keys_lookup_failure(
                 secret_name, namespace, required_keys
             )

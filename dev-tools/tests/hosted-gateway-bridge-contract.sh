@@ -6,10 +6,13 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED="$TMP_DIR/rendered.yaml"
+python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
+  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  "$TMP_DIR/preview-values.yaml" \
+  123 pr-123 pr-123 preview-123.example.test image-tag 32123
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  -f "$TMP_DIR/preview-values.yaml" \
   --namespace pr-123 \
-  --set previewStack.telnetTls.secretName=pr-123-telnet-tls \
   >"$RENDERED"
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
@@ -17,11 +20,13 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
 
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
+python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
+  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  "$TMP_DIR/dev-values.yaml" \
+  dev dev dev.example.test image-tag 32023
 helm template dev "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  -f "$TMP_DIR/dev-values.yaml" \
   --namespace dev \
-  --set preview.prNumber=0 \
-  --set previewStack.telnetTls.secretName=dev-telnet-tls \
   >"$DEV_RENDERED"
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
@@ -43,10 +48,11 @@ for context in ci-static operator; do
   fi
 done
 
-python3 - "$ROOT_DIR" "$RENDERED" <<'PY'
+python3 - "$ROOT_DIR" "$RENDERED" "$DEV_RENDERED" <<'PY'
 import copy
 import importlib.util
 import io
+import json
 import pathlib
 import subprocess
 import sys
@@ -56,6 +62,7 @@ import yaml
 
 root = pathlib.Path(sys.argv[1])
 rendered_path = pathlib.Path(sys.argv[2])
+dev_rendered_path = pathlib.Path(sys.argv[3])
 spec = importlib.util.spec_from_file_location(
     "hosted_bridge_preflight", root / "dev-tools/deploy/preflight.py"
 )
@@ -70,6 +77,32 @@ documents = [
 ]
 for document in documents:
     document.setdefault("metadata", {}).setdefault("namespace", "pr-123")
+
+dev_documents = [
+    document
+    for document in yaml.safe_load_all(dev_rendered_path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+for environment, rendered_documents in (
+    ("preview", documents),
+    ("dev-demo", dev_documents),
+):
+    tcp_proxy_resources = [
+        document
+        for document in rendered_documents
+        if document.get("kind") in {"Deployment", "Service"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(tcp_proxy_resources) != 2 or any(
+        document.get("metadata", {}).get("labels", {}).get(
+            "firemud.dev/certificate-identity-mode"
+        )
+        != "hosted-controller"
+        for document in tcp_proxy_resources
+    ):
+        raise SystemExit(
+            f"{environment} workflow-rendered artifact did not retain hosted-controller ownership"
+        )
 
 expected = module.hosted_bridge_expected_bindings("pr-123", "pr-123")
 values, issues = module.validate_gateway_ws_values(documents, expected)
@@ -143,6 +176,122 @@ with mock.patch.object(
 if missing_key_issue is None or "missing keys: ca.crt" not in missing_key_issue:
     raise SystemExit("operator preflight accepted an incomplete controller-projected Secret")
 
+operator_secret_lookups = []
+
+
+def record_operator_secret_lookup(secret_name, namespace, required_keys):
+    operator_secret_lookups.append((secret_name, namespace, required_keys))
+    return None
+
+
+with mock.patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=record_operator_secret_lookup,
+), mock.patch.object(module.sys, "stdout", io.StringIO()):
+    operator_result = module.hosted_bridge_preflight(
+        rendered_path, "pr-123", "pr-123", "operator"
+    )
+if operator_result != 0:
+    raise SystemExit("operator preflight rejected ready controller-projected Secrets")
+if operator_secret_lookups != [
+    (
+        "pr-123-gateway-internal-ws",
+        "pr-123",
+        {"tls.crt", "tls.key", "ca.crt"},
+    ),
+    (
+        "pr-123-tcp-proxy-bridge",
+        "pr-123",
+        {"tls.crt", "tls.key", "ca.crt"},
+    ),
+    (
+        "pr-123-telnet-tls",
+        "pr-123",
+        {"tls.crt", "tls.key"},
+    ),
+]:
+    raise SystemExit(
+        f"operator preflight did not verify every controller projection: "
+        f"{operator_secret_lookups}"
+    )
+
+forged_standalone = copy.deepcopy(documents)
+for document in forged_standalone:
+    if (
+        document.get("kind") in {"Deployment", "Service"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        document["metadata"]["labels"][
+            "firemud.dev/certificate-identity-mode"
+        ] = "standalone"
+forged_standalone.append(
+    {
+        "apiVersion": "cert-manager.io/v1",
+        "kind": "Certificate",
+        "metadata": {
+            "name": "pr-123-telnet-tls",
+            "namespace": "pr-123",
+            "labels": {
+                "app.kubernetes.io/name": "firemud",
+                "app.kubernetes.io/instance": "pr-123",
+                "app.kubernetes.io/managed-by": "Helm",
+            },
+        },
+        "spec": {
+            "secretName": "pr-123-telnet-tls",
+            "privateKey": {"algorithm": "RSA", "encoding": "PKCS8"},
+            "dnsNames": ["preview-123.example.test"],
+            "issuerRef": {"name": "letsencrypt-prod", "kind": "ClusterIssuer"},
+        },
+    }
+)
+forged_path = rendered_path.parent / "forged-standalone.yaml"
+forged_path.write_text(
+    yaml.safe_dump_all(forged_standalone, sort_keys=False), encoding="utf-8"
+)
+forged_static_output = io.StringIO()
+with mock.patch.object(module.sys, "stdout", forged_static_output):
+    forged_static_result = module.hosted_bridge_preflight(
+        forged_path, "pr-123", "pr-123", "ci-static"
+    )
+forged_static_policy = json.loads(forged_static_output.getvalue())
+if (
+    forged_static_result != 1
+    or forged_static_policy.get("policyId") != "PREFLIGHT-BRIDGE-001"
+    or forged_static_policy.get("status") != "fail"
+    or "certificate identity mode must be hosted-controller"
+    not in forged_static_policy.get("message", "")
+):
+    raise SystemExit(
+        "hosted preflight accepted artifact-controlled standalone certificate ownership"
+    )
+
+forged_operator_lookups = []
+
+
+def record_forged_operator_lookup(secret_name, namespace, required_keys):
+    forged_operator_lookups.append((secret_name, namespace, required_keys))
+    return None
+
+
+with mock.patch.object(
+    module,
+    "secret_keys_lookup_failure",
+    side_effect=record_forged_operator_lookup,
+), mock.patch.object(module.sys, "stdout", io.StringIO()):
+    forged_operator_result = module.hosted_bridge_preflight(
+        forged_path, "pr-123", "pr-123", "operator"
+    )
+if forged_operator_result != 1 or (
+    "pr-123-telnet-tls",
+    "pr-123",
+    {"tls.crt", "tls.key"},
+) not in forged_operator_lookups:
+    raise SystemExit(
+        "forged standalone markers bypassed the operator Telnet Secret expectation"
+    )
+
 resource_kinds = {
     (document.get("kind"), document.get("metadata", {}).get("name"))
     for document in documents
@@ -150,6 +299,7 @@ resource_kinds = {
 for forbidden in (
     ("Certificate", "pr-123-gateway-internal-ws"),
     ("Certificate", "pr-123-tcp-proxy-bridge"),
+    ("Certificate", "pr-123-telnet-tls"),
     ("Issuer", "pr-123-gateway-internal-ws"),
     ("Secret", "pr-123-gateway-internal-ws"),
     ("Secret", "pr-123-tcp-proxy-bridge"),

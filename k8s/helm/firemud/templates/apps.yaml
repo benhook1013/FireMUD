@@ -6,6 +6,8 @@
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
+{{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 {{- $mountGatewayWsServerTls := and $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
@@ -17,6 +19,9 @@ metadata:
   name: {{ $service.name }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+  {{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+  {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
   {{- if or $mountGatewayWsServerTls $mountGatewayWsClientTls }}
@@ -228,6 +233,9 @@ metadata:
   name: {{ $service.name }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
+  {{- if eq $service.name "tcp-proxy-service" }}
+    firemud.dev/certificate-identity-mode: {{ $certificateIdentityMode | quote }}
+  {{- end }}
 spec:
   selector:
     app: {{ $service.name }}
@@ -238,7 +246,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and $port.nodePort (ne $hostedControllerMode "true") }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

@@ -4,6 +4,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 
+inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]')"
+grep -q '^labels_valid=true$' <<<"$inspect_priority"
+grep -q '^priority=true$' <<<"$inspect_priority"
+grep -q '^paused=false$' <<<"$inspect_priority"
+
+inspect_paused="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"preview:paused"}]')"
+grep -q '^labels_valid=true$' <<<"$inspect_paused"
+grep -q '^priority=false$' <<<"$inspect_paused"
+grep -q '^paused=true$' <<<"$inspect_paused"
+
+for malformed_labels in 'null' '{}' '[{"name":1}]' '{not-json'; do
+  inspect_malformed="$(python3 "$SCRIPT" --inspect-labels --labels-json "$malformed_labels")"
+  grep -q '^labels_valid=false$' <<<"$inspect_malformed"
+  grep -q '^priority=false$' <<<"$inspect_malformed"
+  grep -q '^paused=false$' <<<"$inspect_malformed"
+done
+
 deploy_open="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[]')"
 grep -q '^eligible=true$' <<<"$deploy_open"
 grep -q '^reason=eligible$' <<<"$deploy_open"

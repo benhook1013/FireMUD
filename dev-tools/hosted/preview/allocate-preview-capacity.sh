@@ -47,20 +47,50 @@ emit_output() {
   fi
 }
 
+inspect_labels() {
+  local labels_json="$1"
+  local inspection
+  local labels_valid
+  local is_priority
+  local is_paused
+
+  inspection="$(python3 "$eligibility_script" --inspect-labels --labels-json "$labels_json")" || return 1
+  labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$inspection")"
+  is_priority="$(sed -n 's/^priority=//p' <<<"$inspection")"
+  is_paused="$(sed -n 's/^paused=//p' <<<"$inspection")"
+  if [[ "$labels_valid" != true && "$labels_valid" != false ]] ||
+    [[ "$is_priority" != true && "$is_priority" != false ]] ||
+    [[ "$is_paused" != true && "$is_paused" != false ]]; then
+    return 1
+  fi
+  printf '%s\t%s\t%s\n' "$labels_valid" "$is_priority" "$is_paused"
+}
+
 get_pr_state() {
   local pr_number="$1"
-  gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-    --jq '
-      def labels_valid:
-        ((.labels? | type) == "array")
-        and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
-      [
-        .state,
-        .head.sha,
-        (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
-        (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
-        (if labels_valid then "valid" else "invalid" end)
-      ] | @tsv'
+  local raw_metadata
+  local pr_state
+  local head_sha
+  local labels_base64
+  local labels_json
+  local inspection
+  local labels_valid
+  local is_priority
+  local is_paused
+  local extra
+
+  raw_metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+    --jq '[.state, .head.sha, (.labels | tojson | @base64)] | @tsv')" || return 1
+  IFS=$'\t' read -r pr_state head_sha labels_base64 extra <<<"$raw_metadata"
+  if [[ -n "${extra:-}" || -z "$pr_state" || -z "$head_sha" || -z "$labels_base64" ]]; then
+    return 1
+  fi
+  labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)" || return 1
+  inspection="$(inspect_labels "$labels_json")" || return 1
+  IFS=$'\t' read -r labels_valid is_priority is_paused <<<"$inspection"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$pr_state" "$head_sha" "$is_priority" "$is_paused" \
+    "$([[ "$labels_valid" == true ]] && printf valid || printf invalid)"
 }
 
 find_unsatisfied_priority_pr() {
@@ -78,15 +108,13 @@ find_unsatisfied_priority_pr() {
   local labels_valid
   local labels_base64
   local labels_json
+  local label_inspection
   local namespace
   local namespace_owner
   local namespace_head
 
   if ! priority_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
     --jq '
-      def labels_valid:
-        ((.labels? | type) == "array")
-        and all(.labels[]?; (type == "object") and ((.name? | type) == "string"));
       .[]
       | [
           .number,
@@ -95,32 +123,34 @@ find_unsatisfied_priority_pr() {
           .user.login,
           .base.ref,
           .state,
-          (if labels_valid then any(.labels[]?; .name == "preview:priority") else false end),
-          (if labels_valid then any(.labels[]?; .name == "preview:paused") else false end),
-          (if labels_valid then "valid" else "invalid" end),
-          (if labels_valid then (.labels | tojson | @base64) else "invalid" end)
+          (.labels | tojson | @base64)
         ]
       | @tsv')"; then
     echo "Unable to query current priority pull requests" >&2
     return 1
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state is_priority is_paused labels_valid labels_base64; do
+  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state labels_base64; do
     if [[ -z "$pr_number" ]]; then
       continue
     fi
     if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
       continue
     fi
-    if [[ "$labels_valid" != valid ]]; then
+    if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
+      echo "Unable to evaluate priority PR #${pr_number}: malformed label transport" >&2
+      return 1
+    fi
+    if ! label_inspection="$(inspect_labels "$labels_json")"; then
+      echo "Unable to inspect priority PR #${pr_number} label metadata" >&2
+      return 1
+    fi
+    IFS=$'\t' read -r labels_valid is_priority is_paused <<<"$label_inspection"
+    if [[ "$labels_valid" != true ]]; then
       echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
       return 1
     fi
     if [[ "$is_priority" != true || "$is_paused" == true ]]; then
       continue
-    fi
-    if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
-      echo "Unable to evaluate priority PR #${pr_number}: malformed label transport" >&2
-      return 1
     fi
     if ! eligibility_output="$(python3 "$eligibility_script" \
       --operation deploy \
