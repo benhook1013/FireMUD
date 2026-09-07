@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamelogic.test.LookTestFixtures;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
@@ -126,6 +128,8 @@ class MoveAggregationServiceTest {
             .build();
     when(worldStub.getRoomSnapshot(any()))
         .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+    ArgumentCaptor<GetRoomSnapshotRequest> requestCaptor =
+        ArgumentCaptor.forClass(GetRoomSnapshotRequest.class);
     MoveResult result =
         service.resolve(
             MoveRequest.newBuilder()
@@ -133,6 +137,7 @@ class MoveAggregationServiceTest {
                 .setSessionId("session-1")
                 .setCharacterId("player-1")
                 .setPreferredLocale("en-NZ")
+                .setSessionAttestation("attestation-1")
                 .setRoomInstance(
                     RoomInstanceRef.newBuilder()
                         .setTenantId(LookTestFixtures.TENANT)
@@ -142,6 +147,11 @@ class MoveAggregationServiceTest {
                 .setDirection("north")
                 .build());
 
+    verify(worldStub).getRoomSnapshot(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getTenantId())
+        .isEqualTo(LookTestFixtures.TENANT);
+    assertThat(requestCaptor.getValue().getPreferredLocale()).isEqualTo("en-NZ");
+    assertThat(requestCaptor.getValue().getSessionAttestation()).isEqualTo("attestation-1");
     assertThat(result.getSuccess()).isTrue();
     assertThat(result.getDestinationRoomInstance().getTenantId())
         .isEqualTo(LookTestFixtures.TENANT);

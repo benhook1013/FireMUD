@@ -50,10 +50,22 @@ def positive_timeout(value: str | float, name: str = "timeout") -> float:
     try:
         timeout = float(value)
     except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError(f"{name} must be a positive finite number") from exc
+        raise ValueError(f"{name} must be a positive finite number") from exc
     if not math.isfinite(timeout) or timeout <= 0:
-        raise argparse.ArgumentTypeError(f"{name} must be a positive finite number")
+        raise ValueError(f"{name} must be a positive finite number")
     return timeout
+
+
+def _argparse_timeout(name: str) -> Callable[[str], float]:
+    """Adapt direct timeout validation to argparse's error contract."""
+
+    def parse(value: str) -> float:
+        try:
+            return positive_timeout(value, name)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    return parse
 
 
 class EvidenceStore:
@@ -604,13 +616,13 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument("--transcript", required=True, type=Path)
     connect.add_argument(
         "--timeout",
-        type=lambda value: positive_timeout(value, "receive timeout"),
+        type=_argparse_timeout("receive timeout"),
         default=0.25,
         help="receive-idle polling timeout in seconds (default: 0.25)",
     )
     connect.add_argument(
         "--connect-timeout",
-        type=lambda value: positive_timeout(value, "connect timeout"),
+        type=_argparse_timeout("connect timeout"),
         default=DEFAULT_CONNECT_TIMEOUT_SECONDS,
         help="TCP connect and TLS handshake timeout in seconds (default: 10)",
     )

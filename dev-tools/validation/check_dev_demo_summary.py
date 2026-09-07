@@ -160,18 +160,18 @@ def _heredoc_delimiter(opener: re.Match[str]) -> str:
     return re.sub(r"\\(.)", r"\1", token)
 
 
-def _shell_tokens(source: str) -> list[str]:
+def _shell_tokens(source: str, source_label: str = "shell source") -> list[str]:
     lexer = shlex.shlex(source, posix=True, punctuation_chars=";&|<>")
     lexer.commenters = "#"
     lexer.whitespace_split = True
     try:
         return [token for token in lexer if token not in {"\n", "\r\n"}]
     except ValueError as error:
-        raise AssertionError("dev-demo bootstrap step contains invalid shell syntax") from error
+        raise AssertionError(f"{source_label} contains invalid shell syntax") from error
 
 
 def _shell_line_state(
-    line: str, initial_quote: str | None = None
+    line: str, initial_quote: str | None = None, source_label: str = "shell source"
 ) -> tuple[bool, str | None]:
     quote = initial_quote
     escaped = False
@@ -198,16 +198,18 @@ def _shell_line_state(
     if quote is not None or escaped:
         return True, quote
     token_source = line if initial_quote is None else initial_quote + line
-    tokens = _shell_tokens(token_source)
+    tokens = _shell_tokens(token_source, source_label)
     return bool(tokens) and tokens[-1] in {"|", "||", "&&"}, quote
 
 
-def _shell_line_continues(line: str) -> bool:
-    return _shell_line_state(line)[0]
+def _shell_line_continues(line: str, source_label: str = "shell source") -> bool:
+    return _shell_line_state(line, source_label=source_label)[0]
 
 
-def _heredoc_specs(command: str) -> list[tuple[str, bool, bool]]:
-    tokens = _shell_tokens(command)
+def _heredoc_specs(
+    command: str, source_label: str = "shell source"
+) -> list[tuple[str, bool, bool]]:
+    tokens = _shell_tokens(command, source_label)
     feeds_manifest_stdin: dict[int, bool] = {}
     group_start = 0
     group_ranges: list[tuple[int, int]] = []
@@ -259,7 +261,9 @@ def _heredoc_specs(command: str) -> list[tuple[str, bool, bool]]:
     return result
 
 
-def _shell_statements(source: str) -> Iterable[tuple[str, list[tuple[str, bool]]]]:
+def _shell_statements(
+    source: str, source_label: str = "shell source"
+) -> Iterable[tuple[str, list[tuple[str, bool]]]]:
     """Yield shell statements separately from any attached heredoc bodies."""
     lines = source.splitlines()
     index = 0
@@ -267,12 +271,14 @@ def _shell_statements(source: str) -> Iterable[tuple[str, list[tuple[str, bool]]
         command_end = index
         quote: str | None = None
         while command_end + 1 < len(lines):
-            continues, quote = _shell_line_state(lines[command_end], quote)
+            continues, quote = _shell_line_state(
+                lines[command_end], quote, source_label
+            )
             if not continues:
                 break
             command_end += 1
         command = "\n".join(lines[index : command_end + 1])
-        heredocs = _heredoc_specs(command)
+        heredocs = _heredoc_specs(command, source_label)
         if not heredocs:
             index = command_end + 1
             yield command, []
@@ -292,16 +298,18 @@ def _shell_statements(source: str) -> Iterable[tuple[str, list[tuple[str, bool]]
                 index += 1
             else:
                 raise AssertionError(
-                    f"dev-demo bootstrap step contains unterminated heredoc {delimiter!r}"
+                    f"{source_label} contains unterminated heredoc {delimiter!r}"
                 )
             index += 1
         yield command, bodies
 
 
-def _heredoc_inputs(source: str) -> Iterable[tuple[str, str]]:
+def _heredoc_inputs(
+    source: str, source_label: str = "shell source"
+) -> Iterable[tuple[str, str]]:
     """Yield each command and the heredoc body that supplies its effective stdin."""
 
-    for command, bodies in _shell_statements(source):
+    for command, bodies in _shell_statements(source, source_label):
         for body, feeds_manifest_stdin in bodies:
             if feeds_manifest_stdin:
                 yield command, body
@@ -425,15 +433,18 @@ def _heredoc_contains_secret_manifest(body: str) -> bool:
 
 
 def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
-    for statement, _ in _shell_statements(bootstrap_manifest):
-        for group in _shell_command_groups(_shell_tokens(statement)):
+    source_label = (
+        "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
+    )
+    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+        for group in _shell_command_groups(_shell_tokens(statement, source_label)):
             for command in _pipeline_commands(group):
                 arguments = _kubectl_arguments(command)
                 if arguments is not None and _kubectl_creates_secret(arguments):
                     return True
     return any(
         _heredoc_contains_secret_manifest(body)
-        for command, body in _heredoc_inputs(bootstrap_manifest)
+        for command, body in _heredoc_inputs(bootstrap_manifest, source_label)
     )
 
 
@@ -550,7 +561,9 @@ def _summary_heredoc(
     return None
 
 
-def _shell_command_line_ranges(source: str) -> list[tuple[int, int]]:
+def _shell_command_line_ranges(
+    source: str, source_label: str = "shell source"
+) -> list[tuple[int, int]]:
     """Return physical line ranges for quote-aware shell statements."""
 
     lines = source.splitlines()
@@ -560,7 +573,9 @@ def _shell_command_line_ranges(source: str) -> list[tuple[int, int]]:
         command_end = index
         quote: str | None = None
         while command_end + 1 < len(lines):
-            continues, quote = _shell_line_state(lines[command_end], quote)
+            continues, quote = _shell_line_state(
+                lines[command_end], quote, source_label
+            )
             if not continues:
                 break
             command_end += 1
@@ -569,10 +584,12 @@ def _shell_command_line_ranges(source: str) -> list[tuple[int, int]]:
     return ranges
 
 
-def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
+def _summary_write_line_ranges(
+    source: str, source_label: str = "shell source"
+) -> list[tuple[int, int]]:
     lines = source.splitlines()
     ranges: list[tuple[int, int]] = []
-    statement_ranges = _shell_command_line_ranges(source)
+    statement_ranges = _shell_command_line_ranges(source, source_label)
     for index, line in enumerate(lines):
         target_match = SUMMARY_TARGET.search(line)
         if target_match is None:
@@ -605,13 +622,15 @@ def _summary_write_line_ranges(source: str) -> list[tuple[int, int]]:
     return ranges
 
 
-def summary_write_regions(source: str) -> list[str]:
+def summary_write_regions(
+    source: str, source_label: str = "shell source"
+) -> list[str]:
     """Return shell regions that write to GITHUB_STEP_SUMMARY."""
 
     lines = source.splitlines()
     return [
         "\n".join(lines[start : end + 1])
-        for start, end in _summary_write_line_ranges(source)
+        for start, end in _summary_write_line_ranges(source, source_label)
     ]
 
 
@@ -647,6 +666,12 @@ def normalize_summary_helper_path(invocation: str, root_dir: Path) -> Path:
 
 def _helper_matches(source: str) -> Iterable[re.Match[str]]:
     return SUMMARY_HELPER_PATTERN.finditer(source)
+
+
+def _workflow_run_source_label(source: WorkflowRunSource) -> str:
+    if source.resolved_helper_path is not None:
+        return f"summary helper {source.resolved_helper_path}"
+    return f"workflow job {source.job_name!r} step {source.step_name!r}"
 
 
 def collect_workflow_run_sources(workflow: dict) -> list[WorkflowRunSource]:
@@ -710,7 +735,9 @@ def discover_summary_writers(
             seen_sources[traversal_key] = current.summary_reachable
         else:
             seen_helpers[traversal_key] = current.summary_reachable
-        direct_ranges = _summary_write_line_ranges(current.source)
+        source_label = _workflow_run_source_label(current)
+        list(_shell_statements(current.source, source_label))
+        direct_ranges = _summary_write_line_ranges(current.source, source_label)
         if direct_ranges or current.summary_reachable:
             existing_index = summary_writer_indexes.get(traversal_key)
             if existing_index is None:
@@ -1129,7 +1156,9 @@ def validate_workflow(root: Path) -> None:
         if any(
             has_forbidden_summary_reference(region)
             for region in (
-                summary_write_regions(source.source)
+                summary_write_regions(
+                    source.source, _workflow_run_source_label(source)
+                )
                 + ([source.source] if source.summary_reachable else [])
             )
         )
