@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventAudit.SCRIPT_EVENT_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptEventIngressAudit.SCRIPT_EVENT_INGRESS_AUDIT;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutEvents.SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptPatchInstanceRolloutProjections.SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS;
@@ -9,12 +10,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
+import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutEvent;
 import net.firedevops.firemud.automationscripting.entity.ScriptPatchInstanceRolloutProjection;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -98,39 +101,107 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
   }
 
   @Test
-  void v5FailsClosedOnDuplicatePreInstanceOnLoadRowsWithoutDeletingEvidence() {
-    DSLContext dsl = migrateToV4();
-    insertDuplicatePreInstanceOnLoadRows(dsl);
+  void runtimeIngressIdentityTreatsNullIdentityFieldsAsNotDistinct() {
+    DSLContext dsl = migrateToLatest();
+    ScriptEventIngressAuditRepository repository = new ScriptEventIngressAuditRepository(dsl);
 
-    assertThatThrownBy(this::migrateToLatestInSameSchema)
-        .isInstanceOf(FlywayException.class)
-        .hasStackTraceContaining("duplicate pre-instance");
+    var first = repository.insertIfAbsentByIdentity(nullableRuntimeIngress());
+    var second = repository.insertIfAbsentByIdentity(nullableRuntimeIngress());
 
-    assertThat(countRows(dsl, "tenant-pre-instance")).isEqualTo(2);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM script_event_ingress_audit "
-                    + "WHERE tenant_id = 'tenant-pre-instance' AND game_instance_id IS NULL"))
-        .isEqualTo(2L);
+    assertThat(first.inserted()).isTrue();
+    assertThat(second.inserted()).isFalse();
+    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(1);
   }
 
   @Test
-  void v5FailsClosedOnDuplicateRetainedRuntimeRowsWithoutDeletingEvidence() {
-    DSLContext dsl = migrateToV4();
-    insertDuplicateRetainedRuntimeRows(dsl);
+  void pinnedEventAuditIdentityTreatsNullPluginFieldsAsNotDistinct() {
+    DSLContext dsl = migrateToLatest();
+    ScriptEventAuditRepository repository = new ScriptEventAuditRepository(dsl);
 
-    assertThatThrownBy(this::migrateToLatestInSameSchema)
-        .isInstanceOf(FlywayException.class)
-        .hasStackTraceContaining("duplicate retained runtime");
+    var first = repository.insertIfAbsentByHandlerIdentity(nullablePinnedEventAudit());
+    var second = repository.insertIfAbsentByHandlerIdentity(nullablePinnedEventAudit());
 
-    assertThat(countRows(dsl, "tenant-retained-runtime")).isEqualTo(2);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM script_event_ingress_audit "
-                    + "WHERE tenant_id = 'tenant-retained-runtime' "
-                    + "AND game_instance_id = 'instance-retained' "
-                    + "AND region_id IS NULL AND region_epoch IS NULL"))
-        .isEqualTo(2L);
+    assertThat(first.inserted()).isTrue();
+    assertThat(second.inserted()).isFalse();
+    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
+  void unpinnedEventAuditIdentityTreatsNullPluginFieldsAsNotDistinct() {
+    DSLContext dsl = migrateToLatest();
+    ScriptEventAuditRepository repository = new ScriptEventAuditRepository(dsl);
+
+    var first = repository.insertIfAbsentByHandlerIdentity(nullableUnpinnedEventAudit());
+    var second = repository.insertIfAbsentByHandlerIdentity(nullableUnpinnedEventAudit());
+
+    assertThat(first.inserted()).isTrue();
+    assertThat(second.inserted()).isFalse();
+    assertThat(first.audit().getId()).isEqualTo(second.audit().getId());
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(1);
+  }
+
+  @Test
+  void databaseEnforcesIngressPinTupleForPreInstanceAndInstanceRows() {
+    DSLContext dsl = migrateToLatest();
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-null-epoch", null, "owner-null-epoch", "event-rejected"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, null, 6L, "owner-null-instance", "event-rejected-null-instance"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-positive-null-owner", 7L, null, "event-rejected-null-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () ->
+                insertIngressAudit(
+                    dsl, "instance-positive-blank-owner", 8L, "   ", "event-rejected-blank-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_ingress_audit_pin_tuple");
+
+    assertThat(insertIngressAudit(dsl, null, null, null, "event-pre-instance")).isEqualTo(1);
+    assertThat(insertIngressAudit(dsl, "instance-positive", 7L, "owner-positive", "event-instance"))
+        .isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_INGRESS_AUDIT)).isEqualTo(2);
+  }
+
+  @Test
+  void databaseEnforcesEventAuditPinTupleForUnpinnedAndPinnedRows() {
+    DSLContext dsl = migrateToLatest();
+
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, null, "owner-null-epoch", "event-audit-rejected"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, 7L, null, "event-audit-rejected-positive-null-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
+    assertThatThrownBy(
+            () -> insertEventAudit(dsl, 8L, "   ", "event-audit-rejected-positive-blank-owner"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_script_event_audit_pin_tuple");
+
+    assertThat(insertEventAudit(dsl, null, null, "event-audit-unpinned")).isEqualTo(1);
+    assertThat(insertEventAudit(dsl, 7L, "owner-positive", "event-audit-pinned")).isEqualTo(1);
+    assertThat(dsl.fetchCount(SCRIPT_EVENT_AUDIT)).isEqualTo(2);
   }
 
   private DSLContext migrateToLatest() {
@@ -143,57 +214,6 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         .load()
         .migrate();
     return schemaDsl();
-  }
-
-  private DSLContext migrateToV4() {
-    schema = newSchemaName();
-    Flyway.configure()
-        .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .target("4")
-        .load()
-        .migrate();
-    return schemaDsl();
-  }
-
-  private void migrateToLatestInSameSchema() {
-    Flyway.configure()
-        .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .load()
-        .migrate();
-  }
-
-  private void insertDuplicatePreInstanceOnLoadRows(DSLContext dsl) {
-    for (int i = 0; i < 2; i++) {
-      dsl.execute(
-          "INSERT INTO script_event_ingress_audit ("
-              + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
-              + "playable_state_scope, script_id, event_type, event_schema_version, "
-              + "script_patch_version, script_event_id, source_service, trigger_mode, "
-              + "admitted, admission_outcome, admission_reason) VALUES ("
-              + "'tenant-pre-instance', NULL, NULL, NULL, NULL, '', 'script-on-load', "
-              + "'onLoad', 'v1', 'patch-legacy', 'on-load-event', 'legacy-test', 'ON_LOAD', "
-              + "TRUE, 'ADMITTED', 'legacy evidence')");
-    }
-  }
-
-  private void insertDuplicateRetainedRuntimeRows(DSLContext dsl) {
-    for (int i = 0; i < 2; i++) {
-      dsl.execute(
-          "INSERT INTO script_event_ingress_audit ("
-              + "tenant_id, game_instance_id, region_id, region_epoch, entity_id, "
-              + "playable_state_scope, script_id, event_type, event_schema_version, "
-              + "script_patch_version, script_event_id, source_service, trigger_mode, "
-              + "admitted, admission_outcome, admission_reason) VALUES ("
-              + "'tenant-retained-runtime', 'instance-retained', NULL, NULL, 'entity-retained', "
-              + "'INSTANCE', 'script-runtime', 'onEnterRegion', 'v1', 'patch-legacy', "
-              + "'retained-event', 'legacy-test', 'EVENT', TRUE, 'ADMITTED', 'legacy evidence')");
-    }
   }
 
   private ScriptPatchInstanceRolloutEvent rolloutEvent(
@@ -227,6 +247,66 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     return projection;
   }
 
+  private ScriptEventIngressAudit nullableRuntimeIngress() {
+    ScriptEventIngressAudit ingress = new ScriptEventIngressAudit();
+    ingress.setTenantId("tenant-runtime-null");
+    ingress.setGameInstanceId("instance-runtime-null");
+    ingress.setRegionId(null);
+    ingress.setRegionEpoch(null);
+    ingress.setEntityId(null);
+    ingress.setEventType("onEnterRegion");
+    ingress.setEventSchemaVersion("v1");
+    ingress.setScriptPatchVersion("patch-runtime-null");
+    ingress.setScriptPinEpoch(2L);
+    ingress.setScriptPinControlPlaneRequestId("pin-runtime-null");
+    ingress.setScriptEventId("event-runtime-null");
+    ingress.setRequestDigest("a".repeat(64));
+    ingress.setSourceService("game-session-service");
+    ingress.setTriggerMode("EVENT");
+    ingress.setAdmitted(true);
+    ingress.setAdmissionOutcome("ADMITTED");
+    ingress.setAdmissionReason("accepted");
+    return ingress;
+  }
+
+  private ScriptEventAudit nullablePinnedEventAudit() {
+    ScriptEventAudit audit = new ScriptEventAudit();
+    audit.setTenantId("tenant-pinned-null");
+    audit.setGameInstanceId("instance-pinned-null");
+    audit.setRegionId("region-pinned-null");
+    audit.setRegionEpoch(1L);
+    audit.setEntityId("entity-pinned-null");
+    audit.setScriptId("script-pinned-null");
+    audit.setPluginId(null);
+    audit.setPluginVersionId(null);
+    audit.setEventType("onEnterRegion");
+    audit.setEventSchemaVersion("v1");
+    audit.setScriptPatchVersion("patch-pinned-null");
+    audit.setScriptPinEpoch(2L);
+    audit.setScriptPinControlPlaneRequestId("pin-pinned-null");
+    audit.setScriptEventId("event-pinned-null");
+    audit.setSourceService("game-session-service");
+    audit.setTriggerMode("EVENT");
+    audit.setFinalStage("HANDOFF");
+    audit.setFinalOutcome("HANDED_OFF");
+    audit.setFinalReason("accepted");
+    return audit;
+  }
+
+  private ScriptEventAudit nullableUnpinnedEventAudit() {
+    ScriptEventAudit audit = nullablePinnedEventAudit();
+    audit.setTenantId("tenant-unpinned-null");
+    audit.setGameInstanceId("instance-unpinned-null");
+    audit.setRegionId("region-unpinned-null");
+    audit.setEntityId("entity-unpinned-null");
+    audit.setScriptId("script-unpinned-null");
+    audit.setScriptPatchVersion("patch-unpinned-null");
+    audit.setScriptPinEpoch(null);
+    audit.setScriptPinControlPlaneRequestId(null);
+    audit.setScriptEventId("event-unpinned-null");
+    return audit;
+  }
+
   private String rawRequestId(DSLContext dsl, Long id) {
     return dsl.fetchValue(
         SCRIPT_PATCH_INSTANCE_ROLLOUT_EVENTS.LAST_OBSERVED_CONTROL_PLANE_REQUEST_ID,
@@ -239,9 +319,53 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
         SCRIPT_PATCH_INSTANCE_ROLLOUT_PROJECTIONS.ID.eq(id));
   }
 
-  private int countRows(DSLContext dsl, String tenantId) {
-    return dsl.fetchCount(
-        SCRIPT_EVENT_INGRESS_AUDIT, SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID.eq(tenantId));
+  private int insertIngressAudit(
+      DSLContext dsl,
+      String gameInstanceId,
+      Long scriptPinEpoch,
+      String requestId,
+      String eventId) {
+    return dsl.insertInto(SCRIPT_EVENT_INGRESS_AUDIT)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.TENANT_ID, "tenant-direct-" + eventId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.GAME_INSTANCE_ID, gameInstanceId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_ID, "script-direct")
+        .set(
+            SCRIPT_EVENT_INGRESS_AUDIT.EVENT_TYPE,
+            gameInstanceId == null ? "onLoad" : "onEnterRegion")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.EVENT_SCHEMA_VERSION, "v1")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PATCH_VERSION, "patch-direct")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_EPOCH, scriptPinEpoch)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, requestId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SCRIPT_EVENT_ID, eventId)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.SOURCE_SERVICE, "direct-test")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.TRIGGER_MODE, "EVENT")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMITTED, true)
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_OUTCOME, "ADMITTED")
+        .set(SCRIPT_EVENT_INGRESS_AUDIT.ADMISSION_REASON, "accepted")
+        .execute();
+  }
+
+  private int insertEventAudit(
+      DSLContext dsl, Long scriptPinEpoch, String requestId, String eventId) {
+    return dsl.insertInto(SCRIPT_EVENT_AUDIT)
+        .set(SCRIPT_EVENT_AUDIT.TENANT_ID, "tenant-direct-" + eventId)
+        .set(SCRIPT_EVENT_AUDIT.GAME_INSTANCE_ID, "instance-direct")
+        .set(SCRIPT_EVENT_AUDIT.REGION_ID, "region-direct")
+        .set(SCRIPT_EVENT_AUDIT.REGION_EPOCH, 1L)
+        .set(SCRIPT_EVENT_AUDIT.ENTITY_ID, "entity-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_ID, "script-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_EPOCH, scriptPinEpoch)
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PIN_CONTROL_PLANE_REQUEST_ID, requestId)
+        .set(SCRIPT_EVENT_AUDIT.EVENT_TYPE, "onEnterRegion")
+        .set(SCRIPT_EVENT_AUDIT.EVENT_SCHEMA_VERSION, "v1")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_PATCH_VERSION, "patch-direct")
+        .set(SCRIPT_EVENT_AUDIT.SCRIPT_EVENT_ID, eventId)
+        .set(SCRIPT_EVENT_AUDIT.SOURCE_SERVICE, "direct-test")
+        .set(SCRIPT_EVENT_AUDIT.TRIGGER_MODE, "EVENT")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_STAGE, "HANDOFF")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_OUTCOME, "HANDED_OFF")
+        .set(SCRIPT_EVENT_AUDIT.FINAL_REASON, "accepted")
+        .execute();
   }
 
   private DSLContext schemaDsl() {

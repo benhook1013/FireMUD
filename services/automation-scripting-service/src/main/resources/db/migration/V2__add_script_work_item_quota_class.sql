@@ -1,3 +1,0 @@
-ALTER TABLE script_work_items
-    ADD COLUMN quota_class VARCHAR(64) NOT NULL DEFAULT 'STANDARD_RUNTIME';
-
