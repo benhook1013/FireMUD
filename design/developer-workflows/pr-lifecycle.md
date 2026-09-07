@@ -22,6 +22,7 @@ Use this guide for pull-request status, review handling, CI, Renovate, merging, 
 - Do not push review-invalidating commits while hosted review is active. Prepare fixes locally, consume the completed hosted output, then publish one combined fix batch.
 - After all known findings are fixed and pushed, the main orchestrator may request the next hosted full review when justified by the [Review Completion Criteria](#review-completion-criteria), no review is active, and the rate limit is free. Verify the resulting summary because a request may be skipped, fail internally, or be rate-limited.
 - After each review/fix run, report hosted and per-CLI finding counts, their practical significance, whether another review cycle is recommended, and a concise summary of subagent use. This evidence, rather than quota availability alone, determines whether review should continue.
+- PR report: for multi-PR assessments, order rows by intended merge priority and report each PR's chronological review counts as `(N) hosted, N CLI`, latest hosted finding severity/significance/disposition, and a reasoned merge assessment with limitations. Count actual completed reviews consistently from raw posted counts, identify missing, partial, or unverified history, and exclude failed, rate-limited, or empty records from clean rounds. Obtain CLI counts through concise owning-worker reports by default; inspect transcripts or raw logs only to resolve material gaps or contradictions.
 
 ## Review Completion Criteria
 
