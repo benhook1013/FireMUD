@@ -81,6 +81,7 @@ public class TestDataSeeder implements ApplicationRunner {
     Room starterRoom = ensureRoom(zone, STARTER_ROOM_NAME, STARTER_ROOM_DESCRIPTION);
     Room secondaryRoom = ensureRoom(zone, SECONDARY_ROOM_NAME, SECONDARY_ROOM_DESCRIPTION);
     ensureRoomExit(starterRoom, secondaryRoom, "NORTH");
+    ensureRoomExit(secondaryRoom, starterRoom, "SOUTH");
   }
 
   private Region ensureDemoRegion() {
