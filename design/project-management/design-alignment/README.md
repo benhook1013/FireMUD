@@ -84,6 +84,16 @@ The selective ADR-family imports are complete. The next alignment phase is the p
 
 Keep the authority pass focused on design review. When a review unit exposes an unambiguous, bounded implementation or proof correction, prefer landing that correction with its focused tests in a precursor implementation PR before publishing the affected corpus PR; an intentionally accepted, tightly bounded correction may accompany the corpus PR when that is the coherent review boundary. If the implementation is broad, decision-sensitive, or cannot be completed safely within that boundary, retain an explicit tracker gap for the later implementation phase instead. Do not mix code into a corpus PR merely to avoid recording truthful current status, and do not repeatedly reshuffle an already-reviewed hybrid PR solely to optimize reviewer attention.
 
+### Domain review operating model
+
+For the current 5B design-corpus cleanup, the Worker owns each selected mini-domain end to end. The Worker first reconciles preserved domain work and seed fixes, then delegates fresh, disjoint-scope corpus investigations to identify gaps, contradictions, and duplicated authority outside the proposed changes. CodeRabbit and hosted review assess the proposed PR changes and verify their fixes; they are change-review evidence, not a substitute for a broader domain assessment.
+
+Across the investigation scopes and final domain assessment, cover the selected domain, including secondary consequences and proof state, while preserving canonical owner links and keeping implementation changes in their existing owner surfaces.
+
+Fresh disjoint-scope investigations may run while CodeRabbit reviews the active front PR. The Worker consumes and adjudicates each broad search before starting another, so every fresh search examines the updated corpus and the current fix state. During active hosted review, prepare corrections locally and preserve review safety: do not publish review-invalidating changes until the hosted review completes. Coherent stacks are allowed when they retain a stable merge front and account for fixes already downstream.
+
+PR closure follows the hosted review evidence and judgment described by the [PR lifecycle](../../developer-workflows/pr-lifecycle.md). Domain closure has an additional requirement: after fixes converge, complete a fresh assessment of the whole selected domain. Continue work for meaningful gaps, contradictions, owner conflicts, or proof consequences. Stop when remaining suggestions are only duplicates, unsupported, transient status churn, or low-value polishing. The Worker may advance each cycle without per-cycle Overseer approval; escalate consequential new architecture or scope, competing target states, or other decisions that require human judgment through the normal workflow. This model applies to the 5B cleanup and does not modify reusable generic delegation rules or technical architecture.
+
 ## Authority Boundaries
 
 - Product documents define product requirements and observable product behavior; the [product requirements overview](../../product/requirements.md) is the canonical product scope summary.
