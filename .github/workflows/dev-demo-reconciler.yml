@@ -64,24 +64,124 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          workflow_name="Develop Dev Demo Environment"
           namespace="dev"
           desired_head_sha="$(
             gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
           )"
           [[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]]
           current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
-          # shellcheck disable=SC2016 # jq receives the literal $head binding.
-          candidate_run="$(
-            gh run list \
-              --workflow "${workflow_name}" \
-              --branch develop \
-              --limit 50 \
-              --json databaseId,status,conclusion,headSha \
-              | jq -r --arg head "${desired_head_sha}" \
-              '(first(.[] | select(.headSha == $head)) // empty) | [.databaseId, .status, (.conclusion // "")] | @tsv'
+          max_failed_attempts=3
+          expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
+          workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
+          develop_push_run="$(
+            gh api \
+              --method GET \
+              "${workflow_runs_api}" \
+              -f branch=develop \
+              -f event=push \
+              -f "head_sha=${desired_head_sha}" \
+              -F per_page=1
           )"
+          history_not_before="$(jq -r '.workflow_runs[0].created_at // empty' <<<"${develop_push_run}")"
+          if [[ -z "$history_not_before" ]]; then
+            echo "::error title=Dev-demo history anchor missing::No develop push run records when ${desired_head_sha} became the dev-demo target; refusing an unbounded or history-blind dispatch."
+            exit 1
+          fi
+
+          list_run_page() {
+            local page="$1"
+            local status="${2:-}"
+            local api_args=(
+              --method GET
+              "${workflow_runs_api}"
+              -F per_page=100
+              -F "page=${page}"
+            )
+            if [[ -n "$status" ]]; then
+              api_args+=(-f "status=${status}")
+            fi
+            gh api "${api_args[@]}"
+          }
+
+          # Re-runs retain their original workflow-run identity and can therefore
+          # sort behind newer completed attempts. Search every nonterminal state
+          # before using completed history to decide whether another dispatch is safe.
+          candidate_run=""
+          for nonterminal_status in requested waiting pending queued in_progress; do
+            page=1
+            while true; do
+              run_page="$(list_run_page "$page" "$nonterminal_status")"
+              candidate_run="$(
+                jq -r --arg head "${desired_head_sha}" --arg title "${expected_deploy_title}" \
+                  '(first(.workflow_runs[] | select(.head_sha == $head and .display_title == $title)) // empty) | [.id, .status, (.conclusion // "")] | @tsv' \
+                  <<<"${run_page}"
+              )"
+              if [[ -n "$candidate_run" ]]; then
+                break 2
+              fi
+              page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
+              if (( page_size < 100 )); then
+                break
+              fi
+              ((page += 1))
+            done
+          done
+
           IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
+
+          if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
+            echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
+            exit 0
+          fi
+
+          # Walk completed history newest-first until the exact target is found
+          # and, for a failed latest candidate, its three-attempt budget is known.
+          # Irrelevant destroy and other-target runs cannot evict this evidence.
+          failed_attempts=0
+          page=1
+          while true; do
+            run_page="$(list_run_page "$page")"
+            exact_page_runs="$(
+              jq -c \
+                --arg head "${desired_head_sha}" \
+                --arg title "${expected_deploy_title}" \
+                --arg not_before "${history_not_before}" \
+                '[.workflow_runs[] | select(.head_sha == $head and .display_title == $title and .created_at >= $not_before)]' \
+                <<<"${run_page}"
+            )"
+            if [[ -z "$candidate_run" ]]; then
+              candidate_run="$(
+                jq -r \
+                  '(first(.[]) // empty) | [.id, .status, (.conclusion // "")] | @tsv' \
+                  <<<"${exact_page_runs}"
+              )"
+              IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
+            fi
+            if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
+              break
+            fi
+            if [[ "${candidate_status}" == completed && "${candidate_conclusion}" == success ]]; then
+              break
+            fi
+            page_failed_attempts="$(
+              jq -r \
+                '[.[] | select(.status == "completed" and .conclusion != "success")] | length' \
+                <<<"${exact_page_runs}"
+            )"
+            failed_attempts=$((failed_attempts + page_failed_attempts))
+            if (( failed_attempts >= max_failed_attempts )); then
+              break
+            fi
+            page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
+            if (( page_size < 100 )); then
+              break
+            fi
+            oldest_page_created_at="$(jq -r '.workflow_runs[-1].created_at // empty' <<<"${run_page}")"
+            if [[ -z "$oldest_page_created_at" || "$oldest_page_created_at" < "$history_not_before" ]]; then
+              break
+            fi
+            ((page += 1))
+          done
 
           if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
             echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
@@ -96,6 +196,10 @@ jobs:
           fi
 
           if [[ "${candidate_status}" == completed && "${candidate_conclusion}" != success ]]; then
+            if (( failed_attempts >= max_failed_attempts )); then
+              echo "::error title=Dev-demo retry budget exhausted::Develop head ${desired_head_sha} reached ${failed_attempts} failed or cancelled deploy attempts; automatic redispatch is stopped until develop advances or an operator intervenes."
+              exit 1
+            fi
             echo "Redispatching failed dev-demo candidate ${candidate_run_id} for develop head ${desired_head_sha}."
           fi
 

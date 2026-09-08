@@ -403,8 +403,9 @@ jobs:
           kubectl -n "$RUNTIME_NAMESPACE" create secret generic jwt-signing-keys \
             --from-literal=current.key="$signing_key" \
             --dry-run=client -o yaml | kubectl apply -f -
-          jq -n --arg key "$(printf '%s' "$signing_key" | sha256sum | awk '{print $1}')" \
-            '{keys:[{kty:"oct",kid:"trusted-preview",k:$key,alg:"HS256",use:"sig"}]}' \
+          signing_key_sha256="$(printf '%s' "$signing_key" | sha256sum | awk '{print $1}')"
+          jq -n --arg fingerprint "$signing_key_sha256" \
+            '{keys:[],firemudDiagnostic:{purpose:"shared-hmac-secret-path-fingerprint",sha256:$fingerprint}}' \
             | kubectl -n "$RUNTIME_NAMESPACE" create configmap jwt-jwks --from-file=jwks.json=/dev/stdin --dry-run=client -o yaml \
             | kubectl apply -f -
 

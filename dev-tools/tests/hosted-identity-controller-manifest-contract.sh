@@ -5,6 +5,7 @@ IFS=$'\n\t'
 ROOT_DIR="$(cd "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")" && pwd)"
 MANIFEST_DIR="$ROOT_DIR/k8s/hosted-identity-controller"
 CONTROLLER_DIR="$ROOT_DIR/dev-tools/hosted/controller"
+ARTIFACT_VALIDATOR="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 
 fail() {
   echo "hosted identity controller manifest contract: $*" >&2
@@ -91,6 +92,7 @@ for file in \
   "$CONTROLLER_DIR/bootstrap-hosted-identity-controller.sh"; do
   require_file "$file"
 done
+require_file "$ARTIFACT_VALIDATOR"
 
 KUSTOMIZATION="$MANIFEST_DIR/kustomization.yaml"
 CRD="$MANIFEST_DIR/crd.yaml"
@@ -582,7 +584,8 @@ forbidden_strategy="type: RollingUpdate"
 forbid_literal "$DEPLOYMENT" "$forbidden_strategy"
 
 for text_value in \
-  policyTypes: '- Egress' 'k8s-app: kube-dns' 'port: 53' 'port: 443' \
+  policyTypes: '- Ingress' '- Egress' 'ingress: []' 'k8s-app: kube-dns' \
+  'port: 53' 'port: 443' \
   'endPort: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
   'firemud.dev/dev-demo: "true"' 'cannot select the apiserver or a public hostname' \
   'except:' '169.254.0.0/16' 'fe80::/10'; do
@@ -595,6 +598,8 @@ from pathlib import Path
 import yaml
 
 policy = yaml.safe_load(Path(os.environ["NETWORKPOLICY"]).read_text(encoding="utf-8"))
+assert policy["spec"]["policyTypes"] == ["Ingress", "Egress"]
+assert policy["spec"]["ingress"] == []
 grpc_targets = [
     target
     for rule in policy["spec"]["egress"]
@@ -915,6 +920,243 @@ require_literal "$bootstrap_error" "returned yes; expected no"
 for file in "$MANIFEST_DIR"/*.yaml "$CONTROLLER_DIR"/*.sh; do
   forbid_regex "$file" '(production|staging|hobby-self-hosted)'
 done
+
+# Untrusted Service and Ingress shape errors must remain deliberate validator
+# rejections rather than Python attribute/index tracebacks.
+python3 - "$ARTIFACT_VALIDATOR" <<'PY'
+import importlib.util
+import sys
+import tempfile
+from pathlib import Path
+
+import yaml
+
+validator_path = Path(sys.argv[1])
+module_spec = importlib.util.spec_from_file_location(
+    "preview_artifact_validator", validator_path
+)
+validator = importlib.util.module_from_spec(module_spec)
+module_spec.loader.exec_module(validator)
+
+
+def assert_rejected(call, expected):
+    try:
+        call()
+    except ValueError as error:
+        assert str(error) == expected, (str(error), expected)
+    else:
+        raise AssertionError(f"validator accepted malformed artifact: {expected}")
+
+
+with tempfile.TemporaryDirectory() as directory:
+    temp_dir = Path(directory)
+    for index, malformed_spec in enumerate((None, [], "not-a-spec")):
+        service = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "account-service", "namespace": "pr-42"},
+            "spec": malformed_spec,
+        }
+        source = temp_dir / f"malformed-service-{index}.yaml"
+        destination = temp_dir / f"malformed-service-{index}-output.yaml"
+        source.write_text(yaml.safe_dump(service), encoding="utf-8")
+        assert_rejected(
+            lambda source=source, destination=destination: validator.sanitize(
+                source, destination
+            ),
+            "Service/account-service.spec is not an object",
+        )
+        assert not destination.exists()
+        assert_rejected(
+            lambda service=service: validator.validate_services([service]),
+            "Service/account-service.spec is not an object",
+        )
+
+    for index, malformed_ports in enumerate((None, {}, [None])):
+        service = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": "account-service", "namespace": "pr-42"},
+            "spec": {
+                "selector": {"app": "account-service"},
+                "ports": malformed_ports,
+            },
+        }
+        source = temp_dir / f"malformed-service-ports-{index}.yaml"
+        destination = temp_dir / f"malformed-service-ports-{index}-output.yaml"
+        source.write_text(yaml.safe_dump(service), encoding="utf-8")
+        expected = "Service/account-service.spec.ports is not a list of objects"
+        assert_rejected(
+            lambda source=source, destination=destination: validator.sanitize(
+                source, destination
+            ),
+            expected,
+        )
+        assert not destination.exists()
+        assert_rejected(
+            lambda service=service: validator.validate_services([service]), expected
+        )
+
+    valid_tls = [
+        {
+            "hosts": ["pr-42.preview.example.test"],
+            "secretName": "pr-42-tls",
+        }
+    ]
+    valid_path = {
+        "path": "/",
+        "pathType": "Prefix",
+        "backend": {
+            "service": {
+                "name": "spring-cloud-gateway",
+                "port": {"number": 80},
+            }
+        },
+    }
+    valid_rules = [
+        {
+            "host": "pr-42.preview.example.test",
+            "http": {"paths": [valid_path]},
+        }
+    ]
+
+    shape_cases = [
+        (None, "Ingress/firemud-preview.spec is not an object"),
+        ([], "Ingress/firemud-preview.spec is not an object"),
+    ]
+    for malformed in (None, {}, [None]):
+        shape_cases.append(
+            (
+                {"tls": malformed, "rules": valid_rules},
+                "Ingress/firemud-preview.spec.tls is not a list of objects",
+            )
+        )
+    for malformed in (None, {}, [None]):
+        shape_cases.append(
+            (
+                {"tls": valid_tls, "rules": malformed},
+                "Ingress/firemud-preview.spec.rules is not a list of objects",
+            )
+        )
+    for malformed in (None, {}, [None]):
+        shape_cases.append(
+            (
+                {
+                    "tls": valid_tls,
+                    "rules": [
+                        {
+                            "host": "pr-42.preview.example.test",
+                            "http": {"paths": malformed},
+                        }
+                    ],
+                },
+                (
+                    "Ingress/firemud-preview.spec.rules[0].http.paths "
+                    "is not a list of objects"
+                ),
+            )
+        )
+    for malformed in (None, [], "not-an-object"):
+        shape_cases.append(
+            (
+                {
+                    "tls": valid_tls,
+                    "rules": [
+                        {
+                            "host": "pr-42.preview.example.test",
+                            "http": malformed,
+                        }
+                    ],
+                },
+                "Ingress/firemud-preview.spec.rules[0].http is not an object",
+            )
+        )
+    for malformed in (None, [], "not-an-object"):
+        path = {**valid_path, "backend": malformed}
+        shape_cases.append(
+            (
+                {
+                    "tls": valid_tls,
+                    "rules": [
+                        {
+                            "host": "pr-42.preview.example.test",
+                            "http": {"paths": [path]},
+                        }
+                    ],
+                },
+                (
+                    "Ingress/firemud-preview.spec.rules[0].http.paths[0].backend "
+                    "is not an object"
+                ),
+            )
+        )
+    for malformed in (None, [], "not-an-object"):
+        path = {**valid_path, "backend": {"service": malformed}}
+        shape_cases.append(
+            (
+                {
+                    "tls": valid_tls,
+                    "rules": [
+                        {
+                            "host": "pr-42.preview.example.test",
+                            "http": {"paths": [path]},
+                        }
+                    ],
+                },
+                (
+                    "Ingress/firemud-preview.spec.rules[0].http.paths[0].backend.service "
+                    "is not an object"
+                ),
+            )
+        )
+    for malformed in (None, [], "not-an-object"):
+        path = {
+            **valid_path,
+            "backend": {
+                "service": {
+                    "name": "spring-cloud-gateway",
+                    "port": malformed,
+                }
+            },
+        }
+        shape_cases.append(
+            (
+                {
+                    "tls": valid_tls,
+                    "rules": [
+                        {
+                            "host": "pr-42.preview.example.test",
+                            "http": {"paths": [path]},
+                        }
+                    ],
+                },
+                (
+                    "Ingress/firemud-preview.spec.rules[0].http.paths[0].backend."
+                    "service.port is not an object"
+                ),
+            )
+        )
+
+    ingress_path = temp_dir / "malformed-ingress.yaml"
+    for malformed_spec, expected in shape_cases:
+        ingress = {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {"name": "firemud-preview", "namespace": "pr-42"},
+            "spec": malformed_spec,
+        }
+        ingress_path.write_text(yaml.safe_dump(ingress), encoding="utf-8")
+        assert_rejected(
+            lambda: validator.validate_manifest(
+                ingress_path,
+                "pr-42",
+                "pr-42-head-42",
+                "pr-42.preview.example.test",
+            ),
+            expected,
+        )
+PY
+
 rendered="$(mktemp)"
 trap 'rm -f "$rendered"' EXIT
 kubectl kustomize "$MANIFEST_DIR" >"$rendered"

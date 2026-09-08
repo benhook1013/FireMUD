@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.reconcile;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.fabric8.kubernetes.api.model.HasMetadata;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -10,6 +11,7 @@ import io.javaoperatorsdk.operator.api.reconciler.Context;
 import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.Reconciler;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
@@ -486,15 +488,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   }
 
   private boolean deleteOwnedMaterial(EnvironmentIdentityPlan plan) {
-    Namespace identityNamespace = client.namespaces().withName(plan.identityNamespace()).get();
+    var namespaceOperation = client.namespaces().withName(plan.identityNamespace());
+    Namespace identityNamespace = namespaceOperation.get();
     if (identityNamespace == null) {
       return true;
     }
+    boolean namespaceTerminating = isTerminating(identityNamespace);
     if (!HostedIdentityScopeService.isExpectedIdentityNamespace(identityNamespace, plan)
-        || !isOwnedIdentityNamespace(identityNamespace, plan)) {
+        || !isOwnedIdentityNamespace(identityNamespace, plan, namespaceTerminating)) {
       return false;
     }
-    for (String name :
+    List<String> secretNames =
         List.of(
             plan.ingressSecretName(),
             plan.telnetSecretName(),
@@ -505,48 +509,88 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.telnetSecretName() + "-previous",
             plan.gatewayInternalWsSecretName() + "-previous",
             plan.tcpProxyBridgeSecretName() + "-previous",
-            plan.grpcSecretName() + "-previous")) {
+            plan.grpcSecretName() + "-previous");
+    List<String> ownedSecretNames = new ArrayList<>();
+    for (String name : secretNames) {
       Secret secret = client.secrets().inNamespace(plan.identityNamespace()).withName(name).get();
-      if (isOwned(secret, plan.name())) {
-        client.secrets().inNamespace(plan.identityNamespace()).withName(name).delete();
+      if (secret == null) {
+        continue;
       }
+      if (!isOwned(secret, plan.name())) {
+        return false;
+      }
+      ownedSecretNames.add(name);
     }
-    for (String name :
+    List<String> certificateNames =
         List.of(
             plan.ingressCertificateName(),
             plan.telnetCertificateName(),
             plan.gatewayInternalWsCertificateName(),
             plan.tcpProxyBridgeCertificateName(),
-            plan.grpcCertificateName())) {
+            plan.grpcCertificateName());
+    List<String> ownedCertificateNames = new ArrayList<>();
+    for (String name : certificateNames) {
       var operation =
           client
               .genericKubernetesResources(ResourceContexts.CERTIFICATES)
               .inNamespace(plan.identityNamespace())
               .withName(name);
       var certificate = operation.get();
-      if (certificate != null && isOwned(certificate.getMetadata().getLabels(), plan.name())) {
-        operation.delete();
+      if (certificate == null) {
+        continue;
+      }
+      if (certificate.getMetadata() == null
+          || !isOwned(certificate.getMetadata().getLabels(), plan.name())) {
+        return false;
+      }
+      ownedCertificateNames.add(name);
+    }
+    for (String name : ownedSecretNames) {
+      client.secrets().inNamespace(plan.identityNamespace()).withName(name).delete();
+    }
+    for (String name : ownedCertificateNames) {
+      client
+          .genericKubernetesResources(ResourceContexts.CERTIFICATES)
+          .inNamespace(plan.identityNamespace())
+          .withName(name)
+          .delete();
+    }
+    if (!namespaceTerminating) {
+      namespaceOperation.delete();
+      Namespace deletingNamespace = namespaceOperation.get();
+      if (deletingNamespace == null) {
+        return true;
+      }
+      if (!HostedIdentityScopeService.isExpectedIdentityNamespace(deletingNamespace, plan)
+          || !isTerminating(deletingNamespace)) {
+        return false;
       }
     }
-    deleteOwnedScope(plan.identityNamespace(), "firemud-hosted-identity-scope", plan.name());
-    client.namespaces().withName(plan.identityNamespace()).delete();
-    return true;
+    return deleteOwnedScope(plan.identityNamespace(), "firemud-hosted-identity-scope", plan.name());
   }
 
-  private void deleteOwnedScope(String namespace, String name, String environment) {
+  private boolean deleteOwnedScope(String namespace, String name, String environment) {
     var roleOperation = client.rbac().roles().inNamespace(namespace).withName(name);
     var role = roleOperation.get();
-    if (role != null && isOwned(role.getMetadata().getLabels(), environment)) {
+    if (role != null) {
+      if (!isOwnedScopeOrAllowedMissing(role, environment, false)) {
+        return false;
+      }
       roleOperation.delete();
     }
     var bindingOperation = client.rbac().roleBindings().inNamespace(namespace).withName(name);
     var binding = bindingOperation.get();
-    if (binding != null && isOwned(binding.getMetadata().getLabels(), environment)) {
+    if (binding != null) {
+      if (!isOwnedScopeOrAllowedMissing(binding, environment, false)) {
+        return false;
+      }
       bindingOperation.delete();
     }
+    return true;
   }
 
-  private boolean isOwnedIdentityNamespace(Namespace namespace, EnvironmentIdentityPlan plan) {
+  private boolean isOwnedIdentityNamespace(
+      Namespace namespace, EnvironmentIdentityPlan plan, boolean allowMissingScope) {
     var role =
         client
             .rbac()
@@ -564,10 +608,23 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     return namespace.getMetadata() != null
         && namespace.getMetadata().getName() != null
         && namespace.getMetadata().getName().equals(plan.identityNamespace())
-        && role != null
-        && isOwned(role.getMetadata().getLabels(), plan.name())
-        && binding != null
-        && isOwned(binding.getMetadata().getLabels(), plan.name());
+        && isOwnedScopeOrAllowedMissing(role, plan.name(), allowMissingScope)
+        && isOwnedScopeOrAllowedMissing(binding, plan.name(), allowMissingScope);
+  }
+
+  private static boolean isTerminating(Namespace namespace) {
+    return namespace != null
+        && namespace.getMetadata() != null
+        && namespace.getMetadata().getDeletionTimestamp() != null
+        && !namespace.getMetadata().getDeletionTimestamp().isBlank();
+  }
+
+  private static boolean isOwnedScopeOrAllowedMissing(
+      HasMetadata scope, String environment, boolean allowMissing) {
+    if (scope == null) {
+      return allowMissing;
+    }
+    return scope.getMetadata() != null && isOwned(scope.getMetadata().getLabels(), environment);
   }
 
   private static boolean isOwned(Secret secret, String environment) {

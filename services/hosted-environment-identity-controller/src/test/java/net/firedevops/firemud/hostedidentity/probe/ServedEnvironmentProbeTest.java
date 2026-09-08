@@ -39,7 +39,7 @@ class ServedEnvironmentProbeTest {
 
   @Test
   void oversizedHttpStatusLineFailsClosed() throws Exception {
-    assertEquals(-1, readStatus("HTTP/1.1 200 " + "a".repeat(245) + "\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 200 " + "a".repeat(244) + "\r\n"));
   }
 
   @Test

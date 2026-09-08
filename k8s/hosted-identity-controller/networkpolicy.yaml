@@ -14,7 +14,11 @@ spec:
       app.kubernetes.io/name: hosted-environment-identity-controller
       app.kubernetes.io/component: controller
   policyTypes:
+    - Ingress
     - Egress
+  # No pod-originated ingress is accepted. Kubernetes node traffic remains
+  # outside NetworkPolicy isolation, so kubelet actuator probes still work.
+  ingress: []
   egress:
     # Cluster DNS is the only in-cluster name-resolution dependency.
     - to:

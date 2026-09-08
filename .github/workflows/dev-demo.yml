@@ -1,4 +1,5 @@
 name: Develop Dev Demo Environment
+run-name: Develop Dev Demo Environment ${{ inputs.action || 'deploy' }} head-${{ inputs.head_sha || github.sha }}
 
 on:
   push:

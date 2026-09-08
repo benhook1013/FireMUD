@@ -166,6 +166,51 @@ assert projection_wait.index("deadline=$((SECONDS + 900))") < projection_wait.in
     "while (( SECONDS < deadline )); do"
 )
 assert projection_wait.index("projection_ready=true") < projection_wait.index("break")
+
+credential_step = next(
+    step["run"]
+    for step in deploy_steps
+    if step.get("name") == "Create canonical non-identity runtime credentials"
+)
+for fragment in (
+    'signing_key_sha256="$(printf \'%s\' "$signing_key" | sha256sum',
+    'jq -n --arg fingerprint "$signing_key_sha256"',
+    'keys:[]',
+    'purpose:"shared-hmac-secret-path-fingerprint"',
+    'sha256:$fingerprint',
+):
+    assert fragment in credential_step, fragment
+for forbidden in ('openssl base64', 'kty:"oct"', 'k:$key', '--arg key'):
+    assert forbidden not in credential_step, forbidden
+PY
+
+fixture_signing_key="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+actual_signing_key_sha256="$(printf '%s' "$fixture_signing_key" | sha256sum | awk '{print $1}')"
+diagnostic_jwks="$(
+  jq -nc --arg fingerprint "$actual_signing_key_sha256" \
+    '{keys:[],firemudDiagnostic:{purpose:"shared-hmac-secret-path-fingerprint",sha256:$fingerprint}}'
+)"
+python3 - "$fixture_signing_key" "$diagnostic_jwks" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+
+signing_key = sys.argv[1].encode("ascii")
+jwks = json.loads(sys.argv[2])
+expected_fingerprint = hashlib.sha256(signing_key).hexdigest()
+expected_secret_jwk = base64.urlsafe_b64encode(signing_key).decode("ascii").rstrip("=")
+
+if jwks.get("keys") != []:
+    raise SystemExit("trusted hosted diagnostic JWKS unexpectedly publishes verifier keys")
+if jwks.get("firemudDiagnostic") != {
+    "purpose": "shared-hmac-secret-path-fingerprint",
+    "sha256": expected_fingerprint,
+}:
+    raise SystemExit("trusted hosted diagnostic fingerprint does not match exact signing-key bytes")
+serialized = json.dumps(jwks, sort_keys=True)
+if sys.argv[1] in serialized or expected_secret_jwk in serialized:
+    raise SystemExit("trusted hosted diagnostic JWKS publishes shared-HMAC signing material")
 PY
 
 # Execute the trusted selector with the old producer's actual boundary: a

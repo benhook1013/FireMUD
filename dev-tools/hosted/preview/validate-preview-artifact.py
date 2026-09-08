@@ -126,6 +126,20 @@ def fail(message: str) -> typing.NoReturn:
     raise ValueError(message)
 
 
+def _require_mapping(value: object, path: str) -> dict:
+    if not isinstance(value, dict):
+        fail(f"{path} is not an object")
+    return value
+
+
+def _require_mapping_list(value: object, path: str) -> list[dict]:
+    if not isinstance(value, list) or not all(
+        isinstance(item, dict) for item in value
+    ):
+        fail(f"{path} is not a list of objects")
+    return value
+
+
 def _is_expected_secret_reference(value: object) -> bool:
     return isinstance(value, str) and value in EXPECTED_SECRET_REFS
 
@@ -378,9 +392,13 @@ def sanitize(source: Path, destination: Path) -> None:
         if sanitized is None:
             continue
         if sanitized.get("kind") == "Service":
-            for port in sanitized.get("spec", {}).get("ports", []):
-                if isinstance(port, dict):
-                    port.pop("nodePort", None)
+            name = sanitized["metadata"]["name"]
+            spec = _require_mapping(sanitized.get("spec"), f"Service/{name}.spec")
+            ports = _require_mapping_list(
+                spec.get("ports"), f"Service/{name}.spec.ports"
+            )
+            for port in ports:
+                port.pop("nodePort", None)
         _strip_annotations(sanitized)
         _validate_sanitized_secret_refs(sanitized)
         documents.append(sanitized)
@@ -526,7 +544,7 @@ def validate_services(documents: list[dict]) -> None:
         if document.get("kind") != "Service":
             continue
         name = document.get("metadata", {}).get("name")
-        spec = document.get("spec") or {}
+        spec = _require_mapping(document.get("spec"), f"Service/{name}.spec")
         expected_type = "NodePort" if name == "tcp-proxy-service" else "ClusterIP"
         if spec.get("type", "ClusterIP") != expected_type:
             fail(f"Service/{name} has an unsafe service type")
@@ -535,14 +553,16 @@ def validate_services(documents: list[dict]) -> None:
         )
         if spec.get("selector") != {"app": selector_name}:
             fail(f"Service/{name} has an unsafe selector")
+        service_ports = _require_mapping_list(
+            spec.get("ports"), f"Service/{name}.spec.ports"
+        )
         ports = [
             (
                 item.get("name"),
                 item.get("port"),
                 item.get("targetPort"),
             )
-            for item in spec.get("ports", [])
-            if isinstance(item, dict)
+            for item in service_ports
         ]
         if ports != EXPECTED_SERVICE_PORTS[name]:
             fail(f"Service/{name} has an unexpected port set")
@@ -721,26 +741,44 @@ def validate_manifest(
                 f"{document['kind']}/{name}.spec.template.spec",
             )
         if document["kind"] == "Ingress":
-            spec = document.get("spec") or {}
-            tls = spec.get("tls") or []
-            rules = spec.get("rules") or []
+            ingress_path = "Ingress/firemud-preview.spec"
+            spec = _require_mapping(document.get("spec"), ingress_path)
+            tls = _require_mapping_list(spec.get("tls"), f"{ingress_path}.tls")
+            rules = _require_mapping_list(
+                spec.get("rules"), f"{ingress_path}.rules"
+            )
             if len(tls) != 1 or tls[0].get("hosts") != [expected_hostname] or tls[0].get(
                 "secretName"
             ) != f"{expected_namespace}-tls":
                 fail("Ingress/firemud-preview has an unsafe TLS consumer")
             if len(rules) != 1 or rules[0].get("host") != expected_hostname:
                 fail("Ingress/firemud-preview has an unsafe host")
-            paths = ((rules[0].get("http") or {}).get("paths") or [])
+            http = _require_mapping(
+                rules[0].get("http"), f"{ingress_path}.rules[0].http"
+            )
+            paths = _require_mapping_list(
+                http.get("paths"), f"{ingress_path}.rules[0].http.paths"
+            )
             if len(paths) != 1:
                 fail("Ingress/firemud-preview has an unexpected route set")
             route = paths[0]
-            backend = route.get("backend") or {}
-            service_backend = backend.get("service") or {}
+            backend = _require_mapping(
+                route.get("backend"),
+                f"{ingress_path}.rules[0].http.paths[0].backend",
+            )
+            service_backend = _require_mapping(
+                backend.get("service"),
+                f"{ingress_path}.rules[0].http.paths[0].backend.service",
+            )
+            service_port = _require_mapping(
+                service_backend.get("port"),
+                f"{ingress_path}.rules[0].http.paths[0].backend.service.port",
+            )
             if (
                 route.get("path") != "/"
                 or route.get("pathType") != "Prefix"
                 or service_backend.get("name") != "spring-cloud-gateway"
-                or (service_backend.get("port") or {}).get("number") != 80
+                or service_port.get("number") != 80
             ):
                 fail("Ingress/firemud-preview has an unsafe backend")
     if seen != EXPECTED_OBJECTS:

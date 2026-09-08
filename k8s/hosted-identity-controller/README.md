@@ -62,7 +62,8 @@ exact in-cluster SNI/hostname, and current leaf fingerprint; rollout counters
 alone cannot make the identity Ready. It separately uses the projected TCP
 Proxy bridge identity to verify the exact Gateway-internal TLS server identity.
 Existing runtime Secret material is copied to its fixed `*-previous` snapshot
-before replacement. A clean destination may be created without a predecessor.
+in the retained identity namespace before replacement. A clean destination may
+be created without a predecessor.
 Renewal repeats the same generation-safe sequence.
 Ordinary internal WebSocket identity renewal updates retained and projected
 material in place; it does not terminate the bridge. A consumer that has not

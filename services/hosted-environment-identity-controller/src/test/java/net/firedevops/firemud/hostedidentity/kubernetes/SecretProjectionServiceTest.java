@@ -474,6 +474,8 @@ class SecretProjectionServiceTest {
     assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
     assertEquals("serialized-in-flight", continued.state());
     assertEquals(capturedReplacement, continued.source());
+    verify(secretClient.runtimeSecrets(), org.mockito.Mockito.times(1))
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test

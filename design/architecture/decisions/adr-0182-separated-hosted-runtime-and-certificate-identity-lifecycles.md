@@ -17,7 +17,7 @@ The repository now contains the selected in-cluster materializer/reconciler API,
 - Decision date: 2026-09-06
 - Decision key: `OPS-07`
 - Primary capability: `PO-3.2` environment, configuration, secret, certificate, and service-discovery delivery
-- Affected capabilities: `PO-3.1`, `PO-4.4`, `SF-1.3`
+- Affected capabilities: `PO-3.1`, `PO-4.4`, `SF-1.3`, `PO-1.1`
 - Decision owner: FireMUD human product and architecture owner
 - Consultation: explicit human approval and consequential-design refinement on 2026-09-06
 
