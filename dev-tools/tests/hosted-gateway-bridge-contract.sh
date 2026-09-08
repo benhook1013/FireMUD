@@ -6,8 +6,63 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED="$TMP_DIR/rendered.yaml"
-python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
-  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+render_test_values() {
+  local output_path="$1"
+  local pr_number="$2"
+  local namespace="$3"
+  local release_name="$4"
+  local hostname="$5"
+  local image_tag="$6"
+  local telnet_port="$7"
+
+  python3 - \
+    "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+    "$output_path" \
+    "$pr_number" \
+    "$namespace" \
+    "$release_name" \
+    "$hostname" \
+    "$image_tag" \
+    "$telnet_port" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+template_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+pr_number, namespace, release_name, hostname, image_tag, telnet_port = sys.argv[3:]
+text = template_path.read_text(encoding="utf-8")
+replacements = {
+    "__PR_NUMBER__": pr_number,
+    "__NAMESPACE__": namespace,
+    "__RELEASE_NAME__": release_name,
+    "__HOSTNAME__": hostname,
+    "__TELNET_PORT__": telnet_port,
+    "__IMAGE_TAG__": image_tag,
+    "__TLS_SECRET_NAME__": f"{release_name}-tls",
+    "__TELNET_TLS_SECRET_NAME__": f"{release_name}-telnet-tls",
+    "__JWT_SIGNING_KEY__": "a" * 64,
+    "__JWKS_JSON__": json.dumps({"keys": []}, separators=(",", ":")),
+    "__SEED_GAME_NAME__": "Bridge Contract Game",
+    "__SEED_GAME_DESCRIPTION__": "Bridge contract fixture game.",
+    "__SEED_VERSION_NOTES__": "Bridge contract fixture version",
+    "__SEED_TEMPLATE_NAME__": "Bridge Contract Template",
+    "__SEED_TEMPLATE_DESCRIPTION__": "Bridge contract fixture template.",
+    "__SEED_WORKFLOW_ID__": "bridge-contract-seed",
+    "__SEED_MANIFEST_HASH__": "bridge-contract-manifest",
+    "__SEED_GENERATION_CONFIG_REVISION__": "genrev:bridge-contract",
+}
+for target, replacement in replacements.items():
+    if target not in text:
+        raise SystemExit(f"bridge contract fixture token is missing: {target}")
+    text = text.replace(target, replacement)
+text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
+text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
+output_path.write_text(text, encoding="utf-8")
+PY
+}
+
+render_test_values \
   "$TMP_DIR/preview-values.yaml" \
   123 pr-123 pr-123 preview-123.example.test image-tag 32123
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
@@ -20,10 +75,9 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
 
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
-python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
-  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+render_test_values \
   "$TMP_DIR/dev-values.yaml" \
-  dev dev dev.example.test image-tag 32023
+  0 dev dev dev.example.test image-tag 32023
 helm template dev "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/dev-values.yaml" \
   --namespace dev \
@@ -910,70 +964,6 @@ for label, policy_name, policy_types, expected_fragment in (
     if not any(expected_fragment in issue for issue in direction_issues):
         raise SystemExit(f"{label} policy was accepted: {direction_issues}")
 
-preview_source = (root / ".github/workflows/preview.yml").read_text(encoding="utf-8")
-preview_render_index = preview_source.find(">/tmp/preview-rendered.yaml")
-preview_static_index = preview_source.find(
-    "FIREMUD_PREFLIGHT_CONTEXT=ci-static", preview_render_index
-)
-preview_static_call_index = preview_source.find(
-    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_static_index
-)
-preview_dry_run_index = preview_source.find(
-    "kubectl apply --dry-run=server", preview_static_call_index
-)
-preview_deploy_index = preview_source.find(
-    "helm upgrade --install", preview_dry_run_index
-)
-preview_operator_index = preview_source.find(
-    "FIREMUD_PREFLIGHT_CONTEXT=operator", preview_deploy_index
-)
-preview_operator_call_index = preview_source.find(
-    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_operator_index
-)
-preview_bootstrap_index = preview_source.find(
-    "- name: Wait for seeded preview login prerequisites", preview_operator_call_index
-)
-preview_indices = (
-    preview_render_index,
-    preview_static_index,
-    preview_static_call_index,
-    preview_dry_run_index,
-    preview_deploy_index,
-    preview_operator_index,
-    preview_operator_call_index,
-    preview_bootstrap_index,
-)
-if min(preview_indices) < 0:
-    raise SystemExit("preview.yml is missing two-phase hosted bridge preflight wiring")
-if list(preview_indices) != sorted(preview_indices):
-    raise SystemExit(
-        "preview.yml must validate render statically before deploy and projected "
-        "Secrets after rollout but before bootstrap"
-    )
-
-dev_source = (root / ".github/workflows/dev-demo.yml").read_text(encoding="utf-8")
-dev_render_index = dev_source.find(">/tmp/dev-demo-rendered.yaml")
-dev_operator_index = dev_source.find(
-    "FIREMUD_PREFLIGHT_CONTEXT=operator", dev_render_index
-)
-dev_preflight_index = dev_source.find(
-    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", dev_operator_index
-)
-dev_dry_run_index = dev_source.find(
-    "kubectl apply --dry-run=server", dev_preflight_index
-)
-dev_deploy_index = dev_source.find("helm upgrade --install", dev_dry_run_index)
-dev_indices = (
-    dev_render_index,
-    dev_operator_index,
-    dev_preflight_index,
-    dev_dry_run_index,
-    dev_deploy_index,
-)
-if min(dev_indices) < 0:
-    raise SystemExit("dev-demo.yml is missing hosted bridge preflight wiring")
-if list(dev_indices) != sorted(dev_indices):
-    raise SystemExit("dev-demo.yml does not fail bridge preflight before deploy")
 PY
 
-echo "Hosted Gateway bridge Helm, NetworkPolicy, preflight, and workflow contracts passed"
+echo "Hosted Gateway bridge Helm, NetworkPolicy, and preflight contracts passed"

@@ -5,9 +5,44 @@ ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
+python3 - \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
-  "$TMP_DIR/values-controller.yaml" 42 pr-42 preview-release preview-42.preview.example.test image-tag 32042
+  "$TMP_DIR/values-controller.yaml" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+template_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+text = template_path.read_text(encoding="utf-8")
+replacements = {
+    "__PR_NUMBER__": "42",
+    "__NAMESPACE__": "pr-42",
+    "__RELEASE_NAME__": "preview-release",
+    "__HOSTNAME__": "preview-42.preview.example.test",
+    "__TELNET_PORT__": "32042",
+    "__IMAGE_TAG__": "image-tag",
+    "__TLS_SECRET_NAME__": "preview-release-tls",
+    "__TELNET_TLS_SECRET_NAME__": "preview-release-telnet-tls",
+    "__JWT_SIGNING_KEY__": "a" * 64,
+    "__JWKS_JSON__": json.dumps({"keys": []}, separators=(",", ":")),
+    "__SEED_GAME_NAME__": "Telnet TLS Contract Game",
+    "__SEED_GAME_DESCRIPTION__": "Telnet TLS contract fixture game.",
+    "__SEED_VERSION_NOTES__": "Telnet TLS contract fixture version",
+    "__SEED_TEMPLATE_NAME__": "Telnet TLS Contract Template",
+    "__SEED_TEMPLATE_DESCRIPTION__": "Telnet TLS contract fixture template.",
+    "__SEED_WORKFLOW_ID__": "telnet-tls-contract-seed",
+    "__SEED_MANIFEST_HASH__": "telnet-tls-contract-manifest",
+    "__SEED_GENERATION_CONFIG_REVISION__": "genrev:telnet-tls-contract",
+}
+for target, replacement in replacements.items():
+    if target not in text:
+        raise SystemExit(f"Telnet TLS contract fixture token is missing: {target}")
+    text = text.replace(target, replacement)
+text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
+text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
+output_path.write_text(text, encoding="utf-8")
+PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller.yaml" \
   --namespace pr-42 >"$TMP_DIR/rendered-controller.yaml"
