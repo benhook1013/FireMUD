@@ -180,6 +180,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     try {
       releasingListener = new ReleasingWebSocketListener(listener, generation::release);
       WebSocket.Builder builder = generation.client().newWebSocketBuilder();
+      builder.connectTimeout(CONNECT_TIMEOUT);
       if (clientIp != null) {
         builder.header("X-Client-IP", clientIp);
         builder.header("X-Proxy-Client-IP", clientIp);

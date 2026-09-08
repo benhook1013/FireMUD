@@ -50,11 +50,19 @@ SUMMARY_TARGET = re.compile(
     r"['\"]?\$\{?GITHUB_STEP_SUMMARY\}?['\"]?"
 )
 HEREDOC_OPEN = re.compile(
-    r"<<(?P<strip_tabs>-)?[ \t]*(?P<delimiter>"
+    r"(?<!<)<<(?P<strip_tabs>-)?[ \t]*(?P<delimiter>"
     r"'[^'\r\n]*'|"
     r'\"(?:\\.|[^\"\\\r\n])*\"|'
     r"(?:\\[^\r\n]|[^\s;&|<>'\"])+)"
 )
+SHELL_INPUT_REDIRECTION = re.compile(
+    r"(?:(?P<io_number>(?<![A-Za-z0-9_$])[0-9]+)|"
+    r"(?P<brace_io>(?<![A-Za-z0-9_$])\{[A-Za-z_][A-Za-z0-9_]*\}))?"
+    r"(?:<<<|<<|<>|<&|<(?!\())"
+)
+# Only Bash's comma/range forms expand; ordinary ``{name}`` words and fd
+# allocators are literal in this bounded shell model.
+BASH_BRACE_EXPANSION = re.compile(r"\{[^{}\r\n]*(?:,|\.\.)[^{}\r\n]*\}")
 SHELL_IF_START = re.compile(r"^if\b.*;[ \t]*then$")
 PLAYER_BOOTSTRAP_REQUEST_CALL = re.compile(
     r"public_account_url\s*\(\s*(?P<quote>['\"])/auth/player-bootstrap"
@@ -74,6 +82,65 @@ BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK = (
 BOOTSTRAP_PORT_FORWARD_READINESS_GATE = """if ! wait_for_bootstrap_port_forward; then
   exit 1
 fi"""
+# The service-facing request is the ephemeral local ``:80`` mapping; kubectl's
+# forwarding log reports the Service target port (8080) for this Gateway.
+BOOTSTRAP_PORT_FORWARD_FORWARDING_PATTERN = (
+    r'if [[ "${forwarding_line}" =~ ^Forwarding\ from\ '
+    r'(127\.0\.0\.1|localhost):([0-9]+)\ -\>\ 8080$ ]]; then'
+)
+BOOTSTRAP_PORT_FORWARD_PARSED_PORT = (
+    'BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"'
+)
+BOOTSTRAP_PORT_FORWARD_PORT_VALIDATION = (
+    'if [[ -z "${BOOTSTRAP_GATEWAY_PORT}" || ! '
+    '"${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]; then'
+)
+BOOTSTRAP_PORT_FORWARD_PRECHECK = (
+    'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+)
+BOOTSTRAP_PORT_FORWARD_POSTCHECK = (
+    'if kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then'
+)
+BOOTSTRAP_PORT_FORWARD_WAIT_FUNCTION = r'''wait_for_bootstrap_port_forward() {
+  local attempt forwarding_line
+  for (( attempt = 1; attempt <= BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS; attempt++ )); do
+    if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+      echo "::error::Dev-demo Gateway port-forward exited before confirming its loopback listener" >&2
+      return 1
+    fi
+    while IFS= read -r forwarding_line; do
+      if [[ "${forwarding_line}" =~ ^Forwarding\ from\ (127\.0\.0\.1|localhost):([0-9]+)\ -\>\ 8080$ ]]; then
+        BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"
+        if [[ -z "${BOOTSTRAP_GATEWAY_PORT}" || ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]; then
+          echo "::error::Dev-demo Gateway port-forward reported an invalid loopback listener port" >&2
+          return 1
+        fi
+        if kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+          return 0
+        fi
+        echo "::error::Dev-demo Gateway port-forward exited after confirming its loopback listener" >&2
+        return 1
+      fi
+    done < "${BOOTSTRAP_PORT_FORWARD_LOG}"
+    sleep 1
+  done
+  echo "::error::Dev-demo Gateway port-forward did not confirm the expected loopback listener within the bounded wait" >&2
+  return 1
+}'''
+BOOTSTRAP_PORT_FORWARD_COMMAND_TOKENS = (
+    "kubectl",
+    "-n",
+    "${PREVIEW_NAMESPACE}",
+    "port-forward",
+    "--address",
+    "127.0.0.1",
+    "service/spring-cloud-gateway",
+    ":80",
+)
+BOOTSTRAP_PORT_FORWARD_RESET_SEQUENCE = (
+    "BOOTSTRAP_GATEWAY_PORT=\n"
+    "kubectl -n \"${PREVIEW_NAMESPACE}\" port-forward"
+)
 BOOTSTRAP_ACCOUNT_COMMAND_TOKENS = (
     "if",
     "!",
@@ -126,7 +193,7 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     'kubectl -n "${PREVIEW_NAMESPACE}" port-forward',
     "--address 127.0.0.1",
     "service/spring-cloud-gateway",
-    '"${BOOTSTRAP_GATEWAY_PORT}:80"',
+    '":80"',
     "BOOTSTRAP_MODE=account",
     'BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"',
     'gateway_base_url = os.environ["BOOTSTRAP_GATEWAY_BASE_URL"]',
@@ -259,13 +326,37 @@ ENV_OPTIONAL_VALUE_OPTIONS = frozenset(
     {"--block-signal", "--default-signal", "--ignore-signal"}
 )
 # This bootstrap boundary intentionally does not interpret general command
-# launchers. The canonical workflow needs none of these, so reject them instead
-# of trying to prove what command their options or evaluated input will execute.
+# launchers. Except for the exact-token-validated account bootstrap below, the
+# canonical workflow needs none of these, so reject this bounded set of common
+# shells, interpreters, and wrappers instead of trying to prove what their
+# options or evaluated input will execute. This is not an enumeration of every
+# executable capable of indirect command execution.
+# ``command`` is deliberately absent: its bounded resolver below continues to
+# the actual executable, so both direct kubectl and shell-wrapper targets remain
+# covered without treating ordinary ``command printf`` as an indirection.
 UNSAFE_BOOTSTRAP_EXECUTABLES = frozenset(
     {
+        "ash",
         "bash",
+        "busybox",
+        "csh",
+        "dash",
+        "fish",
+        "ksh",
+        "ksh93",
+        "mksh",
+        "node",
+        "perl",
+        "php",
+        "python",
+        "python3",
+        "ruby",
         "sh",
+        "tcsh",
+        "time",
         "xargs",
+        "yash",
+        "zsh",
         "exec",
         "eval",
         "builtin",
@@ -277,14 +368,22 @@ UNSAFE_BOOTSTRAP_EXECUTABLES = frozenset(
         "ionice",
     }
 )
+SHELL_TEST_EXECUTABLES = frozenset({"[", "[["})
 KUBECTL_VALUE_FLAGS = frozenset(
     {
         "-n",
         "--namespace",
+        "-s",
+        "--as-uid",
         "--context",
         "--cluster",
         "--user",
         "--kubeconfig",
+        "--kuberc",
+        "--log-flush-frequency",
+        "--password",
+        "--profile",
+        "--profile-output",
         "--request-timeout",
         "--server",
         "--as",
@@ -295,6 +394,11 @@ KUBECTL_VALUE_FLAGS = frozenset(
         "--client-key",
         "--tls-server-name",
         "--cache-dir",
+        "--username",
+        "-v",
+        "--v",
+        "--vmodule",
+        "--field-manager",
         "--dry-run",
         "-f",
         "--filename",
@@ -302,10 +406,30 @@ KUBECTL_VALUE_FLAGS = frozenset(
         "--output",
     }
 )
+KUBECTL_FLAG_OPTIONS = frozenset(
+    {
+        "--disable-compression",
+        "--insecure-skip-tls-verify",
+        "--match-server-version",
+        "--warnings-as-errors",
+    }
+)
 KUBECTL_MANIFEST_STDIN_FILENAMES = frozenset(
     {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}
 )
 YAML_DOCUMENT_SEPARATOR = re.compile(r"^---[ \t]*(?:#.*)?$", re.MULTILINE)
+_LITERAL_SHELL_MARKERS = tuple("$`*?[]<>~{}")
+_LITERAL_SHELL_MARKER_CODES = {
+    marker: chr(0xE000 + index)
+    for index, marker in enumerate(_LITERAL_SHELL_MARKERS)
+}
+_SHELL_MARKER_BY_CODE = {
+    code: marker for marker, code in _LITERAL_SHELL_MARKER_CODES.items()
+}
+SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<", "<>", "<&"})
+SHELL_REDIRECTION_TOKENS = SHELL_INPUT_REDIRECTION_TOKENS | frozenset(
+    {">", ">>", ">&", ">|"}
+)
 
 
 @dataclass(frozen=True)
@@ -315,6 +439,27 @@ class WorkflowRunSource:
     source: str
     summary_reachable: bool = False
     resolved_helper_path: Path | None = None
+
+
+class _ShellToken(str):
+    """A shell token with whether its dynamic-looking text was executable."""
+
+    def __new__(
+        cls, value: str, *, dynamic: bool = False, io_number: int | None = None
+    ):
+        token = super().__new__(cls, value)
+        token.dynamic = dynamic
+        token.io_number = io_number
+        return token
+
+
+class _HeredocBody(str):
+    """A heredoc body carrying whether the delimiter permits expansion."""
+
+    def __new__(cls, value: str, *, expands: bool):
+        body = super().__new__(cls, value)
+        body.expands = expands
+        return body
 
 
 def normalize_script(script: str) -> str:
@@ -327,6 +472,43 @@ def normalize_nonempty_lines(script: str) -> str:
     )
 
 
+def _protect_literal_shell_markers(source: str) -> str:
+    """Hide quoted or escaped expansion punctuation from the shell lexer."""
+
+    result: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for character in source:
+        if escaped:
+            result.append(_LITERAL_SHELL_MARKER_CODES.get(character, character))
+            escaped = False
+            continue
+        if character == "\\" and quote != "'":
+            result.append(character)
+            escaped = True
+            continue
+        if quote == "'":
+            result.append(_LITERAL_SHELL_MARKER_CODES.get(character, character))
+            if character == "'":
+                quote = None
+            continue
+        if quote == '"':
+            if character == '"':
+                quote = None
+            result.append(
+                character
+                if character in "$`\""
+                else _LITERAL_SHELL_MARKER_CODES.get(character, character)
+            )
+            continue
+        if character in "'\"":
+            quote = character
+            result.append(character)
+            continue
+        result.append(character)
+    return "".join(result)
+
+
 def _heredoc_delimiter(opener: re.Match[str]) -> str:
     token = opener["delimiter"]
     if token.startswith("'") and token.endswith("'"):
@@ -336,16 +518,162 @@ def _heredoc_delimiter(opener: re.Match[str]) -> str:
     return re.sub(r"\\(.)", r"\1", token)
 
 
+def _remove_shell_escaped_newlines(
+    source: str, *, heredoc_body: bool = False
+) -> str:
+    """Model Bash's removal of unquoted backslash-newline pairs."""
+
+    result: list[str] = []
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if escaped:
+            result.append(character)
+            escaped = False
+            index += 1
+            continue
+        if not heredoc_body and (
+            (quote is None and character in "'\"")
+            or (quote is not None and character == quote)
+        ):
+            quote = None if quote == character else character
+            result.append(character)
+            index += 1
+            continue
+        if character == "\\" and (heredoc_body or quote != "'"):
+            slash_start = index
+            while index < len(source) and source[index] == "\\":
+                index += 1
+            slash_count = index - slash_start
+            if index < len(source) and source[index] == "\n" and slash_count % 2:
+                result.extend("\\" * (slash_count - 1))
+                index += 1
+                continue
+            if (
+                index + 1 < len(source)
+                and source[index] == "\r"
+                and source[index + 1] == "\n"
+                and slash_count % 2
+            ):
+                result.extend("\\" * (slash_count - 1))
+                index += 2
+                continue
+            result.extend("\\" * slash_count)
+            escaped = bool(slash_count % 2)
+            continue
+        result.append(character)
+        index += 1
+    return "".join(result)
+
+
+def _shell_input_redirection_fds(source: str) -> list[int]:
+    """Return IO numbers for input redirections in source order."""
+    protected_source = _protect_literal_shell_markers(
+        _strip_shell_comments(source)
+    )
+    return [
+        -1 if match["brace_io"] else int(match["io_number"] or 0)
+        for match in SHELL_INPUT_REDIRECTION.finditer(protected_source)
+    ]
+
+
 def _shell_tokens(source: str, source_label: str = "shell source") -> list[str]:
+    protected_source = _protect_literal_shell_markers(
+        _strip_shell_comments(source)
+    )
     lexer = shlex.shlex(
-        _strip_shell_comments(source), posix=True, punctuation_chars=";&|<>"
+        protected_source, posix=True, punctuation_chars=";&|<>"
     )
     lexer.commenters = ""
     lexer.whitespace_split = True
     try:
-        return [token for token in lexer if token not in {"\n", "\r\n"}]
+        tokens: list[str] = []
+        input_redirection_fds = _shell_input_redirection_fds(source)
+        input_redirection_index = 0
+        lexed_tokens = list(lexer)
+        for token_index, token in enumerate(lexed_tokens):
+            if token in {"\n", "\r\n"}:
+                continue
+            dynamic = _shell_word_is_dynamic(token)
+            restored = "".join(
+                _SHELL_MARKER_BY_CODE.get(character, character)
+                for character in token
+            )
+            io_number = None
+            if token in SHELL_INPUT_REDIRECTION_TOKENS:
+                process_word = (
+                    lexed_tokens[token_index + 1]
+                    if token == "<" and token_index + 1 < len(lexed_tokens)
+                    else None
+                )
+                if not (token == "<" and str(process_word).startswith("(")):
+                    if input_redirection_index >= len(input_redirection_fds):
+                        raise AssertionError(
+                            f"{source_label} input redirection metadata is ambiguous"
+                        )
+                    io_number = input_redirection_fds[input_redirection_index]
+                    input_redirection_index += 1
+            tokens.append(
+                _ShellToken(restored, dynamic=dynamic, io_number=io_number)
+            )
+        if input_redirection_index != len(input_redirection_fds):
+            raise AssertionError(
+                f"{source_label} input redirection metadata is ambiguous"
+            )
+        return tokens
     except ValueError as error:
         raise AssertionError(f"{source_label} contains invalid shell syntax") from error
+
+
+def _shell_word_is_dynamic(value: str) -> bool:
+    """Return whether a shell word is not provably a literal constant."""
+
+    if isinstance(value, _ShellToken):
+        return value.dynamic
+    return bool(
+        re.search(r"[$`*?\[\]<>]", value)
+        or BASH_BRACE_EXPANSION.search(value)
+        or value.startswith("~")
+    )
+
+
+def _shell_has_executable_substitution(
+    source: str, *, heredoc_body: bool = False
+) -> bool:
+    """Return whether executable shell-substitution syntax occurs in source.
+
+    The bootstrap shell is intentionally not a general Bash parser. Any
+    active command/backtick/process substitution is unsafe in this boundary,
+    so detecting the opener is sufficient and malformed or nested syntax is
+    fail-closed rather than recursively balanced.
+    """
+
+    if heredoc_body:
+        # Here-doc quotes are literal; only backslashes can quote these
+        # expansion markers. The repeated-pair prefix permits an even number
+        # of backslashes to leave the marker executable.
+        source = _remove_shell_escaped_newlines(source, heredoc_body=True)
+        return re.search(
+            r"(?<!\\)(?:\\\\)*(?:`|\$\()", source
+        ) is not None
+    source = _remove_shell_escaped_newlines(
+        _strip_shell_comments(source)
+    )
+    protected_source = _protect_literal_shell_markers(source)
+    quoted_delimiter_ranges = [
+        opener.span("delimiter")
+        for opener in HEREDOC_OPEN.finditer(protected_source)
+        if any(quoted in opener["delimiter"] for quoted in "'\"\\")
+    ]
+    return any(
+        not any(
+            start <= match.start() < end
+            for start, end in quoted_delimiter_ranges
+        )
+        for match in re.finditer(r"`|\$\(|<\(|>\(", protected_source)
+    )
 
 
 def _strip_shell_comments(source: str) -> str:
@@ -361,13 +689,13 @@ def _strip_shell_comments(source: str) -> str:
         if escaped:
             result.append(character)
             escaped = False
-            word_started = True
+            if character not in "\r\n":
+                word_started = True
             index += 1
             continue
         if character == "\\" and quote != "'":
             result.append(character)
             escaped = True
-            word_started = True
             index += 1
             continue
         if quote is not None:
@@ -420,7 +748,8 @@ def _shell_line_state(
     for character in line:
         if escaped:
             escaped = False
-            word_started = True
+            if character not in "\r\n":
+                word_started = True
             continue
         if character == "\\" and quote != "'":
             escaped = True
@@ -447,6 +776,52 @@ def _shell_line_continues(line: str, source_label: str = "shell source") -> bool
     return _shell_line_state(line, source_label=source_label)[0]
 
 
+def _stdin_redirection_events(command_tokens: list[str]) -> list[tuple[int, str]]:
+    """Return stdin-affecting redirections in source order.
+
+    The shell applies redirections from left to right. Process substitutions
+    use the same punctuation as ``<``/``>`` but are words, not stdin
+    redirections, so they are explicitly skipped here.
+    """
+
+    events: list[tuple[int, str]] = []
+    index = 0
+    while index < len(command_tokens):
+        token = command_tokens[index]
+        if token not in SHELL_INPUT_REDIRECTION_TOKENS:
+            index += 1
+            continue
+        process_word = command_tokens[index + 1] if index + 1 < len(command_tokens) else ""
+        if token == "<" and (
+            process_word == "(" or process_word.startswith("(")
+        ):
+            index += 1
+            continue
+        if index + 1 >= len(command_tokens):
+            events.append((index, "unknown"))
+            break
+        if getattr(token, "io_number", 0) != 0:
+            index += 2
+            continue
+        events.append((index, "heredoc" if token == "<<" else "other"))
+        index += 2
+    return events
+
+
+def _command_heredoc_openers(command_tokens: list[str]) -> list[int]:
+    return [
+        index
+        for index, kind in _stdin_redirection_events(command_tokens)
+        if kind == "heredoc"
+    ]
+
+
+def _pipeline_command_accepts_upstream_stdin(command_tokens: list[str]) -> bool:
+    """Whether a pipeline command leaves stdin available to its upstream pipe."""
+
+    return not _stdin_redirection_events(command_tokens)
+
+
 def _heredoc_specs(
     command: str, source_label: str = "shell source"
 ) -> list[tuple[str, bool, bool]]:
@@ -468,23 +843,51 @@ def _heredoc_specs(
                 pipeline_start = index + 1
         pipeline_ranges.append((pipeline_start, end))
         for pipeline_index, (command_start, command_end) in enumerate(pipeline_ranges):
+            command_tokens = tokens[command_start:command_end]
             openers = [
-                index
-                for index in range(command_start, command_end)
-                if tokens[index] == "<<" and index + 1 < command_end
+                command_start + index
+                for index in _command_heredoc_openers(command_tokens)
             ]
             if not openers:
                 continue
-            downstream = pipeline_ranges[pipeline_index:]
-            feeds_manifest_stdin[openers[-1]] = any(
-                arguments is not None and _kubectl_reads_manifest_stdin(arguments)
-                for downstream_start, downstream_end in downstream
+            final_stdin_event = _stdin_redirection_events(command_tokens)[-1]
+            final_opener = (
+                command_start + final_stdin_event[0]
+                if final_stdin_event[1] == "heredoc"
+                else None
+            )
+            if final_opener is None:
+                for opener in openers:
+                    feeds_manifest_stdin[opener] = False
+                continue
+
+            command_arguments = _kubectl_arguments(command_tokens)
+            command_reads_stdin = (
+                command_arguments is not None
+                and _kubectl_reads_manifest_stdin(command_arguments)
+            )
+            downstream_reads_stdin = any(
+                arguments is not None
+                and _kubectl_reads_manifest_stdin(arguments)
+                and (
+                    downstream_index == pipeline_index
+                    or _pipeline_command_accepts_upstream_stdin(
+                        tokens[downstream_start:downstream_end]
+                    )
+                )
+                for downstream_index, (downstream_start, downstream_end) in enumerate(
+                    pipeline_ranges[pipeline_index:], start=pipeline_index
+                )
                 for arguments in (
                     _kubectl_arguments(tokens[downstream_start:downstream_end]),
                 )
             )
-            for opener in openers[:-1]:
-                feeds_manifest_stdin[opener] = False
+            feeds_manifest_stdin[final_opener] = (
+                command_reads_stdin or downstream_reads_stdin
+            )
+            for opener in openers:
+                if opener != final_opener:
+                    feeds_manifest_stdin[opener] = False
 
     result: list[tuple[str, bool, bool]] = []
     for index, token in enumerate(tokens):
@@ -500,6 +903,22 @@ def _heredoc_specs(
             )
         )
     return result
+
+
+def _heredoc_expansion_flags(
+    command: str, expected_count: int, source_label: str
+) -> list[bool]:
+    """Return whether each heredoc delimiter leaves body expansion enabled."""
+    protected_command = _protect_literal_shell_markers(
+        _strip_shell_comments(command)
+    )
+    flags = [
+        not any(quoted in opener["delimiter"] for quoted in "'\"\\")
+        for opener in HEREDOC_OPEN.finditer(protected_command)
+    ]
+    if len(flags) != expected_count:
+        raise AssertionError(f"{source_label} heredoc metadata is ambiguous")
+    return flags
 
 
 def _shell_statements(
@@ -525,8 +944,13 @@ def _shell_statements(
             yield command, []
             continue
         index = command_end + 1
+        expansion_flags = _heredoc_expansion_flags(
+            command, len(heredocs), source_label
+        )
         bodies: list[tuple[str, bool]] = []
-        for delimiter, strip_tabs, feeds_manifest_stdin in heredocs:
+        for body_index, (delimiter, strip_tabs, feeds_manifest_stdin) in enumerate(
+            heredocs
+        ):
             body_start = index
             while index < len(lines):
                 candidate = lines[index].lstrip("\t") if strip_tabs else lines[index]
@@ -534,7 +958,15 @@ def _shell_statements(
                     body_lines = lines[body_start:index]
                     if strip_tabs:
                         body_lines = [line.lstrip("\t") for line in body_lines]
-                    bodies.append(("\n".join(body_lines), feeds_manifest_stdin))
+                    bodies.append(
+                        (
+                            _HeredocBody(
+                                "\n".join(body_lines),
+                                expands=expansion_flags[body_index],
+                            ),
+                            feeds_manifest_stdin,
+                        )
+                    )
                     break
                 index += 1
             else:
@@ -565,8 +997,13 @@ def _assert_parsable_shell(source: str, source_label: str = "shell source") -> N
 
 def _shell_command_groups(tokens: list[str]) -> Iterable[list[str]]:
     start = 0
+    test_depth = 0
     for index, token in enumerate(tokens):
-        if token in SHELL_CONTROL_OPERATORS:
+        if token == "[[":
+            test_depth += 1
+        elif token == "]]":
+            test_depth = max(0, test_depth - 1)
+        elif token in SHELL_CONTROL_OPERATORS and test_depth == 0:
             if start < index:
                 yield tokens[start:index]
             start = index + 1
@@ -663,8 +1100,13 @@ def _case_aware_command_groups(
 
 def _pipeline_commands(tokens: list[str]) -> Iterable[list[str]]:
     start = 0
+    test_depth = 0
     for index, token in enumerate(tokens):
-        if token == "|":
+        if token == "[[":
+            test_depth += 1
+        elif token == "]]":
+            test_depth = max(0, test_depth - 1)
+        elif token == "|" and test_depth == 0:
             if start < index:
                 yield tokens[start:index]
             start = index + 1
@@ -792,6 +1234,19 @@ def _effective_executable_index(command: list[str]) -> int | None:
     index = 0
     while index < len(command):
         token = command[index]
+        if token in SHELL_REDIRECTION_TOKENS:
+            index += 2
+            continue
+        if (
+            index + 1 < len(command)
+            and (
+                token.isdigit()
+                or re.fullmatch(r"\{[A-Za-z_][A-Za-z0-9_]*\}", token)
+            )
+            and command[index + 1] in SHELL_REDIRECTION_TOKENS
+        ):
+            index += 3
+            continue
         if token in SHELL_COMMAND_PREFIXES or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token):
             index += 1
             continue
@@ -869,6 +1324,8 @@ def _next_kubectl_positional(
                 if index + 1 >= len(arguments):
                     raise AssertionError(f"kubectl option {token!r} requires a value")
                 index += 2
+            elif option in KUBECTL_FLAG_OPTIONS:
+                index += 1
             else:
                 if reject_unknown_options:
                     raise AssertionError(f"unsupported kubectl option syntax: {token!r}")
@@ -880,17 +1337,27 @@ def _next_kubectl_positional(
 
 def _kubectl_creates_secret(arguments: list[str]) -> bool:
     verb = _next_kubectl_positional(arguments, reject_unknown_options=True)
-    if verb is None or verb[0] != "create":
+    if verb is None:
+        return False
+    if _shell_word_is_dynamic(verb[0]):
+        return True
+    if verb[0] != "create":
         return False
     resource = _next_kubectl_positional(
         arguments, verb[1] + 1, reject_unknown_options=True
     )
-    return resource is not None and resource[0] == "secret"
+    return resource is not None and (
+        _shell_word_is_dynamic(resource[0]) or resource[0] == "secret"
+    )
 
 
 def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
     verb = _next_kubectl_positional(arguments, reject_unknown_options=True)
-    if verb is None or verb[0] not in {"apply", "create", "replace"}:
+    if verb is None:
+        return False
+    if _shell_word_is_dynamic(verb[0]):
+        return True
+    if verb[0] not in {"apply", "create", "replace"}:
         return False
     values = arguments[verb[1] + 1 :]
     index = 0
@@ -899,29 +1366,64 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
         if token == "--":
             break
         if token in {"-f", "--filename"}:
-            if (
-                index + 1 < len(values)
-                and values[index + 1] in KUBECTL_MANIFEST_STDIN_FILENAMES
-            ):
+            if index + 1 >= len(values):
+                return True
+            filename = values[index + 1]
+            if _shell_word_is_dynamic(filename):
+                return True
+            if filename in KUBECTL_MANIFEST_STDIN_FILENAMES:
                 return True
             # The following token is consumed by this value-taking option. Do
             # not inspect it again as though it were another kubectl option.
             index += 2
             continue
+        filename_option = False
         for prefix in ("-f=", "-f", "--filename="):
-            if (
-                token.startswith(prefix)
-                and token[len(prefix) :] in KUBECTL_MANIFEST_STDIN_FILENAMES
-            ):
+            if not token.startswith(prefix):
+                continue
+            filename = token[len(prefix) :]
+            if not filename or _shell_word_is_dynamic(token):
                 return True
-        if (token.startswith("-f") and len(token) > 2) or token.startswith(
-            "--filename="
-        ):
+            if filename in KUBECTL_MANIFEST_STDIN_FILENAMES:
+                return True
+            index += 1
+            filename_option = True
+            break
+        if filename_option:
+            continue
+        attached_short_value = next(
+            (
+                flag
+                for flag in KUBECTL_VALUE_FLAGS
+                if flag.startswith("-")
+                and not flag.startswith("--")
+                and token.startswith(flag)
+                and len(token) > len(flag)
+            ),
+            None,
+        )
+        if attached_short_value is not None:
+            index += 1
+            continue
+        option = token.split("=", 1)[0]
+        if option in KUBECTL_VALUE_FLAGS and "=" in token:
+            if not token.split("=", 1)[1]:
+                return True
             index += 1
             continue
         if token in KUBECTL_VALUE_FLAGS:
+            if index + 1 >= len(values):
+                return True
             index += 2
             continue
+        if option in KUBECTL_FLAG_OPTIONS:
+            index += 1
+            continue
+        if token.startswith("-"):
+            # A bounded option set cannot prove whether an unknown option
+            # consumes the following -f. Treat the command as a potential
+            # stdin consumer instead of allowing a Secret heredoc through.
+            return True
         index += 1
     return False
 
@@ -962,16 +1464,32 @@ def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
         "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
     )
     case_depth = 0
-    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+    for statement, bodies in _shell_statements(bootstrap_manifest, source_label):
+        if _shell_has_executable_substitution(statement):
+            return True
+        if any(
+            getattr(body, "expands", True)
+            and _shell_has_executable_substitution(body, heredoc_body=True)
+            for body, _feeds_manifest_stdin in bodies
+        ):
+            return True
         groups, case_depth = _case_aware_command_groups(
             _shell_tokens(statement, source_label), case_depth
         )
         for group in groups:
             for command in _pipeline_commands(group):
                 executable_index = _effective_executable_index(command)
-                if executable_index is not None and command[
-                    executable_index
-                ].rsplit("/", 1)[-1] in UNSAFE_BOOTSTRAP_EXECUTABLES:
+                canonical_account_bootstrap = command == list(
+                    BOOTSTRAP_ACCOUNT_COMMAND_TOKENS[:-2]
+                )
+                if executable_index is not None and (
+                    (
+                        command[executable_index] not in SHELL_TEST_EXECUTABLES
+                        and _shell_word_is_dynamic(command[executable_index])
+                    )
+                    or command[executable_index].rsplit("/", 1)[-1]
+                    in UNSAFE_BOOTSTRAP_EXECUTABLES
+                ) and not canonical_account_bootstrap:
                     return True
                 arguments = _kubectl_arguments(command)
                 if arguments is not None and _kubectl_creates_secret(arguments):
@@ -996,12 +1514,12 @@ def shell_group_tokens(line: str) -> list[str]:
         character = line[index]
         if escaped:
             escaped = False
-            word_started = True
+            if character not in "\r\n":
+                word_started = True
             index += 1
             continue
         if character == "\\" and quote != "'":
             escaped = True
-            word_started = True
             index += 1
             continue
         if quote is not None:
@@ -1717,6 +2235,105 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
     )
 
 
+def _validate_dynamic_port_forward_command(bootstrap_manifest: str) -> None:
+    """Require an ephemeral local port and the canonical loopback target."""
+
+    source_label = (
+        "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
+    )
+    expected = list(BOOTSTRAP_PORT_FORWARD_COMMAND_TOKENS)
+    matches: list[list[str]] = []
+    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+        tokens = _shell_tokens(statement, source_label)
+        for group in _shell_command_groups(tokens):
+            for command in _pipeline_commands(group):
+                if command[: len(expected)] == expected:
+                    matches.append(command)
+    if len(matches) != 1:
+        raise AssertionError(
+            "dev-demo bootstrap must use exactly one dynamic loopback "
+            "port-forward to service/spring-cloud-gateway"
+        )
+    if normalize_script(BOOTSTRAP_PORT_FORWARD_RESET_SEQUENCE) not in normalize_script(
+        bootstrap_manifest
+    ):
+        raise AssertionError(
+            "dev-demo bootstrap must clear the dynamic port before port-forward"
+        )
+
+
+def _validate_dynamic_port_forward_listener(bootstrap_manifest: str) -> None:
+    """Require the exact executable shape of the canonical listener wait."""
+
+    source_label = (
+        "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
+    )
+
+    def executable_records(source: str) -> list[tuple[list[str], int]]:
+        records: list[tuple[list[str], int]] = []
+        nesting = 0
+        for statement, _ in _shell_statements(source, source_label):
+            tokens = _shell_tokens(statement, source_label)
+            if not tokens:
+                continue
+            records.append((tokens, nesting))
+            nesting += _shell_compound_nesting_delta(statement, tokens)
+            if nesting < 0:
+                raise AssertionError("unsupported shell compound nesting")
+        return records
+
+    records = executable_records(bootstrap_manifest)
+
+    function_opener = _shell_tokens(
+        "wait_for_bootstrap_port_forward() {", source_label
+    )
+    function_name = "wait_for_bootstrap_port_forward"
+    function_definitions = [
+        index
+        for index, (tokens, _) in enumerate(records)
+        if (
+            tokens
+            and tokens[0].removesuffix("()") == function_name
+            and "{" in tokens[1:]
+        )
+        or (
+            len(tokens) >= 2
+            and tokens[0] == "function"
+            and tokens[1].removesuffix("()") == function_name
+        )
+    ]
+    function_starts = [
+        index
+        for index, (tokens, depth) in enumerate(records)
+        if tokens == function_opener and depth == 0
+    ]
+    if len(function_starts) != 1 or function_definitions != function_starts:
+        raise AssertionError(
+            "dev-demo bootstrap must define exactly one canonical port-forward "
+            "listener wait function"
+        )
+    function_start = function_starts[0]
+    function_end = next(
+        (
+            index
+            for index in range(function_start + 1, len(records))
+            if records[index] == (["}"], 1)
+        ),
+        None,
+    )
+    if function_end is None:
+        raise AssertionError(
+            "dev-demo bootstrap port-forward listener wait function is unterminated"
+        )
+    function_records = records[function_start : function_end + 1]
+    canonical_records = executable_records(BOOTSTRAP_PORT_FORWARD_WAIT_FUNCTION)
+    if function_records != canonical_records:
+        raise AssertionError(
+            "dev-demo bootstrap must execute the exact canonical dynamic "
+            "port-forward listener wait function"
+        )
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     source_label = (
         "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
@@ -1733,6 +2350,8 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 "dev-demo player bootstrap must use the authenticated Kubernetes "
                 f"port-forward transport; missing: {expected}"
             )
+    _validate_dynamic_port_forward_command(bootstrap_manifest)
+    _validate_dynamic_port_forward_listener(bootstrap_manifest)
     _validate_bootstrap_readiness_gate(bootstrap_manifest)
     expected_authorization_tokens = _shell_tokens(
         f"if ! {BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}; then",

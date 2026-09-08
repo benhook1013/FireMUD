@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,8 @@ RECOVERY_JSON_READ_ERRORS = JSON_READ_ERRORS + (ValueError,)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
+HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 15
+HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
 JWT_CUSTODY_MODES = (
     "LEGACY_SECRET_DIAGNOSTIC",
     "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
@@ -6606,7 +6609,8 @@ def write_report(
 
 def secret_keys_lookup_failure(
     secret_name: str, namespace: str, required_keys: set[str]
-) -> str | None:
+) -> tuple[str | None, bool]:
+    """Return a Secret-key issue and whether controller convergence may resolve it."""
     try:
         result = subprocess.run(
             [
@@ -6625,28 +6629,85 @@ def secret_keys_lookup_failure(
             timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
-        return f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}"
+        return (
+            f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            False,
+        )
     if result.returncode != 0:
         stderr = result.stderr.strip()
         if "(NotFound)" in stderr:
-            return f"Missing required Secret in cluster: {namespace}/{secret_name}"
+            return (
+                f"Missing required Secret in cluster: {namespace}/{secret_name}",
+                True,
+            )
         return (
-            f"Secret lookup could not be verified for {namespace}/{secret_name}: "
-            + (stderr or "kubectl returned a non-zero status without stderr")
+            (
+                f"Secret lookup could not be verified for {namespace}/{secret_name}: "
+                + (stderr or "kubectl returned a non-zero status without stderr")
+            ),
+            False,
         )
     try:
         payload = json.loads(result.stdout)
     except (UnicodeError, json.JSONDecodeError):
-        return f"Secret lookup returned malformed JSON for {namespace}/{secret_name}"
-    data = payload.get("data") if isinstance(payload, dict) else None
-    actual_keys = set(data) if isinstance(data, dict) else set()
+        return (
+            f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
+        )
+    if not isinstance(payload, dict):
+        return (
+            f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
+        )
+    data = payload.get("data")
+    if data is not None and not isinstance(data, dict):
+        return (
+            f"Secret lookup returned malformed data for {namespace}/{secret_name}",
+            False,
+        )
+    actual_keys = set(data or {})
     missing_keys = sorted(required_keys - actual_keys)
     if missing_keys:
         return (
-            f"Required Secret {namespace}/{secret_name} is missing keys: "
-            + ", ".join(missing_keys)
+            (
+                f"Required Secret {namespace}/{secret_name} is missing keys: "
+                + ", ".join(missing_keys)
+            ),
+            True,
         )
-    return None
+    return None, False
+
+
+def wait_for_secret_key_requirements(
+    secret_requirements: list[tuple[str, set[str]]], namespace: str
+) -> list[str]:
+    """Bound one controller-projection wait across all required Secrets."""
+    pending = list(secret_requirements)
+    latest_issues: dict[str, str] = {}
+    for attempt in range(HOSTED_BRIDGE_SECRET_READY_ATTEMPTS):
+        retry_pending: list[tuple[str, set[str]]] = []
+        for secret_name, required_keys in pending:
+            issue, retryable = secret_keys_lookup_failure(
+                secret_name, namespace, required_keys
+            )
+            if issue is None:
+                continue
+            if not retryable:
+                return [issue]
+            latest_issues[secret_name] = issue
+            retry_pending.append((secret_name, required_keys))
+        if not retry_pending:
+            return []
+        pending = retry_pending
+        if attempt + 1 < HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+            time.sleep(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS)
+    return [
+        (
+            f"{latest_issues[secret_name]} (still not ready after "
+            f"{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS} attempts)"
+        )
+        for secret_name, _ in pending
+    ]
 
 
 def hosted_bridge_expected_bindings(
@@ -6721,12 +6782,12 @@ def hosted_bridge_preflight(
         secret_requirements.append(
             (f"{release_name}-telnet-tls", {"tls.crt", "tls.key"})
         )
-        for secret_name, required_keys in secret_requirements:
-            issue = secret_keys_lookup_failure(
-                secret_name, namespace, required_keys
+        issues.extend(
+            f"Controller projection: {issue}"
+            for issue in wait_for_secret_key_requirements(
+                secret_requirements, namespace
             )
-            if issue:
-                issues.append(f"Controller projection: {issue}")
+        )
     status, message = bridge_validation_result(issues)
     print(
         json.dumps(

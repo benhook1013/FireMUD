@@ -439,10 +439,70 @@ require_contains "$revalidation_helper_path" '${refusal_reason:-preview eligibil
 workflow_revalidation_invocations="$(grep -Fc -- 'bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh' "$preview_path" || true)"
 # shellcheck disable=SC2016 # Count the literal allocator invocation, not its path assignment.
 allocator_revalidation_invocations="$(grep -Fc -- 'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"' "$allocator_path" || true)"
-if [[ "$workflow_revalidation_invocations" -ne 1 || "$allocator_revalidation_invocations" -ne 1 ]]; then
-  echo "Preview deploy must call the shared revalidation helper at exactly two boundaries" >&2
+if [[ "$workflow_revalidation_invocations" -ne 1 || "$allocator_revalidation_invocations" -ne 2 ]]; then
+  echo "Preview deploy must call the shared revalidation helper once before Helm and twice during capacity allocation" >&2
   exit 1
 fi
+python3 - "$allocator_path" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+invocation = (
+    'if ! bash "$revalidate_deploy_script" "$target_pr_number" '
+    '"$target_head_sha"; then'
+)
+
+
+def validate(candidate: str) -> None:
+    positions = []
+    cursor = 0
+    while True:
+        position = candidate.find(invocation, cursor)
+        if position < 0:
+            break
+        positions.append(position)
+        cursor = position + len(invocation)
+    if len(positions) != 2:
+        raise ValueError("capacity allocation requires exactly two complete target revalidations")
+
+    namespace_snapshot = candidate.index('if ! namespace_rows_output="$(')
+    reclaim_publication = candidate.index("if ! publish_reclaim_state reclaiming; then")
+    victim_snapshot = candidate.index(
+        'if ! current_namespace_json="$(kubectl get namespace "$selected_namespace" -o json)"; then'
+    )
+    destructive_delete = candidate.index('if ! bash "$delete_script" "$selected_namespace"')
+    if not positions[0] < namespace_snapshot:
+        raise ValueError("initial complete revalidation must precede capacity evaluation")
+    if not reclaim_publication < positions[1] < victim_snapshot < destructive_delete:
+        raise ValueError(
+            "second complete revalidation must protect the final victim snapshot and deletion"
+        )
+
+
+validate(source)
+first = source.index(invocation)
+second = source.index(invocation, first + len(invocation))
+mutations = (
+    ("removed initial revalidation", source[:first] + source[first + len(invocation) :]),
+    ("removed pre-delete revalidation", source[:second] + source[second + len(invocation) :]),
+    (
+        "downgraded pre-delete revalidation",
+        source[:second]
+        + invocation.replace(
+            'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"',
+            'get_pr_state "$target_pr_number"',
+        )
+        + source[second + len(invocation) :],
+    ),
+)
+for description, mutation in mutations:
+    try:
+        validate(mutation)
+    except ValueError:
+        continue
+    raise SystemExit(f"preview capacity contract accepted mutation: {description}")
+PY
 if grep -Fq 'def labels_valid:' "$preview_path"; then
   echo "Preview workflow must use the centralized label authority" >&2
   exit 1
@@ -451,6 +511,14 @@ assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
   'Deploy preview release'
 assert_step_contains preview.yml preview-deploy 'Deploy preview release' 'helm upgrade --install'
+require_ordered_sequence "$preview_path" \
+  '      - name: Revalidate preview target labels immediately before helm deploy' \
+  '      - name: Deploy preview release' \
+  '      - name: Smoke hosted preview over TCP' \
+  '      - name: Record reconciled preview target'
+assert_step_contains preview.yml preview-deploy \
+  'Record reconciled preview target' \
+  "steps.deploy-release.outcome == 'success'"
 mutated_preview_path="$CONTRACT_TEMP_DIR/mutated-preview.yml"
 awk '
   $0 == "      - name: Deploy preview release" {
@@ -464,6 +532,60 @@ if assert_step_immediately_followed_by preview.yml preview-deploy \
   echo "preview adjacency contract accepted an unnamed intervening step" >&2
   exit 1
 fi
+python3 - "$preview_path" <<'PY'
+import sys
+from pathlib import Path
+
+workflow_path = Path(sys.argv[1])
+source = workflow_path.read_text(encoding="utf-8")
+
+def validate(candidate: str) -> None:
+    for phase in ("image wait", "deploy"):
+        step_name = f"Cancel if preview target was superseded before {phase}"
+        step_start = candidate.index(f"      - name: {step_name}\n")
+        step_end = candidate.find("\n      - ", step_start + 1)
+        if step_end < 0:
+            step_end = len(candidate)
+        step = candidate[step_start:step_end]
+        required = (
+            "          status=0\n",
+            " || status=$?\n",
+            '          if [ "$status" -ne 0 ]; then\n',
+            '            if [ "$status" -eq 10 ]; then\n',
+            '            exit "$status"\n',
+        )
+        if any(fragment not in step for fragment in required):
+            raise ValueError(
+                f"{step_name} must capture and branch on the helper's exact exit status"
+            )
+        if "if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh" in step:
+            raise ValueError(f"{step_name} must not inspect $? after negating the helper")
+
+    annotation = "      - name: Record reconciled preview target\n"
+    smoke = "      - name: Smoke hosted preview over TCP\n"
+    if candidate.index(annotation) < candidate.index(smoke):
+        raise ValueError("preview target must not be marked reconciled before hosted smoke succeeds")
+
+
+validate(source)
+status_mutation = source.replace(
+    "          status=0\n          bash ./dev-tools/hosted/preview/check-preview-head-current.sh \\\n",
+    "          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \\\n",
+    1,
+)
+annotation = "      - name: Record reconciled preview target\n"
+smoke = "      - name: Smoke hosted preview over TCP\n"
+ordering_mutation = source.replace(annotation, "", 1).replace(smoke, annotation + smoke, 1)
+for description, mutation in (
+    ("negated stale-helper status", status_mutation),
+    ("pre-smoke reconciled annotation", ordering_mutation),
+):
+    try:
+        validate(mutation)
+    except ValueError:
+        continue
+    raise SystemExit(f"preview contract accepted mutation: {description}")
+PY
 # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
 require_contains "$preview_reconciler_path" '--inspect-labels --labels-json "$labels_json"'
 require_contains "$preview_reconciler_path" 'malformed label metadata'

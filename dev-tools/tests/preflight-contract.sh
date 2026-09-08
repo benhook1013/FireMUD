@@ -2211,6 +2211,7 @@ else:
     raise SystemExit("naive timestamp unexpectedly accepted")
 
 original_subprocess_run = module.subprocess.run
+original_sleep = module.time.sleep
 try:
     def not_found_lookup(*args, **kwargs):
         if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
@@ -2283,8 +2284,119 @@ try:
     if os_error_message != expected_os_error:
         raise SystemExit(f"OSError Secret lookup reported incorrectly: {os_error_message}")
 
+    required_bridge_keys = {"tls.crt", "tls.key", "ca.crt"}
+    required_telnet_keys = {"tls.crt", "tls.key"}
+    secret_requirements = [
+        ("pr-123-gateway-internal-ws", required_bridge_keys),
+        ("pr-123-tcp-proxy-bridge", required_bridge_keys),
+        ("pr-123-telnet-tls", required_telnet_keys),
+    ]
+    lookup_attempts = {}
+    sleep_delays = []
+
+    def staged_projection_lookup(*args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("Secret-key lookup did not receive its deployment timeout")
+        command = args[0]
+        secret_name = command[5]
+        lookup_attempts[secret_name] = lookup_attempts.get(secret_name, 0) + 1
+        attempt = lookup_attempts[secret_name]
+        if secret_name == "pr-123-gateway-internal-ws" and attempt == 1:
+            return module.subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                'Error from server (NotFound): secrets "pr-123-gateway-internal-ws" not found',
+            )
+        if secret_name == "pr-123-tcp-proxy-bridge" and attempt == 1:
+            payload = {"data": {"tls.crt": "certificate"}}
+        else:
+            required_keys = dict(secret_requirements)[secret_name]
+            payload = {"data": {key: "value" for key in required_keys}}
+        return module.subprocess.CompletedProcess(
+            command, 0, json.dumps(payload), ""
+        )
+
+    module.subprocess.run = staged_projection_lookup
+    module.time.sleep = sleep_delays.append
+    projection_issues = module.wait_for_secret_key_requirements(
+        secret_requirements, "pr-123"
+    )
+    if projection_issues:
+        raise SystemExit(
+            f"converged controller Secret projections were rejected: {projection_issues}"
+        )
+    expected_attempts = {
+        "pr-123-gateway-internal-ws": 2,
+        "pr-123-tcp-proxy-bridge": 2,
+        "pr-123-telnet-tls": 1,
+    }
+    if lookup_attempts != expected_attempts:
+        raise SystemExit(f"controller Secret retries were incorrect: {lookup_attempts}")
+    if sleep_delays != [module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS]:
+        raise SystemExit(f"controller Secret retry delay was incorrect: {sleep_delays}")
+
+    exhaustion_calls = []
+    exhaustion_delays = []
+
+    def never_ready_projection(*args, **kwargs):
+        exhaustion_calls.append(args[0])
+        return module.subprocess.CompletedProcess(
+            args[0],
+            0,
+            json.dumps({"data": {"tls.crt": "certificate"}}),
+            "",
+        )
+
+    module.subprocess.run = never_ready_projection
+    module.time.sleep = exhaustion_delays.append
+    exhaustion_issues = module.wait_for_secret_key_requirements(
+        [("pr-123-gateway-internal-ws", required_bridge_keys)], "pr-123"
+    )
+    if len(exhaustion_calls) != module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+        raise SystemExit(
+            f"controller Secret exhaustion used {len(exhaustion_calls)} attempts"
+        )
+    expected_exhaustion_delays = [
+        module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+    ] * (module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS - 1)
+    if exhaustion_delays != expected_exhaustion_delays:
+        raise SystemExit(
+            f"controller Secret exhaustion delays were incorrect: {exhaustion_delays}"
+        )
+    if (
+        len(exhaustion_issues) != 1
+        or "missing keys: ca.crt, tls.key" not in exhaustion_issues[0]
+        or "still not ready after" not in exhaustion_issues[0]
+    ):
+        raise SystemExit(
+            f"controller Secret exhaustion was not actionable: {exhaustion_issues}"
+        )
+
+    non_retryable_calls = []
+    non_retryable_delays = []
+
+    def forbidden_projection(*args, **kwargs):
+        non_retryable_calls.append(args[0])
+        return module.subprocess.CompletedProcess(
+            args[0], 1, "", 'Error from server (Forbidden): secrets is forbidden'
+        )
+
+    module.subprocess.run = forbidden_projection
+    module.time.sleep = non_retryable_delays.append
+    forbidden_issues = module.wait_for_secret_key_requirements(
+        [("pr-123-gateway-internal-ws", required_bridge_keys)], "pr-123"
+    )
+    if len(non_retryable_calls) != 1 or non_retryable_delays:
+        raise SystemExit("non-retryable controller Secret failure was retried")
+    if len(forbidden_issues) != 1 or "(Forbidden)" not in forbidden_issues[0]:
+        raise SystemExit(
+            f"non-retryable controller Secret failure was not preserved: {forbidden_issues}"
+        )
+
 finally:
     module.subprocess.run = original_subprocess_run
+    module.time.sleep = original_sleep
 
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):

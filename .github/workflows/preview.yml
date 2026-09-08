@@ -431,10 +431,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
+          status=0
+          bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
             "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}"; then
-            status=$?
+            "${{ needs.preview-plan.outputs.head_sha }}" || status=$?
+          if [ "$status" -ne 0 ]; then
             if [ "$status" -eq 10 ]; then
               echo "Cancelling stale preview run before image wait."
               gh run cancel "${GITHUB_RUN_ID}"
@@ -501,17 +502,6 @@ jobs:
             /tmp/preview-values.yaml
             /tmp/preview-rendered.yaml
 
-      - name: Record reconciled preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" \
-            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
-
       - name: Summarize preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |
@@ -528,10 +518,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
+          status=0
+          bash ./dev-tools/hosted/preview/check-preview-head-current.sh \
             "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}"; then
-            status=$?
+            "${{ needs.preview-plan.outputs.head_sha }}" || status=$?
+          if [ "$status" -ne 0 ]; then
             if [ "$status" -eq 10 ]; then
               echo "Cancelling stale preview run before deploy."
               gh run cancel "${GITHUB_RUN_ID}"
@@ -618,6 +609,17 @@ jobs:
             cat "${SMOKE_TRANSCRIPT}"
             exit 1
           fi
+
+      - name: Record reconciled preview target
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
+        run: |
+          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
 
       - name: Summarize preview access
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}

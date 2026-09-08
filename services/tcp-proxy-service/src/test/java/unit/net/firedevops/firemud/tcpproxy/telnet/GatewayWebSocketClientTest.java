@@ -892,6 +892,33 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void stalledGatewayUpgradeTimesOutAndReleasesGeneration() throws Exception {
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    GatewayWebSocketClient client =
+        newClient("localhost", server.getPort(), caCertificate, registry);
+    HttpClient initialGeneration = (HttpClient) client.clientIdentity();
+    CompletableFuture<WebSocket> connection =
+        client.connect(null, null, null, null, null, null, null, new WebSocket.Listener() {});
+
+    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+    ExecutionException failure =
+        assertThrows(ExecutionException.class, () -> connection.get(5, TimeUnit.SECONDS));
+    assertEquals("timeout", GatewayWebSocketClient.classifyFailure(failure));
+    assertEquals(
+        1.0,
+        registry.counter("tcpproxy.gateway.handshake.failures", "reason", "timeout").count());
+
+    server.enqueue(new MockResponse().setResponseCode(200));
+    assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+    assertTrue(client.reloadNow());
+    awaitTermination(initialGeneration);
+    awaitGenerationCount(client, 1);
+  }
+
+  @Test
   void beanShutdownTerminatesCurrentAndRetiredGenerations() throws Exception {
     GatewayWebSocketClient client =
         new GatewayWebSocketClient(
@@ -961,7 +988,6 @@ class GatewayWebSocketClientTest {
     when(executor.awaitTermination(anyLong(), any(TimeUnit.class)))
         .thenThrow(new InterruptedException("test interruption"));
 
-    Thread.currentThread().interrupt();
     try {
       GatewayWebSocketClient.shutdownExecutor(executor, java.time.Duration.ofMillis(1));
       assertTrue(Thread.currentThread().isInterrupted());

@@ -191,11 +191,14 @@ if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; th
   exit 1
 fi
 
-mapfile -t namespace_rows < <(
+if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
-    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}' \
-    | sed '/^$/d'
-)
+    -o jsonpath='{range .items[*]}{.metadata.creationTimestamp}{"|"}{.metadata.name}{"|"}{.metadata.labels.firemud\.dev/pr-number}{"|"}{.metadata.annotations.firemud\.dev/preview-allocated-at}{"|"}{.metadata.annotations.firemud\.dev/last-preview-head-sha}{"|"}{.metadata.annotations.firemud\.dev/last-preview-image-tag}{"\n"}{end}'
+)"; then
+  echo "Unable to list current preview namespaces; refusing capacity action" >&2
+  exit 1
+fi
+mapfile -t namespace_rows < <(printf '%s\n' "$namespace_rows_output" | sed '/^$/d')
 
 active_count=0
 target_exists=false
@@ -243,9 +246,6 @@ if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" 
   echo "Refusing capacity action for stale target PR #${target_pr_number}" >&2
   exit 1
 fi
-if [[ "$target_exists" == "true" ]]; then
-  exit 0
-fi
 if [[ "$target_is_priority" != "true" ]]; then
   if ! unsatisfied_priority_pr="$(find_unsatisfied_priority_pr)"; then
     echo "Refusing ordinary allocation because priority intent could not be evaluated" >&2
@@ -255,6 +255,9 @@ if [[ "$target_is_priority" != "true" ]]; then
     echo "Yielding ordinary PR #${target_pr_number}: priority PR #${unsatisfied_priority_pr} has no current preview" >&2
     exit 1
   fi
+fi
+if [[ "$target_exists" == "true" ]]; then
+  exit 0
 fi
 if (( active_count < max_active )); then
   exit 0
@@ -370,7 +373,9 @@ fi
 # deletion. The job-level lifecycle lock prevents another managed preview
 # deploy, proof, or cleanup from racing this destructive boundary.
 revalidation_failure=""
-if target_metadata="$(get_pr_state "$target_pr_number")"; then
+if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+  revalidation_failure="target PR #${target_pr_number} complete deploy contract could not be revalidated"
+elif target_metadata="$(get_pr_state "$target_pr_number")"; then
   IFS=$'\t' read -r target_state current_target_head target_is_priority target_is_paused target_labels_valid <<<"$target_metadata"
   if [[ "$target_labels_valid" != valid || "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" || "$target_is_paused" == "true" ]]; then
     revalidation_failure="target PR #${target_pr_number} is no longer the current priority target"

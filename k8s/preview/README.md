@@ -61,14 +61,18 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - seed the preview bootstrap state needed for reviewer proof
 - run hosted smoke against the TCP/Telnet path
 
-The dev-demo credential-bearing account bootstrap runs on the self-hosted runner
+The following bootstrap paragraph describes the fixed `dev-demo` environment, not
+the per-PR `pr-preview` environment. The [`dev-demo.yml`](../../.github/workflows/dev-demo.yml)
+workflow's credential-bearing account bootstrap runs on the self-hosted runner
 through the Kubernetes API: it first fail-closes on
 the namespace-scoped
 `kubectl auth can-i create pods --subresource=portforward -n "${PREVIEW_NAMESPACE}"`, then uses a loopback-only
-`kubectl port-forward --address 127.0.0.1 service/spring-cloud-gateway <port>:80`.
+`kubectl port-forward --address 127.0.0.1 service/spring-cloud-gateway :80`, which asks `kubectl` to allocate a free local port automatically. The workflow parses that selected port from the confirmed loopback-listener line before it sends account credentials.
 Only the non-credential session/world bootstrap remains in the short-lived
 in-cluster pod; that pod receives the account-id ConfigMap only and never a
 credential Secret or credential environment variables. This bounded management hop is separate from the gameplay bridge; management-plane HTTPS/mTLS remains a separate target boundary.
+The per-PR `pr-preview` workflow uses [`preview.yml`](../../.github/workflows/preview.yml)
+and its seeded in-cluster bootstrap path instead.
 
 Current implementation limitations:
 

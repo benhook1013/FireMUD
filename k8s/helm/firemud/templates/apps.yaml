@@ -1,4 +1,5 @@
 {{- if .Values.previewStack.enabled }}
+{{- $preview := $.Values.preview | default (dict) }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
@@ -213,7 +214,7 @@ metadata:
   name: {{ $service.name }}
   {{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
   annotations:
-    firemud.dev/allocated-telnet-port: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" $.Values.preview.telnetPort | quote }}
+    firemud.dev/allocated-telnet-port: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") | quote }}
   {{- end }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}

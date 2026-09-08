@@ -415,9 +415,9 @@ class TelnetSession:
         cursor = 0
         while cursor < len(combined):
             candidates = [
-                (combined.find(pattern[:1], cursor), pattern, replacement)
+                (start, pattern, replacement)
                 for pattern, replacement in patterns
-                if combined.find(pattern[:1], cursor) >= 0
+                if (start := combined.find(pattern[:1], cursor)) >= 0
             ]
             if not candidates:
                 safe.extend(combined[cursor:])

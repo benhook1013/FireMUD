@@ -94,6 +94,58 @@ assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
 assert trust_environment(sys.argv[3]) == "staging"
 PY
 
+for preview_shape in absent null; do
+  INVALID_PREVIEW_VALUES="$TMP_DIR/preview-values-$preview_shape.yaml"
+  cp "$TMP_DIR/preview-values.yaml" "$INVALID_PREVIEW_VALUES"
+  python3 - "$INVALID_PREVIEW_VALUES" "$preview_shape" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+if sys.argv[2] == "absent":
+    values.pop("preview")
+else:
+    values["preview"] = None
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
+  APPS_PREVIEW_ERROR="preview.telnetPort is required for hosted-controller TCP Proxy"
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_PREVIEW_VALUES" \
+    --set previewStack.ingress.enabled=false \
+    --set previewStack.gatewayWsTls.enabled=false \
+    --show-only templates/apps.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-preview-$preview_shape-apps.err"; then
+    echo "apps template rendered hosted-controller TCP Proxy with $preview_shape preview" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$APPS_PREVIEW_ERROR" "$TMP_DIR/invalid-preview-$preview_shape-apps.err"; then
+    echo "apps template did not report the expected $preview_shape preview.telnetPort diagnostic" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-preview-$preview_shape-apps.err" >&2
+    exit 1
+  fi
+
+  CERT_PREVIEW_ERROR="preview.hostname is required when rendering the standalone Telnet TLS Certificate"
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_PREVIEW_VALUES" \
+    --set previewStack.ingress.enabled=false \
+    --set previewStack.gatewayWsTls.enabled=false \
+    --set previewStack.certificateIdentity.mode=standalone \
+    --show-only templates/tcp-proxy-certificate.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
+    echo "standalone Telnet TLS Certificate rendered with $preview_shape preview" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$CERT_PREVIEW_ERROR" "$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
+    echo "certificate template did not report the expected $preview_shape preview.hostname diagnostic" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-preview-$preview_shape-certificate.err" >&2
+    exit 1
+  fi
+done
+
 PREVIEW_PR_NUMBER_ERROR="preview.prNumber is required when Gateway WebSocket TLS is enabled"
 for invalid_pr_number in missing empty; do
   INVALID_PR_VALUES="$TMP_DIR/preview-values-pr-number-$invalid_pr_number.yaml"
@@ -335,12 +387,16 @@ with mock.patch.object(
         stderr="",
     ),
 ):
-    missing_key_issue = module.secret_keys_lookup_failure(
+    missing_key_issue, missing_key_retryable = module.secret_keys_lookup_failure(
         "pr-123-tcp-proxy-bridge",
         "pr-123",
         {"tls.crt", "tls.key", "ca.crt"},
     )
-if missing_key_issue is None or "missing keys: ca.crt" not in missing_key_issue:
+if (
+    missing_key_issue is None
+    or "missing keys: ca.crt" not in missing_key_issue
+    or missing_key_retryable is not True
+):
     raise SystemExit("operator preflight accepted an incomplete controller-projected Secret")
 
 operator_secret_lookups = []
@@ -348,7 +404,7 @@ operator_secret_lookups = []
 
 def record_operator_secret_lookup(secret_name, namespace, required_keys):
     operator_secret_lookups.append((secret_name, namespace, required_keys))
-    return None
+    return None, False
 
 
 with mock.patch.object(
@@ -439,7 +495,7 @@ forged_operator_lookups = []
 
 def record_forged_operator_lookup(secret_name, namespace, required_keys):
     forged_operator_lookups.append((secret_name, namespace, required_keys))
-    return None
+    return None, False
 
 
 with mock.patch.object(

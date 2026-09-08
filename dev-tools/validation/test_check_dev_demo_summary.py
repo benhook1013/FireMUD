@@ -660,12 +660,31 @@ RESOURCES"""
             "exec kubectl create secret generic unrelated-resource",
             "eval 'kubectl create secret generic unrelated-resource'",
             "builtin command kubectl create secret generic unrelated-resource",
+            "command dash -c 'kubectl create secret generic unrelated-resource'",
             "nohup kubectl create secret generic unrelated-resource",
             "nice kubectl create secret generic unrelated-resource",
             "setsid kubectl create secret generic unrelated-resource",
             "chroot / kubectl create secret generic unrelated-resource",
             "stdbuf -oL kubectl create secret generic unrelated-resource",
             "ionice -c2 kubectl create secret generic unrelated-resource",
+            "ash -c 'kubectl create secret generic unrelated-resource'",
+            "busybox sh -c 'kubectl create secret generic unrelated-resource'",
+            "csh -c 'kubectl create secret generic unrelated-resource'",
+            "dash -c 'kubectl create secret generic unrelated-resource'",
+            "fish -c 'kubectl create secret generic unrelated-resource'",
+            "ksh -c 'kubectl create secret generic unrelated-resource'",
+            "ksh93 -c 'kubectl create secret generic unrelated-resource'",
+            "mksh -c 'kubectl create secret generic unrelated-resource'",
+            "node -e 'require(\"child_process\").execSync(\"kubectl create secret generic hidden\")'",
+            "perl -e 'system \"kubectl create secret generic hidden\"'",
+            "php -r 'system(\"kubectl create secret generic hidden\");'",
+            "python -c '__import__(\"os\").system(\"kubectl create secret generic hidden\")'",
+            "python3 -c '__import__(\"os\").system(\"kubectl create secret generic hidden\")'",
+            "ruby -e 'system \"kubectl create secret generic hidden\"'",
+            "tcsh -c 'kubectl create secret generic unrelated-resource'",
+            "time kubectl create secret generic unrelated-resource",
+            "yash -c 'kubectl create secret generic unrelated-resource'",
+            "zsh -c 'kubectl create secret generic unrelated-resource'",
             "env -u FOO nohup kubectl create secret generic unrelated-resource",
             "sudo -n nice kubectl create secret generic unrelated-resource",
             "timeout 30s setsid kubectl create secret generic unrelated-resource",
@@ -685,6 +704,33 @@ RESOURCES"""
                     ):
                         self.validator.validate_workflow(root)
 
+    def test_bootstrap_launcher_guard_exempts_only_canonical_python3_account_command(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        account_statement = self._bootstrap_account_statement(bootstrap_manifest)
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(account_statement)
+        )
+
+        alterations = (
+            account_statement.replace(
+                'python3 "${BOOTSTRAP_SCRIPT}"',
+                "python3 -c 'print(1)'",
+                1,
+            ),
+            account_statement.replace(
+                'python3 "${BOOTSTRAP_SCRIPT}"',
+                "python3 /tmp/alternate.py",
+                1,
+            ),
+        )
+        for altered_statement in alterations:
+            with self.subTest(altered_statement=altered_statement):
+                self.assertTrue(
+                    self.validator._bootstrap_creates_secret(altered_statement)
+                )
+
     def test_validate_workflow_accepts_safe_ordinary_commands(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture() + r"""
 printf '%s\n' 'safe summary'
@@ -699,6 +745,8 @@ env --chdir sh printf '%s\n' safe
 env --chdir=sh printf '%s\n' safe
 env -u nohup printf '%s\n' safe
 env -C nice printf '%s\n' safe
+command printf '%s\n' safe
+command -p printf '%s\n' safe
 """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -785,6 +833,89 @@ timeout --foreground 5s printf '%s\n' 'safe summary'
 
         self.assertTrue(self.validator._bootstrap_creates_secret(source))
 
+    def test_bootstrap_secret_detection_recurses_through_executable_expansions(self):
+        backslash_newline = "\\" + "\n"
+        secret_sources = (
+            'printf "%s" "$(kubectl create secret generic hidden)"',
+            "printf '%s' `kubectl create secret generic hidden`",
+            "printf '%s' <(kubectl create secret generic hidden)",
+            "echo `echo \\`kubectl create secret generic hidden\\``",
+            "printf '%s' " + "\\" + "\n$(kubectl create secret generic hidden)",
+            f"printf '%s' ${backslash_newline}(kubectl create secret generic hidden)",
+            f"cat <{backslash_newline}(kubectl create secret generic hidden)",
+            f"cat >{backslash_newline}(kubectl create secret generic hidden)",
+            f"# comment{backslash_newline}$(kubectl create secret generic hidden)",
+            f"# '{backslash_newline}$(kubectl create secret generic hidden)",
+            (
+                "# ' quote punctuation in a comment\n"
+                "$(kubectl create secret generic hidden)"
+            ),
+            (
+                "printf '%s' \"$(echo '# comment )'; "
+                "kubectl create secret generic hidden)\""
+            ),
+            (
+                "printf '%s' \"$(printf '%s' \"${value:-x)}\"; "
+                "kubectl create secret generic hidden)\""
+            ),
+        )
+        for source in secret_sources:
+            with self.subTest(source=source):
+                self.assertTrue(self.validator._bootstrap_creates_secret(source))
+
+        literal_sources = (
+            "printf '%s' '$(kubectl create secret generic documentation-only)'",
+            r"printf '%s' \$(kubectl create secret generic documentation-only)",
+            "# $(kubectl create secret generic documentation-only)",
+            f"printf '%s' '${backslash_newline}(kubectl create secret generic documentation-only)'",
+            f"printf '%s' '<{backslash_newline}(kubectl create secret generic documentation-only)'",
+            f"printf '%s' '>{backslash_newline}(kubectl create secret generic documentation-only)'",
+        )
+        for source in literal_sources:
+            with self.subTest(source=source):
+                self.assertFalse(self.validator._bootstrap_creates_secret(source))
+
+    def test_bootstrap_secret_detection_fails_closed_for_dynamic_kubectl_positions(
+        self,
+    ):
+        dynamic_sources = (
+            'kubectl "$verb" secret',
+            'kubectl create "$resource"',
+            'kubectl create se$resource',
+            '"$kubectl" create secret',
+            "k{u..u}bectl create secret",
+            "kubectl cr{e..e}ate secret",
+            "kubectl create s{e..e}cret",
+        )
+        for source in dynamic_sources:
+            with self.subTest(source=source):
+                self.assertTrue(self.validator._bootstrap_creates_secret(source))
+
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(
+                'kubectl create configmap notes --from-literal=message=secret'
+            )
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret("kubectl create '$resource'")
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(r"kubectl create \$resource")
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(
+                "kubectl create 's{e..e}cret'"
+            )
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(
+                r"kubectl create s\{e..e\}cret"
+            )
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret("kubectl create {name}")
+        )
+
     def test_validate_workflow_ignores_secret_commands_in_quotes_and_comments(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         valid_manifest = bootstrap_manifest + r"""
@@ -866,6 +997,55 @@ RESOURCES"""
                     self.validator._kubectl_reads_manifest_stdin(arguments)
                 )
 
+    def test_kubectl_reads_manifest_stdin_fails_closed_for_dynamic_filename_forms(
+        self,
+    ):
+        dynamic_commands = (
+            ["apply", "-f", "$filename"],
+            ["apply", "-f$filename"],
+            ["apply", "-f=$filename"],
+            ["apply", "--filename=$filename"],
+            ["apply", "--filename", "$(printf manifest.yaml)"],
+        )
+        for arguments in dynamic_commands:
+            with self.subTest(arguments=arguments):
+                self.assertTrue(
+                    self.validator._kubectl_reads_manifest_stdin(arguments)
+                )
+
+        self.assertFalse(
+            self.validator._kubectl_reads_manifest_stdin(
+                ["apply", "--field-manager", "manager", "-f", "manifest.yaml"]
+            )
+        )
+        self.assertFalse(
+            self.validator._kubectl_reads_manifest_stdin(
+                self.validator._shell_tokens("apply -f '$filename'")
+            )
+        )
+        self.assertFalse(
+            self.validator._kubectl_reads_manifest_stdin(
+                self.validator._shell_tokens(r"apply -f \$filename")
+            )
+        )
+
+    def test_kubectl_reads_manifest_stdin_consumes_field_manager_value(self):
+        self.assertTrue(
+            self.validator._kubectl_reads_manifest_stdin(
+                ["apply", "--field-manager", "-f", "-f", "/dev/stdin"]
+            )
+        )
+        self.assertTrue(
+            self.validator._kubectl_reads_manifest_stdin(
+                ["apply", "--field-manager=manager", "-f", "/dev/stdin"]
+            )
+        )
+        self.assertFalse(
+            self.validator._kubectl_reads_manifest_stdin(
+                ["apply", "--field-manager", "manager", "-f", "manifest.yaml"]
+            )
+        )
+
     def test_kubectl_reads_manifest_stdin_skips_consumed_option_values(self):
         non_stdin_commands = (
             ["apply", "-f", "--filename", "manifest.yaml"],
@@ -917,6 +1097,34 @@ RESOURCES"""
                     AssertionError, "must not create or mount credential Secret"
                 ):
                     self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_heredoc_from_dynamic_filename(self):
+        invalid_manifest = self._bootstrap_manifest_fixture() + r'''
+kubectl apply -f "$manifest_file" <<'RESOURCES'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+RESOURCES'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_bootstrap_secret_detection_preserves_escaped_newline_comment_boundary(
+        self,
+    ):
+        source = "safe " + "\\" + "\n# comment; kubectl create secret generic hidden"
+        self.assertFalse(self.validator._bootstrap_creates_secret(source))
+        self.assertTrue(
+            self.validator._bootstrap_creates_secret(
+                "safe\\\n#not-a-comment; kubectl create secret generic hidden"
+            )
+        )
 
     def test_validate_workflow_rejects_secret_after_trailing_pipe_continuation(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -1146,6 +1354,166 @@ RESOURCES"""
             self._write_workflow_fixture(root, valid_manifest)
             self.validator.validate_workflow(root)
 
+    def test_bootstrap_secret_detection_respects_later_stdin_redirection(self):
+        secret_body = """apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-resource
+data: {}
+"""
+        overridden = (
+            "kubectl apply -f - <<'RESOURCES' </tmp/manifest.yaml\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertFalse(self.validator._bootstrap_creates_secret(overridden))
+
+        pipeline_overridden = (
+            "cat <<'RESOURCES' | kubectl apply -f - </tmp/manifest.yaml\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(pipeline_overridden)
+        )
+
+        fd_qualified = (
+            "kubectl apply -f - <<'RESOURCES' 3</dev/null\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertTrue(self.validator._bootstrap_creates_secret(fd_qualified))
+
+        explicit_stdin = (
+            "kubectl apply -f - <<'RESOURCES' 0</tmp/manifest.yaml\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertFalse(self.validator._bootstrap_creates_secret(explicit_stdin))
+
+        named_fd = (
+            "kubectl apply -f - <<'RESOURCES' {input_fd}</dev/null\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertTrue(self.validator._bootstrap_creates_secret(named_fd))
+
+        for source in ("cat<file", "cat<>file", "cat<&0"):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.validator._stdin_redirection_events(
+                        self.validator._shell_tokens(source)
+                    ),
+                    [(1, "other")],
+                )
+
+        variable_adjacent = self.validator._shell_tokens("cat ${input_fd}<file")
+        self.assertEqual(
+            self.validator._stdin_redirection_events(variable_adjacent),
+            [(2, "other")],
+        )
+
+        effective_heredoc = (
+            "kubectl apply -f - </tmp/manifest.yaml <<'RESOURCES'\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertTrue(self.validator._bootstrap_creates_secret(effective_heredoc))
+
+        here_string_overrides = (
+            "kubectl apply -f - <<'RESOURCES' <<<harmless\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(here_string_overrides)
+        )
+
+        heredoc_overrides_here_string = (
+            "kubectl apply -f - <<<harmless <<'RESOURCES'\n"
+            f"{secret_body}RESOURCES"
+        )
+        self.assertTrue(
+            self.validator._bootstrap_creates_secret(heredoc_overrides_here_string)
+        )
+
+    def test_bootstrap_secret_detection_scans_only_unquoted_heredoc_expansions(self):
+        backslash_newline = "\\" + "\n"
+        executable_body = (
+            "cat <<RESOURCES\n"
+            "$(kubectl create secret generic hidden)\n"
+            "RESOURCES"
+        )
+        self.assertTrue(self.validator._bootstrap_creates_secret(executable_body))
+
+        escaped_body = (
+            "cat <<RESOURCES\n"
+            "safe "
+            + "\\"
+            + "\n$(kubectl create secret generic hidden)\n"
+            "RESOURCES"
+        )
+        self.assertTrue(self.validator._bootstrap_creates_secret(escaped_body))
+
+        escaped_marker_body = (
+            "cat <<RESOURCES\n"
+            f"${backslash_newline}(kubectl create secret generic hidden)\n"
+            "RESOURCES"
+        )
+        self.assertTrue(
+            self.validator._bootstrap_creates_secret(escaped_marker_body)
+        )
+
+        literal_body = (
+            "cat <<'RESOURCES'\n"
+            "$(kubectl create secret generic documentation-only)\n"
+            "RESOURCES"
+        )
+        self.assertFalse(self.validator._bootstrap_creates_secret(literal_body))
+
+        quoted_escaped_marker_body = (
+            "cat <<'RESOURCES'\n"
+            f"${backslash_newline}(kubectl create secret generic documentation-only)\n"
+            "RESOURCES"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(quoted_escaped_marker_body)
+        )
+
+        escaped_delimiter = (
+            "cat <<RE\\SOURCES\n"
+            "$(kubectl create secret generic documentation-only)\n"
+            "RESOURCES"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(escaped_delimiter)
+        )
+
+        process_substitution_text = (
+            "cat <<RESOURCES\n"
+            "<(kubectl create secret generic documentation-only)\n"
+            "RESOURCES"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(process_substitution_text)
+        )
+
+        quoted_substitution_delimiter = (
+            "cat <<'$(kubectl create secret generic hidden)'\n"
+            "$(kubectl create secret generic documentation-only)\n"
+            "$(kubectl create secret generic hidden)"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(quoted_substitution_delimiter)
+        )
+
+        double_quoted_substitution_delimiter = (
+            'cat <<"$(kubectl create secret generic hidden)"\n'
+            "$(kubectl create secret generic documentation-only)\n"
+            "$(kubectl create secret generic hidden)"
+        )
+        self.assertFalse(
+            self.validator._bootstrap_creates_secret(
+                double_quoted_substitution_delimiter
+            )
+        )
+
+    def test_heredoc_opener_does_not_match_here_string(self):
+        self.assertIsNone(self.validator.HEREDOC_OPEN.search("cat <<<EOF"))
+
     def test_validate_workflow_accepts_image_pull_secret_reference(self):
         bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(
             lambda pod: pod["spec"].update(
@@ -1300,6 +1668,177 @@ RESOURCES"""
                 re.escape(
                     "port-forward transport; missing: --address 127.0.0.1"
                 ),
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_requires_dynamic_parsed_port_forward(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        forwarding_pattern = self.validator.BOOTSTRAP_PORT_FORWARD_FORWARDING_PATTERN
+        parsed_port = self.validator.BOOTSTRAP_PORT_FORWARD_PARSED_PORT
+        port_validation = self.validator.BOOTSTRAP_PORT_FORWARD_PORT_VALIDATION
+        precheck = self.validator.BOOTSTRAP_PORT_FORWARD_PRECHECK
+        postcheck = self.validator.BOOTSTRAP_PORT_FORWARD_POSTCHECK
+        self.assertIn(forwarding_pattern, bootstrap_manifest)
+        self.assertIn(parsed_port, bootstrap_manifest)
+        self.assertIn(port_validation, bootstrap_manifest)
+        self.assertIn(precheck, bootstrap_manifest)
+        self.assertIn(postcheck, bootstrap_manifest)
+        mutations = (
+            bootstrap_manifest.replace(
+                'kubectl -n "${PREVIEW_NAMESPACE}" port-forward',
+                'printf "%s" kubectl -n "${PREVIEW_NAMESPACE}" port-forward',
+                1,
+            ),
+            bootstrap_manifest.replace('":80"', '"18080:80"', 1),
+            bootstrap_manifest.replace(
+                forwarding_pattern,
+                forwarding_pattern.replace(r"\ -\>\ 8080$", r"\ -\>\ 80$"),
+                1,
+            ),
+            bootstrap_manifest.replace(
+                forwarding_pattern,
+                forwarding_pattern.replace(r"\ -\>\ 8080$", r"\ -\>\ [0-9]+$"),
+                1,
+            ),
+            bootstrap_manifest.replace(
+                parsed_port, parsed_port.replace("[2]", "[1]", 1), 1
+            ),
+            bootstrap_manifest.replace(
+                port_validation,
+                port_validation.replace("^[0-9]+$", ".+", 1),
+                1,
+            ),
+            bootstrap_manifest.replace(
+                "BOOTSTRAP_GATEWAY_PORT=\n", "", 1
+            ),
+            bootstrap_manifest.replace(precheck, "", 1),
+            bootstrap_manifest.replace(postcheck, "", 1),
+        )
+        for invalid_manifest in mutations:
+            with self.subTest(invalid_manifest=invalid_manifest), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_workflow_fixture(root, invalid_manifest)
+                with self.assertRaises(AssertionError):
+                    self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_dynamic_listener_comment_decoys(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        mutations = (
+            (
+                self.validator.BOOTSTRAP_PORT_FORWARD_FORWARDING_PATTERN,
+                self.validator.BOOTSTRAP_PORT_FORWARD_FORWARDING_PATTERN.replace(
+                    r"\ -\>\ 8080$", r"\ -\>\ 80$"
+                ),
+            ),
+            (
+                self.validator.BOOTSTRAP_PORT_FORWARD_PARSED_PORT,
+                self.validator.BOOTSTRAP_PORT_FORWARD_PARSED_PORT.replace(
+                    "[2]", "[1]", 1
+                ),
+            ),
+            (
+                self.validator.BOOTSTRAP_PORT_FORWARD_PORT_VALIDATION,
+                self.validator.BOOTSTRAP_PORT_FORWARD_PORT_VALIDATION.replace(
+                    "^[0-9]+$", ".+", 1
+                ),
+            ),
+            (
+                self.validator.BOOTSTRAP_PORT_FORWARD_PRECHECK,
+                self.validator.BOOTSTRAP_PORT_FORWARD_PRECHECK.replace(
+                    "if ! kill -0", "if kill -0", 1
+                ),
+            ),
+            (
+                self.validator.BOOTSTRAP_PORT_FORWARD_POSTCHECK,
+                self.validator.BOOTSTRAP_PORT_FORWARD_POSTCHECK.replace(
+                    "if kill -0", "if ! kill -0", 1
+                ),
+            ),
+        )
+        for canonical, corrupted in mutations:
+            with self.subTest(canonical=canonical):
+                invalid_manifest = (
+                    bootstrap_manifest.replace(canonical, corrupted, 1)
+                    + "\n# "
+                    + canonical
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "must execute the exact canonical dynamic port-forward listener",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_listener_wait_control_flow_bypasses(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        mutations = (
+            (
+                "  local attempt forwarding_line\n",
+                "  local attempt forwarding_line\n  return 0\n",
+            ),
+            (
+                (
+                    '      echo "::error::Dev-demo Gateway port-forward exited before '
+                    'confirming its loopback listener" >&2'
+                ),
+                "      return 0",
+            ),
+            (
+                '    done < "${BOOTSTRAP_PORT_FORWARD_LOG}"',
+                "    done < /dev/null",
+            ),
+        )
+        for canonical, bypass in mutations:
+            with self.subTest(canonical=canonical):
+                self.assertIn(canonical, bootstrap_manifest)
+                invalid_manifest = bootstrap_manifest.replace(canonical, bypass, 1)
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "must execute the exact canonical dynamic port-forward listener",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_listener_wait_redefinition(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        launch = 'BOOTSTRAP_GATEWAY_PORT=\nkubectl -n "${PREVIEW_NAMESPACE}" port-forward'
+        redefinition = (
+            "function wait_for_bootstrap_port_forward { return 0; }\n"
+            + launch
+        )
+        self.assertIn(launch, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(launch, redefinition, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must define exactly one canonical port-forward listener wait function",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_listener_wait_success_on_timeout(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        terminal_failure = (
+            '  echo "::error::Dev-demo Gateway port-forward did not confirm the '
+            'expected loopback listener within the bounded wait" >&2\n'
+            "  return 1\n}"
+        )
+        permissive_timeout = terminal_failure.replace("return 1", "return 0", 1)
+        self.assertIn(terminal_failure, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            terminal_failure, permissive_timeout, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact canonical dynamic port-forward listener",
             ):
                 self.validator.validate_workflow(root)
 

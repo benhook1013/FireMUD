@@ -42,6 +42,9 @@ cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *"get namespaces"* ]]; then
+  if [[ "${FAKE_NAMESPACE_QUERY_FAIL:-false}" == "true" ]]; then
+    exit 1
+  fi
   printf '%b' "${FAKE_NAMESPACE_ROWS:-}"
   exit 0
 fi
@@ -150,13 +153,29 @@ case "$resource" in
       if [[ "${FAKE_TARGET_RAW_QUERY_FAIL:-false}" == true ]]; then
         exit 1
       fi
+      raw_count=0
+      if [[ -f "$FAKE_TARGET_RAW_CALLS" ]]; then
+        raw_count="$(<"$FAKE_TARGET_RAW_CALLS")"
+      fi
+      raw_count=$((raw_count + 1))
+      printf '%s' "$raw_count" > "$FAKE_TARGET_RAW_CALLS"
+      repository="${FAKE_TARGET_REPOSITORY:-example/FireMUD}"
+      base="${FAKE_TARGET_BASE_REF:-develop}"
+      author="${FAKE_TARGET_AUTHOR:-human}"
+      if (( raw_count > 1 )); then
+        case "${FAKE_TARGET_CONTRACT_MUTATION:-}" in
+          repository) repository=other/FireMUD ;;
+          base) base=feature/stack ;;
+          author) author='renovate[bot]' ;;
+        esac
+      fi
       labels_json="$(fake_labels_json "$priority" "$paused" "$labels_valid")"
       jq -cn \
         --arg state "${FAKE_TARGET_STATE:-open}" \
         --arg head "$FAKE_TARGET_HEAD" \
-        --arg repository "${FAKE_TARGET_REPOSITORY:-example/FireMUD}" \
-        --arg base "${FAKE_TARGET_BASE_REF:-develop}" \
-        --arg author "${FAKE_TARGET_AUTHOR:-human}" \
+        --arg repository "$repository" \
+        --arg base "$base" \
+        --arg author "$author" \
         --argjson labels "$labels_json" \
         '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
       exit 0
@@ -332,6 +351,7 @@ export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
+export FAKE_TARGET_RAW_CALLS="$TEMP_DIR/target-raw-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RECONCILER_RUN_LIST_LOG="$TEMP_DIR/reconciler-run-list.log"
@@ -346,12 +366,13 @@ adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"na
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RUN_LIST_LOG" "$FAKE_RECONCILER_DISPATCH_LOG" "$FAKE_REVALIDATE_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_RAW_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RUN_LIST_LOG" "$FAKE_RECONCILER_DISPATCH_LOG" "$FAKE_REVALIDATE_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_PAUSED=false
   export FAKE_TARGET_LABELS_VALID=valid
   export FAKE_TARGET_RAW_QUERY_FAIL=false
+  export FAKE_TARGET_CONTRACT_MUTATION=''
   export FAKE_TARGET_METADATA=''
   export FAKE_TARGET_STATE=open
   export FAKE_TARGET_REPOSITORY=example/FireMUD
@@ -388,6 +409,7 @@ reset_case() {
   export FAKE_RECONCILER_MODE=false
   export FAKE_RECONCILER_PR_ROWS=''
   export FAKE_ACTIVE_PREVIEW_RUN_ID=''
+  export FAKE_NAMESPACE_QUERY_FAIL=false
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   unset PREVIEW_REVALIDATE_DEPLOY_SCRIPT
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
@@ -431,6 +453,17 @@ if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" 2>"$TEMP_DIR/revalidate-fa
 fi
 grep -qx $'900\thead-900' "$FAKE_REVALIDATE_LOG"
 grep -q 'target deploy eligibility could not be revalidated' "$TEMP_DIR/revalidate-failure.stderr"
+test ! -e "$FAKE_DELETE_LOG"
+test ! -e "$FAKE_PUBLISH_LOG"
+test ! -e "$GITHUB_OUTPUT"
+
+reset_case
+export FAKE_NAMESPACE_QUERY_FAIL=true
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" 2>"$TEMP_DIR/namespace-query-failure.stderr"; then
+  echo "capacity allocation continued after namespace enumeration failed" >&2
+  exit 1
+fi
+grep -q 'Unable to list current preview namespaces; refusing capacity action' "$TEMP_DIR/namespace-query-failure.stderr"
 test ! -e "$FAKE_DELETE_LOG"
 test ! -e "$FAKE_PUBLISH_LOG"
 test ! -e "$GITHUB_OUTPUT"
@@ -580,6 +613,21 @@ grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
 grep -qx '101 900 retained' "$FAKE_PUBLISH_LOG"
 grep -qx 'retained' "$FAKE_PUBLISHED_STATE"
 
+for target_contract_mutation in repository base author; do
+  reset_case
+  export FAKE_TARGET_CONTRACT_MUTATION="$target_contract_mutation"
+  if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" 2>"$TEMP_DIR/target-${target_contract_mutation}-race.stderr"; then
+    echo "reclaim proceeded after target ${target_contract_mutation} changed" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
+  grep -qx '101 900 reclaiming' "$FAKE_PUBLISH_LOG"
+  grep -qx '101 900 retained' "$FAKE_PUBLISH_LOG"
+  grep -qx 'retained' "$FAKE_PUBLISHED_STATE"
+  grep -q 'complete deploy contract could not be revalidated' "$TEMP_DIR/target-${target_contract_mutation}-race.stderr"
+  test "$(<"$FAKE_TARGET_RAW_CALLS")" -eq 2
+done
+
 reset_case
 export FAKE_PR_101_GAINS_PRIORITY=true
 if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
@@ -657,7 +705,11 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" 2>"$TEMP_DIR/existing-ordinary-priority.stderr"; then
+  echo "existing ordinary preview did not yield to an unsatisfied priority PR" >&2
+  exit 1
+fi
+grep -q 'Yielding ordinary PR #900: priority PR #901 has no current preview' "$TEMP_DIR/existing-ordinary-priority.stderr"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case

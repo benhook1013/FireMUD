@@ -10,6 +10,8 @@ The checked-in CA and leaf expire at `2027-09-06 13:32:58 UTC`. Regenerate the c
 
 From the repository root, use OpenSSL to create a new one-year fixture set:
 
+Run all shell code blocks in this regeneration procedure in the same interactive shell so that `work_dir` and the `EXIT` trap remain available across blocks.
+
 ```bash
 fixture_dir=services/tcp-proxy-service/src/test/resources/certs
 work_dir="$(mktemp -d)"

@@ -22,7 +22,10 @@ guard = source[function_start:function_end]
 required_guard_fragments = (
     "BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS",
     'kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}"',
-    "'^Forwarding from (127\\.0\\.0\\.1|localhost):18080 -> [0-9]+$'",
+    "while IFS= read -r forwarding_line; do",
+    'if [[ "${forwarding_line}" =~ ^Forwarding\\ from\\ (127\\.0\\.0\\.1|localhost):([0-9]+)\\ -\\>\\ 8080$ ]]; then',
+    'BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"',
+    '[[ -z "${BOOTSTRAP_GATEWAY_PORT}" || ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
     '"${BOOTSTRAP_PORT_FORWARD_LOG}"',
     "sleep 1",
 )
@@ -32,18 +35,77 @@ for fragment in required_guard_fragments:
 
 if guard.count('kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}"') < 2:
     raise SystemExit("dev-demo port-forward readiness guard must recheck its spawned PID after log confirmation")
+if "$((" in guard or "$(" in guard:
+    raise SystemExit("dev-demo port-forward readiness guard must parse its listener without executable substitutions")
 
-port_assignment = source.find("          BOOTSTRAP_GATEWAY_PORT=18080\n", function_end)
+port_assignment = source.find("          BOOTSTRAP_GATEWAY_PORT=\n", function_end)
+dynamic_port_forward = source.find('            ":80"', port_assignment)
+fixed_port_forward = source.find("            \"${BOOTSTRAP_GATEWAY_PORT}:80\"\n", port_assignment)
 spawn_pid = source.find("          BOOTSTRAP_PORT_FORWARD_PID=$!\n", port_assignment)
 guard_call = source.find("          if ! wait_for_bootstrap_port_forward; then\n", spawn_pid)
 credential_bootstrap = source.find("          if ! BOOTSTRAP_MODE=account \\\n", spawn_pid)
-if min(port_assignment, spawn_pid, guard_call, credential_bootstrap) < 0:
-    raise SystemExit("dev-demo workflow must retain the fixed port, spawned PID, readiness call, and account bootstrap")
-if not port_assignment < spawn_pid < guard_call < credential_bootstrap:
+base_url = source.find('BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}"', credential_bootstrap)
+parsed_port = guard.find('BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"')
+if min(port_assignment, dynamic_port_forward, spawn_pid, guard_call, credential_bootstrap, base_url) < 0:
+    raise SystemExit("dev-demo workflow must retain dynamic port allocation, spawned PID, readiness call, and account bootstrap")
+if fixed_port_forward >= 0:
+    raise SystemExit("dev-demo workflow must not bind a fixed local port before readiness parsing")
+if not port_assignment < dynamic_port_forward < spawn_pid < guard_call < credential_bootstrap:
     raise SystemExit("dev-demo workflow must prove its spawned port-forward before account credentials can be sent")
+if parsed_port < 0:
+    raise SystemExit("dev-demo workflow must source the bootstrap port from the confirmed forwarding line")
+parsed_port_absolute = source.find('BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"', function_start)
+if not function_start < parsed_port_absolute < function_end:
+    raise SystemExit("dev-demo workflow must assign the selected port inside the readiness guard")
 if 'cat "${BOOTSTRAP_PORT_FORWARD_LOG}"' in source:
     raise SystemExit("dev-demo workflow must not print the raw port-forward log on credential-bootstrap failure")
 PY
+}
+
+exercise_port_forward_guard() {
+  local workflow="$1"
+  local forwarding_line="$2"
+  local expected_port="$3"
+  local extracted_guard="$FIXTURE_DIR/extracted-port-forward-guard.sh"
+  local port_forward_log="$FIXTURE_DIR/port-forward.log"
+
+  python3 - "$workflow" "$extracted_guard" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+function_start = source.find("          wait_for_bootstrap_port_forward() {\n")
+function_end = source.find("          cleanup_bootstrap_account_id_file() {\n", function_start)
+if function_start < 0 or function_end < 0:
+    raise SystemExit("dev-demo workflow must define the port-forward readiness guard")
+
+indent = "          "
+lines = source[function_start:function_end].splitlines(keepends=True)
+if any(line.strip() and not line.startswith(indent) for line in lines):
+    raise SystemExit("dev-demo port-forward readiness guard has unexpected indentation")
+Path(sys.argv[2]).write_text(
+    "".join(line[len(indent):] if line.strip() else line for line in lines),
+    encoding="utf-8",
+)
+PY
+
+  printf '%s\n' "$forwarding_line" > "$port_forward_log"
+  (
+    # shellcheck disable=SC1090 # Generated from the checked workflow function above.
+    source "$extracted_guard"
+    BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS=1
+    BOOTSTRAP_PORT_FORWARD_LOG="$port_forward_log"
+    BOOTSTRAP_PORT_FORWARD_PID="$BASHPID"
+    BOOTSTRAP_GATEWAY_PORT=
+    if ! wait_for_bootstrap_port_forward; then
+      echo "dev-demo workflow guard rejected a representative kubectl forwarding line" >&2
+      return 1
+    fi
+    if [[ "$BOOTSTRAP_GATEWAY_PORT" != "$expected_port" ]]; then
+      echo "dev-demo workflow guard parsed the wrong dynamic listener port" >&2
+      return 1
+    fi
+  )
 }
 
 check_port_forward_guard "$WORKFLOW"
@@ -58,6 +120,11 @@ fi
 FIXTURE_DIR="$(mktemp -d)"
 trap 'rm -rf "${FIXTURE_DIR}"' EXIT
 
+exercise_port_forward_guard \
+  "$WORKFLOW" \
+  "Forwarding from 127.0.0.1:54321 -> 8080" \
+  "54321"
+
 MISSING_GUARD_FIXTURE="$FIXTURE_DIR/missing-port-forward-guard.yml"
 sed '/^          if ! wait_for_bootstrap_port_forward; then$/,/^          fi$/d' \
   "$WORKFLOW" > "$MISSING_GUARD_FIXTURE"
@@ -66,10 +133,45 @@ if check_port_forward_guard "$MISSING_GUARD_FIXTURE" >/dev/null 2>&1; then
   exit 1
 fi
 
-WRONG_LISTENER_FIXTURE="$FIXTURE_DIR/wrong-port-forward-listener.yml"
-sed 's/localhost):18080/localhost):18081/' "$WORKFLOW" > "$WRONG_LISTENER_FIXTURE"
-if check_port_forward_guard "$WRONG_LISTENER_FIXTURE" >/dev/null 2>&1; then
-  echo "dev-demo workflow contract accepted confirmation for an unrelated local listener" >&2
+WRONG_TARGET_FIXTURE="$FIXTURE_DIR/wrong-port-forward-target.yml"
+python3 - "$WORKFLOW" "$WRONG_TARGET_FIXTURE" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+old = r"\ -\>\ 8080$"
+new = r"\ -\>\ 8081$"
+if source.count(old) != 1:
+    raise SystemExit("expected exactly one bootstrap forwarding target assertion")
+Path(sys.argv[2]).write_text(source.replace(old, new), encoding="utf-8")
+PY
+if check_port_forward_guard "$WRONG_TARGET_FIXTURE" >/dev/null 2>&1; then
+  echo "dev-demo workflow contract accepted confirmation for an unrelated pod target" >&2
+  exit 1
+fi
+
+FIXED_PORT_FIXTURE="$FIXTURE_DIR/fixed-port-forward.yml"
+python3 - "$WORKFLOW" "$FIXED_PORT_FIXTURE" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+old = '            ":80" \\\n'
+new = '            "18080:80" \\\n'
+if source.count(old) != 1:
+    raise SystemExit("expected exactly one dynamic bootstrap port-forward spec")
+Path(sys.argv[2]).write_text(source.replace(old, new), encoding="utf-8")
+PY
+if check_port_forward_guard "$FIXED_PORT_FIXTURE" >/dev/null 2>&1; then
+  echo "dev-demo workflow contract accepted a fixed local port-forward binding" >&2
+  exit 1
+fi
+
+FIXED_BASE_URL_FIXTURE="$FIXTURE_DIR/fixed-base-url-port.yml"
+sed 's/127\.0\.0\.1:${BOOTSTRAP_GATEWAY_PORT}/127.0.0.1:18080/' \
+  "$WORKFLOW" > "$FIXED_BASE_URL_FIXTURE"
+if check_port_forward_guard "$FIXED_BASE_URL_FIXTURE" >/dev/null 2>&1; then
+  echo "dev-demo workflow contract accepted a bootstrap URL detached from the selected port" >&2
   exit 1
 fi
 
