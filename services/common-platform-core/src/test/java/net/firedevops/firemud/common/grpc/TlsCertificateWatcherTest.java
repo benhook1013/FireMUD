@@ -22,8 +22,8 @@ import org.springframework.boot.health.contributor.HealthIndicator;
 
 class TlsCertificateWatcherTest {
   @Test
-  void noWatchersReportReloadDisabled() {
-    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+  void aggregateHealthMatchesCurrentRegistryCounts() {
+    assertAggregateHealth(TlsCertificateWatcher.health());
   }
 
   @Test
@@ -31,16 +31,17 @@ class TlsCertificateWatcherTest {
     HealthIndicator indicator =
         new CommonCoreAutoConfiguration().tlsCertificateReloadHealthIndicator();
 
-    assertHealth("UP", "disabled_or_not_configured", indicator.health());
+    assertAggregateHealth(indicator.health());
   }
 
   @Test
   void healthyWatcherReportsWatching(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
     try (TlsCertificateWatcher ignored =
         TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {})) {
-      assertHealth("UP", "watching", TlsCertificateWatcher.health());
+      assertHealthDelta(baseline, 1, 1, 0, TlsCertificateWatcher.health());
     }
   }
 
@@ -72,8 +73,7 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
-  void changesQueuedAcrossWatchKeysCauseBoundedReloads(@TempDir Path directory)
-      throws Exception {
+  void changesQueuedAcrossWatchKeysCauseBoundedReloads(@TempDir Path directory) throws Exception {
     Path certificateDirectory = Files.createDirectory(directory.resolve("certificate"));
     Path privateKeyDirectory = Files.createDirectory(directory.resolve("private-key"));
     Path certificate = Files.writeString(certificateDirectory.resolve("tls.crt"), "certificate-1");
@@ -178,6 +178,7 @@ class TlsCertificateWatcherTest {
     CountDownLatch retainedReload = new CountDownLatch(1);
     AtomicBoolean retainedWriteComplete = new AtomicBoolean();
     Object reloadPhase = new Object();
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
     try (TlsCertificateWatcher watcher =
         new TlsCertificateWatcher(
@@ -198,7 +199,7 @@ class TlsCertificateWatcherTest {
       assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
       assertFalse(watcher.hasAllRequiredRegistrations());
-      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
 
       synchronized (reloadPhase) {
         Files.writeString(retainedCertificate, "certificate-2");
@@ -207,7 +208,7 @@ class TlsCertificateWatcherTest {
       assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
       assertFalse(watcher.hasAllRequiredRegistrations());
-      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     }
   }
 
@@ -216,6 +217,7 @@ class TlsCertificateWatcherTest {
       throws Exception {
     Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
     Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
     TlsCertificateWatcher watcher =
         TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
@@ -223,27 +225,67 @@ class TlsCertificateWatcherTest {
       Files.delete(certificate);
       Files.delete(watchedDirectory);
       awaitStopped(watcher);
-      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
     } finally {
       watcher.close();
     }
-    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+    assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
   }
 
   @Test
-  void closingHealthyWatcherRemovesItFromAggregateHealth(@TempDir Path directory) throws Exception {
+  void closingHealthyWatcherRestoresAggregateHealthBaseline(@TempDir Path directory)
+      throws Exception {
+    Path unrelatedCertificate =
+        Files.writeString(directory.resolve("unrelated.crt"), "certificate-1");
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
-    TlsCertificateWatcher watcher =
-        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
 
-    assertHealth("UP", "watching", TlsCertificateWatcher.health());
-    watcher.close();
-    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+    try (TlsCertificateWatcher unrelated =
+        TlsCertificateWatcher.createAndStart(List.of(unrelatedCertificate), () -> {})) {
+      WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+      TlsCertificateWatcher watcher =
+          TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
+      try {
+        assertHealthDelta(baseline, 1, 1, 0, TlsCertificateWatcher.health());
+      } finally {
+        watcher.close();
+      }
+      assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+    }
   }
 
-  private static void assertHealth(String status, String tlsReload, Health health) {
-    assertEquals(status, health.getStatus().getCode());
-    assertEquals(tlsReload, health.getDetails().get("tlsReload"));
+  private static void assertHealthDelta(
+      WatcherCounts baseline,
+      int activeDelta,
+      int healthyDelta,
+      int unhealthyDelta,
+      Health health) {
+    WatcherCounts actual = watcherCounts(health);
+    assertEquals(baseline.active() + activeDelta, actual.active());
+    assertEquals(baseline.healthy() + healthyDelta, actual.healthy());
+    assertEquals(baseline.unhealthy() + unhealthyDelta, actual.unhealthy());
+    assertAggregateHealth(health);
+  }
+
+  private static void assertAggregateHealth(Health health) {
+    WatcherCounts counts = watcherCounts(health);
+    assertEquals(counts.active(), counts.healthy() + counts.unhealthy());
+    if (counts.active() == 0) {
+      assertEquals("UP", health.getStatus().getCode());
+      assertEquals("disabled_or_not_configured", health.getDetails().get("tlsReload"));
+    } else if (counts.unhealthy() == 0) {
+      assertEquals("UP", health.getStatus().getCode());
+      assertEquals("watching", health.getDetails().get("tlsReload"));
+    } else {
+      assertEquals("OUT_OF_SERVICE", health.getStatus().getCode());
+      assertEquals("watcher_unhealthy", health.getDetails().get("tlsReload"));
+    }
+  }
+
+  private static WatcherCounts watcherCounts(Health health) {
+    return new WatcherCounts(
+        ((Number) health.getDetails().get("activeWatchers")).intValue(),
+        ((Number) health.getDetails().get("healthyWatchers")).intValue(),
+        ((Number) health.getDetails().get("unhealthyWatchers")).intValue());
   }
 
   private static void awaitStopped(TlsCertificateWatcher watcher) throws Exception {
@@ -291,4 +333,6 @@ class TlsCertificateWatcherTest {
       }
     };
   }
+
+  private record WatcherCounts(int active, int healthy, int unhealthy) {}
 }
