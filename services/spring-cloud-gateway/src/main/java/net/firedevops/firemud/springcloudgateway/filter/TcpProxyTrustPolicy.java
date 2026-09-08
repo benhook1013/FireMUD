@@ -45,8 +45,6 @@ public final class TcpProxyTrustPolicy {
   private static final Pattern FINGERPRINT = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern WORKLOAD_SEGMENT = Pattern.compile("[A-Za-z0-9._~-]+");
   private static final Set<String> DEVELOPMENT_ENVIRONMENTS = Set.of("local-dev", "isolated-test");
-  private static final Set<String> PLAYER_FACING_ENVIRONMENTS =
-      Set.of("hobby-self-hosted", "staging", "production");
   private static final Set<String> KNOWN_ENVIRONMENTS =
       Set.of(
           "local-dev",
@@ -222,7 +220,8 @@ public final class TcpProxyTrustPolicy {
       throw invalid("legacy insecure header trust requires at least one source CIDR");
     }
     for (String cidr : legacy.getTcpProxy().getInsecureTrustedCidrs()) {
-      if (HeaderTrustFilter.CidrBlock.parse(cidr) == null) {
+      HeaderTrustFilter.CidrBlock parsed = HeaderTrustFilter.CidrBlock.parse(cidr);
+      if (parsed == null || parsed.prefixBits() == 0) {
         throw invalid("legacy insecure header trust contains an invalid source CIDR");
       }
     }
@@ -262,9 +261,7 @@ public final class TcpProxyTrustPolicy {
       }
       case DEVELOPMENT_CIDR -> {
         rejectOtherProfileSettings(profile);
-        if (!DEVELOPMENT_ENVIRONMENTS.contains(configuredEnvironment)
-            || PLAYER_FACING_ENVIRONMENTS.contains(configuredEnvironment)
-            || productionSpringProfile) {
+        if (!DEVELOPMENT_ENVIRONMENTS.contains(configuredEnvironment) || productionSpringProfile) {
           throw invalid(
               "development_cidr is restricted to local-dev or isolated-test without the prod profile");
         }

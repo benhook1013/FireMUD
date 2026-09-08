@@ -255,6 +255,22 @@ class TcpProxyTrustPolicyTest {
         .isFalse();
   }
 
+  @Test
+  void legacyPlaintextTrustRejectsDefaultRoutesForIpv4AndIpv6() {
+    for (String cidr : List.of("0.0.0.0/0", "::/0")) {
+      GatewayHeaderTrustProperties legacy = new GatewayHeaderTrustProperties();
+      legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+      legacy.getTcpProxy().setInsecureTrustedCidrs(List.of(cidr));
+
+      assertThatThrownBy(
+              () ->
+                  new TcpProxyTrustPolicy(
+                      new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("test")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("contains an invalid source CIDR");
+    }
+  }
+
   private static TcpProxyTrustPolicy policy(
       GatewayTcpProxyListenerProperties properties, Set<String> activeProfiles) {
     return new TcpProxyTrustPolicy(
