@@ -171,6 +171,24 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void nullGatewayUriFailsAtConstructionWithBadUrlReason() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GatewayWebSocketClient(
+                    null, "", "", "", "", false, "", new String[] {"test"}, meterRegistry, false));
+
+    assertTrue(ex.getMessage().contains("reason=bad_url"));
+    assertEquals(1.0, meterRegistry.counter("tcpproxy.tls.misconfig").count());
+    assertEquals(
+        1.0,
+        meterRegistry.counter("tcpproxy.gateway.handshake.failures", "reason", "bad_url").count());
+  }
+
+  @Test
   void oneMutualTlsClientPerformsWebSocketHandshakeAndReadinessRequest() throws Exception {
     MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
     server.enqueue(
@@ -270,7 +288,9 @@ class GatewayWebSocketClientTest {
         new Dispatcher() {
           @Override
           public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
-            releaseResponse.await(15, TimeUnit.SECONDS);
+            if (!releaseResponse.await(15, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting to release plaintext readiness response");
+            }
             return new MockResponse().setResponseCode(200);
           }
         });
@@ -309,7 +329,9 @@ class GatewayWebSocketClientTest {
         new Dispatcher() {
           @Override
           public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
-            releaseResponse.await(15, TimeUnit.SECONDS);
+            if (!releaseResponse.await(15, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting to release watched readiness response");
+            }
             return new MockResponse().setResponseCode(200);
           }
         });
@@ -356,7 +378,9 @@ class GatewayWebSocketClientTest {
         new Dispatcher() {
           @Override
           public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
-            releaseResponse.await(15, TimeUnit.SECONDS);
+            if (!releaseResponse.await(15, TimeUnit.SECONDS)) {
+              throw new AssertionError("timed out waiting to release Gateway readiness response");
+            }
             return new MockResponse().setResponseCode(200);
           }
         });
@@ -874,7 +898,7 @@ class GatewayWebSocketClientTest {
     HttpClient initialGeneration = (HttpClient) client.clientIdentity();
     CompletableFuture<WebSocket> connection =
         client.connect(null, null, null, null, null, null, null, new WebSocket.Listener() {});
-    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+    assertNotNull(server.takeRequest(15, TimeUnit.SECONDS));
 
     assertTrue(connection.cancel(true));
     assertTrue(client.reloadNow());
@@ -1049,6 +1073,7 @@ class GatewayWebSocketClientTest {
         caCertificate, rotatedCaCertificate, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     Object recoveredClient = awaitClientAvailable(client);
     assertNotSame(initialClient, recoveredClient);
+    assertClientIdentityRemainsStable(client, recoveredClient);
     assertEquals(1, client.generationCount());
     server.enqueue(new MockResponse().setResponseCode(200));
     assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));

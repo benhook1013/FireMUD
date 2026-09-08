@@ -44,6 +44,8 @@ Trust profiles are explicit and mutually exclusive:
 
 Startup or admission fails closed when the selected profile is incomplete, expired, invalid for the environment, or accompanied by settings for another profile. There is no silent any-of or ordered fallback across identities.
 
+Trust-profile expiry and emergency identity withdrawal are separate boundaries. Gateway enforces migration and break-glass expiry at runtime by stopping the dedicated listener and terminating its established bridges. Emergency withdrawal of an otherwise unexpired identity depends on the environment controller terminating the old Gateway pods and their bridges; rollout strategy or rendered preflight alone is not withdrawal proof.
+
 Every public listener strips inbound `X-Proxy-*`, gateway-owned canonical identity headers, and `X-Firemud-*` admission headers before admission, rate-limit key derivation, or forwarding. Only the authenticated internal bridge path reconstructs canonical headers from the verified peer and validated proxy metadata. NetworkPolicy and internal Services remain defense in depth, not workload authentication.
 
 ## Consequences

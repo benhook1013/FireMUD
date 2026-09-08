@@ -110,6 +110,20 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
 {{- end -}}
 {{- $inferredTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") -}}
+{{- if and (hasKey $gatewayWsTls "trustEnvironment") (not (empty $gatewayWsTls.trustEnvironment)) -}}
+{{- $configuredTrustEnvironment := $gatewayWsTls.trustEnvironment | toString -}}
+{{- if not (or
+  (eq $configuredTrustEnvironment "local-dev")
+  (eq $configuredTrustEnvironment "isolated-test")
+  (eq $configuredTrustEnvironment "pr-preview")
+  (eq $configuredTrustEnvironment "dev-demo-cluster")
+  (eq $configuredTrustEnvironment "hobby-self-hosted")
+  (eq $configuredTrustEnvironment "staging")
+  (eq $configuredTrustEnvironment "production")
+) -}}
+{{- fail (printf "previewStack.gatewayWsTls.trustEnvironment must be one of the canonical environments (got %q)" $configuredTrustEnvironment) -}}
+{{- end -}}
+{{- end -}}
 {{- $trustEnvironment := $gatewayWsTls.trustEnvironment | default $inferredTrustEnvironment -}}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
   value: "true"

@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
@@ -42,6 +43,30 @@ public final class HttpTestSupport {
   public static String getBody(String url, Map<String, String> headers)
       throws IOException, InterruptedException {
     return getBody(url, StandardCharsets.UTF_8, headers);
+  }
+
+  /** Waits until a Spring Boot readiness endpoint reports UP or the timeout expires. */
+  public static void awaitReadiness(String url, Duration timeout) throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (System.nanoTime() < deadline) {
+      try {
+        if (getBody(url).contains("\"status\":\"UP\"")) {
+          return;
+        }
+      } catch (IOException ignored) {
+        // The server may not be listening yet.
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw ex;
+      }
+      try {
+        Thread.sleep(TestAsyncAssertions.DEFAULT_POLL_INTERVAL.toMillis());
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw ex;
+      }
+    }
+    throw new AssertionError("Timed out waiting for HTTP readiness at " + url);
   }
 
   public static String getBody(String url, Charset charset, Map<String, String> headers)

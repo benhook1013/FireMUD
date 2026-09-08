@@ -13,13 +13,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
-import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -27,6 +25,7 @@ import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProper
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
 import net.firedevops.firemud.springcloudgateway.config.TcpProxyTlsListener;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
+import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -264,7 +263,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         Throwable handshakeFailure =
             catchThrowable(() -> connect(port, bridgeHeaders(), clientContextWithoutIdentity()));
         assertThat(handshakeFailure).as("TLS handshake without a client certificate").isNotNull();
-        assertThat(isTlsHandshakeRejection(handshakeFailure))
+        assertThat(TlsTestSupport.isTlsHandshakeRejection(handshakeFailure))
             .as("failure must be a TLS/client-certificate handshake rejection")
             .isTrue();
         assertThat(applicationRequests)
@@ -339,24 +338,6 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     return SslContextBuilder.forClient().trustManager(commonFixture("dev-ca.pem").toFile()).build();
   }
 
-  private static boolean isTlsHandshakeRejection(Throwable failure) {
-    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-      if (cause instanceof SSLException) {
-        return true;
-      }
-      String message = cause.getMessage();
-      if (message != null) {
-        String normalized = message.toLowerCase(Locale.ROOT);
-        if (normalized.contains("certificate_required")
-            || normalized.contains("bad_certificate")
-            || normalized.contains("empty client certificate chain")) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
   private static GatewayTcpProxyListenerProperties listenerProperties(int port) {
     return listenerProperties(port, "production_uri", "production");
   }
@@ -401,10 +382,13 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     if (Files.isRegularFile(moduleLocal)) {
       return moduleLocal;
     }
-    return workingDirectory
-        .resolve("services/spring-cloud-gateway/src/test/resources/certs")
-        .resolve(name)
-        .normalize();
+    Path repositoryFixture =
+        workingDirectory
+            .resolve("services/spring-cloud-gateway/src/test/resources/certs")
+            .resolve(name)
+            .normalize();
+    assertThat(repositoryFixture).as("Gateway TLS fixture %s", name).isRegularFile();
+    return repositoryFixture;
   }
 
   private static Path mainApplicationConfig() {

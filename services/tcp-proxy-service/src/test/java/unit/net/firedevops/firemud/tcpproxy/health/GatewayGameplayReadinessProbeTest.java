@@ -34,6 +34,28 @@ class GatewayGameplayReadinessProbeTest {
   }
 
   @Test
+  void rejectsZeroPollIntervalBeforePolling() {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new GatewayGameplayReadinessProbe(client, Duration.ZERO));
+
+    verifyNoInteractions(client);
+  }
+
+  @Test
+  void rejectsNegativePollIntervalBeforePolling() {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new GatewayGameplayReadinessProbe(client, Duration.ofMillis(-1)));
+
+    verifyNoInteractions(client);
+  }
+
+  @Test
   void startsFailClosedWhilePollingImmediately() throws Exception {
     GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
     CompletableFuture<Boolean> pending = new CompletableFuture<>();

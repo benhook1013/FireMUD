@@ -99,6 +99,170 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
 
+DISABLED_TELNET_CERT_RENDERED="$TMP_DIR/disabled-telnet-certificate.yaml"
+set +e
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.enabled=false \
+  --set previewStack.telnetTls.enabled=true \
+  --set-string 'previewStack.telnetTls.secretName=' \
+  --show-only templates/tcp-proxy-certificate.yaml \
+  --namespace pr-123 >"$DISABLED_TELNET_CERT_RENDERED" 2>"$TMP_DIR/disabled-telnet-certificate.err"
+disabled_certificate_status=$?
+set -e
+if [[ "$disabled_certificate_status" -ne 0 && "$disabled_certificate_status" -ne 1 ]] ||
+  [[ "$disabled_certificate_status" -eq 1 &&
+    "$(
+      grep -F "could not find template templates/tcp-proxy-certificate.yaml" \
+        "$TMP_DIR/disabled-telnet-certificate.err" || true
+    )" == "" ]]; then
+  echo "disabled previewStack certificate render failed unexpectedly" >&2
+  sed -n '1,20p' "$TMP_DIR/disabled-telnet-certificate.err" >&2
+  exit 1
+fi
+python3 - "$DISABLED_TELNET_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if documents:
+    raise SystemExit(
+        "disabled previewStack unexpectedly rendered the standalone Telnet TLS template"
+    )
+PY
+
+HOSTED_CONTROLLER_TELNET_CERT_RENDERED="$TMP_DIR/hosted-controller-telnet-certificate.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.enabled=true \
+  --set previewStack.certificateIdentity.mode=hosted-controller \
+  --namespace pr-123 >"$HOSTED_CONTROLLER_TELNET_CERT_RENDERED"
+python3 - "$HOSTED_CONTROLLER_TELNET_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if any(document.get("kind") == "Certificate" for document in documents):
+    raise SystemExit(
+        "enabled hosted-controller mode rendered a chart-owned Telnet TLS Certificate"
+    )
+PY
+
+OVERRIDE_RENDERED="$TMP_DIR/trust-environment-override.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string previewStack.gatewayWsTls.trustEnvironment=staging \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >"$OVERRIDE_RENDERED"
+python3 - "$RENDERED" "$DEV_RENDERED" "$OVERRIDE_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def trust_environment(path):
+    documents = [
+        document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+    gateway = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    environment = next(
+        entry
+        for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
+        if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"
+    )
+    return environment.get("value")
+
+
+assert trust_environment(sys.argv[1]) == "pr-preview"
+assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
+assert trust_environment(sys.argv[3]) == "staging"
+PY
+
+TRUST_ENVIRONMENT_ERROR="previewStack.gatewayWsTls.trustEnvironment must be one of the canonical environments"
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string previewStack.gatewayWsTls.trustEnvironment=not-a-canonical-environment \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-trust-environment.err"; then
+  echo "apps template rendered with an invalid explicit Gateway trust environment" >&2
+  exit 1
+fi
+if ! grep -Fq "$TRUST_ENVIRONMENT_ERROR" "$TMP_DIR/invalid-trust-environment.err"; then
+  echo "apps template did not report the expected invalid Gateway trust environment diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/invalid-trust-environment.err" >&2
+  exit 1
+fi
+
+for preview_shape in absent null; do
+  INVALID_PREVIEW_VALUES="$TMP_DIR/preview-values-$preview_shape.yaml"
+  cp "$TMP_DIR/preview-values.yaml" "$INVALID_PREVIEW_VALUES"
+  python3 - "$INVALID_PREVIEW_VALUES" "$preview_shape" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+values = yaml.safe_load(path.read_text(encoding="utf-8"))
+if sys.argv[2] == "absent":
+    values.pop("preview")
+else:
+    values["preview"] = None
+path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+
+  if ! helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_PREVIEW_VALUES" \
+    --set previewStack.ingress.enabled=false \
+    --set previewStack.gatewayWsTls.enabled=false \
+    --show-only templates/apps.yaml \
+    --namespace pr-123 >"$TMP_DIR/preview-$preview_shape-apps.yaml"; then
+    echo "apps template required preview allocation data for a raw hosted-controller render" >&2
+    exit 1
+  fi
+  if grep -Fq 'nodePort:' "$TMP_DIR/preview-$preview_shape-apps.yaml"; then
+    echo "apps template selected a NodePort from $preview_shape preview allocation data" >&2
+    exit 1
+  fi
+
+  CERT_PREVIEW_ERROR="preview.hostname is required when rendering the standalone Telnet TLS Certificate"
+  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+    -f "$INVALID_PREVIEW_VALUES" \
+    --set previewStack.ingress.enabled=false \
+    --set previewStack.gatewayWsTls.enabled=false \
+    --set previewStack.certificateIdentity.mode=standalone \
+    --show-only templates/tcp-proxy-certificate.yaml \
+    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
+    echo "standalone Telnet TLS Certificate rendered with $preview_shape preview" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$CERT_PREVIEW_ERROR" "$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
+    echo "certificate template did not report the expected $preview_shape preview.hostname diagnostic" >&2
+    sed -n '1,20p' "$TMP_DIR/invalid-preview-$preview_shape-certificate.err" >&2
+    exit 1
+  fi
+done
+
 PREVIEW_PR_NUMBER_ERROR="preview.prNumber is required when Gateway WebSocket TLS is enabled"
 for invalid_pr_number in missing empty; do
   INVALID_PR_VALUES="$TMP_DIR/preview-values-pr-number-$invalid_pr_number.yaml"
@@ -501,6 +665,27 @@ if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"
 if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
     raise SystemExit("TCP Proxy identity withdrawal can retain a stale rolling-update pod")
 
+gateway_strategy_documents = copy.deepcopy(documents)
+gateway_copy = next(
+    document
+    for document in gateway_strategy_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+gateway_copy["spec"]["strategy"] = {"type": "Recreate"}
+_, gateway_strategy_issues = module.validate_gateway_ws_values(
+    gateway_strategy_documents, expected
+)
+if not any(
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted"
+    in issue
+    for issue in gateway_strategy_issues
+):
+    raise SystemExit(
+        "Gateway Recreate strategy was accepted for the bridge listener: "
+        f"{gateway_strategy_issues}"
+    )
+
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
     "cannot retain stale pods"
@@ -601,6 +786,16 @@ for label, mutation, expected_fragment in (
             "true",
         ),
         "must not configure legacy TCP Proxy header trust",
+    ),
+    (
+        "foreign-trust-environment",
+        lambda docs: mutate_env(
+            docs,
+            "spring-cloud-gateway",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT",
+            "dev-demo-cluster",
+        ),
+        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT must be exactly 'pr-preview'",
     ),
 ):
     mutated = copy.deepcopy(documents)
@@ -765,6 +960,44 @@ for label, mutation in (
     )
     if not any("must not contain an all-port rule" in issue for issue in all_port_issues):
         raise SystemExit(f"{label} Gateway policy was accepted: {all_port_issues}")
+
+for label, ports, expected_fragment in (
+    (
+        "repeated-listener-qualifiers",
+        [
+            {"protocol": "TCP", "port": 8443},
+            {"protocol": "TCP", "port": 8000, "endPort": 9000},
+        ],
+        "listener rule must be exactly TCP 8443",
+    ),
+    (
+        "repeated-malformed-qualifiers",
+        [{"protocol": "TCP"}, {"protocol": "TCP"}],
+        "must not contain an all-port rule",
+    ),
+):
+    repeated_qualifier_policy = copy.deepcopy(documents)
+    gateway_policy = next(
+        document
+        for document in repeated_qualifier_policy
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name")
+        == "spring-cloud-gateway-ingress"
+    )
+    gateway_policy["spec"]["ingress"][0]["ports"] = ports
+    _, repeated_qualifier_issues = module.validate_gateway_ws_values(
+        repeated_qualifier_policy, expected
+    )
+    if not any(
+        expected_fragment in issue for issue in repeated_qualifier_issues
+    ) or any(
+        "exactly one app=tcp-proxy-service peer rule" in issue
+        for issue in repeated_qualifier_issues
+    ):
+        raise SystemExit(
+            f"{label} counted one Gateway policy rule more than once: "
+            f"{repeated_qualifier_issues}"
+        )
 
 for label, policy_name, policy_types, expected_fragment in (
     (
