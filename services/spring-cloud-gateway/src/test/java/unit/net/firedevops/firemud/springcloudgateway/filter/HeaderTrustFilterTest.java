@@ -215,6 +215,33 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void rejectsLegacyTrustedProxySessionWithoutAnyProxyHeaders() {
+    GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
+    properties.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    properties.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = legacyFilter(properties);
+
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/ws/game/test")
+                .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+                .build());
+    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
+
+    filter
+        .filter(
+            exchange,
+            candidate -> {
+              delegated.set(candidate);
+              return Mono.empty();
+            })
+        .block();
+
+    assertThat(delegated.get()).isNull();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+  }
+
+  @Test
   void doesNotEmitLegacySessionId() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);

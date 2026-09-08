@@ -95,7 +95,7 @@ Current implementation limitations:
 ## Current network-policy stance
 
 - Hosted preview now renders checked-in baseline internal-service `NetworkPolicy` resources from the Helm chart.
-- Gateway listener ingress allows only `app=tcp-proxy-service` on TCP `8443`, and TCP Proxy egress reaches only `app=spring-cloud-gateway` on that listener port for the WebSocket bridge.
+- Gateway ingress allows `app=tcp-proxy-service` on TCP `previewStack.gatewayWsTls.targetPort` for the WebSocket bridge, `kube-system` Traefik pods on TCP `8080`, and same-namespace pods on TCP `8080` and `6565`. TCP Proxy bridge egress reaches `app=spring-cloud-gateway` on `previewStack.gatewayWsTls.targetPort`.
 - The player-facing Kustomize/base path and the hosted preview/dev-demo path now share one checked-in baseline policy posture, even though the actual environment classes still differ in lifecycle and operational scope.
 
 ## Current TCP bootstrap contract

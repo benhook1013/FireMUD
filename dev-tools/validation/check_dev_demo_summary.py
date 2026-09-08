@@ -85,6 +85,13 @@ BOOTSTRAP_ACCOUNT_COMMAND_TOKENS = (
     ";",
     "then",
 )
+BOOTSTRAP_SCRIPT_DEFINITION_TOKENS = (
+    "cat",
+    ">",
+    "${BOOTSTRAP_SCRIPT}",
+    "<<",
+    "PY",
+)
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
     "BOOTSTRAP_PORT_FORWARD_PID=$!",
@@ -700,7 +707,7 @@ def _effective_executable_index(command: list[str]) -> int | None:
         if executable == "env":
             index = _env_executable_index(command, index + 1)
             continue
-        if token == "command":
+        if executable == "command":
             index += 1
             while index < len(command) and command[index].startswith("-"):
                 index += 1
@@ -1490,18 +1497,33 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
     source_label = (
         "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
     )
-    records: list[tuple[list[str], int]] = []
+    records: list[tuple[list[str], int, list[tuple[str, bool]]]] = []
     nesting = 0
-    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+    for statement, bodies in _shell_statements(bootstrap_manifest, source_label):
         tokens = _shell_tokens(statement, source_label)
         if not tokens:
             continue
-        records.append((tokens, nesting))
+        records.append((tokens, nesting, bodies))
         nesting += _shell_compound_nesting_delta(statement, tokens)
         if nesting < 0:
             raise AssertionError("unsupported shell compound nesting")
 
-    def references_account_bootstrap(tokens: list[str]) -> bool:
+    definition_indexes = [
+        index
+        for index, (tokens, _, bodies) in enumerate(records)
+        if tokens == list(BOOTSTRAP_SCRIPT_DEFINITION_TOKENS)
+        and len(bodies) == 1
+        and bool(bodies[0][0].strip())
+    ]
+    if len(definition_indexes) != 1:
+        raise AssertionError(
+            "dev-demo player bootstrap must define the bootstrap script exactly once"
+        )
+    definition_index = definition_indexes[0]
+
+    def references_account_bootstrap(
+        record_index: int, tokens: list[str]
+    ) -> bool:
         if "BOOTSTRAP_MODE=account" in tokens:
             return True
         for index, token in enumerate(tokens):
@@ -1509,7 +1531,7 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
                 r"\$(?:BOOTSTRAP_SCRIPT\b|\{BOOTSTRAP_SCRIPT(?:[^}]*)\})", token
             ):
                 continue
-            if index > 0 and tokens[index - 1] in {">", ">>"}:
+            if record_index == definition_index:
                 continue
             if token == "--from-file=bootstrap.py=${BOOTSTRAP_SCRIPT}":
                 continue
@@ -1517,7 +1539,9 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
         return False
 
     account_candidates = [
-        tokens for tokens, _ in records if references_account_bootstrap(tokens)
+        tokens
+        for record_index, (tokens, _, _) in enumerate(records)
+        if references_account_bootstrap(record_index, tokens)
     ]
     if account_candidates != [list(BOOTSTRAP_ACCOUNT_COMMAND_TOKENS)]:
         raise AssertionError(
@@ -1536,10 +1560,10 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
         window = records[start : start + len(expected_sequence)]
         if all(
             tokens == expected and depth == expected_depth
-            for (tokens, depth), (expected, expected_depth) in zip(
+            for (tokens, depth, _), (expected, expected_depth) in zip(
                 window, expected_sequence, strict=True
             )
-        ):
+        ) and definition_index < start:
             return
     raise AssertionError(
         "dev-demo player bootstrap must execute the exact fail-closed "

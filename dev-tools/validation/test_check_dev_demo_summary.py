@@ -83,7 +83,7 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             self.validator.BOOTSTRAP_MANIFEST_HEREDOC_OPENER
         )
         content_start = manifest.index("\n", manifest_start) + 1
-        content_end = manifest.index("\nEOF", content_start)
+        content_end = manifest.index("\nEOF\n", content_start)
         return manifest[:content_start] + rendered_pod + manifest[content_end:]
 
     def _write_workflow_fixture(
@@ -561,18 +561,20 @@ done"""
             self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_secret_create_behind_command_wrapper(self):
-        bootstrap_manifest = self._bootstrap_manifest_fixture()
-        invalid_manifest = (
-            bootstrap_manifest
-            + "\ncommand -- kubectl create secret generic unrelated-resource"
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self._write_workflow_fixture(root, invalid_manifest)
-            with self.assertRaisesRegex(
-                AssertionError, "must not create or mount credential Secret"
-            ):
-                self.validator.validate_workflow(root)
+        for wrapper in ("command", "/usr/bin/command"):
+            with self.subTest(wrapper=wrapper):
+                bootstrap_manifest = self._bootstrap_manifest_fixture()
+                invalid_manifest = (
+                    bootstrap_manifest
+                    + f"\n{wrapper} -- kubectl create secret generic unrelated-resource"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError, "must not create or mount credential Secret"
+                    ):
+                        self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_secret_create_behind_sudo(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -1424,6 +1426,42 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
             duplicate_account_command + "\n" + pid_assignment,
             1,
         )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_bootstrap_script_truncation_before_pid(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            ': >"${BOOTSTRAP_SCRIPT}"\n' + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_second_bootstrap_script_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        replacement = r'''cat >"${BOOTSTRAP_SCRIPT}" <<'EVIL'
+raise SystemExit("replacement")
+EVIL
+''' + pid_assignment
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(pid_assignment, replacement, 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)

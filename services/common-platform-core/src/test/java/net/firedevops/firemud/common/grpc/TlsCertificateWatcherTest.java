@@ -127,6 +127,62 @@ class TlsCertificateWatcherTest {
     }
   }
 
+  @Test
+  void losingFinalWatchKeyStopsWatcher(@TempDir Path directory) throws Exception {
+    Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
+    Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+
+    try (TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {})) {
+      Files.delete(certificate);
+      Files.delete(watchedDirectory);
+
+      awaitStopped(watcher);
+    }
+  }
+
+  @Test
+  void losingOneWatchKeyKeepsWatchingRemainingDirectories(@TempDir Path directory)
+      throws Exception {
+    Path retiredDirectory = Files.createDirectory(directory.resolve("retired"));
+    Path retainedDirectory = Files.createDirectory(directory.resolve("retained"));
+    Path retiredCertificate =
+        Files.writeString(retiredDirectory.resolve("tls.crt"), "certificate-1");
+    Path retainedCertificate =
+        Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch retiredReload = new CountDownLatch(1);
+    CountDownLatch retainedReload = new CountDownLatch(1);
+    AtomicInteger reloads = new AtomicInteger();
+
+    try (TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(retiredCertificate, retainedCertificate),
+            () -> {
+              if (reloads.incrementAndGet() == 1) {
+                retiredReload.countDown();
+              } else {
+                retainedReload.countDown();
+              }
+            })) {
+      Files.delete(retiredCertificate);
+      Files.delete(retiredDirectory);
+      assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
+      assertTrue(watcher.isRunning());
+
+      Files.writeString(retainedCertificate, "certificate-2");
+      assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
+      assertTrue(watcher.isRunning());
+    }
+  }
+
+  private static void awaitStopped(TlsCertificateWatcher watcher) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (watcher.isRunning() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertFalse(watcher.isRunning());
+  }
+
   private static WatchEvent<Path> pathEvent(WatchEvent.Kind<Path> kind, Path context) {
     return new WatchEvent<>() {
       @Override

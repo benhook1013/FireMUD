@@ -73,10 +73,7 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
             ? normalizeIpLiteral(incomingProxyClientIp)
             : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
 
-    if (trustedTcpProxy
-        && isSessionRoute
-        && (dedicatedTcpProxyListener || presentsProxyHeaders(exchange.getRequest().getHeaders()))
-        && canonicalClientIp == null) {
+    if (trustedTcpProxy && isSessionRoute && canonicalClientIp == null) {
       LOG.debug("Rejecting session route: missing or invalid trusted proxy client IP");
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();

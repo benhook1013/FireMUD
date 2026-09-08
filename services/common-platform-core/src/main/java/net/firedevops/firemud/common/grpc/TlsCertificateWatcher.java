@@ -74,6 +74,13 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   private void processEvents() {
     while (running.get()) {
+      if (keys.isEmpty()) {
+        running.set(false);
+        logger.error(
+            "TLS certificate watcher lost all registered directories; stopping credential reloads");
+        return;
+      }
+
       WatchKey key;
       try {
         key = watchService.take();
@@ -150,6 +157,10 @@ public class TlsCertificateWatcher implements AutoCloseable {
       return true;
     }
     return files.contains(dir.resolve(relativePath).toAbsolutePath().normalize());
+  }
+
+  boolean isRunning() {
+    return running.get();
   }
 
   @Override

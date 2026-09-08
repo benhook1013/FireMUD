@@ -44,6 +44,12 @@ class TcpProxyTrustPolicyTest {
             policy.authenticatePeer(
                 sslInfo(
                     certificate(
+                        List.of(san(6, TCP_PROXY_URI), san(2, "tcp-proxy.internal")), true))))
+        .isTrue();
+    assertThat(
+            policy.authenticatePeer(
+                sslInfo(
+                    certificate(
                         List.of(san(6, "spiffe://firemud/ns/other/sa/tcp-proxy-service")), true))))
         .isFalse();
     assertThat(
@@ -218,7 +224,7 @@ class TcpProxyTrustPolicyTest {
                 new TcpProxyTrustPolicy(
                     new GatewayTcpProxyListenerProperties(), legacy, 8080, CLOCK, Set.of("prod")))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("restricted to explicit local/test profiles");
+        .hasMessageContaining("restricted to explicit test/dev/local profiles");
   }
 
   @Test

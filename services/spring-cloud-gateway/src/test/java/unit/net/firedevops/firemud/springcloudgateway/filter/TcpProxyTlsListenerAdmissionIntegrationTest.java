@@ -114,6 +114,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     TcpProxyTrustPolicy trustPolicy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("prod"));
+    // Validate a non-public port first, then bind ephemerally and write back the exact bound port.
     listenerProperties.setPort(0);
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
     GameplayHandshakeFilter handshakeFilter =
@@ -198,6 +199,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     TcpProxyTrustPolicy trustPolicy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), activeProfiles);
+    // Preserve the same validation-before-bind order used by the workload-identity test above.
     listenerProperties.setPort(0);
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
     GameplayHandshakeFilter handshakeFilter =

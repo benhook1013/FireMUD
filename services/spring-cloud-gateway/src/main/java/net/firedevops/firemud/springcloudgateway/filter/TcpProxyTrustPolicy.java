@@ -215,7 +215,8 @@ public final class TcpProxyTrustPolicy {
             .anyMatch(
                 value -> value.equals("test") || value.equals("dev") || value.equals("local"));
     if (!developmentProfile) {
-      throw invalid("legacy insecure header trust is restricted to explicit local/test profiles");
+      throw invalid(
+          "legacy insecure header trust is restricted to explicit test/dev/local profiles");
     }
     if (legacy.getTcpProxy().getInsecureTrustedCidrs().isEmpty()) {
       throw invalid("legacy insecure header trust requires at least one source CIDR");
