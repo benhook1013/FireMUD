@@ -56,6 +56,8 @@ For an exhaustive review, maintain a response-local coverage table containing:
 
 A focused commissioned review may use a smaller table matching its declared boundary. Working coverage tables remain ephemeral unless the human explicitly requests a retained artifact.
 
+Intentionally bounded representative discovery may complete its declared assessment with evidence proportional to that objective, without claiming whole-repository exhaustiveness or domain closure. Early-return and same-scope resumption are defined in the [AI Delegation And Review](../../../developer-workflows/ai-delegation-and-review.md) guide.
+
 ## Findings
 
 Report findings before optional commentary. Do not spend output praising or summarizing material that is already clear.
@@ -77,8 +79,8 @@ Within a coordinated review, identify duplicates using the canonical owner, affe
 
 End with exactly one review state:
 
-- `complete` – every declared item was covered or explicitly excluded with an acceptable rationale;
-- `incomplete` – the review was sampled, a required area was skipped, or necessary proof or live evidence was unavailable; or
+- `complete` – every item in the declared assessment boundary was covered or explicitly excluded with an acceptable rationale;
+- `incomplete` – the review was an early batch, used undeclared sampling, skipped a required area, or necessary proof or live evidence was unavailable; or
 - `blocked` – a missing authority, competing target state, unavailable required source, or human decision prevents the review from continuing.
 
 `No findings` does not imply `complete`. A static review may be complete within its declared static boundary while live evidence remains unavailable, but it must not make an unqualified readiness claim.
