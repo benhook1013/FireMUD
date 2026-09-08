@@ -164,6 +164,7 @@ fi
 TELNET_TLS_SECRET_SUFFIX_ERROR="previewStack.telnetTls.secretName must end with -telnet-tls when Telnet TLS is enabled"
 helm template raw-hosted-sentinel "$ROOT_DIR/k8s/helm/firemud" \
   -f "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
   --namespace pr-42 >/dev/null
 for invalid_secret_name in \
   '__TELNET_TLS_SECRET_NAME_' \

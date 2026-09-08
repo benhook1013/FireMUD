@@ -513,6 +513,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
 
   private static URI parseGatewayUri(String value) {
     try {
+      if (value == null) {
+        throw new IllegalArgumentException("missing Gateway WebSocket URI");
+      }
       URI uri = URI.create(value);
       if (!("ws".equals(uri.getScheme()) || "wss".equals(uri.getScheme()))
           || uri.getHost() == null

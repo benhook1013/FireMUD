@@ -47,7 +47,7 @@ req_extensions = v3_req
 prompt = no
 
 [distinguished_name]
-CN = firemud-gateway-websocket-client
+CN = firemud-grpc
 
 [v3_req]
 subjectAltName = @alt_names

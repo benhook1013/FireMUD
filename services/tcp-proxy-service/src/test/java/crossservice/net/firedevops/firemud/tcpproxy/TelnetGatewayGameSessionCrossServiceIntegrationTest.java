@@ -2,7 +2,6 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -183,21 +182,8 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   private void awaitTrafficAdmissionReady() throws InterruptedException {
-    TestAsyncAssertions.assertEventually(
-        "TCP Proxy traffic-admission readiness",
-        COMMAND_WAIT,
-        () -> {
-          try {
-            return HttpTestSupport.getBody(
-                    "http://localhost:" + port + "/actuator/health/readiness")
-                .contains("\"status\":\"UP\"");
-          } catch (IOException ex) {
-            return false;
-          } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            return false;
-          }
-        });
+    HttpTestSupport.awaitReadiness(
+        "http://localhost:" + port + "/actuator/health/readiness", COMMAND_WAIT);
   }
 
   private static void awaitCommand(String expected) {

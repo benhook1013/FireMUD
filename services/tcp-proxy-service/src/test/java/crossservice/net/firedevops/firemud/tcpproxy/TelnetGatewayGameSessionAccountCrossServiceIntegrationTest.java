@@ -29,7 +29,6 @@ import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
-import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -602,12 +601,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetWhisperDeliversTargetAndObserverViews() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
-    STACK.clearScreenBuffers(
-        TENANT_ID,
-        DEMO_WORLD_INSTANCE_ID,
-        ACCOUNT_ID,
-        SORA_ACCOUNT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
 
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
@@ -631,8 +624,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
 
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
-      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
-          .contains(ChatTestFixtures.canonicalWhisperText());
       GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
           screenBufferService,
           targetContext,
@@ -643,6 +634,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           observerContext,
           COMMAND_WAIT,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
+      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
+          .contains(ChatTestFixtures.canonicalWhisperText());
       assertThat(
               scenario.target().readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
           .contains(ChatTestFixtures.canonicalWhisperTargetText());
@@ -757,9 +750,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     STACK.seedLiveSession(
         90210L,
         TENANT_ID,
-        SORA_ACCOUNT_ID,
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
         "sora@example.com",
-        SORA_ACCOUNT_ID,
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         LookTestFixtures.ROOM_ID,
@@ -792,21 +785,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private void awaitTrafficAdmissionReady() throws InterruptedException {
-    TestAsyncAssertions.assertEventually(
-        "TCP Proxy traffic-admission readiness",
-        COMMAND_WAIT,
-        () -> {
-          try {
-            return HttpTestSupport.getBody(
-                    "http://localhost:" + port + "/actuator/health/readiness")
-                .contains("\"status\":\"UP\"");
-          } catch (IOException ex) {
-            return false;
-          } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            return false;
-          }
-        });
+    HttpTestSupport.awaitReadiness(
+        "http://localhost:" + port + "/actuator/health/readiness", COMMAND_WAIT);
   }
 
   private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {

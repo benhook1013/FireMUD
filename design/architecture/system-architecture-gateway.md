@@ -117,6 +117,8 @@ The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** for the certificate-bou
 - **`breakglass_fingerprint`:** the leaf certificate's SHA-256 fingerprint is the one explicitly pinned for the named, expiring incident.
 - **`development_cidr`:** local development or isolated automated tests use a TLS (`wss://`) listener without client authentication and only the exact configured source CIDR predicate; this is an explicitly insecure exception, does not claim certificate identity, and never authorizes a plain-transport bridge.
 
+Expiry of a selected migration or break-glass trust profile is enforced by the Gateway runtime: the dedicated listener stops admitting traffic and its established bridges are terminated. Emergency withdrawal of an otherwise unexpired identity is a separate controller action that terminates every old Gateway pod and bridge. Gateway retains RollingUpdate or the Kubernetes default for ordinary availability-preserving replacement; that rollout strategy and its rendered preflight check are not emergency-withdrawal proof.
+
 For the three certificate-bound profiles, missing peer-certificate data or a failed chain/client-auth check rejects the handshake; for every profile, a failed selected predicate rejects it, strips/discards the raw `X-Proxy-*` inputs, and does not promote them. The profiles are mutually exclusive: configured identities from another profile are not fallback matchers. Hosted, staging, hobby/self-hosted player-facing, and production profiles must not select `development_cidr`.
 
 Gateway config selects exactly one trust profile; settings from another profile make startup or admission fail closed:

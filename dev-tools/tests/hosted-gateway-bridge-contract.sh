@@ -87,13 +87,50 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
 
 DISABLED_TELNET_CERT_RENDERED="$TMP_DIR/disabled-telnet-certificate.yaml"
+set +e
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/preview-values.yaml" \
   --set previewStack.enabled=false \
   --set previewStack.telnetTls.enabled=true \
   --set-string 'previewStack.telnetTls.secretName=' \
-  --namespace pr-123 >"$DISABLED_TELNET_CERT_RENDERED"
+  --show-only templates/tcp-proxy-certificate.yaml \
+  --namespace pr-123 >"$DISABLED_TELNET_CERT_RENDERED" 2>"$TMP_DIR/disabled-telnet-certificate.err"
+disabled_certificate_status=$?
+set -e
+if [[ "$disabled_certificate_status" -ne 0 && "$disabled_certificate_status" -ne 1 ]] ||
+  [[ "$disabled_certificate_status" -eq 1 &&
+    "$(
+      grep -F "could not find template templates/tcp-proxy-certificate.yaml" \
+        "$TMP_DIR/disabled-telnet-certificate.err" || true
+    )" == "" ]]; then
+  echo "disabled previewStack certificate render failed unexpectedly" >&2
+  sed -n '1,20p' "$TMP_DIR/disabled-telnet-certificate.err" >&2
+  exit 1
+fi
 python3 - "$DISABLED_TELNET_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if documents:
+    raise SystemExit(
+        "disabled previewStack unexpectedly rendered the standalone Telnet TLS template"
+    )
+PY
+
+HOSTED_CONTROLLER_TELNET_CERT_RENDERED="$TMP_DIR/hosted-controller-telnet-certificate.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.enabled=true \
+  --set previewStack.certificateIdentity.mode=hosted-controller \
+  --namespace pr-123 >"$HOSTED_CONTROLLER_TELNET_CERT_RENDERED"
+python3 - "$HOSTED_CONTROLLER_TELNET_CERT_RENDERED" <<'PY'
 import sys
 from pathlib import Path
 
@@ -106,7 +143,7 @@ documents = [
 ]
 if any(document.get("kind") == "Certificate" for document in documents):
     raise SystemExit(
-        "disabled previewStack rendered a standalone Telnet TLS Certificate"
+        "enabled hosted-controller mode rendered a chart-owned Telnet TLS Certificate"
     )
 PY
 
@@ -147,6 +184,21 @@ assert trust_environment(sys.argv[1]) == "pr-preview"
 assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
 assert trust_environment(sys.argv[3]) == "staging"
 PY
+
+TRUST_ENVIRONMENT_ERROR="previewStack.gatewayWsTls.trustEnvironment must be one of the canonical environments"
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string previewStack.gatewayWsTls.trustEnvironment=not-a-canonical-environment \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-trust-environment.err"; then
+  echo "apps template rendered with an invalid explicit Gateway trust environment" >&2
+  exit 1
+fi
+if ! grep -Fq "$TRUST_ENVIRONMENT_ERROR" "$TMP_DIR/invalid-trust-environment.err"; then
+  echo "apps template did not report the expected invalid Gateway trust environment diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/invalid-trust-environment.err" >&2
+  exit 1
+fi
 
 for preview_shape in absent null; do
   INVALID_PREVIEW_VALUES="$TMP_DIR/preview-values-$preview_shape.yaml"

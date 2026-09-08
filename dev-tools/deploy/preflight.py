@@ -3996,7 +3996,7 @@ def validate_gateway_ws_listener(
     gateway_strategy = (document.get("spec") or {}).get("strategy")
     if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"}:
         issues = [
-            "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default"
+            "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default for ordinary availability-preserving replacement; emergency identity withdrawal requires controller termination and is not proven by this rendered strategy"
         ]
     else:
         issues = []
