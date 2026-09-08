@@ -1,6 +1,6 @@
 # Project Direction Entrypoint
 
-Last refreshed: 2026-09-07. These notes are non-normative continuity guidance. Architecture/design documents own target-state contracts; implementation trackers own implementation, proof, gaps, and handoffs; repository workflow guidance selects process. Refresh owner-reported PR, review, CI, and SHA facts at decision time.
+Last refreshed: 2026-09-09. These notes are non-normative continuity guidance. Architecture/design documents own target-state contracts; implementation trackers own implementation, proof, gaps, and handoffs; repository workflow guidance selects process. Refresh owner-reported PR, review, CI, and SHA facts at decision time.
 
 ## Confirmed direction
 
@@ -21,7 +21,7 @@ Last refreshed: 2026-09-07. These notes are non-normative continuity guidance. A
 
 ## Current work and pending decisions
 
-- **5B:** Current 5B review scopes and completion are tracked in [PR #2698](https://github.com/benhook1013/FireMUD/pull/2698), [PR #2677](https://github.com/benhook1013/FireMUD/pull/2677), [PR #2678](https://github.com/benhook1013/FireMUD/pull/2678), and [PR #2679](https://github.com/benhook1013/FireMUD/pull/2679). Worker executes them; no parallel 5B ledger or final extra sweep. #2698 is current; the others are parked.
+- **5B:** Current 5B review scopes and completion are tracked in [PR #2698](https://github.com/benhook1013/FireMUD/pull/2698), [PR #2677](https://github.com/benhook1013/FireMUD/pull/2677), [PR #2678](https://github.com/benhook1013/FireMUD/pull/2678), and [PR #2679](https://github.com/benhook1013/FireMUD/pull/2679). #2698 is merged. Worker’s selected next 5B lane is #2677, explicitly paused while Gameplay finishes its stack; #2678 and #2679 remain parked. No parallel 5B ledger or final extra sweep.
 - **Pending future discussion:** the shipped-game/profile idea remains a product/content topic, not a selected repository assignment. The archived manual-testing tracker proposed one read-only preview/dev-demo pass through player bootstrap/login/`PLAY`/`LOOK` with reproducible deployed-commit evidence; it does not establish a recurring test programme. Old 5B follow-up material carried residual scope/authentication, migration-proof, and routing candidates requiring fresh develop-head adjudication if revived. Historical main-slice/whole-corpus plans record review sequencing only and do not authorize restart. These source details are checkpointed history, not active lanes.
 - **Pending separate review:** `/home/ben/src/FireMUD-coderabbit-rate-limit-fix` requires its own current semantic review/PR. Record it only; do not execute it here. Older process-document patches may be superseded.
 - **Dated/unverified carry-forward:** retained Weather/identity/recovery dispositions remain source material until a current owner report resolves them. Historical corpus plans/status ledgers and branch/worktree inventories are checkpointed provenance only and do not authorize work; prior PR/review/merge claims remain unverified. Do not blanket-drop unknown actions from the archived notes.
