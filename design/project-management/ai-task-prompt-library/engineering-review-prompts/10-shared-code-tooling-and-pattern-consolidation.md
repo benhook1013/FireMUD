@@ -4,6 +4,8 @@ Use this prompt for an occasional repository-wide review of repeated implementat
 
 Apply the [shared review contract](../system-review-prompts/00-shared-review-contract.md).
 
+Before sampling, identify the declared review boundary and discovery objective; assess completion under the shared review contract for that scope.
+
 ## Starting Sources
 
 - `design/architecture/repository-structure.md`
