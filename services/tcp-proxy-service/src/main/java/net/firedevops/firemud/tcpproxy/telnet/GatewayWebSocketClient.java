@@ -75,7 +75,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       Executors.newSingleThreadExecutor(
           Thread.ofVirtual().name("gateway-http-client-retirement", 0).factory());
   private volatile ClientState state;
-  private TlsCertificateWatcher certificateWatcher;
+  private volatile TlsCertificateWatcher certificateWatcher;
 
   @Autowired
   public GatewayWebSocketClient(
@@ -296,6 +296,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     return watcher != null && watcher.isRunning();
   }
 
+  boolean isCertificateWatcherHealthy() {
+    TlsCertificateWatcher watcher = certificateWatcher;
+    return watcher != null && watcher.hasAllRequiredRegistrations();
+  }
+
   @Override
   public synchronized void close() throws IOException {
     if (!closed.compareAndSet(false, true)) {
@@ -345,7 +350,8 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   private boolean hasUsableCertificateWatcher() {
-    return "ws".equals(gatewayUri.getScheme()) || isCertificateWatcherRunning();
+    return !closed.get()
+        && ("ws".equals(gatewayUri.getScheme()) || isCertificateWatcherHealthy());
   }
 
   private HttpClient newHttpClient(javax.net.ssl.SSLContext sslContext) {

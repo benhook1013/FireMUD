@@ -87,8 +87,7 @@ class TcpProxyTlsListenerTest {
     delegated.set(false);
     MockServerHttpResponse normalizedGameplayResponse = new MockServerHttpResponse();
     handler
-        .handle(
-            MockServerHttpRequest.get("/ws/game/./demo").build(), normalizedGameplayResponse)
+        .handle(MockServerHttpRequest.get("/ws/game/./demo").build(), normalizedGameplayResponse)
         .block();
     assertThat(delegated).isTrue();
     assertThat(normalizedGameplayResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);

@@ -165,11 +165,13 @@ class TlsCertificateWatcherTest {
                 }
               }
             })) {
+      assertTrue(watcher.hasAllRequiredRegistrations());
       Files.delete(retiredCertificate);
       Files.delete(retiredDirectory);
       watcher.start();
       assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
+      assertFalse(watcher.hasAllRequiredRegistrations());
 
       synchronized (reloadPhase) {
         Files.writeString(retainedCertificate, "certificate-2");
@@ -177,6 +179,7 @@ class TlsCertificateWatcherTest {
       }
       assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
+      assertFalse(watcher.hasAllRequiredRegistrations());
     }
   }
 

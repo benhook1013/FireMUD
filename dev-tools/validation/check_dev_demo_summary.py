@@ -1584,7 +1584,7 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
             return True
         if "BOOTSTRAP_SCRIPT" in tokens:
             return True
-        for index, token in enumerate(tokens):
+        for token in tokens:
             if token == BOOTSTRAP_SCRIPT_PATH and record_index != assignment_index:
                 return True
             if not re.search(

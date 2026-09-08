@@ -380,9 +380,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                     contextlib.redirect_stderr(stderr),
                     self.assertRaises(SystemExit) as raised,
                 ):
-                    telnet_session.build_parser().parse_args(
-                        [*base_args, "--port", invalid]
-                    )
+                    telnet_session.main([*base_args, "--port", invalid])
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn(
                     "argument --port: port must be an integer between 1 and 65535",
@@ -392,10 +390,14 @@ class TelnetSessionDriverTest(unittest.TestCase):
 
         for valid in ("1", "65535"):
             with self.subTest(valid=valid):
-                args = telnet_session.build_parser().parse_args(
-                    [*base_args, "--port", valid]
-                )
-                self.assertEqual(args.port, int(valid))
+                with patch.object(
+                    telnet_session, "run_connect", return_value=0
+                ) as run_connect:
+                    self.assertEqual(
+                        telnet_session.main([*base_args, "--port", valid]), 0
+                    )
+                run_connect.assert_called_once()
+                self.assertEqual(run_connect.call_args.args[0].port, int(valid))
 
     def test_connect_and_receive_timeouts_are_distinct_positive_cli_values(self):
         parser = telnet_session.build_parser()

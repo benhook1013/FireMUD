@@ -35,6 +35,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final Set<Path> files;
   private final Runnable onChange;
   private final AtomicBoolean running = new AtomicBoolean(true);
+  private final AtomicBoolean allRequiredRegistrationsValid = new AtomicBoolean(true);
   private final Thread thread;
 
   public static TlsCertificateWatcher createAndStart(List<Path> files, Runnable onChange)
@@ -116,6 +117,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     }
     if (!key.reset()) {
       keys.remove(key);
+      allRequiredRegistrationsValid.set(false);
     }
     return changed;
   }
@@ -161,6 +163,10 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   public boolean isRunning() {
     return running.get();
+  }
+
+  public boolean hasAllRequiredRegistrations() {
+    return running.get() && allRequiredRegistrationsValid.get();
   }
 
   @Override
