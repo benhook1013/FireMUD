@@ -29,6 +29,7 @@ import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetDriver;
 import net.firedevops.firemud.tcpproxy.testsupport.GameplayTelnetScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.TestAsyncAssertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -130,6 +131,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void readinessEndpointReportsTrafficAdmissionReady() throws Exception {
     ensureTestServicesStarted();
+    awaitTrafficAdmissionReady();
     String body =
         HttpTestSupport.getBody("http://localhost:" + port + "/actuator/health/readiness");
     assertThat(body).contains("\"status\":\"UP\"");
@@ -784,8 +786,27 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new GatewayHolder(context, port);
   }
 
-  private GameplayTelnetDriver openTelnetClient() throws IOException {
+  private GameplayTelnetDriver openTelnetClient() throws Exception {
+    awaitTrafficAdmissionReady();
     return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
+  }
+
+  private void awaitTrafficAdmissionReady() throws InterruptedException {
+    TestAsyncAssertions.assertEventually(
+        "TCP Proxy traffic-admission readiness",
+        COMMAND_WAIT,
+        () -> {
+          try {
+            return HttpTestSupport.getBody(
+                    "http://localhost:" + port + "/actuator/health/readiness")
+                .contains("\"status\":\"UP\"");
+          } catch (IOException ex) {
+            return false;
+          } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return false;
+          }
+        });
   }
 
   private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {
