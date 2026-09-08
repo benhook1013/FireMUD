@@ -61,6 +61,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   private static final int GENERATION_ACQUIRE_ATTEMPTS = 2;
   private static final String CLIENT_AUTH_EKU = "1.3.6.1.5.5.7.3.2";
   private static final String GAMEPLAY_WEBSOCKET_ROUTE = "/ws/game";
+  private static final String BAD_HEADER_REASON = "bad_header";
   private static final List<String> LOCAL_PROFILES = List.of("dev", "local", "test");
 
   private final URI gatewayUri;
@@ -166,6 +167,18 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       String realmSlug,
       String pointerVersion,
       WebSocket.Listener listener) {
+    try {
+      validateHeaderValue("X-Client-IP", clientIp);
+      validateHeaderValue("X-Proxy-Connection-Id", proxyConnectionId);
+      validateHeaderValue("X-Game-Instance-Id", gameInstanceId);
+      validateHeaderValue("X-Tenant-Id", tenantId);
+      validateHeaderValue("X-World-Slug", worldSlug);
+      validateHeaderValue("X-Realm-Slug", realmSlug);
+      validateHeaderValue("X-Pointer-Version", pointerVersion);
+    } catch (TlsConfigurationException error) {
+      return CompletableFuture.failedFuture(error);
+    }
+
     ClientGeneration generation = acquireCurrentGeneration();
     if (generation == null) {
       String reason = state.failureReason();
@@ -183,10 +196,8 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       releasingListener = new ReleasingWebSocketListener(listener, generation::release);
       WebSocket.Builder builder = generation.client().newWebSocketBuilder();
       builder.connectTimeout(WEBSOCKET_HANDSHAKE_TIMEOUT);
-      if (clientIp != null) {
-        builder.header("X-Client-IP", clientIp);
-        builder.header("X-Proxy-Client-IP", clientIp);
-      }
+      addHeader(builder, "X-Client-IP", clientIp);
+      addHeader(builder, "X-Proxy-Client-IP", clientIp);
       addHeader(builder, "X-Proxy-Connection-Id", proxyConnectionId);
       addHeader(builder, "X-Game-Instance-Id", gameInstanceId);
       addHeader(builder, "X-Proxy-Game-Instance-Id", gameInstanceId);
@@ -213,6 +224,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         generation.release();
       } else {
         releasingListener.release();
+      }
+      if (error instanceof TlsConfigurationException) {
+        return CompletableFuture.failedFuture(error);
       }
       throw error;
     }
@@ -512,6 +526,14 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     recordFailure(reason);
   }
 
+  private void validateHeaderValue(String headerName, String value) {
+    try {
+      TelnetRoutingBundle.validateHeaderValue(headerName, value);
+    } catch (IllegalArgumentException e) {
+      throw configurationFailure(BAD_HEADER_REASON, e.getMessage(), e);
+    }
+  }
+
   private static URI parseGatewayUri(String value) {
     try {
       if (value == null) {
@@ -565,7 +587,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
             .anyMatch(profile -> !LOCAL_PROFILES.contains(profile));
   }
 
-  private static void addHeader(WebSocket.Builder builder, String name, String value) {
+  private void addHeader(WebSocket.Builder builder, String name, String value) {
+    if (value != null) {
+      validateHeaderValue(name, value);
+    }
     if (value != null && !value.isBlank()) {
       builder.header(name, value);
     }
@@ -578,6 +603,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
 
   static String classifyFailure(Throwable error) {
     Throwable cause = unwrap(error);
+    if (cause instanceof TlsConfigurationException tlsFailure) {
+      return tlsFailure.reason();
+    }
     if (cause instanceof UnknownHostException) {
       return "dns";
     }

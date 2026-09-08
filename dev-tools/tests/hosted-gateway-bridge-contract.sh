@@ -74,6 +74,111 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
 
+LEGACY_NODEPORT_RENDERED="$TMP_DIR/legacy-nodeport.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/legacy-nodeport-values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+tcp_proxy = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+tcp_proxy["ports"][0]["nodePort"] = 30001
+tcp_proxy["ports"].append({"port": 8080, "targetPort": 8080})
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/legacy-nodeport-values.yaml" \
+  --namespace pr-123 \
+  >"$LEGACY_NODEPORT_RENDERED"
+python3 - "$LEGACY_NODEPORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+proxy_service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+telnet_port = next(
+    port for port in proxy_service["spec"]["ports"] if port.get("port") == 2323
+)
+if telnet_port.get("nodePort") != 32123:
+    raise SystemExit(
+        "hosted-controller Telnet NodePort did not use preview.telnetPort: "
+        f"{telnet_port}"
+    )
+extra_port = next(
+    port for port in proxy_service["spec"]["ports"] if port.get("port") == 8080
+)
+if "nodePort" in extra_port:
+    raise SystemExit(
+        "hosted-controller extra TCP Proxy service port unexpectedly gained a NodePort"
+    )
+PY
+
+STANDALONE_NODEPORT_RENDERED="$TMP_DIR/standalone-nodeport.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/standalone-nodeport-values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+values["previewStack"]["certificateIdentity"]["mode"] = "standalone"
+tcp_proxy = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "tcp-proxy-service"
+)
+tcp_proxy["ports"][0]["nodePort"] = 30001
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/standalone-nodeport-values.yaml" \
+  --namespace pr-123 \
+  >"$STANDALONE_NODEPORT_RENDERED"
+python3 - "$STANDALONE_NODEPORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+proxy_service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+telnet_port = next(
+    port for port in proxy_service["spec"]["ports"] if port.get("port") == 2323
+)
+if telnet_port.get("nodePort") != 30001:
+    raise SystemExit(
+        "standalone TCP Proxy Telnet NodePort no longer uses the service port value: "
+        f"{telnet_port}"
+    )
+PY
+
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
 render_test_values \
   "$TMP_DIR/dev-values.yaml" \
@@ -676,8 +781,7 @@ if not any(
     )
 
 strategy_issue = (
-    "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
-    "cannot retain stale pods"
+    "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )
 multi_container_proxy = copy.deepcopy(documents)
 proxy_copy = next(

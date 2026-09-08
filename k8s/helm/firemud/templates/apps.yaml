@@ -231,7 +231,9 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and (eq $certificateIdentityMode "hosted-controller") (eq $service.name "tcp-proxy-service") (eq (int $port.port) 2323) }}
+      nodePort: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") }}
+      {{- else if $port.nodePort }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

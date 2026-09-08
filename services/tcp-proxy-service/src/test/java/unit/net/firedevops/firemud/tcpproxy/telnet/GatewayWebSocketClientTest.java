@@ -727,6 +727,62 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void controlCharactersInEveryDynamicHeaderValueUseStableConfigurationFailure() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "ws://localhost:65535/ws/game",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "",
+            new String[] {"test"},
+            registry,
+            false);
+    clients.add(client);
+
+    String invalid = "safe\r\ninjected";
+    for (int index = 0; index < 7; index++) {
+      String clientIp = index == 0 ? invalid : null;
+      String proxyConnectionId = index == 1 ? invalid : null;
+      String gameInstanceId = index == 2 ? invalid : null;
+      String tenantId = index == 3 ? invalid : null;
+      String worldSlug = index == 4 ? invalid : null;
+      String realmSlug = index == 5 ? invalid : null;
+      String pointerVersion = index == 6 ? invalid : null;
+
+      ExecutionException failure =
+          assertThrows(
+              ExecutionException.class,
+              () ->
+                  client
+                      .connect(
+                          clientIp,
+                          proxyConnectionId,
+                          gameInstanceId,
+                          tenantId,
+                          worldSlug,
+                          realmSlug,
+                          pointerVersion,
+                          new WebSocket.Listener() {})
+                      .get(1, TimeUnit.SECONDS));
+
+      assertNotNull(failure.getCause());
+      assertTrue(failure.getCause().getMessage().contains("reason=bad_header"));
+      assertEquals("bad_header", GatewayWebSocketClient.classifyFailure(failure));
+    }
+
+    assertEquals(
+        7.0,
+        registry.counter("tcpproxy.gateway.handshake.failures", "reason", "bad_header").count());
+    assertEquals(
+        0.0, registry.counter("tcpproxy.gateway.handshake.failures", "reason", "unknown").count());
+    assertEquals(7.0, registry.counter("tcpproxy.tls.misconfig").count());
+  }
+
+  @Test
   void synchronousBuildFailureReleasesGeneration() throws Exception {
     GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate);
     HttpClient replacementClient = mock(HttpClient.class);
