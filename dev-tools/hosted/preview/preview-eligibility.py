@@ -45,9 +45,8 @@ def evaluate(
     labels_json: str,
 ) -> tuple[bool, str]:
     labels_valid, _ = parse_labels(labels_json)
-    if operation in {"deploy", "retain"}:
-        if not labels_valid:
-            return False, "malformed-label-metadata"
+    if operation in {"deploy", "retain"} and not labels_valid:
+        return False, "malformed-label-metadata"
     if author in DEPENDENCY_BOT_AUTHORS:
         return False, "dependency-bot"
     if base_ref not in SUPPORTED_BASE_REFS:
