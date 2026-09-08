@@ -130,6 +130,11 @@ Entry format:
   - Observation: a project name supplied by the caller does not prove ownership of destructive access.
   - Expected pattern: require a claim/capability, verify project resources and the canonical endpoint, and fail closed on stale, colliding, or mismatched state.
 
+- `2026-09-09`: Focused ShellCheck runs must include sourced repository files
+  - Context: a focused invocation linted `hosted-login-look-smoke.sh` without also passing its sourced `demo-smoke-defaults.sh` and reported `SC1091`, while the repository CI invocation passes every tracked shell script together.
+  - Observation: this warning can be an invocation mismatch rather than a script defect; adding `-x` or including the sourced file makes the focused result match the canonical whole-repository check.
+  - Expected pattern: when linting a shell subset, pass its repository-owned sourced files as inputs or use `shellcheck -x`; do not suppress `SC1091` merely to compensate for an incomplete local command.
+
 - `2026-09-05`: Automation source type alone does not identify the local command path
   - Context: reconciling local exact-pin admission and final execution with the existing remote Automation follow-up path.
   - Observation: local and remote commands both use the `AUTOMATION` source type, so applying local tuple requirements by source type alone breaks the remote legacy path before its separate source/target tuple contract is implemented.
