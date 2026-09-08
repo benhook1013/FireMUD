@@ -1,14 +1,22 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.RoleBindingBuilder;
 import io.fabric8.kubernetes.api.model.rbac.RoleBuilder;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import java.util.HashMap;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -77,6 +85,42 @@ class RuntimeProfileServiceTest {
   }
 
   @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void runtimeProfileRejectsIncompleteOrInvalidRuntimeIdentity() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(anyString())).thenReturn(namespace);
+
+    Namespace missingUid =
+        new NamespaceBuilder().withNewMetadata().withName("pr-42").endMetadata().build();
+    when(namespace.get()).thenReturn(missingUid);
+    assertEquals(
+        "runtime Namespace has no stable UID",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+
+    Namespace missingHead = previewRuntimeNamespace(null, "32001");
+    when(namespace.get()).thenReturn(missingHead);
+    assertEquals(
+        "runtime Namespace has no canonical deployed head identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+
+    Namespace missingPort = previewRuntimeNamespace("a".repeat(40), null);
+    when(namespace.get()).thenReturn(missingPort);
+    assertEquals(
+        "runtime Namespace has no canonical Telnet port identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+
+    Namespace invalidPort = previewRuntimeNamespace("a".repeat(40), "32016");
+    when(namespace.get()).thenReturn(invalidPort);
+    assertEquals(
+        "runtime Namespace has an invalid Telnet port identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+  }
+
+  @Test
   void retainedIdentityNamespaceMustHaveOnlyItsDerivedControllerLabels() {
     var devPlan = planner.plan("dev-demo");
     var valid =
@@ -123,6 +167,53 @@ class RuntimeProfileServiceTest {
             .endMetadata()
             .build();
     assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(unexpectedOwner, devPlan));
+
+    var previewPlan = planner.plan("pr-42");
+    var preview =
+        new NamespaceBuilder()
+            .withNewMetadata()
+            .withName("pr-42-identity")
+            .withLabels(
+                Map.of(
+                    "firemud.dev/managed-by", "hosted-identity-controller",
+                    "firemud.dev/identity-name", "pr-42",
+                    "firemud.dev/retention", "retained",
+                    "firemud.dev/environment-class", "pr-preview"))
+            .endMetadata()
+            .build();
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(preview, previewPlan));
+    assertFalse(
+        HostedIdentityScopeService.isExpectedIdentityNamespace(
+            new NamespaceBuilder(preview)
+                .editMetadata()
+                .withName("pr-43-identity")
+                .endMetadata()
+                .build(),
+            previewPlan));
+    assertFalse(
+        HostedIdentityScopeService.isExpectedIdentityNamespace(
+            new NamespaceBuilder(preview)
+                .editMetadata()
+                .withGenerateName("pr-42-")
+                .endMetadata()
+                .build(),
+            previewPlan));
+    assertFalse(
+        HostedIdentityScopeService.isExpectedIdentityNamespace(
+            new NamespaceBuilder(preview)
+                .editMetadata()
+                .addToAnnotations("external", "unexpected")
+                .endMetadata()
+                .build(),
+            previewPlan));
+    assertFalse(
+        HostedIdentityScopeService.isExpectedIdentityNamespace(
+            new NamespaceBuilder(preview)
+                .editMetadata()
+                .withFinalizers("external/finalizer")
+                .endMetadata()
+                .build(),
+            previewPlan));
   }
 
   @Test
@@ -179,5 +270,21 @@ class RuntimeProfileServiceTest {
     assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
     roundTripped.getMetadata().setAnnotations(Map.of("unexpected", "ownership"));
     assertFalse(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
+  }
+
+  private static Namespace previewRuntimeNamespace(String head, String port) {
+    var builder =
+        new NamespaceBuilder()
+            .withNewMetadata()
+            .withName("pr-42")
+            .withUid("runtime-uid")
+            .withLabels(Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "42"));
+    if (head != null) {
+      builder.addToAnnotations("firemud.dev/last-preview-head-sha", head);
+    }
+    if (port != null) {
+      builder.addToAnnotations("firemud.dev/last-preview-telnet-port", port);
+    }
+    return builder.endMetadata().build();
   }
 }

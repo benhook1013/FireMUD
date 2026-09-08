@@ -49,7 +49,8 @@ class SecretMaterialValidatorTest {
     assertEquals(64, summary.certificateFingerprint().length());
     assertEquals(64, summary.spkiSha256().length());
     assertEquals(1, GrpcTransportBundleGenerator.issuanceGeneration(source));
-    assertEquals(44, GrpcTransportBundleGenerator.grpcDnsNames(plan).size());
+    assertEquals(
+        plan.grpcConsumers().size() * 4, GrpcTransportBundleGenerator.grpcDnsNames(plan).size());
     assertEquals(
         true,
         GrpcTransportBundleGenerator.grpcDnsNames(plan)

@@ -61,6 +61,7 @@ class HostedStatusServiceTest {
 
     assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());
     assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, resource.getStatus().getPhase());
+    assertEquals("RuntimeIdentityChanged", resource.getStatus().getConditions().get(0).getReason());
   }
 
   @Test
@@ -112,7 +113,7 @@ class HostedStatusServiceTest {
   }
 
   @Test
-  void readyTransitionTimeChangesOnlyWhenStatusReasonOrMessageChanges() {
+  void readyTransitionTimeChangesOnlyWhenStatusChanges() {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(
         new ObjectMetaBuilder()
@@ -152,6 +153,39 @@ class HostedStatusServiceTest {
         null,
         null,
         null);
+    assertEquals(
+        "2026-01-01T00:00:00Z",
+        resource.getStatus().getConditions().get(0).getLastTransitionTime());
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        "Blocked",
+        "still not ready",
+        false,
+        null,
+        null,
+        null,
+        null);
+    assertEquals(
+        "2026-01-01T00:00:00Z",
+        resource.getStatus().getConditions().get(0).getLastTransitionTime());
+
+    var role = new HostedEnvironmentIdentityStatus.RoleStatus();
+    role.setRevision("sha256:" + "a".repeat(64));
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Ready,
+        "Reconciled",
+        "ready",
+        true,
+        null,
+        role,
+        role,
+        role,
+        role,
+        role);
+    assertEquals("True", resource.getStatus().getConditions().get(0).getStatus());
     assertFalse(
         "2026-01-01T00:00:00Z"
             .equals(resource.getStatus().getConditions().get(0).getLastTransitionTime()));

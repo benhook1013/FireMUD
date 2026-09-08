@@ -18,19 +18,19 @@ require_file() {
 require_literal() {
   local file="$1"
   local literal="$2"
-  rg -Fq -- "$literal" "$file" || fail "missing '$literal' in $file"
+  grep -Fq -- "$literal" "$file" || fail "missing '$literal' in $file"
 }
 
 require_regex() {
   local file="$1"
   local expression="$2"
-  rg --quiet --regexp "$expression" "$file" || fail "missing /$expression/ in $file"
+  grep -Eq -- "$expression" "$file" || fail "missing /$expression/ in $file"
 }
 
 forbid_literal() {
   local file="$1"
   local literal="$2"
-  if rg -Fq -- "$literal" "$file"; then
+  if grep -Fq -- "$literal" "$file"; then
     fail "forbidden '$literal' found in $file"
   fi
 }
@@ -38,9 +38,44 @@ forbid_literal() {
 forbid_regex() {
   local file="$1"
   local expression="$2"
-  if rg --quiet --regexp "$expression" "$file"; then
+  if grep -Eq -- "$expression" "$file"; then
     fail "forbidden /$expression/ found in $file"
   fi
+}
+
+select_named_yaml_document() {
+  local file="$1"
+  local kind="$2"
+  local name="$3"
+  local selected
+  if ! selected="$(python3 - "$file" "$kind" "$name" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+kind = sys.argv[2]
+name = sys.argv[3]
+matches = [
+    document
+    for document in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+    and document.get("kind") == kind
+    and isinstance(document.get("metadata"), dict)
+    and document["metadata"].get("name") == name
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected exactly one {kind}/{name} in {path}, found {len(matches)}"
+    )
+print(yaml.safe_dump(matches[0], sort_keys=False), end="")
+PY
+  )"; then
+    fail "could not select exactly one $kind/$name from $file"
+  fi
+  [[ -n "$selected" ]] || fail "selected $kind/$name from $file is empty"
+  printf '%s\n' "$selected"
 }
 
 for file in \
@@ -271,7 +306,10 @@ for forbidden_ha_marker in \
   FIREMUD_HOSTED_IDENTITY_LEADER_ELECTION_LEASE; do
   forbid_literal "$RBAC" "$forbidden_ha_marker"
 done
-requester_rbac="$(sed -n '1,28p' "$RBAC")"
+requester_rbac="$(
+  select_named_yaml_document "$RBAC" Role firemud-hosted-identity-requester
+)"
+[[ -n "$requester_rbac" ]] || fail "requester Role selection is empty"
 for forbidden_requester_permission in secrets certificates; do
   if grep -Fqi -- "$forbidden_requester_permission" <<<"$requester_rbac"; then
     fail "requester role has forbidden $forbidden_requester_permission access"
@@ -287,12 +325,10 @@ for forbidden_cluster_permission in secrets certificates hostedenvironmentidenti
     fail "controller ClusterRole has broad $forbidden_cluster_permission access"
   fi
 done
-scope_writer_rbac="$(awk '
-  /^---$/ { in_document = 0; is_scope_writer = 0 }
-  /^kind: ClusterRole$/ { in_document = 1 }
-  in_document && /^  name: firemud-hosted-identity-scope-writer$/ { is_scope_writer = 1 }
-  in_document && is_scope_writer { print }
-' "$RBAC")"
+scope_writer_rbac="$(
+  select_named_yaml_document "$RBAC" ClusterRole firemud-hosted-identity-scope-writer
+)"
+[[ -n "$scope_writer_rbac" ]] || fail "scope-writer ClusterRole selection is empty"
 for text_value in \
   "- roles" \
   "- rolebindings" \
@@ -427,6 +463,25 @@ for ca_proof in \
   'does not match the configured fingerprint'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
+BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
+import os
+from pathlib import Path
+
+source = Path(os.environ["BOOTSTRAP"]).read_text(encoding="utf-8")
+last_authorization_probe = source.index(
+    'expect_can_i no --as="$requester_sa" --namespace=dev '
+    'get hostedenvironmentidentities.platform.firemud.dev'
+)
+active_transition = source.index(
+    'if [[ "$ACTIVATION_MODE" == "active" ]]; then\n'
+    '  verify_grpc_ca_prerequisite'
+)
+assert last_authorization_probe < active_transition
+assert 'rendered_activation_mode="$(sed -n ' in source
+assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
+assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
+assert 'fail "activation mode still contains the paused value after replacement"' in source
+PY
 require_literal "$PROJECTION" "ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION"
 forbid_literal "$GRPC_GENERATOR" 'requiredData(caSource, "tls.crt")'
 forbid_literal "$GRPC_GENERATOR" 'requiredData(caSource, "tls.key")'
@@ -439,6 +494,12 @@ bootstrap_error="$bootstrap_test_dir/error"
 cat >"$bootstrap_test_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+record_event() {
+  if [[ -n "${FAKE_EVENT_LOG:-}" ]]; then
+    printf '%s\n' "$1" >>"$FAKE_EVENT_LOG"
+  fi
+}
 
 if [[ "${1:-}" == "kustomize" ]]; then
   cat <<'YAML'
@@ -459,9 +520,21 @@ YAML
   exit 0
 fi
 if [[ "${1:-}" == "apply" ]]; then
+  manifest=''
+  previous=''
+  for argument in "$@"; do
+    if [[ "$previous" == "-f" ]]; then
+      manifest="$argument"
+    fi
+    previous="$argument"
+  done
+  [[ -n "$manifest" ]] || exit 2
+  activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$manifest")"
+  record_event "apply:${activation_mode}"
   exit 0
 fi
 if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "rollout" ]]; then
+  record_event rollout
   exit 0
 fi
 if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "deployment" ]]; then
@@ -470,6 +543,17 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "crd" ]]; then
   printf 'True\n'
+  exit 0
+fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "firemud-grpc-ca" ]]; then
+  record_event ca-read
+  case "$*" in
+    *'{.type}'*) printf 'Opaque' ;;
+    *'go-template='*) printf 'ca.crt\nca.key\n' ;;
+    *'{.data.ca\.crt}'*) base64 --wrap=0 <"$FAKE_CA_CERT" ;;
+    *'{.data.ca\.key}'*) base64 --wrap=0 <"$FAKE_CA_KEY" ;;
+    *) exit 2 ;;
+  esac
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicy" ]]; then
@@ -481,6 +565,7 @@ if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicybinding" ]]; th
   exit 0
 fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then
+  record_event auth-check
   if [[ " $* " == *" --all-namespaces "* || " $* " == *" --namespace=dev "* ]]; then
     if [[ "${FAKE_CAN_I_ERROR:-0}" == "1" ]]; then
       printf 'simulated authorization API failure\n' >&2
@@ -500,8 +585,22 @@ printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
 exit 2
 SH
 chmod +x "$bootstrap_test_dir/kubectl"
+bootstrap_ca_cert="$bootstrap_test_dir/ca.crt"
+bootstrap_ca_key="$bootstrap_test_dir/ca.key"
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$bootstrap_ca_key" \
+  -out "$bootstrap_ca_cert" \
+  -days 1 \
+  -subj '/CN=firemud-grpc-ca' \
+  >/dev/null 2>&1
 bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-bootstrap_fingerprint='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+bootstrap_fingerprint="$(
+  openssl x509 -in "$bootstrap_ca_cert" -outform DER |
+    sha256sum |
+    awk '{print $1}'
+)"
+[[ "$bootstrap_fingerprint" =~ ^[0-9a-f]{64}$ ]] || \
+  fail "could not compute the fixture gRPC CA fingerprint"
 if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
   bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
@@ -509,6 +608,60 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+active_event_log="$bootstrap_test_dir/active-events"
+if ! FAKE_EVENT_LOG="$active_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected the verified pause-first active transition: $(cat "$bootstrap_error")"
+fi
+require_literal "$bootstrap_output" "activation=active"
+mapfile -t active_events <"$active_event_log"
+[[ "${active_events[0]:-}" == "apply:paused" ]] || \
+  fail "active bootstrap did not apply paused mode first"
+[[ "${active_events[-2]:-}" == "apply:active" ]] || \
+  fail "active bootstrap did not replace paused mode with active"
+[[ "${active_events[-1]:-}" == "rollout" ]] || \
+  fail "active bootstrap did not wait for the active rollout"
+auth_checks=0
+last_auth_index=-1
+first_ca_index=-1
+active_apply_index=-1
+for index in "${!active_events[@]}"; do
+  case "${active_events[$index]}" in
+    auth-check)
+      auth_checks=$((auth_checks + 1))
+      last_auth_index="$index"
+      ;;
+    ca-read)
+      if (( first_ca_index < 0 )); then
+        first_ca_index="$index"
+      fi
+      ;;
+    apply:active) active_apply_index="$index" ;;
+  esac
+done
+[[ "$auth_checks" -eq 11 ]] || fail "active bootstrap did not run all authorization probes"
+(( first_ca_index > last_auth_index )) || \
+  fail "active bootstrap read the CA before all authorization probes completed"
+(( active_apply_index > first_ca_index )) || \
+  fail "active bootstrap applied active mode before verifying the gRPC CA"
+mismatch_event_log="$bootstrap_test_dir/mismatch-events"
+if FAKE_EVENT_LOG="$mismatch_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
+  --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a mismatched gRPC CA fingerprint"
+fi
+require_literal "$bootstrap_error" "does not match the configured fingerprint"
+if grep -Fxq -- "apply:active" "$mismatch_event_log"; then
+  fail "bootstrap applied active mode after a mismatched gRPC CA fingerprint"
+fi
 if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \

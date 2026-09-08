@@ -45,6 +45,25 @@ if [[ "$*" == *"get namespaces"* ]]; then
   printf '%b' "${FAKE_NAMESPACE_ROWS:-}"
   exit 0
 fi
+if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ "${FAKE_RUNTIME_LOOKUP_ERROR:-false}" == true ]]; then
+    exit 1
+  fi
+  if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]]; then
+    exit 0
+  fi
+  printf 'namespace/%s\n' "$3"
+  exit 0
+fi
+if [[ "$1" == delete && "$2" == namespace ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  exit 0
+fi
+if [[ "$1" == wait && "$2" == --for=delete ]]; then
+  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  exit 0
+fi
 namespace="${3:-}"
 case "$namespace" in
   pr-101)
@@ -308,6 +327,7 @@ export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
+export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -316,7 +336,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -349,6 +369,8 @@ reset_case() {
   export FAKE_PRUNE_METADATA=''
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
+  export FAKE_RUNTIME_LOOKUP_ERROR=false
+  export FAKE_RUNTIME_NAMESPACE_PRESENT=true
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
@@ -772,6 +794,27 @@ export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_bas
 bash "$PRUNER" --apply
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 
+reset_case
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+bash "$PRUNER" --delete-runtime pr-101
+grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
+if grep -Eq '^(delete|wait) ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "runtime deletion continued after a successful absent lookup" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_LOOKUP_ERROR=true
+if bash "$PRUNER" --delete-runtime pr-101; then
+  echo "runtime deletion treated a namespace lookup error as NotFound" >&2
+  exit 1
+fi
+grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
+if grep -Eq '^(delete|wait) ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "runtime deletion continued after a namespace lookup error" >&2
+  exit 1
+fi
+
 for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
   reset_case
   export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
@@ -895,6 +938,43 @@ test ! -e "$FAKE_DELETE_LOG"
 trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
+RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
+extract_workflow_step_run \
+  "$reconciler_workflow" \
+  "Dispatch preview deploys for drifted PRs" \
+  "$RECONCILER_RUN"
+
+reset_case
+reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_valid_output"
+if ! grep -qx 'Preview pr-901 already aligned to head-901' "$reconciler_valid_output"; then
+  echo "reconciler did not preserve an aligned preview with transported labels" >&2
+  sed 's/^/reconciler output: /' "$reconciler_valid_output" >&2
+  exit 1
+fi
+
+reset_case
+malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"
+reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${malformed_labels_base64}\n" \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_malformed_output"
+grep -qx 'Skipping preview reconcile for PR #901: not preview-eligible (reason=malformed-label-metadata, author=human, base=develop)' \
+  "$reconciler_malformed_output"
+if grep -q '^Dispatching preview deploy' "$reconciler_malformed_output"; then
+  echo "reconciler dispatched after malformed label metadata" >&2
+  exit 1
+fi
+
 TRUSTED_TARGET_RUN="$TEMP_DIR/hosted-identity-target.sh"
 extract_workflow_step_run \
   "$trusted_workflow" \
@@ -1028,5 +1108,9 @@ test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
+grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
+grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
 
 echo "preview priority contract checks passed"

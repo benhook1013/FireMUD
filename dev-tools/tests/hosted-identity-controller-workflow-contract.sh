@@ -189,20 +189,23 @@ case "$resource" in
 esac
 SH
 chmod +x "$TEMP_DIR/bin/gh"
-PATH="$TEMP_DIR/bin:$PATH" \
-  GH_TOKEN=fake \
-  GITHUB_REPOSITORY=example/FireMUD \
-  EVENT_NAME=workflow_run \
-  EVENT_ACTION=completed \
-  WORKFLOW_RUN_ID=42 \
-  WORKFLOW_RUN_HEAD_SHA=head-900 \
-  EVENT_PR_NUMBER='' \
-  EVENT_HEAD_SHA='' \
-  INPUT_PR_NUMBER='' \
-  INPUT_HEAD_SHA='' \
-  INPUT_ACTION='' \
-  GITHUB_OUTPUT="$TEMP_DIR/output" \
-  bash "$TEMP_DIR/target.sh"
+(
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    EVENT_NAME=workflow_run \
+    EVENT_ACTION=completed \
+    WORKFLOW_RUN_ID=42 \
+    WORKFLOW_RUN_HEAD_SHA=head-900 \
+    EVENT_PR_NUMBER='' \
+    EVENT_HEAD_SHA='' \
+    INPUT_PR_NUMBER='' \
+    INPUT_HEAD_SHA='' \
+    INPUT_ACTION='' \
+    GITHUB_OUTPUT="$TEMP_DIR/output" \
+    bash "$TEMP_DIR/target.sh"
+)
 test "$(cat "$TEMP_DIR/output")" = 'action=none'
 
 echo 'hosted identity controller workflow contract passed'

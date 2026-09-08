@@ -136,25 +136,30 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
           PR_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
           DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_AUTHOR="$PR_USER_LOGIN"
             BASE_REF="$PR_BASE_REF"
+            LABELS_JSON="$(jq -c 'if type == "array" then [.[] | {name: .name}] else . end' <<<"$PR_LABELS_JSON")"
             if [ "$EVENT_ACTION" = "closed" ]; then
               PR_STATE="closed"
             else
               PR_STATE="open"
             fi
           else
-            PR_AUTHOR="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.user.login')"
-            BASE_REF="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.base.ref')"
-            PR_STATE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}" --jq '.state')"
+            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${DERIVED_PR_NUMBER}")"
+            PR_AUTHOR="$(jq -r '.user.login' <<<"$PULL_REQUEST_JSON")"
+            BASE_REF="$(jq -r '.base.ref' <<<"$PULL_REQUEST_JSON")"
+            PR_STATE="$(jq -r '.state' <<<"$PULL_REQUEST_JSON")"
+            LABELS_JSON="$(jq -c '.labels | if type == "array" then [.[] | {name: .name}] else . end' <<<"$PULL_REQUEST_JSON")"
           fi
           {
             echo "author=${PR_AUTHOR}"
             echo "base_ref=${BASE_REF}"
             echo "state=${PR_STATE}"
+            echo "labels_json=${LABELS_JSON}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve preview eligibility
@@ -164,12 +169,14 @@ jobs:
           TARGET_STATE: ${{ steps.target-metadata.outputs.state }}
           TARGET_BASE_REF: ${{ steps.target-metadata.outputs.base_ref }}
           TARGET_AUTHOR: ${{ steps.target-metadata.outputs.author }}
+          TARGET_LABELS_JSON: ${{ steps.target-metadata.outputs.labels_json }}
         run: |
           python3 ./dev-tools/hosted/preview/preview-eligibility.py \
             --operation "$DERIVED_ACTION" \
             --state "$TARGET_STATE" \
             --base-ref "$TARGET_BASE_REF" \
-            --author "$TARGET_AUTHOR" >> "$GITHUB_OUTPUT"
+            --author "$TARGET_AUTHOR" \
+            --labels-json "$TARGET_LABELS_JSON" >> "$GITHUB_OUTPUT"
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}

@@ -220,12 +220,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           project(plan, tcpProxyBridge, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
       SecretProjectionService.ProjectionResult grpcProjection =
           project(plan, grpc, HostedIdentityContract.GRPC_ROLE);
-      boolean projectionsReady =
-          ingressProjection.isSynced()
-              && telnetProjection.isSynced()
-              && gatewayInternalWsProjection.isSynced()
-              && tcpProxyBridgeProjection.isSynced()
-              && grpcProjection.isSynced();
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
               client, plan, telnetProjection.revision(), grpcProjection.revision());
@@ -286,7 +280,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 grpc.sourceObjectGeneration(),
                 grpc.summary().spkiSha256());
       }
-      projectionsReady =
+      boolean projectionsReady =
           ingressProjection.isSynced()
               && telnetProjection.isSynced()
               && gatewayInternalWsProjection.isSynced()

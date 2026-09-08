@@ -83,6 +83,9 @@ public class SecretProjectionService {
     annotations.put(HostedIdentityContract.PROVENANCE_ANNOTATION, provenance);
     annotations.put(HostedIdentityContract.DIGEST_ANNOTATION, revision);
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    if (existing != null) {
+      carryAcceptedSnapshot(existing.getMetadata().getAnnotations(), annotations);
+    }
     Secret candidate =
         new SecretBuilder()
             .withMetadata(
@@ -274,6 +277,22 @@ public class SecretProjectionService {
                     annotations,
                     HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION))
         && spki.equals(value(annotations, HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
+  }
+
+  private static void carryAcceptedSnapshot(
+      Map<String, String> existing, Map<String, String> candidate) {
+    for (String key :
+        java.util.List.of(
+            HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION,
+            HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION,
+            HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION,
+            HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION)) {
+      String value = value(existing, key);
+      if (value == null || value.isBlank()) {
+        throw new IllegalStateException("accepted projection snapshot is incomplete");
+      }
+      candidate.put(key, value);
+    }
   }
 
   private static long generation(Map<String, String> annotations, String key) {

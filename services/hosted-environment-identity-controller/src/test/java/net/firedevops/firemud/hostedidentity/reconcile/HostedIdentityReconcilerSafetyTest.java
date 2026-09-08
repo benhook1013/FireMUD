@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.reconcile;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -110,6 +111,9 @@ class HostedIdentityReconcilerSafetyTest {
             org.mockito.ArgumentMatchers.eq(client), org.mockito.ArgumentMatchers.any()))
         .thenReturn(new DeploymentRolloutService.RetirementResult(false, false, false));
     ServedEnvironmentProbe probes = mock(ServedEnvironmentProbe.class);
+    Context<HostedEnvironmentIdentity> context = mock(Context.class);
+    ResourceOperations<HostedEnvironmentIdentity> operations = mock(ResourceOperations.class);
+    when(context.resourceOperations()).thenReturn(operations);
     HostedIdentityReconciler reconciler =
         new HostedIdentityReconciler(
             client,
@@ -130,11 +134,11 @@ class HostedIdentityReconcilerSafetyTest {
             net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
                 .Retired);
 
-    UpdateControl<HostedEnvironmentIdentity> result =
-        reconciler.reconcile(resource, mock(Context.class));
+    UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource, context);
 
     verify(rollout)
         .stopBridges(org.mockito.ArgumentMatchers.eq(client), org.mockito.ArgumentMatchers.any());
+    verify(operations, never()).removeFinalizer(HostedIdentityContract.FINALIZER);
     verifyNoInteractions(certificates, projections, scope, runtime, probes);
     assertEquals(
         HostedEnvironmentIdentityStatus.Phase.Retiring,
@@ -185,6 +189,12 @@ class HostedIdentityReconcilerSafetyTest {
         HostedIdentityReconciler.finishRetirement(context);
     assertEquals(true, alreadyDeleted.isNoUpdate());
     assertEquals(false, alreadyDeleted.isPatchStatus());
+
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(operations)
+        .removeFinalizer(HostedIdentityContract.FINALIZER);
+    assertThrows(
+        KubernetesClientException.class, () -> HostedIdentityReconciler.finishRetirement(context));
   }
 
   @Test
@@ -301,7 +311,11 @@ class HostedIdentityReconcilerSafetyTest {
     var rollback = material(3, 2, "2".repeat(64), "new");
     var objectRollback = material(5, 1, "2".repeat(64), "new");
     var substitution = material(4, 2, "2".repeat(64), "new");
+    var unchanged = material(4, 2, priorSpki, "old");
+    var advanced = material(5, 3, "2".repeat(64), "new");
 
+    assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(unchanged, previous));
+    assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(advanced, previous));
     assertThrows(
         IllegalStateException.class,
         () -> HostedIdentityReconciler.validateSourceProgress(rollback, previous));

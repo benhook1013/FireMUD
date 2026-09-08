@@ -46,7 +46,8 @@ spec:
       ports:
         - protocol: TCP
           port: 443
-    # Hosted Telnet is exposed through the allocator's fixed NodePort range.
+    # Hosted Telnet uses preview allocator NodePorts 32000-32015 plus the fixed
+    # dev-demo NodePort 32016.
     # The controller probes only the port derived from the canonical identity;
     # this range is the smallest cluster-independent NetworkPolicy allowance.
     - to:

@@ -225,7 +225,7 @@ public class SecretMaterialValidator {
     if (sans != null) {
       for (List<?> entry : sans) {
         if (entry.size() < 2) {
-          throw new MaterialValidationException("certificate contains a non-DNS SAN");
+          throw new MaterialValidationException("certificate contains a malformed SAN entry");
         }
         if (Integer.valueOf(2).equals(entry.get(0))) {
           actual.add(String.valueOf(entry.get(1)).toLowerCase(Locale.ROOT));

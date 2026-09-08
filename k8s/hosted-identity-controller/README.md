@@ -119,8 +119,9 @@ policy-level constraints.
 
 The NetworkPolicy permits DNS and TCP/443 for the Kubernetes API plus fixed
 public HTTPS probes; its IPv4/IPv6 443 destinations exclude link-local
-`169.254.0.0/16` and `fe80::/10`. It also permits the allocator's 32000-32016
-Telnet range, TCP/6565 only to Account, and TCP/443 only to Gateway in runtime
+`169.254.0.0/16` and `fe80::/10`. It also permits the preview allocator's
+32000-32015 Telnet range plus the fixed dev-demo port 32016, TCP/6565 only to
+Account, and TCP/443 only to Gateway in runtime
 Namespaces carrying the externally owned canonical preview or dev-demo label.
 Kubernetes NetworkPolicy cannot identify an API server or public
 hostname, so the controller must enforce the derived SNI/SAN/issuer allowlist

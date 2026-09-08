@@ -2,9 +2,9 @@ package net.firedevops.firemud.hostedidentity.probe;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Secret;
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
-import java.io.InputStreamReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -39,12 +39,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class ServedEnvironmentProbe {
   private static final Pattern PREVIEW_NUMBER = Pattern.compile("pr-([1-9][0-9]*)");
-  private static final Pattern HTTP_STATUS = Pattern.compile("HTTP/[^ ]+ ([0-9]{3})(?: |$)");
   private static final Pattern PRIVATE_KEY_BLOCK =
       Pattern.compile(
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
           Pattern.DOTALL);
   private static final int GRPC_PORT = 6565;
+  private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";
   private final HostedIdentityProperties properties;
 
@@ -112,19 +112,15 @@ public class ServedEnvironmentProbe {
     if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
-    try (SSLSocket socket =
-        openBridgeTlsSocket(
-            plan.gatewayInternalWsDnsName(),
-            443,
-            expectedFingerprint,
-            material,
-            properties.getGrpcTrustAnchorSha256())) {
-      return socket == null
-          ? new ProbeResult(false, "leaf-fingerprint-mismatch")
-          : new ProbeResult(true, "mtls-handshake");
-    } catch (Exception exception) {
-      return new ProbeResult(false, "connection-failed");
-    }
+    return internalTlsProbe(
+        () ->
+            openBridgeTlsSocket(
+                plan.gatewayInternalWsDnsName(),
+                443,
+                expectedFingerprint,
+                material,
+                properties.getGrpcTrustAnchorSha256()),
+        "mtls-handshake");
   }
 
   private ProbeResult grpc(
@@ -133,20 +129,33 @@ public class ServedEnvironmentProbe {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
     String hostname = grpcHostname(plan);
-    try (SSLSocket socket =
-        openGrpcTlsSocket(
-            hostname,
-            hostname,
-            GRPC_PORT,
-            expectedFingerprint,
-            material,
-            properties.getGrpcTrustAnchorSha256())) {
+    return internalTlsProbe(
+        () ->
+            openGrpcTlsSocket(
+                hostname,
+                hostname,
+                GRPC_PORT,
+                expectedFingerprint,
+                material,
+                properties.getGrpcTrustAnchorSha256()),
+        "mtls-handshake");
+  }
+
+  static ProbeResult internalTlsProbe(InternalTlsSocketOpener opener, String successReason) {
+    try (SSLSocket socket = opener.open()) {
       return socket == null
           ? new ProbeResult(false, "leaf-fingerprint-mismatch")
-          : new ProbeResult(true, "mtls-handshake");
+          : new ProbeResult(true, successReason);
+    } catch (IllegalArgumentException exception) {
+      return new ProbeResult(false, "material-or-configuration-invalid");
     } catch (Exception exception) {
       return new ProbeResult(false, "connection-failed");
     }
+  }
+
+  @FunctionalInterface
+  interface InternalTlsSocketOpener {
+    SSLSocket open() throws Exception;
   }
 
   private static String grpcHostname(EnvironmentIdentityPlan plan) {
@@ -334,21 +343,63 @@ public class ServedEnvironmentProbe {
           ("GET / HTTP/1.1\r\nHost: " + hostname + "\r\nConnection: close\r\n\r\n")
               .getBytes(StandardCharsets.ISO_8859_1));
       output.flush();
-      BufferedReader reader =
-          new BufferedReader(
-              new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
-      String statusLine = reader.readLine();
-      Matcher matcher = statusLine == null ? null : HTTP_STATUS.matcher(statusLine);
-      if (matcher == null || !matcher.find()) {
+      int code = readHttpStatusCode(socket.getInputStream());
+      if (code < 0) {
         return new ProbeResult(false, "invalid-http-response");
       }
-      int code = Integer.parseInt(matcher.group(1));
       return code < 500
           ? new ProbeResult(true, "http-" + code)
           : new ProbeResult(false, "http-" + code);
     } catch (Exception exception) {
       return new ProbeResult(false, "connection-failed");
     }
+  }
+
+  static int readHttpStatusCode(InputStream input) throws IOException {
+    byte[] statusLineBytes = new byte[MAX_HTTP_STATUS_LINE_BYTES];
+    int length = 0;
+    boolean carriageReturn = false;
+    while (true) {
+      int next = input.read();
+      if (next < 0) {
+        return -1;
+      }
+      if (next == '\n') {
+        if (!carriageReturn) {
+          return -1;
+        }
+        break;
+      }
+      if (carriageReturn) {
+        return -1;
+      }
+      if (next == '\r') {
+        carriageReturn = true;
+      } else {
+        if (length == statusLineBytes.length) {
+          return -1;
+        }
+        statusLineBytes[length++] = (byte) next;
+      }
+    }
+
+    String statusLine = new String(statusLineBytes, 0, length, StandardCharsets.ISO_8859_1);
+    if (statusLine.length() < 12
+        || !(statusLine.startsWith("HTTP/1.0 ") || statusLine.startsWith("HTTP/1.1 "))
+        || !isAsciiDigit(statusLine.charAt(9))
+        || !isAsciiDigit(statusLine.charAt(10))
+        || !isAsciiDigit(statusLine.charAt(11))
+        || (statusLine.length() > 12 && statusLine.charAt(12) != ' ')) {
+      return -1;
+    }
+    return (statusLine.charAt(9) - '0') * 100
+        + (statusLine.charAt(10) - '0') * 10
+        + statusLine.charAt(11)
+        - '0';
+  }
+
+  private static boolean isAsciiDigit(char value) {
+    return value >= '0' && value <= '9';
   }
 
   private ProbeResult telnet(String hostname, int port, String expectedFingerprint) {

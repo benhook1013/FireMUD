@@ -118,7 +118,7 @@ public class HostedStatusService {
         new HostedCondition("Ready", effectiveReady ? "True" : "False", reason, message);
     condition.setObservedGeneration(resource.getMetadata().getGeneration());
     condition.setLastTransitionTime(
-        sameConditionState(previousReady, condition)
+        sameConditionStatus(previousReady, condition)
                 && previousReady.getLastTransitionTime() != null
                 && !previousReady.getLastTransitionTime().isBlank()
             ? previousReady.getLastTransitionTime()
@@ -131,11 +131,8 @@ public class HostedStatusService {
     return role != null && role.getRevision() != null && !role.getRevision().isBlank();
   }
 
-  private static boolean sameConditionState(HostedCondition previous, HostedCondition current) {
-    return previous != null
-        && Objects.equals(previous.getStatus(), current.getStatus())
-        && Objects.equals(previous.getReason(), current.getReason())
-        && Objects.equals(previous.getMessage(), current.getMessage());
+  private static boolean sameConditionStatus(HostedCondition previous, HostedCondition current) {
+    return previous != null && Objects.equals(previous.getStatus(), current.getStatus());
   }
 
   public static RoleStatus role(

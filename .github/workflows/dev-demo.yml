@@ -64,6 +64,9 @@ jobs:
       - name: Derive dev-demo target
         id: derive
         run: |
+          set -euo pipefail
+          RUNTIME_NAMESPACE="dev"
+          RELEASE_NAME="dev"
           if [ "${{ github.event_name }}" = "push" ]; then
             ACTION="deploy"
             HEAD_SHA="${{ github.sha }}"
@@ -83,10 +86,17 @@ jobs:
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
+          [[ "$ACTION" == "deploy" || "$ACTION" == "destroy" ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$IMAGE_TAG" ]]
+          [[ "$HOSTNAME" == "dev.preview.firedevops.net" ]]
+          [[ "$RUNTIME_NAMESPACE" == "dev" ]]
+          [[ "$RELEASE_NAME" == "dev" ]]
+          [[ "$TELNET_PORT" == "32016" ]]
           {
             echo "action=${ACTION}"
-            echo "namespace=dev"
-            echo "release_name=dev"
+            echo "namespace=${RUNTIME_NAMESPACE}"
+            echo "release_name=${RELEASE_NAME}"
             echo "hostname=${HOSTNAME}"
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"

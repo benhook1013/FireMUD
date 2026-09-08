@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -24,6 +26,31 @@ import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerat
 import org.junit.jupiter.api.Test;
 
 class ServedEnvironmentProbeTest {
+  @Test
+  void acceptsExactHttp10AndHttp11StatusLines() throws Exception {
+    assertEquals(200, readStatus("HTTP/1.0 200 OK\r\n"));
+    assertEquals(204, readStatus("HTTP/1.1 204\r\n"));
+  }
+
+  @Test
+  void oversizedHttpStatusLineFailsClosed() throws Exception {
+    assertEquals(-1, readStatus("HTTP/1.1 200 " + "a".repeat(245) + "\r\n"));
+  }
+
+  @Test
+  void repeatedHttpPrefixStatusLineFailsClosed() throws Exception {
+    assertEquals(-1, readStatus("HTTP/".repeat(40) + "1.1 200 OK\r\n"));
+  }
+
+  @Test
+  void malformedHttpStatusLinesFailClosed() throws Exception {
+    assertEquals(-1, readStatus("HTTP/2 200 OK\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 20x OK\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 2000 OK\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 200 OK\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 200 OK"));
+  }
+
   @Test
   void configuredPortsOwnTheProbeDerivationBoundary() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
@@ -59,11 +86,35 @@ class ServedEnvironmentProbeTest {
         (hostname, port) -> new ServedEnvironmentProbe.ProbeResult(false, "rejected");
 
     assertEquals(
+        "https-rejected", probe.probe(plan, 32001, rejected, ready, rejected, rejected).reason());
+    assertEquals(
+        "telnet-rejected", probe.probe(plan, 32001, ready, rejected, rejected, rejected).reason());
+    assertEquals(
         "bridge-rejected", probe.probe(plan, 32001, ready, ready, rejected, ready).reason());
     assertEquals("grpc-rejected", probe.probe(plan, 32001, ready, ready, ready, rejected).reason());
     assertEquals(
         "served-bridge-and-grpc-accepted",
         probe.probe(plan, 32001, ready, ready, ready, ready).reason());
+  }
+
+  @Test
+  void internalTlsProbeDistinguishesMaterialErrorsFromConnectionFailures() {
+    assertEquals(
+        "material-or-configuration-invalid",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  throw new IllegalArgumentException("invalid material");
+                },
+                "mtls-handshake")
+            .reason());
+    assertEquals(
+        "connection-failed",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  throw new IOException("connect failed");
+                },
+                "mtls-handshake")
+            .reason());
   }
 
   @Test
@@ -114,6 +165,11 @@ class ServedEnvironmentProbeTest {
             "generate", EnvironmentIdentityPlan.class);
     generate.setAccessible(true);
     return (Secret) generate.invoke(new GrpcTransportBundleGenerator(), plan);
+  }
+
+  private static int readStatus(String statusLine) throws Exception {
+    return ServedEnvironmentProbe.readHttpStatusCode(
+        new ByteArrayInputStream(statusLine.getBytes(StandardCharsets.ISO_8859_1)));
   }
 
   private static String fingerprint(String encodedCertificate) throws Exception {

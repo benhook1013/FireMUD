@@ -47,6 +47,8 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controlle
 python3 - "$workflow" "$reconciler" "$requester" "$waiter" <<'PY'
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -65,6 +67,22 @@ if workflow["concurrency"] != {
     raise SystemExit("dev-demo lifecycle must remain non-cancelling")
 if reconciler["concurrency"]["cancel-in-progress"] is not False:
     raise SystemExit("dev-demo reconciler must remain non-cancelling")
+
+plan_steps = workflow["jobs"]["dev-demo-plan"]["steps"]
+derive_run = next(step["run"] for step in plan_steps if step.get("id") == "derive")
+for required in (
+    'RUNTIME_NAMESPACE="dev"',
+    'RELEASE_NAME="dev"',
+    '[[ "$ACTION" == "deploy" || "$ACTION" == "destroy" ]]',
+    '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+    '[[ -n "$IMAGE_TAG" ]]',
+    '[[ "$HOSTNAME" == "dev.preview.firedevops.net" ]]',
+    '[[ "$RUNTIME_NAMESPACE" == "dev" ]]',
+    '[[ "$RELEASE_NAME" == "dev" ]]',
+    '[[ "$TELNET_PORT" == "32016" ]]',
+):
+    if required not in derive_run:
+        raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")
 
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
@@ -147,6 +165,16 @@ for required in (
 ):
     if required not in waiter:
         raise SystemExit(f"projection waiter lacks {required}")
+projection_waiter = waiter.split('if [[ "${1:-}" == "--retired" ]]', maxsplit=1)[0]
+for required in (
+    "projection_ready=false",
+    "projection_ready=true",
+    'if [[ "$projection_ready" != true ]]',
+):
+    if required not in projection_waiter:
+        raise SystemExit(f"projection waiter lacks per-projection completion proof: {required}")
+if projection_waiter.count("deadline=$((SECONDS + timeout_seconds))") != 1:
+    raise SystemExit("projection waiter must preserve one shared deadline")
 
 reconcile_steps = reconciler["jobs"]["reconcile-dev-demo"]["steps"]
 reconcile_run = next(
@@ -154,6 +182,8 @@ reconcile_run = next(
     for step in reconcile_steps
     if step.get("name") == "Dispatch dev-demo deploy when stale or missing"
 )
+if "displayTitle" in reconcile_run:
+    raise SystemExit("dev-demo reconciler still depends on a mutable run display title")
 for required in (
     "set -euo pipefail",
     "--ignore-not-found",
@@ -165,4 +195,32 @@ for required in (
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
+
+jq_marker = '| jq -r --arg head "${desired_head_sha}" \\\n'
+try:
+    jq_argument = reconcile_run.split(jq_marker, 1)[1].lstrip()
+    jq_filter = jq_argument.split("'", 2)[1]
+except (IndexError, ValueError) as error:
+    raise SystemExit("could not extract dev-demo exact-head run filter") from error
+run_fixture = [
+    {
+        "databaseId": 41,
+        "status": "in_progress",
+        "conclusion": None,
+        "displayTitle": "Manual dispatch with an unrelated title",
+        "headSha": "a" * 40,
+    }
+]
+selected_run = subprocess.run(
+    ["jq", "-r", "--arg", "head", "a" * 40, jq_filter],
+    input=json.dumps(run_fixture),
+    text=True,
+    check=True,
+    capture_output=True,
+).stdout.removesuffix("\n")
+if selected_run != "41\tin_progress\t":
+    raise SystemExit(
+        "dev-demo exact-head run lookup rejected a matching run with a custom title: "
+        f"{selected_run!r}"
+    )
 PY

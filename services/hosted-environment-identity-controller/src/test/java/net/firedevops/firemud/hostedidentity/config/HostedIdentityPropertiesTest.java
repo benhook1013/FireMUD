@@ -14,6 +14,16 @@ class HostedIdentityPropertiesTest {
     assertEquals(HostedIdentityProperties.ActivationMode.OBSERVE, properties.activationMode());
     properties.setActivationMode("unexpected");
     assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    properties.setActivationMode("active");
+    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
+    properties.setActivationMode("ACTIVE");
+    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
+    properties.setActivationMode(null);
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    properties.setActivationMode(" \t ");
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    properties.setActivationMode(" active ");
+    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
     assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());
   }
 }

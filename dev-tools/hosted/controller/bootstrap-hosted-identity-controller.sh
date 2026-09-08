@@ -110,7 +110,9 @@ sed -i \
   "$temporary_manifest"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
 grep -Fq -- "value: $GRPC_TRUST_ANCHOR_SHA256" "$temporary_manifest" || fail "gRPC trust-anchor replacement did not occur"
-grep -Fq -- "value: $initial_activation_mode" "$temporary_manifest" || fail "activation mode replacement did not occur"
+rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
+[[ "$rendered_activation_mode" == "$initial_activation_mode" ]] || \
+  fail "activation mode replacement did not produce exactly one expected value"
 if grep -Fq -- "__IMAGE_DIGEST_REQUIRED__" "$temporary_manifest" || \
    grep -Fq -- "__GRPC_TRUST_ANCHOR_SHA256_REQUIRED__" "$temporary_manifest" || \
    grep -Fq -- "__ACTIVATION_MODE_REQUIRED__" "$temporary_manifest"; then
@@ -184,22 +186,6 @@ verify_grpc_ca_prerequisite() {
     fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
 }
 
-if [[ "$ACTIVATION_MODE" == "active" ]]; then
-  verify_grpc_ca_prerequisite
-  # Re-rendering is unnecessary: the only changed value is the enum-validated
-  # activation field.  Re-applying the complete private manifest keeps the
-  # transition under the same server-side field manager as bootstrap.
-  sed -i "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/value: $initial_activation_mode/value: $ACTIVATION_MODE/;}" "$temporary_manifest"
-  grep -Fq -- "value: $ACTIVATION_MODE" "$temporary_manifest" || fail "active activation replacement did not occur"
-  kubectl apply \
-    --server-side \
-    --field-manager="$FIELD_MANAGER" \
-    -f "$temporary_manifest"
-  kubectl -n "$CONTROL_NAMESPACE" rollout status \
-    "deployment/$DEPLOYMENT_NAME" \
-    --timeout="${WAIT_SECONDS}s"
-fi
-
 controller_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-controller"
 requester_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-requester"
 
@@ -236,5 +222,26 @@ expect_can_i no --as="$controller_sa" --all-namespaces create certificates.cert-
 expect_can_i yes --as="$controller_sa" create namespaces
 expect_can_i no --as="$requester_sa" --all-namespaces list secrets
 expect_can_i no --as="$requester_sa" --namespace=dev get hostedenvironmentidentities.platform.firemud.dev
+
+if [[ "$ACTIVATION_MODE" == "active" ]]; then
+  verify_grpc_ca_prerequisite
+  # Re-rendering is unnecessary: the only changed value is the enum-validated
+  # activation field. Re-applying the complete private manifest keeps the
+  # transition under the same server-side field manager as bootstrap.
+  sed -i "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/value: $initial_activation_mode/value: $ACTIVATION_MODE/;}" "$temporary_manifest"
+  rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
+  [[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]] || \
+    fail "active activation replacement did not produce exactly one active value"
+  if grep -Fq -- "value: $initial_activation_mode" "$temporary_manifest"; then
+    fail "activation mode still contains the paused value after replacement"
+  fi
+  kubectl apply \
+    --server-side \
+    --field-manager="$FIELD_MANAGER" \
+    -f "$temporary_manifest"
+  kubectl -n "$CONTROL_NAMESPACE" rollout status \
+    "deployment/$DEPLOYMENT_NAME" \
+    --timeout="${WAIT_SECONDS}s"
+fi
 
 echo "hosted identity controller bootstrap applied in $CONTROL_NAMESPACE (activation=$ACTIVATION_MODE)"

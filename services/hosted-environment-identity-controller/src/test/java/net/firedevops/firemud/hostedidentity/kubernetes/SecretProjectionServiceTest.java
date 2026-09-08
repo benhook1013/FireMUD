@@ -4,16 +4,33 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.SecretList;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.MixedOperation;
+import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
+import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
+import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
+import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class SecretProjectionServiceTest {
   @Test
@@ -214,6 +231,118 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void replacementProjectionRetainsAcceptedSnapshotAndKeepsRotationSerialized() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretProjectionService service = new SecretProjectionService();
+    SecretClient secretClient = secretClient(plan);
+    KubernetesClient client = secretClient.client();
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    String acceptedRevision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, acceptedData);
+    String acceptedSpki = "1".repeat(64);
+    Map<String, String> acceptedAnnotations = acceptedAnnotations(acceptedRevision, acceptedSpki);
+    Secret existing =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            acceptedData,
+            acceptedAnnotations);
+    existing.getMetadata().setResourceVersion("7");
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    Secret replacement =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
+        .thenReturn(predecessorResource);
+
+    var result =
+        service.project(
+            client,
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            replacement,
+            2,
+            2,
+            "2".repeat(64),
+            "cert-manager");
+
+    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.runtimeSecrets()).resource(candidate.capture());
+    Map<String, String> annotations = candidate.getValue().getMetadata().getAnnotations();
+    assertEquals(
+        acceptedRevision, annotations.get(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION));
+    assertEquals(
+        "1", annotations.get(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION));
+    assertEquals(
+        "1", annotations.get(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION));
+    assertEquals(
+        acceptedSpki, annotations.get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
+    assertEquals("pending", annotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
+    assertEquals("projected", result.state());
+    assertEquals(
+        HostedIdentityContract.INGRESS_ROLE,
+        CertificateMaterialService.selectSerializedRole(
+            List.of(
+                new CertificateMaterialService.RotationState(
+                    HostedIdentityContract.INGRESS_ROLE, true, false, false),
+                new CertificateMaterialService.RotationState(
+                    HostedIdentityContract.TELNET_ROLE, false, false, false))));
+  }
+
+  @Test
+  void grpcSourceOwnershipIsRecheckedAfterRotationSelection() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    KubernetesClient client = secretClient.client();
+    Map<String, String> data = Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    for (String role :
+        List.of(
+            HostedIdentityContract.INGRESS_ROLE,
+            HostedIdentityContract.TELNET_ROLE,
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+            HostedIdentityContract.GRPC_ROLE)) {
+      String name = secretName(plan, role);
+      String revision = SecretProjectionService.revisionForRole(role, data);
+      Map<String, String> annotations = acceptedAnnotations(revision, "1".repeat(64));
+      if (HostedIdentityContract.INGRESS_ROLE.equals(role)) {
+        annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+      }
+      Resource<Secret> projectionResource = mock(Resource.class);
+      when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
+      when(projectionResource.get()).thenReturn(ownedSecret(plan, role, name, data, annotations));
+      Resource<Secret> sourceResource = mock(Resource.class);
+      when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
+    }
+    Secret ownedGrpc =
+        ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());
+    Secret unownedGrpc =
+        new SecretBuilder(ownedGrpc).editMetadata().withLabels(Map.of()).endMetadata().build();
+    Resource<Secret> grpcSourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(plan.grpcSecretName()))
+        .thenReturn(grpcSourceResource);
+    when(grpcSourceResource.get()).thenReturn(ownedGrpc, unownedGrpc);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            mock(CertificateResourceFactory.class),
+            mock(SecretMaterialValidator.class),
+            mock(GrpcTransportBundleGenerator.class),
+            new HostedIdentityProperties());
+
+    IllegalStateException exception =
+        assertThrows(IllegalStateException.class, () -> service.grpc(client, plan, 1L));
+
+    assertEquals("identity source Secret is not controller-owned", exception.getMessage());
+  }
+
+  @Test
   void rolloutEditPreservesEveryFieldExceptTheSelectedTemplateAnnotation() {
     var deployment =
         new DeploymentBuilder()
@@ -311,5 +440,75 @@ class SecretProjectionServiceTest {
 
   private static String encoded(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static SecretClient secretClient(EnvironmentIdentityPlan plan) {
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(runtimeSecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(mock(Resource.class));
+    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(mock(Resource.class));
+    return new SecretClient(client, runtimeSecrets, identitySecrets);
+  }
+
+  private record SecretClient(
+      KubernetesClient client,
+      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets,
+      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets) {}
+
+  private static EnvironmentIdentityPlan plan() {
+    return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+  }
+
+  private static Map<String, String> acceptedAnnotations(String revision, String spki) {
+    Map<String, String> annotations = new LinkedHashMap<>();
+    annotations.put(HostedIdentityContract.REVISION_ANNOTATION, revision);
+    annotations.put(HostedIdentityContract.SOURCE_GENERATION_ANNOTATION, "1");
+    annotations.put(HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION, "1");
+    annotations.put(HostedIdentityContract.SPKI_SHA256_ANNOTATION, spki);
+    annotations.put(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION, revision);
+    annotations.put(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION, "1");
+    annotations.put(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION, "1");
+    annotations.put(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION, spki);
+    annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "accepted");
+    return annotations;
+  }
+
+  private static Secret ownedSecret(
+      EnvironmentIdentityPlan plan,
+      String role,
+      String name,
+      Map<String, String> data,
+      Map<String, String> annotations) {
+    return new SecretBuilder()
+        .withNewMetadata()
+        .withName(name)
+        .withNamespace(plan.runtimeNamespace())
+        .withLabels(HostedIdentityContract.managedLabels(plan.name(), role))
+        .withAnnotations(annotations)
+        .endMetadata()
+        .withType("kubernetes.io/tls")
+        .withData(data)
+        .build();
+  }
+
+  private static String secretName(EnvironmentIdentityPlan plan, String role) {
+    return switch (role) {
+      case HostedIdentityContract.INGRESS_ROLE -> plan.ingressSecretName();
+      case HostedIdentityContract.TELNET_ROLE -> plan.telnetSecretName();
+      case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
+      case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
+      case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
+      default -> throw new IllegalArgumentException("unsupported role");
+    };
   }
 }

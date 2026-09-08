@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.security;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.List;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +27,20 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("pr-42-tcp-proxy-bridge", plan.tcpProxyBridgeSecretName());
     assertEquals("spiffe://firemud/ns/pr-42/sa/tcp-proxy-service", plan.tcpProxyBridgeUriSan());
     assertEquals("firemud-grpc-tls", plan.grpcSecretName());
-    assertEquals(11, plan.grpcConsumers().size());
+    assertEquals(
+        List.of(
+            "account-service",
+            "automation-scripting-service",
+            "entity-management-service",
+            "game-design-service",
+            "game-logic-service",
+            "game-session-service",
+            "logging-admin-service",
+            "social-groups-service",
+            "spring-cloud-gateway",
+            "tcp-proxy-service",
+            "world-management-service"),
+        plan.grpcConsumers());
   }
 
   @Test
@@ -42,6 +56,25 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("dev-telnet-tls", plan.telnetSecretName());
     assertEquals("dev-gateway-internal-ws", plan.gatewayInternalWsCertificateName());
     assertEquals("dev-tcp-proxy-bridge", plan.tcpProxyBridgeCertificateName());
+    assertEquals(
+        "spring-cloud-gateway-mtls.dev.svc.cluster.local", plan.gatewayInternalWsDnsName());
+    assertEquals("spiffe://firemud/ns/dev/sa/tcp-proxy-service", plan.tcpProxyBridgeUriSan());
+  }
+
+  @Test
+  void mapsEachConfiguredIssuerAndCaSecretToItsNamedPlanAccessor() {
+    var properties = new HostedIdentityProperties();
+    properties.setIngressIssuer("sentinel-ingress-issuer");
+    properties.setTelnetIssuer("sentinel-telnet-issuer");
+    properties.setGrpcIssuer("sentinel-grpc-issuer");
+    properties.setCaSecretName("sentinel-grpc-ca-secret");
+
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+
+    assertEquals("sentinel-ingress-issuer", plan.ingressIssuer());
+    assertEquals("sentinel-telnet-issuer", plan.telnetIssuer());
+    assertEquals("sentinel-grpc-issuer", plan.grpcIssuer());
+    assertEquals("sentinel-grpc-ca-secret", plan.caSecretName());
   }
 
   @Test

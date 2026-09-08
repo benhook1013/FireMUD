@@ -148,6 +148,7 @@ public class CertificateMaterialService {
       if (source == null) {
         return RoleMaterial.pending(HostedIdentityContract.GRPC_ROLE, "serialized-behind-public");
       }
+      requireOwned(source, plan, HostedIdentityContract.GRPC_ROLE, "identity source Secret");
     } else {
       source =
           grpcBundleGenerator.ensure(

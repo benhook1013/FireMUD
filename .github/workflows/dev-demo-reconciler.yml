@@ -77,9 +77,9 @@ jobs:
               --workflow "${workflow_name}" \
               --branch develop \
               --limit 50 \
-              --json databaseId,status,conclusion,displayTitle,headSha \
+              --json databaseId,status,conclusion,headSha \
               | jq -r --arg head "${desired_head_sha}" \
-              '(first(.[] | select(.displayTitle == "Develop Dev Demo Environment" and .headSha == $head)) // empty) | [.databaseId, .status, (.conclusion // "")] | @tsv'
+              '(first(.[] | select(.headSha == $head)) // empty) | [.databaseId, .status, (.conclusion // "")] | @tsv'
           )"
           IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
 

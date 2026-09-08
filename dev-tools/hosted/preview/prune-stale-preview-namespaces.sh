@@ -8,7 +8,10 @@ delete_runtime_namespace() {
     return 2
   fi
 
-  if ! kubectl get namespace "$runtime_namespace" >/dev/null 2>&1; then
+  runtime_lookup="$(
+    kubectl get namespace "$runtime_namespace" --ignore-not-found -o name
+  )"
+  if [[ -z "$runtime_lookup" ]]; then
     echo "Runtime namespace ${runtime_namespace} is already absent."
     return 0
   fi
