@@ -110,20 +110,22 @@ class TelnetServerTest {
 
   @Test
   void gatewayUriWithQueryFailsAtConstruction() {
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            new GatewayWebSocketClient(
-                "ws://localhost/ws?tenant=demo",
-                "",
-                "",
-                "",
-                "",
-                false,
-                "",
-                new String[] {"test"},
-                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-                false));
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GatewayWebSocketClient(
+                    "wss://localhost/ws?tenant=demo",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    new String[] {"test"},
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                    false));
+    assertTrue(ex.getMessage().contains("reason=bad_url"));
   }
 
   @Test
