@@ -604,7 +604,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         TENANT_ID,
         DEMO_WORLD_INSTANCE_ID,
         ACCOUNT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_ACCOUNT_ID,
         Long.parseLong(ChatTestFixtures.PLAYER_NYX));
 
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
@@ -755,9 +755,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     STACK.seedLiveSession(
         90210L,
         TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_ACCOUNT_ID,
         "sora@example.com",
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        SORA_ACCOUNT_ID,
         "Sora",
         DEMO_WORLD_INSTANCE_ID,
         LookTestFixtures.ROOM_ID,

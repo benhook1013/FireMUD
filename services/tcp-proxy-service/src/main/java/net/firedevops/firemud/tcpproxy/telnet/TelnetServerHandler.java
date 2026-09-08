@@ -872,6 +872,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       public void onError(WebSocket webSocket, Throwable error) {
         try (CombinedLoggingContext ignored = openLoggingContext()) {
           if (closing) {
+            logger.debug("Ignoring late Gateway WebSocket error for {}", gatewayWsUrl, error);
             return;
           }
           logger.error("WebSocket error for {}", gatewayWsUrl, error);

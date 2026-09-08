@@ -47,7 +47,17 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
             Thread.ofPlatform().daemon(true).name("gateway-readiness-poll", 0).factory());
     pollingTask =
         pollExecutor.scheduleWithFixedDelay(
-            pollState::refresh, 0L, pollIntervalNanos, TimeUnit.NANOSECONDS);
+            () -> {
+              try {
+                pollState.refresh();
+              } catch (RuntimeException error) {
+                pollState.markUnreadyAfterRefreshFailure();
+                logger.debug("Gateway readiness poll failed; reporting unready", error);
+              }
+            },
+            0L,
+            pollIntervalNanos,
+            TimeUnit.NANOSECONDS);
   }
 
   public boolean isReady() {
@@ -78,6 +88,11 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
 
     private boolean isReady() {
       return ready.get();
+    }
+
+    private synchronized void markUnreadyAfterRefreshFailure() {
+      ready.set(false);
+      inFlight.set(null);
     }
 
     private synchronized void refresh() {

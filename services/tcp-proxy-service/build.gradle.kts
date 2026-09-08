@@ -53,8 +53,6 @@ configurations.named("runtimeClasspath") {
 abstract class VerifyNoRedisRuntime : DefaultTask() {
     @get:Classpath abstract val runtimeClasspath: ConfigurableFileCollection
 
-    @get:InputFile abstract val bootJar: RegularFileProperty
-
     @TaskAction
     fun verify() {
         val forbiddenModules =
@@ -71,6 +69,22 @@ abstract class VerifyNoRedisRuntime : DefaultTask() {
         check(forbiddenRuntimeFiles.isEmpty()) {
             "TCP Proxy runtimeClasspath contains Redis client modules: ${forbiddenRuntimeFiles.sorted()}"
         }
+    }
+}
+
+@DisableCachingByDefault(because = "Verification task produces no outputs")
+abstract class VerifyNoRedisBootJar : DefaultTask() {
+    @get:InputFile abstract val bootJar: RegularFileProperty
+
+    @TaskAction
+    fun verify() {
+        val forbiddenModules =
+            setOf(
+                "spring-boot-starter-data-redis",
+                "spring-boot-data-redis",
+                "spring-data-redis",
+                "lettuce-core",
+            )
 
         val forbiddenEntries =
             ZipFile(bootJar.get().asFile).use { archive ->
@@ -92,11 +106,21 @@ val verifyNoRedisRuntime =
         group = "verification"
         description = "Verifies that the stateless TCP Proxy runtime contains no Redis client."
         runtimeClasspath.from(configurations.named("runtimeClasspath"))
+    }
+
+val verifyNoRedisBootJar =
+    tasks.register<VerifyNoRedisBootJar>("verifyNoRedisBootJar") {
+        group = "verification"
+        description = "Verifies that the TCP Proxy bootJar contains no Redis runtime entries."
         bootJar.set(tasks.named<BootJar>("bootJar").flatMap { it.archiveFile })
     }
 
 tasks.named("check") {
     dependsOn(verifyNoRedisRuntime)
+}
+
+tasks.named("assemble") {
+    finalizedBy(verifyNoRedisBootJar)
 }
 
 tasks.named<BootRun>("bootRun") {

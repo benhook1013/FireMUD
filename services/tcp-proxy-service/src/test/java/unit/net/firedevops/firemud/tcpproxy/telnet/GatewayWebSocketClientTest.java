@@ -151,6 +151,26 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void gatewayUriWithQueryFailsAtConstruction() {
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GatewayWebSocketClient(
+                    "wss://localhost/ws?tenant=demo",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    new String[] {"test"},
+                    new SimpleMeterRegistry(),
+                    false));
+    assertTrue(ex.getMessage().contains("reason=bad_url"));
+  }
+
+  @Test
   void oneMutualTlsClientPerformsWebSocketHandshakeAndReadinessRequest() throws Exception {
     MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
     server.enqueue(

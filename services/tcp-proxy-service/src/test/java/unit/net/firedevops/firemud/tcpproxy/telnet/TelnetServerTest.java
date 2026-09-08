@@ -109,26 +109,6 @@ class TelnetServerTest {
   }
 
   @Test
-  void gatewayUriWithQueryFailsAtConstruction() {
-    IllegalStateException ex =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                new GatewayWebSocketClient(
-                    "wss://localhost/ws?tenant=demo",
-                    "",
-                    "",
-                    "",
-                    "",
-                    false,
-                    "",
-                    new String[] {"test"},
-                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-                    false));
-    assertTrue(ex.getMessage().contains("reason=bad_url"));
-  }
-
-  @Test
   void configuredTlsCertificateAcceptsTlsHandshake(@TempDir Path tempDir) throws Exception {
     Path certificatePath = tempDir.resolve("dev-cert.pem");
     Path keyPath = tempDir.resolve("dev-key.pem");

@@ -48,16 +48,10 @@ PY
 
 check_port_forward_guard "$WORKFLOW"
 
-# shellcheck disable=SC2016 # The inner Bash must expand these literal variables.
-if ! bash -c '
-readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
-bootstrap_variable=BOOTSTRAP_SCRIPT
-if printf -v "${bootstrap_variable}" %s /dev/null 2>/dev/null; then
-  exit 10
-fi
-test "${BOOTSTRAP_SCRIPT}" = /tmp/dev-demo-bootstrap.py
-'; then
-  echo "Bash readonly binding did not reject indirect BOOTSTRAP_SCRIPT reassignment" >&2
+# Keep the workflow source's bootstrap path binding stable; this is the shell
+# declaration used by the following heredoc and subsequent bootstrap commands.
+if ! grep -Fq '          readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py' "$WORKFLOW"; then
+  echo "dev-demo workflow must declare its readonly bootstrap script path" >&2
   exit 1
 fi
 

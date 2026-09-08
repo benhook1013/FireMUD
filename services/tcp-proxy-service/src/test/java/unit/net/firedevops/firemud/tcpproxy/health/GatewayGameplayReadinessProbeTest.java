@@ -14,6 +14,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
 import org.junit.jupiter.api.Test;
 
@@ -120,6 +121,30 @@ class GatewayGameplayReadinessProbeTest {
       awaitReadiness(probe, false);
       verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
       assertFalse(probe.isReady());
+    }
+  }
+
+  @Test
+  void refreshFailureOutsideReadinessRequestStillAllowsLaterPolling() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> retry = new CompletableFuture<>();
+    CompletableFuture<Boolean> throwingFuture =
+        new CompletableFuture<>() {
+          @Override
+          public CompletableFuture<Boolean> whenComplete(
+              BiConsumer<? super Boolean, ? super Throwable> action) {
+            throw new IllegalStateException("callback registration failure");
+          }
+        };
+    when(client.isReadyAsync()).thenReturn(throwingFuture, retry);
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      assertFalse(probe.isReady());
+
+      verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
+      retry.complete(true);
+      awaitReadiness(probe, true);
     }
   }
 

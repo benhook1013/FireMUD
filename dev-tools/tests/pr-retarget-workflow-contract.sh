@@ -460,7 +460,7 @@ awk '
 ' "$preview_path" > "$mutated_preview_path"
 if assert_step_immediately_followed_by preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
-  'Deploy preview release' "$mutated_preview_path"; then
+  'Deploy preview release' "$mutated_preview_path" 2>/dev/null; then
   echo "preview adjacency contract accepted an unnamed intervening step" >&2
   exit 1
 fi
