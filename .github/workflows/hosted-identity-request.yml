@@ -38,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.target.outputs.action }}
-      destroy_reason: ${{ steps.target.outputs.destroy_reason }}
       pr_number: ${{ steps.target.outputs.pr_number }}
       base_sha: ${{ steps.target.outputs.base_sha }}
       head_sha: ${{ steps.target.outputs.head_sha }}
@@ -83,21 +82,19 @@ jobs:
             test "$source_path" = '.github/workflows/preview.yml'
             PR_NUMBER="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}" --jq '.pull_requests[0].number // empty')"
             test -n "$PR_NUMBER"
-            ACTION=inspect
+            ACTION=deploy
             EXPECTED_HEAD_SHA="$WORKFLOW_RUN_HEAD_SHA"
           elif [[ "$EVENT_NAME" == pull_request_target ]]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             ACTION=destroy
-            DESTROY_REASON=closed
             EXPECTED_HEAD_SHA="$EVENT_HEAD_SHA"
           else
             PR_NUMBER="$INPUT_PR_NUMBER"
             ACTION="$INPUT_ACTION"
-            DESTROY_REASON=''
             EXPECTED_HEAD_SHA="$INPUT_HEAD_SHA"
           fi
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
-          [[ "$ACTION" == deploy || "$ACTION" == destroy || "$ACTION" == inspect ]]
+          [[ "$ACTION" == deploy || "$ACTION" == destroy ]]
           pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
           base_ref="$(jq -r '.base.ref // empty' <<<"$pull_request_json")"
@@ -109,13 +106,9 @@ jobs:
           label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
             --inspect-labels --labels-json "$labels_json")"
           labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
-          is_paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
           emit_no_action() {
             echo "$1"
-            {
-              echo 'action=none'
-              echo 'destroy_reason='
-            } >> "$GITHUB_OUTPUT"
+            echo 'action=none' >> "$GITHUB_OUTPUT"
             exit 0
           }
           if [[ "$EVENT_NAME" == workflow_run ]]; then
@@ -129,24 +122,17 @@ jobs:
               "Ignoring stale source render for an earlier PR head."
             [[ "$labels_valid" == true ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
-            if [[ "$is_paused" == true ]]; then
-              echo "Current PR is labelled preview:paused; requesting trusted cleanup."
-              ACTION=destroy
-              DESTROY_REASON=paused
-            else
-              expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
-              if ! artifacts_json="$(gh api --paginate --slurp \
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/artifacts?per_page=100")"; then
-                emit_no_action "Ignoring source render because its artifacts could not be verified."
-              fi
-              artifact_count="$(jq --arg name "$expected_artifact_name" \
-                '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
-                <<<"$artifacts_json")"
-              [[ "$artifact_count" == 1 ]] || emit_no_action \
-                "Ignoring source render without exactly one current ${expected_artifact_name} artifact."
-              ACTION=deploy
-              DESTROY_REASON=''
+            expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
+            if ! artifacts_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/artifacts?per_page=100")"; then
+              emit_no_action "Ignoring source render because its artifacts could not be verified."
             fi
+            artifact_count="$(jq --arg name "$expected_artifact_name" \
+              '[.[].artifacts[] | select(.name == $name and .expired == false)] | length' \
+              <<<"$artifacts_json")"
+            [[ "$artifact_count" == 1 ]] || emit_no_action \
+              "Ignoring source render without exactly one current ${expected_artifact_name} artifact."
+            ACTION=deploy
           else
             [[ "$repository" == "$GITHUB_REPOSITORY" ]]
             [[ "$base_ref" == main || "$base_ref" == develop ]]
@@ -156,12 +142,8 @@ jobs:
                 emit_no_action \
                   "Refusing hosted preview activation: PR label metadata is missing or malformed."
               fi
-              if [[ "$is_paused" == true ]]; then
-                emit_no_action "Refusing hosted preview activation: PR is labelled preview:paused."
-              fi
             else
               [[ "$state" == closed ]]
-              DESTROY_REASON=closed
             fi
           fi
           if [[ -n "$EXPECTED_HEAD_SHA" ]]; then
@@ -174,7 +156,6 @@ jobs:
           fi
           {
             echo "action=${ACTION}"
-            echo "destroy_reason=${DESTROY_REASON}"
             echo "pr_number=${PR_NUMBER}"
             echo "base_sha=${base_sha}"
             echo "head_sha=${current_head_sha}"
@@ -344,7 +325,7 @@ jobs:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
 
-      - name: Revalidate unpaused PR before Active request
+      - name: Revalidate open PR before Active request
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -663,7 +644,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          DESTROY_REASON: ${{ needs.validate-target.outputs.destroy_reason }}
         run: |
           set -euo pipefail
           refuse_cleanup() {
@@ -676,27 +656,9 @@ jobs:
           current_state="$(jq -r '.state // empty' <<<"$pull_request_json")"
           current_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
           current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
-          labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
-          if ! label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py --inspect-labels --labels-json "$labels_json")"; then
-            refuse_cleanup "label metadata inspection failed"
-          fi
-          labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
-          is_paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
           [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_cleanup "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_cleanup "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          case "$DESTROY_REASON" in
-            closed)
-              [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
-              ;;
-            paused)
-              [[ "$current_state" == open ]] || refuse_cleanup "paused cleanup requires an open pull request (state=${current_state})"
-              [[ "$labels_valid" == true ]] || refuse_cleanup "label metadata is malformed"
-              [[ "$is_paused" == true ]] || refuse_cleanup "preview:paused is no longer present"
-              ;;
-            *)
-              refuse_cleanup "destroy reason is invalid (${DESTROY_REASON})"
-              ;;
-          esac
+          [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
       - name: Delete runtime and wait for NotFound
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
@@ -710,7 +672,6 @@ jobs:
           PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
-          DESTROY_REASON: ${{ needs.validate-target.outputs.destroy_reason }}
         with:
           script: |
             const { publishPreviewComment } = require(
@@ -722,7 +683,7 @@ jobs:
               core,
               mode: "removed",
               markerPolicy: "replace",
-              statePolicy: process.env.DESTROY_REASON === "paused" ? "expected-open" : "expected-closed",
+              statePolicy: "expected-closed",
               telnetPort: "unavailable",
               staleDescription: "trusted preview removal",
             });
@@ -761,7 +722,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          DESTROY_REASON: ${{ needs.validate-target.outputs.destroy_reason }}
         run: |
           set -euo pipefail
           refuse_cleanup() {
@@ -774,27 +734,9 @@ jobs:
           current_state="$(jq -r '.state // empty' <<<"$pull_request_json")"
           current_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
           current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
-          labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
-          if ! label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py --inspect-labels --labels-json "$labels_json")"; then
-            refuse_cleanup "label metadata inspection failed"
-          fi
-          labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
-          is_paused="$(sed -n 's/^paused=//p' <<<"$label_metadata")"
           [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_cleanup "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_cleanup "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          case "$DESTROY_REASON" in
-            closed)
-              [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
-              ;;
-            paused)
-              [[ "$current_state" == open ]] || refuse_cleanup "paused cleanup requires an open pull request (state=${current_state})"
-              [[ "$labels_valid" == true ]] || refuse_cleanup "label metadata is malformed"
-              [[ "$is_paused" == true ]] || refuse_cleanup "preview:paused is no longer present"
-              ;;
-            *)
-              refuse_cleanup "destroy reason is invalid (${DESTROY_REASON})"
-              ;;
-          esac
+          [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
       - name: Apply canonical Retired request
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
