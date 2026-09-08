@@ -33,8 +33,28 @@ spec:
     - expression: "(request.operation == 'DELETE' ? request.name : object.metadata.name).matches('^(dev-demo|pr-[1-9][0-9]*)$')"
       message: HostedEnvironmentIdentity name must be dev-demo or pr-N
       reason: Invalid
-    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester'"
-      message: only system:masters or the fixed hosted-identity requester may change the desired state
+    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
+      message: only system:masters, the fixed hosted-identity requester, or the controller's exact finalizer patch may change an identity
+      reason: Forbidden
+    - expression: >-
+        request.userInfo.username != 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        (request.operation == 'PATCH' &&
+         object.spec == oldObject.spec &&
+         has(object.status) == has(oldObject.status) &&
+         (!has(object.status) || object.status == oldObject.status) &&
+         object.metadata.name == oldObject.metadata.name &&
+         object.metadata.namespace == oldObject.metadata.namespace &&
+         has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+         (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
+         has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
+         (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
+         has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+         (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) &&
+         (((!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0) &&
+           object.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity']) ||
+          (oldObject.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity'] &&
+           (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))))
+      message: the controller may patch only the exact hosted identity finalizer while spec and all other mutable metadata remain unchanged
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || object.spec.desiredState in ['Active', 'Retired']"
       message: spec contains only desiredState Active or Retired
@@ -42,10 +62,10 @@ spec:
     - expression: "!(request.operation in ['UPDATE', 'PATCH']) || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
       message: desiredState is monotonic; Active may transition only to Retired
       reason: Invalid
-    - expression: "request.operation != 'DELETE' || (oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
+    - expression: "request.operation != 'DELETE' || (has(oldObject.status) && has(oldObject.status.phase) && oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
       message: an identity may be deleted only after the controller reports Retired
       reason: Forbidden
-    - expression: "request.operation == 'DELETE' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && ((request.operation == 'UPDATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.all(f, f == 'platform.firemud.dev/hosted-environment-identity'))) || (request.operation != 'UPDATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
+    - expression: "request.operation == 'DELETE' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (((request.operation in ['UPDATE', 'PATCH']) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)) || (request.operation == 'CREATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
       message: requester metadata may not claim controller ownership or reserved firemud labels
       reason: Forbidden
 ---
@@ -114,7 +134,26 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: hosted-identity-secret-boundary
-      expression: "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' && (request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$'))) || ((request.namespace in ['dev', 'dev-identity'] || request.namespace.matches('^pr-[1-9][0-9]*$') || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) && ((request.operation == 'DELETE' && (request.name == 'firemud-grpc-tls' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') || request.name == 'firemud-grpc-tls-previous' || request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$'))) || (request.operation != 'DELETE' && (object.metadata.name == 'firemud-grpc-tls' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') || object.metadata.name == 'firemud-grpc-tls-previous' || object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$')))))"
+      expression: >-
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         (request.namespace in ['dev', 'dev-identity'] ||
+          request.namespace.matches('^pr-[1-9][0-9]*$') ||
+          request.namespace.matches('^pr-[1-9][0-9]*-identity$'))) ||
+        (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
+         request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$')) ||
+        ((request.namespace in ['dev', 'dev-identity'] ||
+          request.namespace.matches('^pr-[1-9][0-9]*$') ||
+          request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
+         ((request.operation == 'DELETE' &&
+           (request.name == 'firemud-grpc-tls' ||
+            request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
+            request.name == 'firemud-grpc-tls-previous' ||
+            request.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$'))) ||
+          (request.operation != 'DELETE' &&
+           (object.metadata.name == 'firemud-grpc-tls' ||
+            object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
+            object.metadata.name == 'firemud-grpc-tls-previous' ||
+            object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$')))))
   validations:
     # Namespace deletion also deletes the exact retained material.  Allow
     # only the built-in kube-system namespace controller, DELETE, managed

@@ -15,10 +15,14 @@ class CertificateResourceFactoryTest {
     var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     var factory = new CertificateResourceFactory();
 
-    var ingressSpec = spec(factory.ingress(plan));
-    var telnetSpec = spec(factory.telnet(plan));
+    var ingress = factory.ingress(plan);
+    var telnet = factory.telnet(plan);
+    var ingressSpec = spec(ingress);
+    var telnetSpec = spec(telnet);
     var gatewaySpec = spec(factory.gatewayInternalWs(plan));
     var bridgeSpec = spec(factory.tcpProxyBridge(plan));
+    assertEquals("pr-42-tls", ingress.getMetadata().getName());
+    assertEquals("pr-42-telnet-tls", telnet.getMetadata().getName());
     assertEquals("pr-42-tls", ingressSpec.get("secretName"));
     assertEquals("pr-42-telnet-tls", telnetSpec.get("secretName"));
     assertEquals("letsencrypt-prod", ((Map<?, ?>) ingressSpec.get("issuerRef")).get("name"));

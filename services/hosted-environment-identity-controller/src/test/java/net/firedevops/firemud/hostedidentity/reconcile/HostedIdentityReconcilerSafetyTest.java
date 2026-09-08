@@ -18,6 +18,7 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
+import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.ResourceOperations;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +42,103 @@ import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
 
 class HostedIdentityReconcilerSafetyTest {
+  @Test
+  void projectionAcceptanceStatusUsesTheFirstUnsyncedProjection() {
+    var status =
+        HostedIdentityReconciler.readinessStatus(
+            java.util.List.of(
+                SecretProjectionService.ProjectionResult.synced("ingress"),
+                SecretProjectionService.ProjectionResult.awaiting(
+                    "predecessor-not-accepted", "telnet"),
+                SecretProjectionService.ProjectionResult.awaiting(
+                    "awaiting-acceptance", "gateway")),
+            new DeploymentRolloutService.RolloutResult(false, false, false),
+            new ServedEnvironmentProbe.ProbeResult(false, "https-connection-failed"));
+
+    assertReadinessStatus(
+        status,
+        HostedEnvironmentIdentityStatus.Phase.Syncing,
+        "AwaitingAcceptance",
+        "predecessor-not-accepted",
+        false);
+  }
+
+  @Test
+  void rolloutStatusPrecedesProbeStatusAndIdentifiesTheFirstPendingRollout() {
+    var synced = SecretProjectionService.ProjectionResult.synced("revision");
+    var probeFailure = new ServedEnvironmentProbe.ProbeResult(false, "https-connection-failed");
+
+    assertReadinessStatus(
+        HostedIdentityReconciler.readinessStatus(
+            java.util.List.of(synced),
+            new DeploymentRolloutService.RolloutResult(false, false, false),
+            probeFailure),
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RolloutPending",
+        "telnet-rollout-pending",
+        false);
+    assertReadinessStatus(
+        HostedIdentityReconciler.readinessStatus(
+            java.util.List.of(synced),
+            new DeploymentRolloutService.RolloutResult(false, true, false),
+            probeFailure),
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RolloutPending",
+        "grpc-rollout-pending",
+        false);
+  }
+
+  @Test
+  void probeStatusOwnsReasonAndMessageAfterEarlierGatesPass() {
+    var status =
+        HostedIdentityReconciler.readinessStatus(
+            java.util.List.of(SecretProjectionService.ProjectionResult.synced("revision")),
+            new DeploymentRolloutService.RolloutResult(true, true, true),
+            new ServedEnvironmentProbe.ProbeResult(false, "bridge-connection-failed"));
+
+    assertReadinessStatus(
+        status,
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "ServedProbePending",
+        "bridge-connection-failed",
+        false);
+  }
+
+  @Test
+  void readyStatusPreservesTheSuccessfulProbeMessage() {
+    var status =
+        HostedIdentityReconciler.readinessStatus(
+            java.util.List.of(SecretProjectionService.ProjectionResult.synced("revision")),
+            new DeploymentRolloutService.RolloutResult(true, true, true),
+            new ServedEnvironmentProbe.ProbeResult(true, "served-bridge-and-grpc-accepted"));
+
+    assertReadinessStatus(
+        status,
+        HostedEnvironmentIdentityStatus.Phase.Ready,
+        "Reconciled",
+        "served-bridge-and-grpc-accepted",
+        true);
+  }
+
+  @Test
+  void informerAndConfiguredControlNamespaceMustStayCanonical() {
+    ControllerConfiguration configuration =
+        HostedIdentityReconciler.class.getAnnotation(ControllerConfiguration.class);
+    assertEquals(
+        java.util.List.of(HostedIdentityContract.CONTROL_NAMESPACE),
+        java.util.Arrays.asList(configuration.informer().namespaces()));
+
+    HostedIdentityProperties canonical = new HostedIdentityProperties();
+    assertEquals(HostedIdentityContract.CONTROL_NAMESPACE, canonical.getControlNamespace());
+    assertDoesNotThrow(canonical::afterPropertiesSet);
+
+    HostedIdentityProperties mismatched = new HostedIdentityProperties();
+    mismatched.setControlNamespace("other-system");
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, mismatched::afterPropertiesSet);
+    assertEquals("hosted identity control namespace must be firemud-system", failure.getMessage());
+  }
+
   @Test
   void retirementPublishesTerminalStatusBeforeDeletionRemovesFinalizer() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
@@ -313,6 +411,7 @@ class HostedIdentityReconcilerSafetyTest {
     var substitution = material(4, 2, "2".repeat(64), "new");
     var unchanged = material(4, 2, priorSpki, "old");
     var advanced = material(5, 3, "2".repeat(64), "new");
+    var reusedKey = material(5, 3, priorSpki, "new");
 
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(unchanged, previous));
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(advanced, previous));
@@ -325,6 +424,12 @@ class HostedIdentityReconcilerSafetyTest {
     assertThrows(
         IllegalStateException.class,
         () -> HostedIdentityReconciler.validateSourceProgress(objectRollback, previous));
+    assertEquals(
+        "replacement certificate reused the prior public key",
+        assertThrows(
+                IllegalStateException.class,
+                () -> HostedIdentityReconciler.validateSourceProgress(reusedKey, previous))
+            .getMessage());
   }
 
   @Test
@@ -361,6 +466,18 @@ class HostedIdentityReconcilerSafetyTest {
 
   private static String encoded(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static void assertReadinessStatus(
+      HostedIdentityReconciler.ReadinessStatus status,
+      HostedEnvironmentIdentityStatus.Phase phase,
+      String reason,
+      String message,
+      boolean ready) {
+    assertEquals(phase, status.phase());
+    assertEquals(reason, status.reason());
+    assertEquals(message, status.message());
+    assertEquals(ready, status.ready());
   }
 
   private static HostedEnvironmentIdentity resource() {

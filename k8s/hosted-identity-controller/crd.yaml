@@ -51,9 +51,6 @@ spec:
               type: string
             metadata:
               type: object
-              # Kubernetes supplies metadata fields outside this CRD schema.  The
-              # user-controlled spec and status below remain closed objects.
-              x-kubernetes-preserve-unknown-fields: true
             spec:
               type: object
               additionalProperties: false
@@ -309,7 +306,5 @@ spec:
                       maxLength: 64
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
           x-kubernetes-validations:
-            - rule: "self.metadata.namespace == 'firemud-system'"
-              message: HostedEnvironmentIdentity is served only from firemud-system
             - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
               message: name must be dev-demo or pr-N with a positive decimal PR number

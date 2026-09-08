@@ -1,10 +1,12 @@
 package net.firedevops.firemud.hostedidentity.config;
 
 import java.time.Duration;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "firemud.hosted-identity")
-public class HostedIdentityProperties {
+public class HostedIdentityProperties implements InitializingBean {
   public enum ActivationMode {
     PAUSED,
     OBSERVE,
@@ -32,6 +34,14 @@ public class HostedIdentityProperties {
   private int devDemoTelnetPort = 32016;
   private Duration reconcileInterval = Duration.ofSeconds(30);
   private Duration grpcRenewBefore = Duration.ofDays(7);
+
+  @Override
+  public void afterPropertiesSet() {
+    if (!HostedIdentityContract.CONTROL_NAMESPACE.equals(controlNamespace)) {
+      throw new IllegalStateException(
+          "hosted identity control namespace must be " + HostedIdentityContract.CONTROL_NAMESPACE);
+    }
+  }
 
   public String getControlNamespace() {
     return controlNamespace;

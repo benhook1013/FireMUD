@@ -33,7 +33,7 @@ import org.springframework.stereotype.Component;
 @Component
 @ControllerConfiguration(
     finalizerName = HostedIdentityContract.FINALIZER,
-    informer = @Informer(namespaces = {"firemud-system"}))
+    informer = @Informer(namespaces = {HostedIdentityContract.CONTROL_NAMESPACE}))
 public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIdentity> {
   private final KubernetesClient client;
   private final AdmissionValidator admissionValidator;
@@ -278,31 +278,22 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 grpc.sourceObjectGeneration(),
                 grpc.summary().spkiSha256());
       }
-      boolean projectionsReady =
-          ingressProjection.isSynced()
-              && telnetProjection.isSynced()
-              && gatewayInternalWsProjection.isSynced()
-              && tcpProxyBridgeProjection.isSynced()
-              && grpcProjection.isSynced();
-      boolean ready = projectionsReady && rollout.ready() && probes.ready();
-      String reason =
-          ready
-              ? "Reconciled"
-              : !projectionsReady
-                  ? "AwaitingAcceptance"
-                  : !rollout.ready() ? "RolloutPending" : "ServedProbePending";
-      HostedEnvironmentIdentityStatus.Phase phase =
-          ready
-              ? HostedEnvironmentIdentityStatus.Phase.Ready
-              : !projectionsReady
-                  ? HostedEnvironmentIdentityStatus.Phase.Syncing
-                  : HostedEnvironmentIdentityStatus.Phase.Verifying;
+      ReadinessStatus readiness =
+          readinessStatus(
+              List.of(
+                  ingressProjection,
+                  telnetProjection,
+                  gatewayInternalWsProjection,
+                  tcpProxyBridgeProjection,
+                  grpcProjection),
+              rollout,
+              probes);
       return status(
           resource,
-          phase,
-          reason,
-          probes.reason(),
-          ready,
+          readiness.phase(),
+          readiness.reason(),
+          readiness.message(),
+          readiness.ready(),
           runtimeProfile,
           ingress,
           telnet,
@@ -322,6 +313,41 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null);
     }
   }
+
+  static ReadinessStatus readinessStatus(
+      List<SecretProjectionService.ProjectionResult> projections,
+      DeploymentRolloutService.RolloutResult rollout,
+      ServedEnvironmentProbe.ProbeResult probes) {
+    for (SecretProjectionService.ProjectionResult projection : projections) {
+      if (!projection.isSynced()) {
+        return new ReadinessStatus(
+            HostedEnvironmentIdentityStatus.Phase.Syncing,
+            "AwaitingAcceptance",
+            projection.state(),
+            false);
+      }
+    }
+    if (!rollout.ready()) {
+      String message =
+          !rollout.telnetReady()
+              ? "telnet-rollout-pending"
+              : !rollout.grpcReady() ? "grpc-rollout-pending" : "rollout-pending";
+      return new ReadinessStatus(
+          HostedEnvironmentIdentityStatus.Phase.Verifying, "RolloutPending", message, false);
+    }
+    if (!probes.ready()) {
+      return new ReadinessStatus(
+          HostedEnvironmentIdentityStatus.Phase.Verifying,
+          "ServedProbePending",
+          probes.reason(),
+          false);
+    }
+    return new ReadinessStatus(
+        HostedEnvironmentIdentityStatus.Phase.Ready, "Reconciled", probes.reason(), true);
+  }
+
+  record ReadinessStatus(
+      HostedEnvironmentIdentityStatus.Phase phase, String reason, String message, boolean ready) {}
 
   private SecretProjectionService.ProjectionResult project(
       EnvironmentIdentityPlan plan, CertificateMaterialService.RoleMaterial material, String role) {

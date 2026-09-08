@@ -342,6 +342,7 @@ jobs:
           set -euo pipefail
           for secret_name in "${IDENTITY_NAME}-gateway-internal-ws" "${IDENTITY_NAME}-tcp-proxy-bridge"; do
             deadline=$((SECONDS + 900))
+            projection_ready=false
             while (( SECONDS < deadline )); do
               if secret_json="$(kubectl -n "$RUNTIME_NAMESPACE" get secret "$secret_name" -o json 2>/dev/null)" &&
                  jq -e --arg identity "$IDENTITY_NAME" --arg secret "$secret_name" '
@@ -352,11 +353,12 @@ jobs:
                    (.data["tls.key"] | type == "string" and length > 0) and
                    (.data["ca.crt"] | type == "string" and length > 0)
                  ' <<<"$secret_json" >/dev/null; then
+                projection_ready=true
                 break
               fi
               sleep 5
             done
-            if (( SECONDS >= deadline )); then
+            if [[ "$projection_ready" != true ]]; then
               echo "Timed out waiting for complete controller projection ${secret_name}." >&2
               exit 1
             fi

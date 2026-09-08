@@ -20,13 +20,13 @@ class HostedStatusServiceTest {
     RuntimeProfile previous = new RuntimeProfile();
     previous.setRuntimeNamespaceUid("uid-before");
     previous.setDeployedHeadSha("head-before");
-    var current = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32042, true);
+    var current = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32002, true);
 
     assertFalse(HostedStatusService.profileMatches(previous, current));
     assertTrue(
         HostedStatusService.profileMatches(
             previous,
-            new RuntimeProfileService.RuntimeProfile("uid-before", "head-before", 32042, true)));
+            new RuntimeProfileService.RuntimeProfile("uid-before", "head-before", 32002, true)));
   }
 
   @Test
@@ -47,7 +47,7 @@ class HostedStatusServiceTest {
     var service =
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
 
-    var changed = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32042, true);
+    var changed = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32002, true);
     service.status(
         resource,
         HostedEnvironmentIdentityStatus.Phase.Ready,

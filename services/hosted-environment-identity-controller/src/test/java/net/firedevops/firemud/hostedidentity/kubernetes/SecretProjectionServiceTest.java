@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
@@ -129,14 +131,26 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.MaterializationBatch batch =
         service.beginMaterialization(client, plan);
     CertificateMaterialService.RoleMaterial ingress = batch.ingress();
-    CertificateMaterialService.RoleMaterial grpc = batch.grpc(null);
 
     assertEquals(HostedIdentityContract.INGRESS_ROLE, ingress.role());
-    assertEquals(HostedIdentityContract.GRPC_ROLE, grpc.role());
     assertEquals(summary, ingress.summary());
+    ArgumentCaptor<String> read = ArgumentCaptor.forClass(String.class);
+    verify(runtimeSecrets, org.mockito.Mockito.atLeastOnce()).withName(read.capture());
+    assertEquals(
+        java.util.Set.of(
+            plan.ingressSecretName(),
+            plan.telnetSecretName(),
+            plan.gatewayInternalWsSecretName(),
+            plan.tcpProxyBridgeSecretName(),
+            plan.grpcSecretName()),
+        java.util.Set.copyOf(read.getAllValues()));
+
+    clearInvocations(runtimeSecrets);
+    CertificateMaterialService.RoleMaterial grpc = batch.grpc(null);
+
+    assertEquals(HostedIdentityContract.GRPC_ROLE, grpc.role());
     assertEquals(summary, grpc.summary());
-    verify(runtimeSecrets, org.mockito.Mockito.times(5))
-        .withName(org.mockito.ArgumentMatchers.anyString());
+    verifyNoInteractions(runtimeSecrets);
   }
 
   @Test
@@ -600,9 +614,10 @@ class SecretProjectionServiceTest {
         "image@sha256:test",
         deployment.getSpec().getTemplate().getSpec().getContainers().get(0).getImage());
     assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
-    deployment.getStatus().setReplicas(0);
     deployment.getStatus().setReadyReplicas(0);
     deployment.getStatus().setAvailableReplicas(0);
+    assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
+    deployment.getStatus().setReplicas(0);
     assertEquals(true, DeploymentRolloutService.retirementScaleDownObserved(deployment));
   }
 

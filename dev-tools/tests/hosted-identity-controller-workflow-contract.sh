@@ -14,6 +14,7 @@ bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-contr
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
+artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 
 contains() {
   grep -Fq -- "$2" "$1" || {
@@ -157,16 +158,82 @@ loop = (
     '"${IDENTITY_NAME}-tcp-proxy-bridge"; do'
 )
 assert projection_wait.count("deadline=$((SECONDS + 900))") == 1
+assert projection_wait.count("projection_ready=false") == 1
+assert projection_wait.count("projection_ready=true") == 1
+assert 'if [[ "$projection_ready" != true ]]' in projection_wait
 assert projection_wait.index(loop) < projection_wait.index("deadline=$((SECONDS + 900))")
 assert projection_wait.index("deadline=$((SECONDS + 900))") < projection_wait.index(
     "while (( SECONDS < deadline )); do"
 )
+assert projection_wait.index("projection_ready=true") < projection_wait.index("break")
 PY
 
 # Execute the trusted selector with the old producer's actual boundary: a
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Explicit-null pod templates are authored artifact errors, not validator
+# tracebacks, in both the sanitizer and trusted manifest-validation paths.
+null_template_manifest="$TEMP_DIR/null-template.yaml"
+cat >"$null_template_manifest" <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+  namespace: pr-42
+spec:
+  template: null
+YAML
+null_template_output="$TEMP_DIR/null-template-output.yaml"
+null_template_error="$TEMP_DIR/null-template-sanitize-error"
+if python3 "$artifact_validator" sanitize "$null_template_manifest" \
+  "$null_template_output" >"$TEMP_DIR/null-template-sanitize-output" \
+  2>"$null_template_error"; then
+  echo "preview artifact sanitizer accepted an explicit-null pod template" >&2
+  exit 1
+fi
+grep -Fxq \
+  'preview artifact rejected: Deployment/account-service.spec.template.spec is not a pod specification' \
+  "$null_template_error"
+test ! -e "$null_template_output"
+
+null_template_metadata="$TEMP_DIR/null-template-metadata.json"
+python3 - "$null_template_manifest" "$null_template_metadata" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest = Path(sys.argv[1])
+metadata = {
+    "schemaVersion": 1,
+    "event": "pull_request",
+    "repository": "example/FireMUD",
+    "sourceWorkflow": ".github/workflows/preview.yml",
+    "sourceRunId": 42,
+    "prNumber": 42,
+    "baseSha": "base-42",
+    "headSha": "head-42",
+    "mergeSha": "merge-42",
+    "hostname": "pr-42.preview.example.test",
+    "imageTag": "pr-42-head-42",
+    "manifestSha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+}
+Path(sys.argv[2]).write_text(json.dumps(metadata), encoding="utf-8")
+PY
+null_template_error="$TEMP_DIR/null-template-validate-error"
+if python3 "$artifact_validator" \
+  "$null_template_metadata" "$null_template_manifest" example/FireMUD 42 42 \
+  base-42 head-42 merge-42 pr-42-head-42 pr-42.preview.example.test \
+  >"$TEMP_DIR/null-template-validate-output" 2>"$null_template_error"; then
+  echo "preview artifact validator accepted an explicit-null pod template" >&2
+  exit 1
+fi
+grep -Fxq \
+  'preview artifact rejected: Deployment/account-service.spec.template.spec is not a pod specification' \
+  "$null_template_error"
+
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys
 from pathlib import Path

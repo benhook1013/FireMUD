@@ -369,7 +369,7 @@ def sanitize(source: Path, destination: Path) -> None:
         if metadata.get("namespace") in {"firemud-system", "kube-system"}:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
         if kind in {"Deployment", "Job"}:
-            pod = (raw.get("spec") or {}).get("template", {}).get("spec")
+            pod = ((raw.get("spec") or {}).get("template") or {}).get("spec")
             _validate_restricted_pod_security(
                 pod,
                 f"{kind}/{metadata['name']}.spec.template.spec",
@@ -715,7 +715,7 @@ def validate_manifest(
             if location.endswith(".image") and isinstance(value, str):
                 _validate_image_reference(location, value, expected_image_tag)
         if document["kind"] in {"Deployment", "Job"}:
-            pod = (document.get("spec") or {}).get("template", {}).get("spec")
+            pod = ((document.get("spec") or {}).get("template") or {}).get("spec")
             _validate_restricted_pod_security(
                 pod,
                 f"{document['kind']}/{name}.spec.template.spec",

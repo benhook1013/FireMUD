@@ -46,6 +46,9 @@ rules:
       - get
       - list
       - watch
+      # JOSDK adds and removes the controller finalizer through a JSON Patch on
+      # the primary resource. Admission limits this grant to that exact change.
+      - patch
   - apiGroups:
       - platform.firemud.dev
     resources:

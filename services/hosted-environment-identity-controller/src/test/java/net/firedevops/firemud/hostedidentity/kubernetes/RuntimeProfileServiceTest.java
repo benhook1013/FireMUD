@@ -86,6 +86,25 @@ class RuntimeProfileServiceTest {
 
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
+  void runtimeProfileReadsTheExactPresentIdentityTuple() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get()).thenReturn(previewRuntimeNamespace("a".repeat(40), "32002"));
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+
+    assertEquals("runtime-uid", profile.runtimeNamespaceUid());
+    assertEquals("a".repeat(40), profile.deployedHeadSha());
+    assertEquals(32002, profile.telnetPort());
+    assertTrue(profile.present());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
   void runtimeProfileRejectsIncompleteOrInvalidRuntimeIdentity() {
     var plan = planner.plan("pr-42");
     KubernetesClient client = mock(KubernetesClient.class);
@@ -246,6 +265,25 @@ class RuntimeProfileServiceTest {
         .setOwnerReferences(
             java.util.List.of(new OwnerReferenceBuilder().withName("other").build()));
     assertFalse(HostedIdentityScopeService.roleEquivalent(roundTripped, desired));
+
+    var verbDrift = new RoleBuilder(desired).build();
+    verbDrift.getRules().get(0).setVerbs(java.util.List.of("get"));
+    assertFalse(HostedIdentityScopeService.roleEquivalent(verbDrift, desired));
+
+    var resourceDrift = new RoleBuilder(desired).build();
+    resourceDrift.getRules().get(0).setResources(java.util.List.of("configmaps"));
+    assertFalse(HostedIdentityScopeService.roleEquivalent(resourceDrift, desired));
+
+    var ruleCountDrift =
+        new RoleBuilder(desired)
+            .addToRules(
+                new PolicyRuleBuilder()
+                    .withApiGroups("")
+                    .withResources("configmaps")
+                    .withVerbs("get")
+                    .build())
+            .build();
+    assertFalse(HostedIdentityScopeService.roleEquivalent(ruleCountDrift, desired));
   }
 
   @Test
