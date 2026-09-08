@@ -10,6 +10,8 @@ import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -19,14 +21,14 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @ConditionalOnBean(GrpcServerLifecycle.class)
-public class GrpcServerTlsReloader {
+public class GrpcServerTlsReloader implements HealthIndicator {
   private static final Logger logger = LoggingUtil.getLogger(GrpcServerTlsReloader.class);
   private static final String CERT_CHAIN_ENV = "FIREMUD_GRPC_CERT_CHAIN_PATH";
   private static final String PRIVATE_KEY_ENV = "FIREMUD_GRPC_PRIVATE_KEY_PATH";
   private static final String CA_CERT_ENV = "FIREMUD_GRPC_CA_CERT_PATH";
 
   private final GrpcServerLifecycle serverLifecycle;
-  private TlsCertificateWatcher watcher;
+  private volatile TlsCertificateWatcher watcher;
 
   public GrpcServerTlsReloader(GrpcServerLifecycle serverLifecycle) {
     this.serverLifecycle = serverLifecycle;
@@ -57,6 +59,11 @@ public class GrpcServerTlsReloader {
     } catch (Exception e) {
       logger.error("Failed to restart gRPC server", e);
     }
+  }
+
+  @Override
+  public Health health() {
+    return TlsCertificateWatcher.healthFor(watcher);
   }
 
   @PreDestroy
