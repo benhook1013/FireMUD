@@ -98,4 +98,75 @@ grep -q "Skipping static preflight policy enforcement" "$OUTPUT_FILE" || {
   exit 1
 }
 
+for environment_and_overlay in 'staging stage' 'production prod'; do
+  read -r environment overlay <<<"$environment_and_overlay"
+  rendered_overlay="$REPO_ROOT/k8s/overlays/$overlay"
+  kubectl kustomize "$rendered_overlay" >"$OUTPUT_FILE"
+  python3 - "$REPO_ROOT" "$environment" "$OUTPUT_FILE" <<'PY'
+import copy
+import importlib.util
+import pathlib
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+environment = sys.argv[2]
+rendered_path = pathlib.Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location(
+    "overlay_preflight_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+documents = module.parse_documents(rendered_path.read_text(encoding="utf-8"))
+proxy = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
+    raise SystemExit(
+        f"{environment} TCP Proxy render must use Recreate for exclusive bridge identity"
+    )
+
+expected_path = (
+    root / f"design/operations/environments/{environment}/expected-bindings.yaml"
+)
+expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+# Isolate the rollout invariant from listener and network-policy prerequisites: this
+# contract's input is the real rendered overlay, while those prerequisites have
+# their own focused preflight coverage.
+module.canonical_gateway_ws_endpoint = lambda documents, expected: (
+    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:8443",
+    [],
+)
+module.validate_gateway_ws_listener = lambda documents, expected: (set(), [])
+module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
+strategy_issue = (
+    "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
+    "cannot retain stale pods"
+)
+_, current_issues = module.validate_gateway_ws_values(documents, expected)
+if strategy_issue in current_issues:
+    raise SystemExit(f"{environment} canonical render failed bridge rollout validation")
+
+mutation = copy.deepcopy(documents)
+mutated_proxy = next(
+    document
+    for document in mutation
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+mutated_proxy["spec"].pop("strategy")
+_, mutation_issues = module.validate_gateway_ws_values(mutation, expected)
+if strategy_issue not in mutation_issues:
+    raise SystemExit(
+        f"{environment} preflight accepted a TCP Proxy render without Recreate"
+    )
+PY
+done
+
 echo "overlay preflight contract checks passed"

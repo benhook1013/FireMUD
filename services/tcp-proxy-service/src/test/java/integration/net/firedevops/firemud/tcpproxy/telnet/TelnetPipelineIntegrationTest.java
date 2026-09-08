@@ -19,8 +19,7 @@ import org.mockito.Mockito;
 class TelnetPipelineIntegrationTest {
 
   private TelnetServerHandler.WebSocketConnector stubConnector(WebSocket ws) {
-    return (gatewayWsUrl,
-        clientIp,
+    return (clientIp,
         proxyConnectionId,
         gameInstanceId,
         tenantId,

@@ -44,7 +44,6 @@ public final class TelnetServer {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServer.class);
 
   private final int port;
-  private final String gatewayWsUrl;
   private final boolean tlsEnabled;
   private final String certPath;
   private final String keyPath;
@@ -68,6 +67,8 @@ public final class TelnetServer {
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
   private final BooleanSupplier gameplayTrafficReady;
+  private final String gatewayWsUrl;
+  private final TelnetServerHandler.WebSocketConnector webSocketConnector;
   private final RuntimeIdentity runtimeIdentity;
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
       new ConcurrentHashMap<>();
@@ -86,7 +87,6 @@ public final class TelnetServer {
   @Autowired
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
-      @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
       @Value("${TCP_PROXY_TLS_ENABLED:false}") boolean tlsEnabled,
       @Value("${TCP_PROXY_TLS_CERT:}") String certPath,
       @Value("${TCP_PROXY_TLS_KEY:}") String keyPath,
@@ -102,10 +102,10 @@ public final class TelnetServer {
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient,
       RuntimeIdentity runtimeIdentity) {
     this.port = port;
     this.boundPort = port;
-    this.gatewayWsUrl = gatewayWsUrl;
     this.tlsEnabled = tlsEnabled;
     this.certPath = certPath;
     this.keyPath = keyPath;
@@ -126,6 +126,8 @@ public final class TelnetServer {
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
+    this.gatewayWsUrl = gatewayWebSocketClient.gatewayUri().toString();
+    this.webSocketConnector = gatewayWebSocketClient::connect;
     this.runtimeIdentity = runtimeIdentity;
     Gauge.builder(
             "tcpproxy.connections.active",
@@ -151,7 +153,6 @@ public final class TelnetServer {
 
   public TelnetServer(
       int port,
-      String gatewayWsUrl,
       boolean tlsEnabled,
       String certPath,
       String keyPath,
@@ -161,10 +162,10 @@ public final class TelnetServer {
       int maxLineBytes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
-      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      GatewayWebSocketClient gatewayWebSocketClient) {
     this(
         port,
-        gatewayWsUrl,
         tlsEnabled,
         certPath,
         keyPath,
@@ -180,6 +181,7 @@ public final class TelnetServer {
         meterRegistry,
         eventService,
         gatewayGameplayReadinessProbe,
+        gatewayWebSocketClient,
         new RuntimeIdentity(
             "tcp-proxy-service",
             "tcp-proxy-test",
@@ -267,7 +269,7 @@ public final class TelnetServer {
                               advertiseMcp,
                               meterRegistry,
                               gameplayTrafficReady,
-                              TelnetServerHandler::createWebSocket,
+                              webSocketConnector,
                               eventService,
                               bufferDepth,
                               defaultGameInstanceId,

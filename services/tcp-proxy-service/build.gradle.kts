@@ -2,11 +2,21 @@
 plugins {
     `java-test-fixtures`
     id("net.firedevops.firemud.service-conventions")
-    id("net.firedevops.firemud.redis-conventions")
 }
 
+import java.util.zip.ZipFile
 import net.firedevops.firemud.GenerateTcpProxyDevCertsTask
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.SetProperty
+import org.gradle.api.tasks.Classpath
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.TaskAction
+import org.gradle.work.DisableCachingByDefault
 import org.springframework.boot.gradle.tasks.run.BootRun
+import org.springframework.boot.gradle.tasks.bundling.BootJar
 import org.gradle.language.jvm.tasks.ProcessResources
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
@@ -34,6 +44,82 @@ dependencies {
     testRuntimeOnly(libs.postgresql)
 
     testFixturesImplementation(testFixtures(project(":common-test-support")))
+}
+
+configurations.named("runtimeClasspath") {
+    // TCP Proxy is a stateless edge and must not activate Redis auto-configuration at runtime.
+    exclude(group = "org.springframework.boot", module = "spring-boot-starter-data-redis")
+}
+
+val forbiddenRedisRuntimeModules =
+    setOf(
+        "spring-boot-starter-data-redis",
+        "spring-boot-data-redis",
+        "spring-data-redis",
+        "lettuce-core",
+    )
+
+@DisableCachingByDefault(because = "Verification task produces no outputs")
+abstract class VerifyNoRedisRuntime : DefaultTask() {
+    @get:Classpath abstract val runtimeClasspath: ConfigurableFileCollection
+    @get:Input abstract val forbiddenModules: SetProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val forbiddenRuntimeFiles =
+            runtimeClasspath.files
+                .map { it.name }
+                .filter { entry -> forbiddenModules.get().any { entry.startsWith("$it-") } }
+        check(forbiddenRuntimeFiles.isEmpty()) {
+            "TCP Proxy runtimeClasspath contains Redis client modules: ${forbiddenRuntimeFiles.sorted()}"
+        }
+    }
+}
+
+@DisableCachingByDefault(because = "Verification task produces no outputs")
+abstract class VerifyNoRedisBootJar : DefaultTask() {
+    @get:InputFile abstract val bootJar: RegularFileProperty
+    @get:Input abstract val forbiddenModules: SetProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val forbiddenEntries =
+            ZipFile(bootJar.get().asFile).use { archive ->
+                archive.entries().asSequence()
+                    .map { it.name.substringAfterLast('/') }
+                    .filter { entry ->
+                        entry == "TelnetRedisConfiguration.class" ||
+                            forbiddenModules.get().any { entry.startsWith("$it-") }
+                    }.toList()
+            }
+        check(forbiddenEntries.isEmpty()) {
+            "TCP Proxy bootJar contains Redis runtime entries: ${forbiddenEntries.sorted()}"
+        }
+    }
+}
+
+val verifyNoRedisRuntime =
+    tasks.register<VerifyNoRedisRuntime>("verifyNoRedisRuntime") {
+        group = "verification"
+        description = "Verifies that the stateless TCP Proxy runtime contains no Redis client."
+        runtimeClasspath.from(configurations.named("runtimeClasspath"))
+        forbiddenModules.set(forbiddenRedisRuntimeModules)
+    }
+
+val verifyNoRedisBootJar =
+    tasks.register<VerifyNoRedisBootJar>("verifyNoRedisBootJar") {
+        group = "verification"
+        description = "Verifies that the TCP Proxy bootJar contains no Redis runtime entries."
+        bootJar.set(tasks.named<BootJar>("bootJar").flatMap { it.archiveFile })
+        forbiddenModules.set(forbiddenRedisRuntimeModules)
+    }
+
+tasks.named("check") {
+    dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
+}
+
+tasks.named("assemble") {
+    finalizedBy(verifyNoRedisBootJar)
 }
 
 tasks.named<BootRun>("bootRun") {
