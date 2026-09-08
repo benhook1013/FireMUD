@@ -102,6 +102,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
   private final AtomicReference<CompletableFuture<WebSocket>> inFlightGatewayConnection =
       new AtomicReference<>();
+  private final Object webSocketLifecycleLock = new Object();
   private volatile CompletableFuture<WebSocket> inFlightSend;
   private String clientIp;
   private boolean connectEventRecorded;
@@ -239,12 +240,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private boolean setWebSocket(WebSocket webSocket, boolean reconnected) {
-    this.webSocket.set(webSocket);
-    if (closing) {
-      this.webSocket.compareAndSet(webSocket, null);
-      webSocket.abort();
-      reconnecting = false;
-      return false;
+    synchronized (webSocketLifecycleLock) {
+      if (closing) {
+        webSocket.abort();
+        reconnecting = false;
+        return false;
+      }
+      this.webSocket.set(webSocket);
     }
     reconnecting = false;
     startHeartbeat();
@@ -509,7 +511,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void closeGatewayWebSocket() {
-    WebSocket socket = webSocket.getAndSet(null);
+    WebSocket socket;
+    synchronized (webSocketLifecycleLock) {
+      socket = webSocket.getAndSet(null);
+    }
     if (socket != null) {
       try {
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");

@@ -490,6 +490,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       if (!("ws".equals(uri.getScheme()) || "wss".equals(uri.getScheme()))
           || uri.getHost() == null
           || uri.getUserInfo() != null
+          || uri.getQuery() != null
           || uri.getFragment() != null) {
         throw new IllegalArgumentException("unsupported Gateway WebSocket URI");
       }

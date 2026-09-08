@@ -158,6 +158,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
     try {
       listener.start();
+      assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
       listenerProperties.setPort(port);
       HttpHeaders bridgeHeaders = bridgeHeaders();
@@ -255,6 +256,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
 
     try {
       listener.start();
+      assertThat(listener.isRunning()).isTrue();
       int port = listener.boundPort();
       listenerProperties.setPort(port);
       assertThat(trustPolicy.requiresClientCertificate()).isEqualTo(requiresClientCertificate);
@@ -347,8 +349,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         String normalized = message.toLowerCase(Locale.ROOT);
         if (normalized.contains("certificate_required")
             || normalized.contains("bad_certificate")
-            || normalized.contains("empty client certificate chain")
-            || normalized.contains("connection prematurely closed before opening handshake")) {
+            || normalized.contains("empty client certificate chain")) {
           return true;
         }
       }

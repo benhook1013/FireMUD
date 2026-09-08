@@ -214,6 +214,19 @@ class TcpProxyTrustPolicyTest {
   }
 
   @Test
+  void developmentCidrRejectsDefaultRoutesForIpv4AndIpv6() {
+    for (String cidr : List.of("0.0.0.0/0", "::/0")) {
+      GatewayTcpProxyListenerProperties properties = properties("development_cidr");
+      properties.setTrustedClientCaPath(null);
+      properties.getDevelopmentCidr().setTrustedCidr(cidr);
+
+      assertThatThrownBy(() -> policy(properties, Set.of("test")))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("development-cidr.trusted-cidr is invalid");
+    }
+  }
+
+  @Test
   void legacyPlaintextTrustIsRejectedOutsideExplicitLocalOrTestProfile() {
     GatewayHeaderTrustProperties legacy = new GatewayHeaderTrustProperties();
     legacy.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);

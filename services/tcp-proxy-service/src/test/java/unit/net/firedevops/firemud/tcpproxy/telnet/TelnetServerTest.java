@@ -88,22 +88,42 @@ class TelnetServerTest {
   void missingGatewayUriFailsAtConstruction() {
     GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
 
+    NullPointerException ex =
+        assertThrows(
+            NullPointerException.class,
+            () ->
+                new TelnetServer(
+                    0,
+                    false,
+                    "",
+                    "",
+                    false,
+                    0,
+                    0,
+                    4096,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                    Mockito.mock(TcpProxyEventService.class),
+                    readyProbe(),
+                    client));
+    assertTrue(ex.getMessage().contains("gatewayUri"));
+  }
+
+  @Test
+  void gatewayUriWithQueryFailsAtConstruction() {
     assertThrows(
-        NullPointerException.class,
+        IllegalStateException.class,
         () ->
-            new TelnetServer(
-                0,
-                false,
+            new GatewayWebSocketClient(
+                "ws://localhost/ws?tenant=demo",
+                "",
+                "",
                 "",
                 "",
                 false,
-                0,
-                0,
-                4096,
+                "",
+                new String[] {"test"},
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-                Mockito.mock(TcpProxyEventService.class),
-                readyProbe(),
-                client));
+                false));
   }
 
   @Test

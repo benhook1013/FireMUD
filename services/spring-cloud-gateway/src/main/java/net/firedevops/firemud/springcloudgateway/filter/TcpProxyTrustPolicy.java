@@ -275,8 +275,8 @@ public final class TcpProxyTrustPolicy {
         String cidr =
             requireText(
                 listener.getDevelopmentCidr().getTrustedCidr(), "development-cidr.trusted-cidr");
-        HeaderTrustFilter.CidrSet parsed = new HeaderTrustFilter.CidrSet(List.of(cidr));
-        if (parsed.isEmpty()) {
+        HeaderTrustFilter.CidrBlock parsed = HeaderTrustFilter.CidrBlock.parse(cidr);
+        if (parsed == null || parsed.prefixBits() == 0) {
           throw invalid("development-cidr.trusted-cidr is invalid");
         }
         yield cidr.trim();

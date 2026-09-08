@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -365,7 +366,46 @@ class TelnetServerHandlerTest {
     handler.channelInactive(ctx);
 
     verify(lateWebSocket).abort();
-    verify(lateWebSocket, Mockito.never()).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    verify(lateWebSocket, Mockito.never()).sendClose(anyInt(), anyString());
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void asynchronousGatewayOpenAfterChannelInactiveCannotPublishSocket() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              listenerRef.set(listener);
+              return new CompletableFuture<>();
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(null);
+
+    handler.channelActive(ctx);
+    handler.channelInactive(ctx);
+
+    WebSocket lateWebSocket = mock(WebSocket.class);
+    listenerRef.get().onOpen(lateWebSocket);
+
+    verify(lateWebSocket).abort();
+    verify(lateWebSocket, Mockito.never()).request(anyLong());
+    verify(lateWebSocket, Mockito.never()).sendClose(anyInt(), anyString());
     executor.shutdownGracefully();
   }
 
