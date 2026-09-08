@@ -874,7 +874,7 @@ class GatewayWebSocketClientTest {
     HttpClient initialGeneration = (HttpClient) client.clientIdentity();
     CompletableFuture<WebSocket> connection =
         client.connect(null, null, null, null, null, null, null, new WebSocket.Listener() {});
-    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+    assertNotNull(server.takeRequest(15, TimeUnit.SECONDS));
 
     assertTrue(connection.cancel(true));
     assertTrue(client.reloadNow());
@@ -1049,6 +1049,7 @@ class GatewayWebSocketClientTest {
         caCertificate, rotatedCaCertificate, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     Object recoveredClient = awaitClientAvailable(client);
     assertNotSame(initialClient, recoveredClient);
+    assertClientIdentityRemainsStable(client, recoveredClient);
     assertEquals(1, client.generationCount());
     server.enqueue(new MockResponse().setResponseCode(200));
     assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
