@@ -29,6 +29,8 @@ numbers. For local/private/test-only plaintext proof, pass
 `--allow-insecure`; this flag is intentionally explicit and must never be used
 for a public or hosted endpoint.
 
+Because raw TCP does not use TLS trust or hostname verification, `--allow-insecure` cannot be combined with `--ca-file` or `--server-hostname`; either combination is a command-line usage error that exits with status `2` before connecting.
+
 Type ordinary player commands at the prompt. The usual compatible flow is
 `WORLDS`, `LOGIN <email> <password>`, `PLAY demo`, and `LOOK`; the current
 Telnet smoke contract describes the environment-specific admission flow and
@@ -68,3 +70,5 @@ exact echoed `LOGIN` line have the password replaced with `[REDACTED]` before
 display and append. As with any interactive client, credentials necessarily
 exist transiently in process memory while being sent; this tool does not claim
 to protect that memory from a compromised host or debugger.
+
+When an inbound line partially matches a held `LOGIN` echo through credential bytes but later bytes disprove the exact echo, the client discards the held prefix and the remainder of that line through its boundary rather than risk exposing a credential fragment. The transcript records `redaction_suppressed` events with `phase` values `start` and `end`, and interactive output renders those boundaries so the operator can see that inbound display contained a deliberate safety gap.

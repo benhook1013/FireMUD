@@ -1115,6 +1115,50 @@ run_reconciler_fixture "$MUTATED_RECONCILER_RUN" "$TEMP_DIR/reconciler-mutated.o
 grep -Fq 'inputs[pr_number]=101' "$FAKE_RECONCILER_DISPATCH_LOG"
 
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+python3 - "$preview_workflow" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+actual = workflow["jobs"]["preview-plan"]["if"]
+expected = (
+    "${{ github.event_name != 'pull_request' || "
+    "(github.event.pull_request.head.repo.full_name == github.repository && "
+    "(github.event.action != 'unlabeled' || "
+    "github.event.label.name == 'preview:paused' || "
+    "!(github.event.label.name == 'preview:priority'))) }}"
+)
+if actual != expected:
+    raise SystemExit(f"unexpected preview-plan event condition: {actual}")
+
+
+def preview_plan_runs(event_name, action, label, same_repository=True):
+    return event_name != "pull_request" or (
+        same_repository and (action != "unlabeled" or label != "preview:priority")
+    )
+
+
+cases = (
+    ("pull_request", "unlabeled", "preview:priority", True, False),
+    ("pull_request", "labeled", "preview:priority", True, True),
+    ("pull_request", "unlabeled", "preview:paused", True, True),
+    ("pull_request", "labeled", "preview:paused", True, True),
+    ("pull_request", "unlabeled", "unrelated", True, True),
+    ("pull_request", "labeled", "unrelated", True, True),
+    ("pull_request", "synchronize", "", True, True),
+    ("pull_request", "opened", "", False, False),
+    ("workflow_dispatch", "", "", False, True),
+)
+for event_name, action, label, same_repository, expected_result in cases:
+    actual_result = preview_plan_runs(event_name, action, label, same_repository)
+    if actual_result != expected_result:
+        raise SystemExit(
+            "preview-plan event condition mismatch for "
+            f"{event_name}/{action}/{label or '-'}: {actual_result}"
+        )
+PY
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
 grep -q 'github.event.label.name == '\''preview:paused'\''' "$preview_workflow"
 grep -q '^      - unlabeled$' "$preview_workflow"

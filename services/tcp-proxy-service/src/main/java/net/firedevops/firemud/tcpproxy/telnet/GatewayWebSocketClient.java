@@ -432,18 +432,16 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     }
   }
 
-  private IllegalStateException configurationFailure(String reason, String message) {
+  private TlsConfigurationException configurationFailure(String reason, String message) {
     return configurationFailure(reason, message, null);
   }
 
-  private IllegalStateException configurationFailure(
+  private TlsConfigurationException configurationFailure(
       String reason, String message, Throwable cause) {
     recordConfigurationFailure(reason);
     String diagnostic = message + "; reason=" + reason;
     logger.error(diagnostic, cause);
-    return cause == null
-        ? new IllegalStateException(diagnostic)
-        : new IllegalStateException(diagnostic, cause);
+    return new TlsConfigurationException(reason, diagnostic, cause);
   }
 
   private void recordFailure(String reason) {
@@ -556,10 +554,25 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     return current;
   }
 
-  private static String reasonFrom(RuntimeException exception) {
-    String message = String.valueOf(exception.getMessage());
-    int reasonIndex = message.lastIndexOf("reason=");
-    return reasonIndex >= 0 ? message.substring(reasonIndex + "reason=".length()) : "unknown";
+  static String reasonFrom(RuntimeException exception) {
+    return exception instanceof TlsConfigurationException tlsFailure
+        ? tlsFailure.reason()
+        : "unknown";
+  }
+
+  private static final class TlsConfigurationException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private final String reason;
+
+    private TlsConfigurationException(String reason, String message, Throwable cause) {
+      super(message, cause);
+      this.reason = reason;
+    }
+
+    private String reason() {
+      return reason;
+    }
   }
 
   private final class ClientGeneration {

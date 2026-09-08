@@ -1474,6 +1474,67 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_unset_bootstrap_script_before_pid(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            "unset BOOTSTRAP_SCRIPT\n" + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_decoy_bootstrap_script_configmap_reference(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical_reference = '--from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}"'
+        self.assertIn(canonical_reference, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            canonical_reference,
+            "--from-file=bootstrap.py=/tmp/evil.py",
+            1,
+        ) + ('\nprintf %s --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}"')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must reference the canonical bootstrap script ConfigMap source "
+                "exactly once",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_bootstrap_definition_inside_false_branch(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        assignment = "BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
+        definition_start = bootstrap_manifest.index(assignment)
+        definition_end = bootstrap_manifest.index("\nPY\n", definition_start) + len(
+            "\nPY"
+        )
+        definition = bootstrap_manifest[definition_start:definition_end]
+        invalid_manifest = bootstrap_manifest.replace(
+            definition,
+            f"if false; then\n{definition}\nfi",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must assign the canonical bootstrap script path exactly once",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_script_truncation_before_pid(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"

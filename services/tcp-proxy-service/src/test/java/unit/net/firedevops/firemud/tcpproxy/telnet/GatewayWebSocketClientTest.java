@@ -559,6 +559,7 @@ class GatewayWebSocketClientTest {
     Path rotatedCertificate = Files.copy(certificate, tempDir.resolve("client.crt"));
     Path rotatedPrivateKey = Files.copy(privateKey, tempDir.resolve("client.key"));
     Path rotatedCaCertificate = Files.copy(caCertificate, tempDir.resolve("ca.crt"));
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
     GatewayWebSocketClient client =
         new GatewayWebSocketClient(
             "wss://localhost:8443/ws/game",
@@ -569,7 +570,7 @@ class GatewayWebSocketClientTest {
             false,
             "",
             new String[] {"dev"},
-            new SimpleMeterRegistry(),
+            registry,
             false);
     clients.add(client);
     HttpClient initialClient = (HttpClient) client.clientIdentity();
@@ -581,16 +582,33 @@ class GatewayWebSocketClientTest {
     assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     awaitTermination(initialClient);
     awaitGenerationCount(client, 0);
-    assertTrue(
-        client
-            .connect(null, null, null, null, null, null, null, new WebSocket.Listener() {})
-            .isCompletedExceptionally());
+    ExecutionException connectionFailure =
+        assertThrows(
+            ExecutionException.class,
+            () ->
+                client
+                    .connect(null, null, null, null, null, null, null, new WebSocket.Listener() {})
+                    .get(5, TimeUnit.SECONDS));
+    assertTrue(connectionFailure.getCause().getMessage().contains("reason=cert_validation"));
+    assertEquals(
+        2.0,
+        registry
+            .counter("tcpproxy.gateway.handshake.failures", "reason", "cert_validation")
+            .count());
 
     Files.copy(
         caCertificate, rotatedCaCertificate, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     assertTrue(client.reloadNow());
     assertNotSame(initialClient, client.clientIdentity());
     assertEquals(1, client.generationCount());
+  }
+
+  @Test
+  void reloadReasonDoesNotParseAnExceptionDiagnostic() {
+    assertEquals(
+        "unknown",
+        GatewayWebSocketClient.reasonFrom(
+            new IllegalStateException("diagnostic text; reason=client_cert_missing")));
   }
 
   @Test

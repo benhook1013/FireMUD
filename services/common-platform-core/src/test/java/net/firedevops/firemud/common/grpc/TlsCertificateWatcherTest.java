@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -149,24 +150,31 @@ class TlsCertificateWatcherTest {
         Files.writeString(retainedDirectory.resolve("tls.crt"), "certificate-1");
     CountDownLatch retiredReload = new CountDownLatch(1);
     CountDownLatch retainedReload = new CountDownLatch(1);
-    AtomicInteger reloads = new AtomicInteger();
+    AtomicBoolean retainedWriteComplete = new AtomicBoolean();
+    Object reloadPhase = new Object();
 
     try (TlsCertificateWatcher watcher =
-        TlsCertificateWatcher.createAndStart(
+        new TlsCertificateWatcher(
             List.of(retiredCertificate, retainedCertificate),
             () -> {
-              if (reloads.incrementAndGet() == 1) {
-                retiredReload.countDown();
-              } else {
-                retainedReload.countDown();
+              synchronized (reloadPhase) {
+                if (retainedWriteComplete.get()) {
+                  retainedReload.countDown();
+                } else {
+                  retiredReload.countDown();
+                }
               }
             })) {
       Files.delete(retiredCertificate);
       Files.delete(retiredDirectory);
+      watcher.start();
       assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
 
-      Files.writeString(retainedCertificate, "certificate-2");
+      synchronized (reloadPhase) {
+        Files.writeString(retainedCertificate, "certificate-2");
+        retainedWriteComplete.set(true);
+      }
       assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
     }

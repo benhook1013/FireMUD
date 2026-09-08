@@ -97,6 +97,24 @@ BOOTSTRAP_SCRIPT_DEFINITION_TOKENS = (
 BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE = (
     "--from-file=bootstrap.py=${BOOTSTRAP_SCRIPT}"
 )
+BOOTSTRAP_SCRIPT_CONFIGMAP_TOKENS = (
+    "kubectl",
+    "-n",
+    "${PREVIEW_NAMESPACE}",
+    "create",
+    "configmap",
+    "dev-demo-bootstrap-script",
+    BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE,
+    "--from-file=account-id=${BOOTSTRAP_ACCOUNT_ID_FILE}",
+    "--dry-run=client",
+    "-o",
+    "yaml",
+    "|",
+    "kubectl",
+    "apply",
+    "-f",
+    "-",
+)
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
     "BOOTSTRAP_PORT_FORWARD_PID=$!",
@@ -1516,11 +1534,14 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
     assignment_indexes = [
         index
         for index, (tokens, _, _) in enumerate(records)
-        if any(token.startswith("BOOTSTRAP_SCRIPT=") for token in tokens)
+        if any(
+            re.fullmatch(r"BOOTSTRAP_SCRIPT(?:\+)?=.*", token)
+            for token in tokens
+        )
     ]
     if len(assignment_indexes) != 1 or records[assignment_indexes[0]][0] != list(
         BOOTSTRAP_SCRIPT_ASSIGNMENT_TOKENS
-    ):
+    ) or records[assignment_indexes[0]][1] != 0:
         raise AssertionError(
             "dev-demo player bootstrap must assign the canonical bootstrap script "
             "path exactly once"
@@ -1529,8 +1550,9 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
 
     definition_indexes = [
         index
-        for index, (tokens, _, bodies) in enumerate(records)
+        for index, (tokens, depth, bodies) in enumerate(records)
         if tokens == list(BOOTSTRAP_SCRIPT_DEFINITION_TOKENS)
+        and depth == 0
         and len(bodies) == 1
         and bool(bodies[0][0].strip())
     ]
@@ -1541,8 +1563,8 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
     definition_index = definition_indexes[0]
     configmap_reference_indexes = [
         index
-        for index, (tokens, _, _) in enumerate(records)
-        if BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE in tokens
+        for index, (tokens, depth, _) in enumerate(records)
+        if tokens == list(BOOTSTRAP_SCRIPT_CONFIGMAP_TOKENS) and depth == 0
     ]
     if len(configmap_reference_indexes) != 1:
         raise AssertionError(
@@ -1555,6 +1577,8 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
         record_index: int, tokens: list[str]
     ) -> bool:
         if "BOOTSTRAP_MODE=account" in tokens:
+            return True
+        if "BOOTSTRAP_SCRIPT" in tokens:
             return True
         for index, token in enumerate(tokens):
             if token == BOOTSTRAP_SCRIPT_PATH and record_index != assignment_index:

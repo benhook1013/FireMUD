@@ -332,6 +332,14 @@ class TelnetSession:
                 f"[{record['seq']}] {record['direction'].upper()} TELNET: "
                 f"{record.get('command')} option={record.get('option')}"
             )
+        elif record["event"] == "redaction_suppressed":
+            phase = record.get("phase", "unknown")
+            detail = (
+                "discarding ambiguous LOGIN echo through line end"
+                if phase == "start"
+                else "ambiguous LOGIN echo suppression ended"
+            )
+            self.output(f"[{record['seq']}] REDACTION SUPPRESSED ({phase}): {detail}")
 
     def _append(self, direction: str, event: str, **fields) -> dict:
         record = self.store.append(direction, event, **fields)

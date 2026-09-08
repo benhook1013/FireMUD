@@ -225,9 +225,12 @@ class TcpProxyTlsListenerTest {
     if (Files.isRegularFile(moduleSibling)) {
       return moduleSibling;
     }
-    return workingDirectory
-        .resolve("services/common-test-support/src/testFixtures/resources/certs")
-        .resolve(name)
-        .normalize();
+    Path repositoryFixture =
+        workingDirectory
+            .resolve("services/common-test-support/src/testFixtures/resources/certs")
+            .resolve(name)
+            .normalize();
+    assertThat(repositoryFixture).as("TLS fixture %s", name).isRegularFile();
+    return repositoryFixture;
   }
 }

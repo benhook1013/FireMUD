@@ -56,7 +56,7 @@ jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'preview:priority' || github.event.label.name == 'preview:paused')) }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'unlabeled' || github.event.label.name == 'preview:paused' || !(github.event.label.name == 'preview:priority'))) }}
     # Only supersede the non-mutating plan. Deploy, proof, and cleanup retain
     # their place in the shared non-cancelling lifecycle queue below.
     concurrency:

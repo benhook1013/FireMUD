@@ -900,6 +900,34 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 ["partial\r", "\ncontinued"],
             )
 
+    def test_redaction_suppression_boundaries_are_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=output.append,
+                tls_enabled=False,
+            )
+
+            session._append("inbound", "redaction_suppressed", phase="start")
+            session._append("inbound", "redaction_suppressed", phase="end")
+
+            self.assertEqual(
+                output,
+                [
+                    (
+                        "[1] REDACTION SUPPRESSED (start): "
+                        "discarding ambiguous LOGIN echo through line end"
+                    ),
+                    (
+                        "[2] REDACTION SUPPRESSED (end): "
+                        "ambiguous LOGIN echo suppression ended"
+                    ),
+                ],
+            )
+
     def test_login_echo_redacts_password_in_output_and_transcript(self):
         secret = "secret-7"
 
