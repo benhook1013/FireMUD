@@ -71,6 +71,20 @@ BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK = (
     'kubectl auth can-i create pods --subresource=portforward '
     '-n "${PREVIEW_NAMESPACE}" >/dev/null'
 )
+BOOTSTRAP_PORT_FORWARD_READINESS_GATE = """if ! wait_for_bootstrap_port_forward; then
+  exit 1
+fi"""
+BOOTSTRAP_ACCOUNT_COMMAND_TOKENS = (
+    "if",
+    "!",
+    "BOOTSTRAP_MODE=account",
+    "BOOTSTRAP_GATEWAY_BASE_URL=http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}",
+    "BOOTSTRAP_ACCOUNT_ID_FILE=${BOOTSTRAP_ACCOUNT_ID_FILE}",
+    "python3",
+    "${BOOTSTRAP_SCRIPT}",
+    ";",
+    "then",
+)
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
     "BOOTSTRAP_PORT_FORWARD_PID=$!",
@@ -108,7 +122,7 @@ KUBERNETES_SECRET_KIND = re.compile(
     r"^kind[ \t]*:[ \t]*['\"]?Secret['\"]?[ \t]*(?:#.*)?$",
     re.IGNORECASE | re.MULTILINE,
 )
-SHELL_CONTROL_OPERATORS = frozenset({";", "&", "&&", "||"})
+SHELL_CONTROL_OPERATORS = frozenset({";", ";;", ";&", ";;&", "&", "&&", "||"})
 SHELL_COMMAND_PREFIXES = frozenset(
     {
         "!",
@@ -461,6 +475,93 @@ def _shell_command_groups(tokens: list[str]) -> Iterable[list[str]]:
         yield tokens[start:]
 
 
+def _case_arm_pattern_end(tokens: list[str], start: int = 0) -> int | None:
+    """Return a bounded case-pattern terminator, including spaced `)`."""
+
+    separate_close = next(
+        (index for index in range(start, len(tokens)) if tokens[index] == ")"),
+        None,
+    )
+    scan_end = separate_close if separate_close is not None else len(tokens)
+    expect_pattern = True
+    saw_pattern = False
+    for index in range(start, scan_end):
+        token = tokens[index]
+        attached_close = separate_close is None and token.endswith(")")
+        value = token[:-1] if attached_close else token
+        if expect_pattern:
+            if not value or value == "|":
+                return None
+            saw_pattern = True
+            expect_pattern = False
+        elif value == "|":
+            expect_pattern = True
+        else:
+            return None
+        if attached_close:
+            return index if not expect_pattern else None
+    if separate_close is not None and saw_pattern and not expect_pattern:
+        return separate_close
+    return None
+
+
+def _shell_syntax_command_index(group: list[str]) -> int | None:
+    index = 0
+    while index < len(group) and (
+        group[index] in SHELL_COMMAND_PREFIXES
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", group[index])
+    ):
+        index += 1
+    return index if index < len(group) else None
+
+
+def _case_aware_command_groups(
+    tokens: list[str], case_depth: int
+) -> tuple[list[list[str]], int]:
+    """Strip bounded case syntax while retaining each arm's executable body."""
+
+    commands: list[list[str]] = []
+
+    def append_arm_body(body: list[str]) -> None:
+        syntax_index = _shell_syntax_command_index(body)
+        if syntax_index is not None and body[syntax_index] in {"case", "esac"}:
+            raise AssertionError("unsupported nested shell case syntax")
+        commands.append(body)
+
+    for group in _shell_command_groups(tokens):
+        if not group:
+            continue
+        syntax_index = _shell_syntax_command_index(group)
+        syntax_token = group[syntax_index] if syntax_index is not None else None
+        if syntax_token == "case":
+            if syntax_index != 0 or case_depth != 0:
+                raise AssertionError("unsupported nested shell case syntax")
+            if len(group) < 3 or group[2] != "in":
+                raise AssertionError("unsupported shell case syntax")
+            case_depth += 1
+            if len(group) == 3:
+                continue
+            pattern_end = _case_arm_pattern_end(group, 3)
+            if pattern_end is None:
+                raise AssertionError("unsupported shell case arm syntax")
+            if pattern_end + 1 < len(group):
+                append_arm_body(group[pattern_end + 1 :])
+            continue
+        if syntax_token == "esac":
+            if syntax_index != 0 or case_depth == 0 or len(group) != 1:
+                raise AssertionError("unsupported shell case terminator syntax")
+            case_depth -= 1
+            continue
+        if case_depth > 0:
+            pattern_end = _case_arm_pattern_end(group)
+            if pattern_end is not None:
+                if pattern_end + 1 < len(group):
+                    append_arm_body(group[pattern_end + 1 :])
+                continue
+        commands.append(group)
+    return commands, case_depth
+
+
 def _pipeline_commands(tokens: list[str]) -> Iterable[list[str]]:
     start = 0
     for index, token in enumerate(tokens):
@@ -747,8 +848,12 @@ def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
     source_label = (
         "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
     )
+    case_depth = 0
     for statement, _ in _shell_statements(bootstrap_manifest, source_label):
-        for group in _shell_command_groups(_shell_tokens(statement, source_label)):
+        groups, case_depth = _case_aware_command_groups(
+            _shell_tokens(statement, source_label), case_depth
+        )
+        for group in groups:
             for command in _pipeline_commands(group):
                 executable_index = _effective_executable_index(command)
                 if executable_index is not None and command[
@@ -758,6 +863,8 @@ def _bootstrap_creates_secret(bootstrap_manifest: str) -> bool:
                 arguments = _kubectl_arguments(command)
                 if arguments is not None and _kubectl_creates_secret(arguments):
                     return True
+    if case_depth != 0:
+        raise AssertionError("unterminated shell case syntax")
     return any(
         _heredoc_contains_secret_manifest(body)
         for command, body in _heredoc_inputs(bootstrap_manifest, source_label)
@@ -1359,6 +1466,87 @@ def _validate_player_bootstrap_payload(source: str, request: re.Match[str]) -> b
     return fields == {"accountIdentifier": "email", "secret": "password"}
 
 
+def _shell_compound_nesting_delta(statement: str, tokens: list[str]) -> int:
+    """Track bounded compound-shell nesting without interpreting command data."""
+
+    grouping = shell_group_tokens(statement)
+    delta = grouping.count("{") - grouping.count("}")
+    normalized = normalize_script(statement)
+    if normalized == "(":
+        delta += 1
+    elif normalized == ")":
+        delta -= 1
+    for group in _shell_command_groups(tokens):
+        if group[0] in {"if", "for", "while", "until", "case"}:
+            delta += 1
+        elif group[0] in {"fi", "done", "esac"}:
+            delta -= 1
+    return delta
+
+
+def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
+    """Require the fail-closed readiness gate in executable top-level flow."""
+
+    source_label = (
+        "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
+    )
+    records: list[tuple[list[str], int]] = []
+    nesting = 0
+    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+        tokens = _shell_tokens(statement, source_label)
+        if not tokens:
+            continue
+        records.append((tokens, nesting))
+        nesting += _shell_compound_nesting_delta(statement, tokens)
+        if nesting < 0:
+            raise AssertionError("unsupported shell compound nesting")
+
+    def references_account_bootstrap(tokens: list[str]) -> bool:
+        if "BOOTSTRAP_MODE=account" in tokens:
+            return True
+        for index, token in enumerate(tokens):
+            if not re.search(
+                r"\$(?:BOOTSTRAP_SCRIPT\b|\{BOOTSTRAP_SCRIPT(?:[^}]*)\})", token
+            ):
+                continue
+            if index > 0 and tokens[index - 1] in {">", ">>"}:
+                continue
+            if token == "--from-file=bootstrap.py=${BOOTSTRAP_SCRIPT}":
+                continue
+            return True
+        return False
+
+    account_candidates = [
+        tokens for tokens, _ in records if references_account_bootstrap(tokens)
+    ]
+    if account_candidates != [list(BOOTSTRAP_ACCOUNT_COMMAND_TOKENS)]:
+        raise AssertionError(
+            "dev-demo player bootstrap must execute exactly one canonical account "
+            "bootstrap command"
+        )
+
+    expected_sequence = (
+        (["BOOTSTRAP_PORT_FORWARD_PID=$!"], 0),
+        (["if", "!", "wait_for_bootstrap_port_forward", ";", "then"], 0),
+        (["exit", "1"], 1),
+        (["fi"], 1),
+        (list(BOOTSTRAP_ACCOUNT_COMMAND_TOKENS), 0),
+    )
+    for start in range(len(records) - len(expected_sequence) + 1):
+        window = records[start : start + len(expected_sequence)]
+        if all(
+            tokens == expected and depth == expected_depth
+            for (tokens, depth), (expected, expected_depth) in zip(
+                window, expected_sequence, strict=True
+            )
+        ):
+            return
+    raise AssertionError(
+        "dev-demo player bootstrap must execute the exact fail-closed "
+        "port-forward readiness gate immediately before account bootstrap"
+    )
+
+
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
@@ -1372,6 +1560,7 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 "dev-demo player bootstrap must use the authenticated Kubernetes "
                 f"port-forward transport; missing: {expected}"
             )
+    _validate_bootstrap_readiness_gate(bootstrap_manifest)
     authorization_lines = [
         line.strip()
         for line in bootstrap_manifest.splitlines()

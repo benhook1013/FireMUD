@@ -655,8 +655,8 @@ class GatewayWebSocketClientTest {
         StandardCopyOption.REPLACE_EXISTING);
 
     Object reloadedClient = awaitClientIdentityChange(client, initialClient);
-    Thread.sleep(300);
-    assertSame(reloadedClient, client.clientIdentity());
+    assertClientIdentityRemainsStable(client, reloadedClient);
+    awaitGenerationCount(client, 1);
 
     WebSocket webSocket =
         client
@@ -769,6 +769,16 @@ class GatewayWebSocketClientTest {
     assertNotNull(currentIdentity);
     assertNotSame(initialIdentity, currentIdentity);
     return currentIdentity;
+  }
+
+  private static void assertClientIdentityRemainsStable(
+      GatewayWebSocketClient client, Object expectedIdentity) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(300);
+    do {
+      assertSame(expectedIdentity, client.clientIdentity());
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    assertSame(expectedIdentity, client.clientIdentity());
   }
 
   private record TlsMaterial(Path certificate, Path privateKey, Path caCertificate) {}

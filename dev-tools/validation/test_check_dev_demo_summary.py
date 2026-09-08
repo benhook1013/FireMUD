@@ -66,6 +66,14 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             deploy_job, "Create dev-demo smoke account"
         )["run"]
 
+    def _bootstrap_account_statement(self, bootstrap_manifest: str) -> str:
+        expected = list(self.validator.BOOTSTRAP_ACCOUNT_COMMAND_TOKENS)
+        return next(
+            statement
+            for statement, _ in self.validator._shell_statements(bootstrap_manifest)
+            if self.validator._shell_tokens(statement) == expected
+        )
+
     def _bootstrap_manifest_with_pod_mutation(self, mutate) -> str:
         manifest = self._bootstrap_manifest_fixture()
         pod = self.validator._extract_bootstrap_pod(manifest)
@@ -370,6 +378,90 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
                         "must not create or mount credential Secret",
                     ):
                         self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_inside_single_line_case_arm(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            '\ncase "$mode" in secret) kubectl create secret generic '
+            "unrelated-resource ;; *) : ;; esac"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_after_spaced_case_close(self):
+        for pattern in ("x", '"x)"', r"x\)"):
+            with self.subTest(pattern=pattern):
+                bootstrap_manifest = self._bootstrap_manifest_fixture()
+                invalid_manifest = bootstrap_manifest + (
+                    f'\ncase "$mode" in {pattern} ) '
+                    "kubectl create secret generic x ;; esac"
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "must not create or mount credential Secret",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_secret_create_inside_multiline_case_arm(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + r'''
+case "$mode" in
+  secret | credentials ) sudo -n command -- kubectl create \
+    secret generic unrelated-resource ;;
+  *) : ;;
+esac'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "must not create or mount credential Secret"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_unmodeled_case_syntax(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            '\ncase "$mode" kubectl create secret generic unrelated-resource'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError, "unsupported shell case syntax"
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_nested_case_at_start_of_arm_body(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        invalid_manifest = bootstrap_manifest + (
+            '\ncase "$mode" in x) case "$nested" in y) : ;; esac ;; esac'
+        )
+        with self.assertRaisesRegex(
+            AssertionError, "unsupported nested shell case syntax"
+        ):
+            self.validator._bootstrap_creates_secret(invalid_manifest)
+
+    def test_validate_workflow_accepts_case_words_as_command_arguments(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        valid_manifest = bootstrap_manifest + r'''
+printf '%s\n' case
+printf '%s\n' esac'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, valid_manifest)
+            self.validator.validate_workflow(root)
 
     def test_validate_workflow_rejects_secret_create_inside_else_branch(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
@@ -1175,6 +1267,169 @@ RESOURCES"""
                 re.escape(
                     "port-forward transport; missing: --address 127.0.0.1"
                 ),
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_missing_port_forward_readiness_gate(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        readiness_gate = self.validator.BOOTSTRAP_PORT_FORWARD_READINESS_GATE
+        self.assertIn(readiness_gate, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(readiness_gate, "", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact fail-closed port-forward readiness gate "
+                "immediately before account bootstrap",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_non_failing_port_forward_readiness_gate(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        readiness_gate = self.validator.BOOTSTRAP_PORT_FORWARD_READINESS_GATE
+        permissive_gate = readiness_gate.replace("  exit 1", "  :", 1)
+        self.assertIn(readiness_gate, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            readiness_gate, permissive_gate, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact fail-closed port-forward readiness gate "
+                "immediately before account bootstrap",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_port_forward_gate_after_account_bootstrap(
+        self,
+    ):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        readiness_gate = self.validator.BOOTSTRAP_PORT_FORWARD_READINESS_GATE
+        account_cleanup = """cleanup_bootstrap_port_forward
+if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then"""
+        self.assertIn(readiness_gate, bootstrap_manifest)
+        self.assertIn(account_cleanup, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(readiness_gate, "", 1).replace(
+            account_cleanup, readiness_gate + "\n" + account_cleanup, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact fail-closed port-forward readiness gate "
+                "immediately before account bootstrap",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_readiness_gate_inside_false_branch(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        readiness_gate = self.validator.BOOTSTRAP_PORT_FORWARD_READINESS_GATE
+        wrapped_gate = f"if false; then\n{readiness_gate}\nfi"
+        self.assertIn(readiness_gate, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            readiness_gate, wrapped_gate, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact fail-closed port-forward readiness gate "
+                "immediately before account bootstrap",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_readiness_gate_in_unconsumed_heredoc(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        readiness_gate = self.validator.BOOTSTRAP_PORT_FORWARD_READINESS_GATE
+        example_gate = f"cat <<'READINESS_EXAMPLE'\n{readiness_gate}\nREADINESS_EXAMPLE"
+        self.assertIn(readiness_gate, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            readiness_gate, example_gate, 1
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute the exact fail-closed port-forward readiness gate "
+                "immediately before account bootstrap",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_altered_account_bootstrap_command(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        account_statement = self._bootstrap_account_statement(bootstrap_manifest)
+        alterations = (
+            account_statement.replace("python3", "/bin/true python3", 1),
+            account_statement.replace(
+                "BOOTSTRAP_MODE=account \\",
+                "BOOTSTRAP_MODE=account timeout 60s \\",
+                1,
+            ),
+        )
+        for altered_statement in alterations:
+            with self.subTest(altered_statement=altered_statement):
+                invalid_manifest = bootstrap_manifest.replace(
+                    account_statement, altered_statement, 1
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self._write_workflow_fixture(root, invalid_manifest)
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "must execute exactly one canonical account bootstrap command",
+                    ):
+                        self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_duplicate_account_script_before_pid(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        account_statement = self._bootstrap_account_statement(bootstrap_manifest)
+        self.assertTrue(account_statement.startswith("if ! "))
+        self.assertTrue(account_statement.endswith("; then"))
+        direct_account_command = account_statement.removeprefix("if ! ").removesuffix(
+            "; then"
+        )
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            direct_account_command + "\n" + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_indirect_duplicate_account_script(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        duplicate_account_command = r'''ACCOUNT_BOOTSTRAP_MODE=account
+env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
+  /usr/bin/python3 "$BOOTSTRAP_SCRIPT" || true'''
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            duplicate_account_command + "\n" + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
             ):
                 self.validator.validate_workflow(root)
 
