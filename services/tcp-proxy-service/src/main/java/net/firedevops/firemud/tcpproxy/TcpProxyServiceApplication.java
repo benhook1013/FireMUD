@@ -9,6 +9,9 @@ import org.springframework.context.event.EventListener;
 
 @SpringBootApplication(
     excludeName = {
+      "net.firedevops.firemud.common.config.CommonAutoConfiguration",
+      "net.firedevops.firemud.common.config.CommonSagaAutoConfiguration",
+      "net.firedevops.firemud.common.config.DatabaseAutoConfiguration",
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
       "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
     })

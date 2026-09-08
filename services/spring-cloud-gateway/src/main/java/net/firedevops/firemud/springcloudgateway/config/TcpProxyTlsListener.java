@@ -8,6 +8,7 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import java.io.File;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -204,16 +205,54 @@ public final class TcpProxyTlsListener implements SmartLifecycle {
     public reactor.core.publisher.Mono<Void> handle(
         org.springframework.http.server.reactive.ServerHttpRequest request,
         org.springframework.http.server.reactive.ServerHttpResponse response) {
-      String path = request.getURI().getPath();
-      if (path != null
-          && (path.equals("/ws/game")
-              || path.startsWith("/ws/game/")
-              || path.equals("/actuator/health/readiness")
-              || path.equals("/actuator/health/liveness"))) {
+      URI requestUri = request.getURI();
+      String decodedPath = requestUri.getPath();
+      String canonicalPath = requestUri.normalize().getPath();
+      if (decodedPath != null
+          && !containsParentSegment(decodedPath)
+          && canonicalPath != null
+          && !containsDotSegment(canonicalPath)
+          && (canonicalPath.equals("/ws/game")
+              || canonicalPath.startsWith("/ws/game/")
+              || canonicalPath.equals("/actuator/health/readiness")
+              || canonicalPath.equals("/actuator/health/liveness"))) {
         return delegate.handle(request, response);
       }
       response.setStatusCode(HttpStatus.NOT_FOUND);
       return response.setComplete();
+    }
+
+    private static boolean containsParentSegment(String path) {
+      return containsDotSegment(path, false);
+    }
+
+    private static boolean containsDotSegment(String path) {
+      return containsDotSegment(path, true);
+    }
+
+    private static boolean containsDotSegment(String path, boolean includeCurrentDirectory) {
+      int segmentStart = 0;
+      while (segmentStart <= path.length()) {
+        int segmentEnd = path.indexOf('/', segmentStart);
+        if (segmentEnd < 0) {
+          segmentEnd = path.length();
+        }
+        int parameterStart = path.indexOf(';', segmentStart);
+        int valueEnd =
+            parameterStart >= 0 && parameterStart < segmentEnd ? parameterStart : segmentEnd;
+        int valueLength = valueEnd - segmentStart;
+        if ((includeCurrentDirectory && valueLength == 1 && path.charAt(segmentStart) == '.')
+            || (valueLength == 2
+                && path.charAt(segmentStart) == '.'
+                && path.charAt(segmentStart + 1) == '.')) {
+          return true;
+        }
+        if (segmentEnd == path.length()) {
+          return false;
+        }
+        segmentStart = segmentEnd + 1;
+      }
+      return false;
     }
   }
 }

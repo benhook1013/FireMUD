@@ -193,7 +193,7 @@ Entry format:
 - `2026-09-06`: Credential bootstrap requires the bounded Kubernetes port-forward hop
   - Context: an earlier dev-demo correction preferred an in-cluster bootstrap pod for all account and session setup, but player credentials were thereby sent over an internal plaintext service path.
   - Observation: until internal HTTPS/mTLS exists, credential-bearing account bootstrap must use the already-declared `pods/portforward` capability over the Kubernetes API, bound to runner loopback; only non-credential session/world setup should remain in-cluster.
-  - Expected pattern: fail closed with `kubectl auth can-i create pods --subresource=portforward`, use `--address 127.0.0.1`, keep readiness/PID/log/account-id cleanup bounded, and never emit credential material.
+  - Expected pattern: fail closed with `kubectl auth can-i create pods --subresource=portforward -n "${PREVIEW_NAMESPACE}" >/dev/null`, use `--address 127.0.0.1`, keep readiness/PID/log/account-id cleanup bounded, and never emit credential material.
 
 - `2026-09-07`: Keep credential-free and credential-bearing bootstrap paths separate
   - Context: the dev-demo workflow needs an in-cluster setup path for session/world state while account bootstrap still crosses an internal plaintext hop.

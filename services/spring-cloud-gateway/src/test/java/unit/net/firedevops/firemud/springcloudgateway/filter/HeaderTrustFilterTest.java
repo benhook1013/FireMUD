@@ -1,10 +1,16 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
@@ -19,6 +25,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 class HeaderTrustFilterTest {
+  private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
 
   @Test
   void stripsSpoofedClientIpHeader() {
@@ -107,19 +114,20 @@ class HeaderTrustFilterTest {
   }
 
   @Test
-  void promotesProxyHeadersOnlyOnAuthenticatedDedicatedTlsListener() {
+  void promotesProxyHeadersOnlyOnAuthenticatedDedicatedTlsListener() throws Exception {
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
-    GatewayTcpProxyListenerProperties listenerProperties = developmentListenerProperties();
+    GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("test"));
     HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
 
     MockServerHttpRequest trustedRequest =
         MockServerHttpRequest.get("/ws/game/test")
             .localAddress(new InetSocketAddress("127.0.0.1", 8443))
             .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
-            .sslInfo(org.mockito.Mockito.mock(SslInfo.class))
+            .sslInfo(authenticatedPeer)
             .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .build();
@@ -131,34 +139,37 @@ class HeaderTrustFilterTest {
     assertThat(promoted.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"))
         .isEqualTo("conn-123");
 
-    MockServerHttpRequest untrustedDedicatedRequest =
+    MockServerHttpRequest untrustedListenerRequest =
         MockServerHttpRequest.get("/ws/game/test")
-            .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+            .localAddress(new InetSocketAddress("127.0.0.1", 8080))
             .remoteAddress(new InetSocketAddress("192.0.2.1", 50001))
-            .sslInfo(org.mockito.Mockito.mock(SslInfo.class))
+            .sslInfo(authenticatedPeer)
+            .header("X-Proxy-Client-IP", "203.0.113.99")
+            .header("X-Proxy-Connection-Id", "conn-123")
             .build();
-    MockServerWebExchange untrustedDedicatedExchange =
-        MockServerWebExchange.from(untrustedDedicatedRequest);
-    filter.filter(untrustedDedicatedExchange, ignored -> Mono.empty()).block();
-    assertThat(untrustedDedicatedExchange.getResponse().getStatusCode())
+    MockServerWebExchange untrustedListenerExchange =
+        MockServerWebExchange.from(untrustedListenerRequest);
+    filter.filter(untrustedListenerExchange, ignored -> Mono.empty()).block();
+    assertThat(untrustedListenerExchange.getResponse().getStatusCode())
         .isEqualTo(HttpStatus.FORBIDDEN);
   }
 
   @Test
-  void rejectsAuthenticatedSessionWhenProxyClientIpIsMissingOrMalformed() {
+  void rejectsAuthenticatedSessionWhenProxyClientIpIsMissingOrMalformed() throws Exception {
     GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
-    GatewayTcpProxyListenerProperties listenerProperties = developmentListenerProperties();
+    GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
     TcpProxyTrustPolicy policy =
         new TcpProxyTrustPolicy(
             listenerProperties, headerProperties, 8080, Clock.systemUTC(), Set.of("test"));
     HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
 
     for (String clientIp : new String[] {null, "not-an-ip"}) {
       MockServerHttpRequest.BaseBuilder<?> requestBuilder =
           MockServerHttpRequest.get("/ws/game/test")
               .localAddress(new InetSocketAddress("127.0.0.1", 8443))
               .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
-              .sslInfo(org.mockito.Mockito.mock(SslInfo.class))
+              .sslInfo(authenticatedPeer)
               .header("X-Proxy-Connection-Id", "conn-123");
       if (clientIp != null) {
         requestBuilder.header("X-Proxy-Client-IP", clientIp);
@@ -397,15 +408,30 @@ class HeaderTrustFilterTest {
             Set.of("test")));
   }
 
-  private static GatewayTcpProxyListenerProperties developmentListenerProperties() {
+  private static GatewayTcpProxyListenerProperties certificateListenerProperties() {
     GatewayTcpProxyListenerProperties properties = new GatewayTcpProxyListenerProperties();
     properties.setEnabled(true);
     properties.setPort(8443);
     properties.setCertificateChainPath("server.crt");
     properties.setPrivateKeyPath("server.key");
-    properties.setEnvironment("isolated-test");
-    properties.setTrustProfile("development_cidr");
-    properties.getDevelopmentCidr().setTrustedCidr("127.0.0.1/32");
+    properties.setTrustedClientCaPath("client-ca.crt");
+    properties.setEnvironment("production");
+    properties.setTrustProfile("production_uri");
+    properties.getProductionUri().setUriSan(TCP_PROXY_URI);
     return properties;
+  }
+
+  private static SslInfo authenticatedTcpProxyPeer() throws Exception {
+    try (InputStream certificateStream =
+        Objects.requireNonNull(
+            HeaderTrustFilterTest.class.getResourceAsStream("/certs/tcp-proxy-client.pem"),
+            "missing TCP Proxy client certificate fixture")) {
+      X509Certificate certificate =
+          (X509Certificate)
+              CertificateFactory.getInstance("X.509").generateCertificate(certificateStream);
+      SslInfo sslInfo = mock(SslInfo.class);
+      when(sslInfo.getPeerCertificates()).thenReturn(new X509Certificate[] {certificate});
+      return sslInfo;
+    }
   }
 }

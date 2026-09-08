@@ -500,6 +500,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
             port=32000,
             transcript=Path("/tmp/session.jsonl"),
             timeout=0.25,
+            connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
             allow_insecure=False,
             ca_file=None,
             server_hostname=None,
@@ -1320,7 +1321,14 @@ class TelnetSessionDriverTest(unittest.TestCase):
                             self.close_reasons.append(reason)
 
                     args = argparse.Namespace(
-                        host="localhost", port=32000, transcript=transcript, timeout=0.25
+                        host="localhost",
+                        port=32000,
+                        transcript=transcript,
+                        timeout=0.25,
+                        connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+                        allow_insecure=False,
+                        ca_file=None,
+                        server_hostname=None,
                     )
                     output = io.StringIO()
                     sessions = []
@@ -1373,6 +1381,10 @@ class TelnetSessionDriverTest(unittest.TestCase):
                     port=32000,
                     transcript=Path("/tmp/session.jsonl"),
                     timeout=0.25,
+                    connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+                    allow_insecure=False,
+                    ca_file=None,
+                    server_hostname=None,
                 )
                 sessions = []
 
@@ -1439,7 +1451,14 @@ class TelnetSessionDriverTest(unittest.TestCase):
                     self.closed = True
 
             args = argparse.Namespace(
-                host="localhost", port=32000, transcript=transcript, timeout=0.25
+                host="localhost",
+                port=32000,
+                transcript=transcript,
+                timeout=0.25,
+                connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+                allow_insecure=False,
+                ca_file=None,
+                server_hostname=None,
             )
             output = io.StringIO()
             with (

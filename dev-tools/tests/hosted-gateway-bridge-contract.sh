@@ -32,6 +32,44 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
 
+OVERRIDE_RENDERED="$TMP_DIR/trust-environment-override.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string previewStack.gatewayWsTls.trustEnvironment=staging \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >"$OVERRIDE_RENDERED"
+python3 - "$RENDERED" "$DEV_RENDERED" "$OVERRIDE_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def trust_environment(path):
+    documents = [
+        document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+    gateway = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    environment = next(
+        entry
+        for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
+        if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"
+    )
+    return environment.get("value")
+
+
+assert trust_environment(sys.argv[1]) == "pr-preview"
+assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
+assert trust_environment(sys.argv[3]) == "staging"
+PY
+
 PREVIEW_PR_NUMBER_ERROR="preview.prNumber is required when Gateway WebSocket TLS is enabled"
 for invalid_pr_number in missing empty; do
   INVALID_PR_VALUES="$TMP_DIR/preview-values-pr-number-$invalid_pr_number.yaml"

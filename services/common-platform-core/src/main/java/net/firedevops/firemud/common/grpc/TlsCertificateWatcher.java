@@ -159,7 +159,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
     return files.contains(dir.resolve(relativePath).toAbsolutePath().normalize());
   }
 
-  boolean isRunning() {
+  public boolean isRunning() {
     return running.get();
   }
 

@@ -4527,14 +4527,40 @@ def validate_hosted_telnet_tls_values(
                 f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"
             )
         identity_mode = required_identity_mode
-    if identity_mode == "hosted-controller" and any(
-        isinstance(port, dict) and "nodePort" in port
-        for port in ((tcp_service.get("spec") or {}).get("ports") or [])
-    ):
-        issues.append(
-            "hosted-controller TCP Proxy Service must not declare an explicit nodePort"
+    if identity_mode == "hosted-controller":
+        metadata = tcp_service.get("metadata") or {}
+        annotations = metadata.get("annotations") or {}
+        allocated_port = (
+            annotations.get("firemud.dev/allocated-telnet-port")
+            if isinstance(annotations, dict)
+            else None
         )
-
+        if not isinstance(allocated_port, str) or not re.fullmatch(
+            r"[1-9][0-9]*", allocated_port
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
+            )
+        telnet_ports = [
+            port
+            for port in ((tcp_service.get("spec") or {}).get("ports") or [])
+            if isinstance(port, dict)
+            and port.get("port") == 2323
+            and port.get("targetPort") == 2323
+            and port.get("protocol", "TCP") == "TCP"
+        ]
+        if len(telnet_ports) != 1 or "nodePort" not in telnet_ports[0]:
+            issues.append(
+                "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
+            )
+        elif (
+            isinstance(allocated_port, str)
+            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
+            and telnet_ports[0]["nodePort"] != int(allocated_port)
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
+            )
     certificates = {
         metadata_name(document): document
         for document in documents

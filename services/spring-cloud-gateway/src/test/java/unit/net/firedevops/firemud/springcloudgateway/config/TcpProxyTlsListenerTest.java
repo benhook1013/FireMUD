@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.HttpHandler;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -82,6 +83,38 @@ class TcpProxyTlsListenerTest {
     handler.handle(MockServerHttpRequest.get("/ws/game/demo").build(), gameplayResponse).block();
     assertThat(delegated).isTrue();
     assertThat(gameplayResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+    delegated.set(false);
+    MockServerHttpResponse normalizedGameplayResponse = new MockServerHttpResponse();
+    handler
+        .handle(
+            MockServerHttpRequest.get("/ws/game/./demo").build(), normalizedGameplayResponse)
+        .block();
+    assertThat(delegated).isTrue();
+    assertThat(normalizedGameplayResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+
+    for (String traversalPath :
+        new String[] {
+          "/ws/game/../actuator/env",
+          "/ws/game/%2e%2e/actuator/env",
+          "/ws/game/%2E%2e/actuator/env",
+          "/ws/game/%2e%2e%3bignored/actuator/env",
+          "/ws/game/%2e%2e%2factuator/env",
+          "/ws/game/%2e%2e/../actuator/env",
+          "/ws/game/%2e/../actuator/env"
+        }) {
+      delegated.set(false);
+      MockServerHttpResponse traversalResponse = new MockServerHttpResponse();
+      handler
+          .handle(
+              MockServerHttpRequest.method(HttpMethod.GET, URI.create(traversalPath)).build(),
+              traversalResponse)
+          .block();
+      assertThat(delegated).as("delegate for %s", traversalPath).isFalse();
+      assertThat(traversalResponse.getStatusCode())
+          .as("status for %s", traversalPath)
+          .isEqualTo(HttpStatus.NOT_FOUND);
+    }
 
     delegated.set(false);
     MockServerHttpResponse nearMissResponse = new MockServerHttpResponse();

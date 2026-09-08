@@ -2,7 +2,6 @@
 plugins {
     `java-test-fixtures`
     id("net.firedevops.firemud.service-conventions")
-    id("net.firedevops.firemud.redis-conventions")
 }
 
 import net.firedevops.firemud.GenerateTcpProxyDevCertsTask
@@ -34,6 +33,11 @@ dependencies {
     testRuntimeOnly(libs.postgresql)
 
     testFixturesImplementation(testFixtures(project(":common-test-support")))
+}
+
+configurations.named("runtimeClasspath") {
+    // TCP Proxy is a stateless edge and must not activate Redis auto-configuration at runtime.
+    exclude(group = "org.springframework.boot", module = "spring-boot-starter-data-redis")
 }
 
 tasks.named<BootRun>("bootRun") {

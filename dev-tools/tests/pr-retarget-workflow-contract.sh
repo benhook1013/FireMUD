@@ -55,7 +55,7 @@ assert_step_contains() {
     END { exit !(found_job && found_step && matched) }
   ' "$path"; then
     echo "$workflow job $job step $step must contain: $expected" >&2
-    exit 1
+    return 1
   fi
 }
 

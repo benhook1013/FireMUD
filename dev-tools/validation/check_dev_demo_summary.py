@@ -86,6 +86,8 @@ BOOTSTRAP_ACCOUNT_COMMAND_TOKENS = (
     "then",
 )
 BOOTSTRAP_SCRIPT_PATH = "/tmp/dev-demo-bootstrap.py"
+# Keep readonly in the canonical tokens; the shell workflow contract proves
+# that Bash also blocks indirect rebinding mechanisms such as printf -v.
 BOOTSTRAP_SCRIPT_ASSIGNMENT_TOKENS = (
     "readonly",
     f"BOOTSTRAP_SCRIPT={BOOTSTRAP_SCRIPT_PATH}",
@@ -131,7 +133,6 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     'return f"{gateway_base_url}/api/account{path}"',
     'cleanup_bootstrap_port_forward\n          if [[ ! -s "${BOOTSTRAP_ACCOUNT_ID_FILE}" ]]; then',
     '--from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}"',
-    'value: session',
     'if bootstrap_mode == "account":',
     'email = os.environ["DEMO_SMOKE_EMAIL"]',
     'password = os.environ["DEMO_SMOKE_PASSWORD"]',
@@ -1638,6 +1639,9 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
 
 
 def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
+    source_label = (
+        "workflow job 'dev-demo-deploy' step 'Create dev-demo smoke account'"
+    )
     normalized = normalize_script(bootstrap_manifest)
     for expected in BOOTSTRAP_MANIFEST_REQUIRED_MARKERS:
         if normalize_script(expected) not in normalized:
@@ -1651,15 +1655,20 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
                 f"port-forward transport; missing: {expected}"
             )
     _validate_bootstrap_readiness_gate(bootstrap_manifest)
-    authorization_lines = [
-        line.strip()
-        for line in bootstrap_manifest.splitlines()
-        if re.search(r"\bkubectl\s+auth\s+can-i\b", line)
-    ]
-    expected_authorization_line = (
-        f"if ! {BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}; then"
+    expected_authorization_tokens = _shell_tokens(
+        f"if ! {BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}; then",
+        "canonical dev-demo port-forward authorization",
     )
-    if authorization_lines != [expected_authorization_line]:
+    authorization_statements = []
+    for statement, _ in _shell_statements(bootstrap_manifest, source_label):
+        tokens = _shell_tokens(statement, source_label)
+        if any(
+            tokens[index].rsplit("/", 1)[-1] == "kubectl"
+            and tokens[index + 1 : index + 3] == ["auth", "can-i"]
+            for index in range(len(tokens) - 2)
+        ):
+            authorization_statements.append(tokens)
+    if authorization_statements != [expected_authorization_tokens]:
         raise AssertionError(
             "dev-demo port-forward authorization must use exactly: "
             f"{BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}"

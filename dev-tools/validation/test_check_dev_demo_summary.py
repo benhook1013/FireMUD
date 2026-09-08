@@ -6,7 +6,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,10 +75,18 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         )
 
     def _bootstrap_manifest_with_pod_mutation(self, mutate) -> str:
+        class IndentedSafeDumper(self.validator.yaml.SafeDumper):
+            def increase_indent(self, flow=False, indentless=False):
+                return super().increase_indent(flow, indentless=False)
+
         manifest = self._bootstrap_manifest_fixture()
         pod = self.validator._extract_bootstrap_pod(manifest)
         mutate(pod)
-        rendered_pod = self.validator.yaml.safe_dump(pod, sort_keys=False).rstrip()
+        rendered_pod = self.validator.yaml.dump(
+            pod,
+            Dumper=IndentedSafeDumper,
+            sort_keys=False,
+        ).rstrip()
         manifest_start = manifest.index(
             self.validator.BOOTSTRAP_MANIFEST_HEREDOC_OPENER
         )
@@ -130,6 +137,10 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
 
     def test_noop_bootstrap_manifest_mutation_preserves_valid_fixture(self):
         bootstrap_manifest = self._bootstrap_manifest_with_pod_mutation(lambda _pod: None)
+        self.assertIn(
+            "  containers:\n    - name: dev-demo-bootstrap",
+            bootstrap_manifest,
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, bootstrap_manifest)
@@ -1474,32 +1485,6 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
             ):
                 self.validator.validate_workflow(root)
 
-    def test_readonly_bootstrap_script_rejects_indirect_printf_reassignment(self):
-        bootstrap_manifest = self._bootstrap_manifest_fixture()
-        protected_assignment = (
-            "readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
-        )
-        self.assertIn(protected_assignment, bootstrap_manifest)
-
-        result = subprocess.run(
-            [
-                "bash",
-                "-c",
-                f"""{protected_assignment}
-bootstrap_variable=BOOTSTRAP_SCRIPT
-if printf -v "${{bootstrap_variable}}" %s /dev/null; then
-  exit 10
-fi
-test "${{BOOTSTRAP_SCRIPT}}" = /tmp/dev-demo-bootstrap.py
-""",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-
     def test_validate_workflow_rejects_literal_path_duplicate_account_script(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
@@ -1627,6 +1612,54 @@ EVIL
             self._write_workflow_fixture(root, bootstrap_manifest)
             self.validator.validate_workflow(root)
 
+    def test_validate_workflow_accepts_formatting_equivalent_authorization(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        canonical = (
+            f"if ! {self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK}; then"
+        )
+        formatted = r"""if ! kubectl   auth can-i create pods \
+  --subresource=portforward -n ${PREVIEW_NAMESPACE} \
+  > /dev/null ; then"""
+        self.assertIn(canonical, bootstrap_manifest)
+        bootstrap_manifest = bootstrap_manifest.replace(canonical, formatted, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_authorization_with_extra_command(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
+        self.assertIn(scoped_check, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            scoped_check,
+            scoped_check + " && printf unexpected",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                re.escape(f"authorization must use exactly: {scoped_check}"),
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_path_qualified_duplicate_authorization(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        bootstrap_manifest += (
+            "\n/usr/bin/kubectl auth can-i create pods "
+            '--subresource=portforward -n "${PREVIEW_NAMESPACE}" >/dev/null'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, bootstrap_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "authorization must use exactly",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_slash_form_port_forward_authorization(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         scoped_check = self.validator.BOOTSTRAP_PORT_FORWARD_AUTHORIZATION_CHECK
@@ -1733,7 +1766,7 @@ EVIL
             ):
                 self.validator.validate_workflow(root)
 
-    def test_validate_workflow_rejects_split_bootstrap_mode(self):
+    def test_validate_workflow_rejects_non_session_bootstrap_mode(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         self.assertIn("value: session", bootstrap_manifest)
         invalid_manifest = bootstrap_manifest.replace("value: session", "value: account", 1)
@@ -1741,8 +1774,7 @@ EVIL
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
             with self.assertRaisesRegex(
-                AssertionError,
-                re.escape("port-forward transport; missing: value: session"),
+                AssertionError, "must run the noncredential session bootstrap"
             ):
                 self.validator.validate_workflow(root)
 
@@ -1754,7 +1786,6 @@ EVIL
                 if item.get("name") == "BOOTSTRAP_MODE"
             ).update(value="account")
         )
-        invalid_manifest += "\n# Preserve the raw transport marker: value: session"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)
@@ -1767,7 +1798,6 @@ EVIL
         invalid_manifest = self._bootstrap_manifest_with_pod_mutation(
             lambda pod: pod["spec"]["containers"][0].update(env={"name": "BOOTSTRAP_MODE"})
         )
-        invalid_manifest += "\n# Preserve the raw transport marker: value: session"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_workflow_fixture(root, invalid_manifest)

@@ -100,10 +100,13 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- define "firemud.gatewayWsServerEnv" -}}
 {{- $root := .root -}}
 {{- $preview := $root.Values.preview | default (dict) -}}
+{{- $gatewayWsTls := $root.Values.previewStack.gatewayWsTls | default (dict) -}}
 {{- $prNumber := get $preview "prNumber" -}}
 {{- if or (not (hasKey $preview "prNumber")) (and (empty $prNumber) (ne (toString $prNumber) "0")) -}}
 {{- fail "preview.prNumber is required when Gateway WebSocket TLS is enabled" -}}
 {{- end -}}
+{{- $inferredTrustEnvironment := ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") -}}
+{{- $trustEnvironment := $gatewayWsTls.trustEnvironment | default $inferredTrustEnvironment -}}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED
   value: "true"
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS
@@ -117,7 +120,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH
   value: /gateway-ws-server-tls/ca.crt
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT
-  value: {{ ternary "dev-demo-cluster" "pr-preview" (eq (toString $prNumber) "0") }}
+  value: {{ $trustEnvironment | quote }}
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE
   value: production_uri
 - name: FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN

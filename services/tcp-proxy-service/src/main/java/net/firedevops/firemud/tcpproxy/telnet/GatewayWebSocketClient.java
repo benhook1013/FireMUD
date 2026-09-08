@@ -205,6 +205,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   public CompletableFuture<Boolean> isReadyAsync() {
+    if (!hasUsableCertificateWatcher()) {
+      return CompletableFuture.completedFuture(false);
+    }
     ClientGeneration generation = acquireCurrentGeneration();
     if (generation == null) {
       return CompletableFuture.completedFuture(false);
@@ -227,7 +230,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
           try {
             try {
               if (error == null) {
-                ready = response.statusCode() >= 200 && response.statusCode() < 300;
+                ready =
+                    response.statusCode() >= 200
+                        && response.statusCode() < 300
+                        && hasUsableCertificateWatcher();
               } else {
                 recordFailure(classifyFailure(error));
               }
@@ -285,6 +291,11 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     return generations.size();
   }
 
+  boolean isCertificateWatcherRunning() {
+    TlsCertificateWatcher watcher = certificateWatcher;
+    return watcher != null && watcher.isRunning();
+  }
+
   @Override
   public synchronized void close() throws IOException {
     if (!closed.compareAndSet(false, true)) {
@@ -331,6 +342,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       throw configurationFailure(
           "client_cert_invalid", "Gateway WebSocket client certificate or key is invalid", e);
     }
+  }
+
+  private boolean hasUsableCertificateWatcher() {
+    return "ws".equals(gatewayUri.getScheme()) || isCertificateWatcherRunning();
   }
 
   private HttpClient newHttpClient(javax.net.ssl.SSLContext sslContext) {

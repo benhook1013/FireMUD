@@ -1199,7 +1199,8 @@ grep -Fq '[ "$labels_valid" = "true" ] && [ "$paused" = "true" ]' "$preview_work
 grep -Fq '(requiresPausedLabel && !pauseStillPresent) ||' "$preview_workflow"
 grep -Fq 'currentPullRequest.labels.some(label => label?.name === "preview:paused")' "$preview_workflow"
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
-test "$(grep -Fhc -- 'revalidate-preview-deploy.sh' "$preview_workflow" "$ALLOCATOR" | awk '{ total += $1 } END { print total }')" -eq 2
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$preview_workflow")" -eq 1
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
 test "$(grep -Fc -- '--revalidate-deploy' "$revalidation_helper")" -eq 1
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
 grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"

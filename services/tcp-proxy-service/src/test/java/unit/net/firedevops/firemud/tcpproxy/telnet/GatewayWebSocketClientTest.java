@@ -173,6 +173,101 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void mutualTlsReadinessRequiresCertificateWatcher() throws Exception {
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.enqueue(new MockResponse().setResponseCode(200));
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "wss://localhost:" + server.getPort() + "/ws/game",
+            certificate.toString(),
+            privateKey.toString(),
+            caCertificate.toString(),
+            certificate.toString(),
+            false,
+            "",
+            new String[] {"dev"},
+            new SimpleMeterRegistry(),
+            false);
+    clients.add(client);
+
+    assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+    assertEquals(0, server.getRequestCount());
+  }
+
+  @Test
+  void plaintextReadinessDoesNotRequireCertificateWatcher() throws Exception {
+    MockWebServer server = new MockWebServer();
+    server.enqueue(new MockResponse().setResponseCode(200));
+    server.start(InetAddress.getByName("127.0.0.1"), 0);
+    servers.add(server);
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "ws://localhost:" + server.getPort() + "/ws/game",
+            "",
+            "",
+            "",
+            "",
+            false,
+            "",
+            new String[] {"dev"},
+            new SimpleMeterRegistry(),
+            false);
+    clients.add(client);
+
+    assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+    assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+  }
+
+  @Test
+  void losingFinalWatchKeyFailsInFlightAndSubsequentReadiness() throws Exception {
+    CountDownLatch releaseResponse = new CountDownLatch(1);
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.setDispatcher(
+        new Dispatcher() {
+          @Override
+          public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+            if (!releaseResponse.await(5, TimeUnit.SECONDS)) {
+              return new MockResponse().setResponseCode(503);
+            }
+            return new MockResponse().setResponseCode(200);
+          }
+        });
+    Path watchedDirectory = Files.createDirectory(materialDirectory.resolve("watched-material"));
+    Path watchedCertificate = Files.copy(certificate, watchedDirectory.resolve("client.crt"));
+    Path watchedPrivateKey = Files.copy(privateKey, watchedDirectory.resolve("client.key"));
+    Path watchedCa = Files.copy(caCertificate, watchedDirectory.resolve("ca.crt"));
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            "wss://localhost:" + server.getPort() + "/ws/game",
+            watchedCertificate.toString(),
+            watchedPrivateKey.toString(),
+            watchedCa.toString(),
+            certificate.toString(),
+            false,
+            "",
+            new String[] {"dev"},
+            new SimpleMeterRegistry(),
+            true);
+    clients.add(client);
+    CompletableFuture<Boolean> readiness = client.isReadyAsync();
+
+    try {
+      assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+      replaceWatchedDirectory(watchedDirectory);
+      awaitCertificateWatcherStopped(client);
+      assertNotNull(client.clientIdentity());
+      releaseResponse.countDown();
+
+      assertFalse(readiness.get(5, TimeUnit.SECONDS));
+      int completedRequests = server.getRequestCount();
+      assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
+      assertEquals(completedRequests, server.getRequestCount());
+    } finally {
+      releaseResponse.countDown();
+    }
+  }
+
+  @Test
   void readinessCompletionKeepsGenerationAcquiredUntilObserversRun() throws Exception {
     CountDownLatch releaseResponse = new CountDownLatch(1);
     CountDownLatch completionObserverEntered = new CountDownLatch(1);
@@ -757,7 +852,7 @@ class GatewayWebSocketClientTest {
             "",
             new String[] {"dev"},
             registry,
-            false);
+            true);
     clients.add(client);
     return client;
   }
@@ -790,6 +885,18 @@ class GatewayWebSocketClientTest {
     Files.copy(generationKey, generation.resolve("tls.key"));
     Files.copy(caCertificate, generation.resolve("ca.crt"));
     return generation;
+  }
+
+  private void replaceWatchedDirectory(Path watchedDirectory) throws Exception {
+    Path replacement = Files.createDirectory(materialDirectory.resolve("replacement-material"));
+    Files.copy(certificate, replacement.resolve("client.crt"));
+    Files.copy(privateKey, replacement.resolve("client.key"));
+    Files.copy(caCertificate, replacement.resolve("ca.crt"));
+    Files.delete(watchedDirectory.resolve("client.crt"));
+    Files.delete(watchedDirectory.resolve("client.key"));
+    Files.delete(watchedDirectory.resolve("ca.crt"));
+    Files.delete(watchedDirectory);
+    Files.move(replacement, watchedDirectory);
   }
 
   private TlsMaterial copyRotatedTlsMaterial() throws Exception {
@@ -826,6 +933,15 @@ class GatewayWebSocketClientTest {
       Thread.sleep(10);
     }
     assertEquals(expected, client.generationCount());
+  }
+
+  private static void awaitCertificateWatcherStopped(GatewayWebSocketClient client)
+      throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (client.isCertificateWatcherRunning() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertFalse(client.isCertificateWatcherRunning());
   }
 
   private static Object awaitClientIdentityChange(
