@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,6 +22,7 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslProvider;
 import java.net.InetAddress;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
@@ -578,6 +581,58 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void synchronousHeaderFailureReleasesGeneration() throws Exception {
+    GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate);
+    HttpClient initialClient = (HttpClient) client.clientIdentity();
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            client.connect(
+                "invalid\nheader",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new WebSocket.Listener() {}));
+
+    assertTrue(client.reloadNow());
+    awaitTermination(initialClient);
+    awaitGenerationCount(client, 1);
+  }
+
+  @Test
+  void synchronousBuildFailureReleasesGeneration() throws Exception {
+    GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate);
+    HttpClient replacementClient = mock(HttpClient.class);
+    WebSocket.Builder builder = mock(WebSocket.Builder.class);
+    IllegalStateException failure = new IllegalStateException("synchronous build failure");
+    when(replacementClient.newWebSocketBuilder()).thenReturn(builder);
+    when(builder.buildAsync(any(URI.class), any(WebSocket.Listener.class))).thenThrow(failure);
+    replaceCurrentGeneration(client, replacementClient);
+
+    assertSame(
+        failure,
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                client.connect(
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new WebSocket.Listener() {})));
+
+    assertTrue(client.reloadNow());
+    verify(replacementClient, timeout(5000)).close();
+  }
+
+  @Test
   void plaintextGatewayIsRejectedInProduction() {
     IllegalStateException failure =
         assertThrows(
@@ -1065,6 +1120,25 @@ class GatewayWebSocketClientTest {
     try (var input = Files.newInputStream(path)) {
       return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
     }
+  }
+
+  private static void replaceCurrentGeneration(
+      GatewayWebSocketClient client, HttpClient replacementClient) throws Exception {
+    java.lang.reflect.Method newGeneration =
+        GatewayWebSocketClient.class.getDeclaredMethod("newGeneration", HttpClient.class);
+    newGeneration.setAccessible(true);
+    Object generation = newGeneration.invoke(client, replacementClient);
+
+    Class<?> stateType =
+        Class.forName(GatewayWebSocketClient.class.getName() + "$ClientState");
+    java.lang.reflect.Method available =
+        stateType.getDeclaredMethod("available", newGeneration.getReturnType());
+    available.setAccessible(true);
+    Object availableState = available.invoke(null, generation);
+
+    java.lang.reflect.Field state = GatewayWebSocketClient.class.getDeclaredField("state");
+    state.setAccessible(true);
+    state.set(client, availableState);
   }
 
   private static void awaitTermination(HttpClient client) throws Exception {

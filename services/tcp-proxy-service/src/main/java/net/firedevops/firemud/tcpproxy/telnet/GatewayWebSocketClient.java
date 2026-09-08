@@ -174,34 +174,43 @@ public final class GatewayWebSocketClient implements AutoCloseable {
               "Gateway WebSocket TLS client is unavailable; reason=" + reason));
     }
 
-    ReleasingWebSocketListener releasingListener =
-        new ReleasingWebSocketListener(listener, generation::release);
-    WebSocket.Builder builder = generation.client().newWebSocketBuilder();
-    if (clientIp != null) {
-      builder.header("X-Client-IP", clientIp);
-      builder.header("X-Proxy-Client-IP", clientIp);
-    }
-    addHeader(builder, "X-Proxy-Connection-Id", proxyConnectionId);
-    addHeader(builder, "X-Game-Instance-Id", gameInstanceId);
-    addHeader(builder, "X-Proxy-Game-Instance-Id", gameInstanceId);
-    addHeader(builder, "X-Tenant-Id", tenantId);
-    addHeader(builder, "X-Proxy-Tenant-Id", tenantId);
-    TelnetRoutingBundle routingBundle =
-        TelnetRoutingBundle.normalize(worldSlug, realmSlug, pointerVersion);
-    if (routingBundle != null) {
-      addHeader(builder, "X-World-Slug", routingBundle.worldSlug());
-      addHeader(builder, "X-Realm-Slug", routingBundle.realmSlug());
-      addHeader(builder, "X-Pointer-Version", routingBundle.pointerVersion());
-    }
+    ReleasingWebSocketListener releasingListener = null;
+    try {
+      releasingListener = new ReleasingWebSocketListener(listener, generation::release);
+      WebSocket.Builder builder = generation.client().newWebSocketBuilder();
+      if (clientIp != null) {
+        builder.header("X-Client-IP", clientIp);
+        builder.header("X-Proxy-Client-IP", clientIp);
+      }
+      addHeader(builder, "X-Proxy-Connection-Id", proxyConnectionId);
+      addHeader(builder, "X-Game-Instance-Id", gameInstanceId);
+      addHeader(builder, "X-Proxy-Game-Instance-Id", gameInstanceId);
+      addHeader(builder, "X-Tenant-Id", tenantId);
+      addHeader(builder, "X-Proxy-Tenant-Id", tenantId);
+      TelnetRoutingBundle routingBundle =
+          TelnetRoutingBundle.normalize(worldSlug, realmSlug, pointerVersion);
+      if (routingBundle != null) {
+        addHeader(builder, "X-World-Slug", routingBundle.worldSlug());
+        addHeader(builder, "X-Realm-Slug", routingBundle.realmSlug());
+        addHeader(builder, "X-Pointer-Version", routingBundle.pointerVersion());
+      }
 
-    CompletableFuture<WebSocket> connection = builder.buildAsync(gatewayUri, releasingListener);
-    connection.whenComplete(
-        (ignored, error) -> {
-          if (error != null && !connection.isCancelled()) {
-            recordFailure(classifyFailure(error));
-          }
-        });
-    return new ConnectionFuture(connection, releasingListener);
+      CompletableFuture<WebSocket> connection = builder.buildAsync(gatewayUri, releasingListener);
+      connection.whenComplete(
+          (ignored, error) -> {
+            if (error != null && !connection.isCancelled()) {
+              recordFailure(classifyFailure(error));
+            }
+          });
+      return new ConnectionFuture(connection, releasingListener);
+    } catch (RuntimeException error) {
+      if (releasingListener == null) {
+        generation.release();
+      } else {
+        releasingListener.release();
+      }
+      throw error;
+    }
   }
 
   public CompletableFuture<Boolean> isReadyAsync() {

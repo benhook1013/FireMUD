@@ -1134,34 +1134,48 @@ grep -Fq 'inputs[pr_number]=101' "$FAKE_RECONCILER_DISPATCH_LOG"
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 python3 - "$preview_workflow" <<'PY'
 import sys
+import re
 from pathlib import Path
 
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 actual = workflow["jobs"]["preview-plan"]["if"]
-expected = (
-    "${{ github.event_name != 'pull_request' || "
-    "(github.event.pull_request.head.repo.full_name == github.repository && "
-    "((github.event.action != 'labeled' && "
-    "github.event.action != 'unlabeled') || "
-    "github.event.label.name == 'preview:paused' || "
-    "(github.event.action == 'labeled' && "
-    "github.event.label.name == 'preview:priority'))) }}"
-)
-if actual != expected:
-    raise SystemExit(f"unexpected preview-plan event condition: {actual}")
+if not isinstance(actual, str) or not actual.strip().startswith("${{"):
+    raise SystemExit(f"preview-plan if condition is not a workflow expression: {actual}")
+
+expression = actual.strip()[3:-2].strip()
 
 
-def preview_plan_runs(event_name, action, label, same_repository=True):
-    return event_name != "pull_request" or (
-        same_repository
-        and (
-            action not in {"labeled", "unlabeled"}
-            or label == "preview:paused"
-            or (action == "labeled" and label == "preview:priority")
-        )
+def evaluate_workflow_condition(event_name, action, label, same_repository=True):
+    context = {
+        "github.event_name": event_name,
+        "github.event.action": action,
+        "github.event.label.name": label,
+        "github.event.pull_request.head.repo.full_name": (
+            "example/FireMUD" if same_repository else "fork/FireMUD"
+        ),
+        "github.repository": "example/FireMUD",
+    }
+    translated = expression
+    references = sorted(
+        set(re.findall(r"\b(?:github|inputs)(?:\.[A-Za-z_][A-Za-z0-9_-]*)+", expression)),
+        key=len,
+        reverse=True,
     )
+    for reference in references:
+        if reference not in context:
+            raise SystemExit(f"unmapped workflow expression reference: {reference}")
+        translated = translated.replace(reference, repr(context[reference]))
+    translated = translated.replace("&&", " and ").replace("||", " or ")
+    translated = re.sub(r"!(?!=)", " not ", translated)
+    try:
+        result = eval(translated, {"__builtins__": {}}, {})
+    except (SyntaxError, NameError, TypeError, ValueError) as error:
+        raise SystemExit(f"could not evaluate preview-plan workflow condition: {error}")
+    if not isinstance(result, bool):
+        raise SystemExit(f"preview-plan workflow condition did not return a boolean: {result}")
+    return result
 
 
 cases = (
@@ -1178,7 +1192,7 @@ cases = (
     ("workflow_dispatch", "", "", False, True),
 )
 for event_name, action, label, same_repository, expected_result in cases:
-    actual_result = preview_plan_runs(event_name, action, label, same_repository)
+    actual_result = evaluate_workflow_condition(event_name, action, label, same_repository)
     if actual_result != expected_result:
         raise SystemExit(
             "preview-plan event condition mismatch for "
