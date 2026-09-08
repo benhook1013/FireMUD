@@ -129,6 +129,7 @@ public class HostedEnvironmentIdentityStatus {
     copy.setHostname(source.getHostname());
     copy.setTelnetPort(source.getTelnetPort());
     copy.setRuntimeNamespaceUid(source.getRuntimeNamespaceUid());
+    copy.setRequestedHeadSha(source.getRequestedHeadSha());
     copy.setDeployedHeadSha(source.getDeployedHeadSha());
     return copy;
   }
@@ -212,6 +213,7 @@ public class HostedEnvironmentIdentityStatus {
     private String hostname;
     private Integer telnetPort;
     private String runtimeNamespaceUid;
+    private String requestedHeadSha;
     private String deployedHeadSha;
 
     public String getName() {
@@ -268,6 +270,14 @@ public class HostedEnvironmentIdentityStatus {
 
     public void setRuntimeNamespaceUid(String runtimeNamespaceUid) {
       this.runtimeNamespaceUid = runtimeNamespaceUid;
+    }
+
+    public String getRequestedHeadSha() {
+      return requestedHeadSha;
+    }
+
+    public void setRequestedHeadSha(String requestedHeadSha) {
+      this.requestedHeadSha = requestedHeadSha;
     }
 
     public String getDeployedHeadSha() {

@@ -133,8 +133,14 @@ if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]*)$ ]]; then
   echo "identity name is not canonical: ${identity_name}" >&2
   exit 2
 fi
-if [[ -z "$expected_head_sha" ]]; then
-  echo "expected head SHA is required" >&2
+normalize_head_sha() {
+  local head_sha="$1"
+  [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  printf '%s' "${head_sha,,}"
+}
+
+if ! expected_head_sha="$(normalize_head_sha "$expected_head_sha")"; then
+  echo "expected head SHA must be exactly 40 hexadecimal characters" >&2
   exit 2
 fi
 if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
@@ -155,14 +161,35 @@ while (( SECONDS < deadline )); do
   fi
 
   namespace_uid="$(jq -r '.metadata.uid // empty' <<<"$namespace_json")"
-  namespace_head="$(jq -r '(.metadata.annotations["firemud.dev/last-preview-head-sha"] // .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] // empty)' <<<"$namespace_json")"
+  if [[ "$identity_name" == dev-demo ]]; then
+    namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
+  else
+    namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-preview-head-sha"] // empty' <<<"$namespace_json")"
+  fi
   if [[ -z "$namespace_uid" ]]; then
     echo "Runtime namespace ${runtime_namespace} has no UID yet; retrying."
     sleep 5
     continue
   fi
-  if [[ "$namespace_head" != "$expected_head_sha" ]]; then
-    echo "Runtime namespace ${runtime_namespace} is not aligned to requested head ${expected_head_sha}; observed ${namespace_head:-missing}."
+  if ! normalized_namespace_requested_head="$(normalize_head_sha "$namespace_requested_head")"; then
+    echo "Runtime namespace ${runtime_namespace} has no canonical requested head; observed ${namespace_requested_head:-missing}."
+    sleep 5
+    continue
+  fi
+  if [[ "$normalized_namespace_requested_head" != "$expected_head_sha" ]]; then
+    echo "Runtime namespace ${runtime_namespace} requested head is stale; expected ${expected_head_sha}, observed ${namespace_requested_head}."
+    sleep 5
+    continue
+  fi
+  if ! normalized_namespace_deployed_head="$(normalize_head_sha "$namespace_deployed_head")"; then
+    echo "Runtime namespace ${runtime_namespace} has no canonical deployed head; observed ${namespace_deployed_head:-missing}."
+    sleep 5
+    continue
+  fi
+  if [[ "$normalized_namespace_deployed_head" != "$expected_head_sha" ]]; then
+    echo "Runtime namespace ${runtime_namespace} deployed head is stale; expected ${expected_head_sha}, observed ${namespace_deployed_head}."
     sleep 5
     continue
   fi
@@ -180,7 +207,8 @@ while (( SECONDS < deadline )); do
   ready_reason="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .reason) // empty' <<<"$identity_json")"
   ready_message="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .message) // empty' <<<"$identity_json")"
   profile_uid="$(jq -r '.status.profile.runtimeNamespaceUid // empty' <<<"$identity_json")"
-  profile_head="$(jq -r '.status.profile.deployedHeadSha // empty' <<<"$identity_json")"
+  profile_requested_head="$(jq -r '.status.profile.requestedHeadSha // empty' <<<"$identity_json")"
+  profile_deployed_head="$(jq -r '.status.profile.deployedHeadSha // empty' <<<"$identity_json")"
   ingress_revision="$(jq -r '.status.ingress.revision // empty' <<<"$identity_json")"
   telnet_revision="$(jq -r '.status.telnet.revision // empty' <<<"$identity_json")"
   grpc_revision="$(jq -r '.status.grpc.revision // empty' <<<"$identity_json")"
@@ -206,8 +234,16 @@ while (( SECONDS < deadline )); do
     sleep 5
     continue
   fi
-  if [[ "$profile_uid" != "$namespace_uid" || "$profile_head" != "$expected_head_sha" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, head ${profile_head:-missing}); retrying."
+  if [[ "$profile_uid" != "$namespace_uid" ]]; then
+    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}); retrying."
+    sleep 5
+    continue
+  fi
+  if ! normalized_profile_requested_head="$(normalize_head_sha "$profile_requested_head")" ||
+    ! normalized_profile_deployed_head="$(normalize_head_sha "$profile_deployed_head")" ||
+    [[ "$normalized_profile_requested_head" != "$expected_head_sha" ]] ||
+    [[ "$normalized_profile_deployed_head" != "$expected_head_sha" ]]; then
+    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}); retrying."
     sleep 5
     continue
   fi

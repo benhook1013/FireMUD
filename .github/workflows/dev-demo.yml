@@ -308,6 +308,19 @@ jobs:
             --wait \
             --timeout 15m
 
+      - name: Record exact deployed dev-demo head
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == dev ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+            "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
+            --overwrite >/dev/null
+
       - name: Show deployed dev-demo services
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
         run: |

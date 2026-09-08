@@ -32,7 +32,9 @@ firemud:
     grpc-trust-anchor-sha256: ""
     ingress-leaf-sha256: ""
     telnet-leaf-sha256: ""
-    preview-head-annotation: firemud.dev/last-preview-head-sha
+    preview-requested-head-annotation: firemud.dev/requested-preview-head-sha
+    preview-deployed-head-annotation: firemud.dev/last-preview-head-sha
+    dev-demo-requested-head-annotation: firemud.dev/requested-dev-demo-head-sha
     dev-demo-head-annotation: firemud.dev/last-dev-demo-head-sha
     preview-telnet-port-annotation: firemud.dev/last-preview-telnet-port
     dev-demo-telnet-port-annotation: firemud.dev/last-dev-demo-telnet-port

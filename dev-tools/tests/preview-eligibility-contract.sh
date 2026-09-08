@@ -121,24 +121,30 @@ extract_workflow_step_run "Resolve preview eligibility" "$eligibility_run"
 run_workflow_eligibility() {
   local labels_json="$1"
   local output="$2"
-  DERIVED_ACTION=deploy \
-    TARGET_STATE=open \
-    TARGET_BASE_REF=develop \
-    TARGET_AUTHOR=human \
-    TARGET_LABELS_JSON="$labels_json" \
-    GITHUB_OUTPUT="$output" \
-    bash "$eligibility_run"
+  (
+    cd "$ROOT_DIR"
+    DERIVED_ACTION=deploy \
+      TARGET_STATE=open \
+      TARGET_BASE_REF=develop \
+      TARGET_AUTHOR=human \
+      TARGET_LABELS_JSON="$labels_json" \
+      GITHUB_OUTPUT="$output" \
+      bash "$eligibility_run"
+  )
 }
 
 event_metadata_output="$TEMP_DIR/event-metadata.out"
-EVENT_NAME=pull_request \
-  EVENT_ACTION=synchronize \
-  PR_USER_LOGIN=human \
-  PR_BASE_REF=develop \
-  PR_LABELS_JSON='[{"name":"preview:priority","color":"ffffff"},{"name":"quote\"slash\\label"}]' \
-  DERIVED_PR_NUMBER=900 \
-  GITHUB_OUTPUT="$event_metadata_output" \
-  bash "$target_metadata_run"
+(
+  cd "$ROOT_DIR"
+  EVENT_NAME=pull_request \
+    EVENT_ACTION=synchronize \
+    PR_USER_LOGIN=human \
+    PR_BASE_REF=develop \
+    PR_LABELS_JSON='[{"name":"preview:priority","color":"ffffff"},{"name":"quote\"slash\\label"}]' \
+    DERIVED_PR_NUMBER=900 \
+    GITHUB_OUTPUT="$event_metadata_output" \
+    bash "$target_metadata_run"
+)
 event_labels_json="$(sed -n 's/^labels_json=//p' "$event_metadata_output")"
 test "$event_labels_json" = '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]'
 
@@ -148,14 +154,17 @@ grep -qx 'eligible=true' "$event_eligibility_output"
 grep -qx 'reason=eligible' "$event_eligibility_output"
 
 malformed_event_metadata_output="$TEMP_DIR/malformed-event-metadata.out"
-EVENT_NAME=pull_request \
-  EVENT_ACTION=synchronize \
-  PR_USER_LOGIN=human \
-  PR_BASE_REF=develop \
-  PR_LABELS_JSON='{}' \
-  DERIVED_PR_NUMBER=900 \
-  GITHUB_OUTPUT="$malformed_event_metadata_output" \
-  bash "$target_metadata_run"
+(
+  cd "$ROOT_DIR"
+  EVENT_NAME=pull_request \
+    EVENT_ACTION=synchronize \
+    PR_USER_LOGIN=human \
+    PR_BASE_REF=develop \
+    PR_LABELS_JSON='{}' \
+    DERIVED_PR_NUMBER=900 \
+    GITHUB_OUTPUT="$malformed_event_metadata_output" \
+    bash "$target_metadata_run"
+)
 malformed_event_labels_json="$(sed -n 's/^labels_json=//p' "$malformed_event_metadata_output")"
 test "$malformed_event_labels_json" = '{}'
 malformed_event_eligibility_output="$TEMP_DIR/malformed-event-eligibility.out"
@@ -175,18 +184,21 @@ EOF
 chmod +x "$TEMP_DIR/bin/gh"
 
 dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
-FAKE_GH_LOG="$TEMP_DIR/gh.log" \
-  FAKE_PULL_REQUEST_JSON='{"state":"open","base":{"ref":"develop"},"user":{"login":"human"},"labels":[{"name":"preview:priority","color":"ffffff"},{"name":"custom:label"}]}' \
-  EVENT_NAME=workflow_dispatch \
-  EVENT_ACTION='' \
-  PR_USER_LOGIN='' \
-  PR_BASE_REF='' \
-  PR_LABELS_JSON='' \
-  DERIVED_PR_NUMBER=900 \
-  GITHUB_REPOSITORY=example/FireMUD \
-  GITHUB_OUTPUT="$dispatch_metadata_output" \
-  PATH="$TEMP_DIR/bin:$PATH" \
-  bash "$target_metadata_run"
+(
+  cd "$ROOT_DIR"
+  FAKE_GH_LOG="$TEMP_DIR/gh.log" \
+    FAKE_PULL_REQUEST_JSON='{"state":"open","base":{"ref":"develop"},"user":{"login":"human"},"labels":[{"name":"preview:priority","color":"ffffff"},{"name":"custom:label"}]}' \
+    EVENT_NAME=workflow_dispatch \
+    EVENT_ACTION='' \
+    PR_USER_LOGIN='' \
+    PR_BASE_REF='' \
+    PR_LABELS_JSON='' \
+    DERIVED_PR_NUMBER=900 \
+    GITHUB_REPOSITORY=example/FireMUD \
+    GITHUB_OUTPUT="$dispatch_metadata_output" \
+    PATH="$TEMP_DIR/bin:$PATH" \
+    bash "$target_metadata_run"
+)
 grep -qx 'api repos/example/FireMUD/pulls/900' "$TEMP_DIR/gh.log"
 dispatch_labels_json="$(sed -n 's/^labels_json=//p' "$dispatch_metadata_output")"
 test "$dispatch_labels_json" = '[{"name":"preview:priority"},{"name":"custom:label"}]'

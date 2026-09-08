@@ -38,7 +38,6 @@ import org.springframework.stereotype.Component;
 /** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
 @Component
 public class ServedEnvironmentProbe {
-  private static final Pattern PREVIEW_NUMBER = Pattern.compile("pr-([1-9][0-9]*)");
   private static final Pattern PRIVATE_KEY_BLOCK =
       Pattern.compile(
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
@@ -460,27 +459,6 @@ public class ServedEnvironmentProbe {
 
   private static String normalize(String fingerprint) {
     return fingerprint.toLowerCase(Locale.ROOT).replace(":", "").trim();
-  }
-
-  int telnetPort(String name) {
-    if ("dev-demo".equals(name)) {
-      int port = properties.getDevDemoTelnetPort();
-      if (port < 1 || port > 65535) {
-        throw new IllegalArgumentException("dev-demo Telnet port is outside the valid port range");
-      }
-      return port;
-    }
-    Matcher matcher = PREVIEW_NUMBER.matcher(name);
-    if (!matcher.matches()) {
-      throw new IllegalArgumentException("unsupported hosted environment name");
-    }
-    int base = properties.getPreviewTelnetPortBase();
-    long port = (long) base + Integer.parseInt(matcher.group(1));
-    if (base < 1 || base > 65520 || port < base || port > base + 15L) {
-      throw new IllegalArgumentException(
-          "preview Telnet port is outside the fixed allocation window");
-    }
-    return Math.toIntExact(port);
   }
 
   @FunctionalInterface

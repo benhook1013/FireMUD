@@ -47,6 +47,14 @@ if [[ "$*" == *"get namespaces"* ]]; then
 fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" ]]; then
+    if [[ "${FAKE_RUNTIME_RECHECK_ERROR:-false}" == true ]]; then
+      exit 1
+    fi
+    if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT:-true}" == false ]]; then
+      exit 0
+    fi
+  fi
   if [[ "${FAKE_RUNTIME_LOOKUP_ERROR:-false}" == true ]]; then
     exit 1
   fi
@@ -62,6 +70,10 @@ if [[ "$1" == delete && "$2" == namespace ]]; then
 fi
 if [[ "$1" == wait && "$2" == --for=delete ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ "${FAKE_RUNTIME_WAIT_ERROR:-false}" == true ]]; then
+    : > "$FAKE_RUNTIME_WAIT_MARKER"
+    exit 1
+  fi
   exit 0
 fi
 namespace="${3:-}"
@@ -328,6 +340,7 @@ export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
+export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -336,7 +349,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -371,6 +384,9 @@ reset_case() {
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
+  export FAKE_RUNTIME_WAIT_ERROR=false
+  export FAKE_RUNTIME_RECHECK_ERROR=false
+  export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
@@ -812,6 +828,29 @@ fi
 grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
 if grep -Eq '^(delete|wait) ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
   echo "runtime deletion continued after a namespace lookup error" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_WAIT_ERROR=true
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+bash "$PRUNER" --delete-runtime pr-101
+test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
+grep -qx 'delete namespace pr-101 --ignore-not-found --wait=false' "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'wait --for=delete namespace/pr-101 --timeout=10m' "$FAKE_RUNTIME_KUBECTL_LOG"
+
+reset_case
+export FAKE_RUNTIME_WAIT_ERROR=true
+if bash "$PRUNER" --delete-runtime pr-101; then
+  echo "runtime deletion suppressed a wait failure while the namespace remained present" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_WAIT_ERROR=true
+export FAKE_RUNTIME_RECHECK_ERROR=true
+if bash "$PRUNER" --delete-runtime pr-101; then
+  echo "runtime deletion suppressed a wait failure after the absence recheck failed" >&2
   exit 1
 fi
 

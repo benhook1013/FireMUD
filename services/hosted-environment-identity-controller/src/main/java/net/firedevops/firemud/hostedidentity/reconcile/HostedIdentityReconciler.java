@@ -220,6 +220,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           project(plan, tcpProxyBridge, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
       SecretProjectionService.ProjectionResult grpcProjection =
           project(plan, grpc, HostedIdentityContract.GRPC_ROLE);
+      ReadinessStatus deploymentHead = deploymentHeadStatus(runtimeProfile);
+      if (!deploymentHead.ready()) {
+        return status(
+            resource,
+            deploymentHead.phase(),
+            deploymentHead.reason(),
+            deploymentHead.message(),
+            false,
+            runtimeProfile,
+            ingress,
+            telnet,
+            gatewayInternalWs,
+            tcpProxyBridge,
+            grpc);
+      }
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
               client, plan, telnetProjection.revision(), grpcProjection.revision());
@@ -348,12 +363,35 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         HostedEnvironmentIdentityStatus.Phase.Ready, "Reconciled", probes.reason(), true);
   }
 
+  static ReadinessStatus deploymentHeadStatus(RuntimeProfileService.RuntimeProfile runtimeProfile) {
+    if (runtimeProfile.deployedHeadMatchesRequest()) {
+      return new ReadinessStatus(
+          HostedEnvironmentIdentityStatus.Phase.Ready,
+          "RuntimeDeploymentCurrent",
+          "deployed runtime head matches the requested head",
+          true);
+    }
+    String message =
+        runtimeProfile.deployedHeadSha() == null
+            ? "waiting for successful Helm deployment evidence"
+            : "deployed runtime head does not match the requested head";
+    return new ReadinessStatus(
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RuntimeDeploymentPending",
+        message,
+        false);
+  }
+
   record ReadinessStatus(
       HostedEnvironmentIdentityStatus.Phase phase, String reason, String message, boolean ready) {}
 
-  private SecretProjectionService.ProjectionResult project(
+  SecretProjectionService.ProjectionResult project(
       EnvironmentIdentityPlan plan, CertificateMaterialService.RoleMaterial material, String role) {
     validateSourceLabels(material.source(), plan, role);
+    if (material.projectionDeferred()) {
+      return SecretProjectionService.ProjectionResult.awaiting(
+          material.state(), material.revision());
+    }
     String provenance =
         HostedIdentityContract.GRPC_ROLE.equals(role)
             ? HostedIdentityContract.TRANSPORT_PROVENANCE
@@ -740,7 +778,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   static void validateSourceProgress(
       CertificateMaterialService.RoleMaterial material,
       HostedEnvironmentIdentityStatus.RoleStatus previous) {
-    if (previous == null || previous.getSourceGeneration() == null) return;
+    if (previous == null
+        || previous.getSourceGeneration() == null
+        || material.acceptedSnapshotDeferred()) return;
     long priorGeneration = previous.getSourceGeneration();
     long priorObjectGeneration =
         previous.getSourceObjectGeneration() == null ? 0 : previous.getSourceObjectGeneration();

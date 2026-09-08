@@ -76,10 +76,20 @@ public class HostedStatusService {
             && roleReady(gatewayInternalWs)
             && roleReady(tcpProxyBridge)
             && roleReady(grpc);
-    boolean effectiveReady = ready && !profileChanged && identityEvidenceComplete;
-    if (profileChanged && ready) {
+    boolean deploymentEvidenceCurrent =
+        runtimeProfile == null || runtimeProfile.deployedHeadMatchesRequest();
+    boolean effectiveReady =
+        ready && deploymentEvidenceCurrent && !profileChanged && identityEvidenceComplete;
+    if (ready && !deploymentEvidenceCurrent) {
+      reason = "RuntimeDeploymentPending";
+      message = "deployed runtime head must match the requested head";
+      if (phase == Phase.Ready) {
+        phase = Phase.Pending;
+      }
+    } else if (profileChanged && ready) {
       reason = "RuntimeIdentityChanged";
-      message = "runtime Namespace UID or deployed head changed; fresh convergence is required";
+      message =
+          "runtime Namespace UID, requested head, or deployed head changed; fresh convergence is required";
       if (phase == Phase.Ready) {
         phase = Phase.Pending;
       }
@@ -107,10 +117,12 @@ public class HostedStatusService {
     if (runtimeProfile != null && runtimeProfile.present()) {
       profile.setTelnetPort(runtimeProfile.telnetPort());
       profile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
+      profile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
       profile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
     } else if (runtimeProfile == null && previousProfile != null) {
       profile.setTelnetPort(previousProfile.getTelnetPort());
       profile.setRuntimeNamespaceUid(previousProfile.getRuntimeNamespaceUid());
+      profile.setRequestedHeadSha(previousProfile.getRequestedHeadSha());
       profile.setDeployedHeadSha(previousProfile.getDeployedHeadSha());
     }
     status.setProfile(profile);
@@ -160,8 +172,9 @@ public class HostedStatusService {
     if (previous == null || !current.present()) {
       return previous == null && !currentPresent(current);
     }
-    return current.runtimeNamespaceUid().equals(previous.getRuntimeNamespaceUid())
-        && current.deployedHeadSha().equals(previous.getDeployedHeadSha());
+    return Objects.equals(current.runtimeNamespaceUid(), previous.getRuntimeNamespaceUid())
+        && Objects.equals(current.requestedHeadSha(), previous.getRequestedHeadSha())
+        && Objects.equals(current.deployedHeadSha(), previous.getDeployedHeadSha());
   }
 
   private static boolean currentPresent(RuntimeProfileService.RuntimeProfile current) {

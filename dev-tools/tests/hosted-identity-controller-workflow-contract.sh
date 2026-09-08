@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 trusted="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
+preview="$ROOT_DIR/.github/workflows/preview.yml"
 dev_demo="$ROOT_DIR/.github/workflows/dev-demo.yml"
 runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
@@ -15,6 +16,7 @@ waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 
 contains() {
   grep -Fq -- "$2" "$1" || {
@@ -80,6 +82,8 @@ contains "$waiter" '.status.gatewayInternalWs.revision'
 contains "$waiter" '.status.tcpProxyBridge.revision'
 contains "$waiter" '--projections'
 contains "$waiter" 'firemud.dev/managed-by'
+contains "$waiter" 'firemud.dev/requested-preview-head-sha'
+contains "$waiter" 'firemud.dev/last-preview-head-sha'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
 for phase in \
   Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying \
@@ -90,6 +94,8 @@ contains "$mode_resolver" 'UniqueKeyLoader'
 contains "$mode_resolver" 'ALLOWED_MODES = frozenset({"standalone", "hosted-controller"})'
 # shellcheck disable=SC2016 # Match the literal desired-state interpolation in the helper.
 contains "$requester" 'desiredState: ${desired_state}'
+contains "$trusted" 'actions: read # Inspect the completed source workflow and its artifacts.'
+contains "$trusted" 'contents: read # Check out the trusted default-branch workflow implementation.'
 
 # Dev-demo is the prerequisite's only active consumer integration. It preserves
 # standalone operation and gates controller requests/waits on resolved mode.
@@ -102,13 +108,15 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
+preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run"], triggers
 assert triggers["workflow_run"] == {
@@ -118,8 +126,6 @@ assert triggers["workflow_run"] == {
 assert workflow["permissions"] == {
     "actions": "read",
     "contents": "read",
-    "issues": "read",
-    "pull-requests": "read",
 }
 
 jobs = workflow["jobs"]
@@ -135,6 +141,31 @@ for job_name, required_gate in expected_gates.items():
     assert required_gate in condition, (job_name, condition)
 
 validate_job = jobs["validate-target"]
+assert validate_job["permissions"] == {
+    "actions": "read",
+    "contents": "read",
+    "pull-requests": "read",
+}
+assert jobs["deploy-runtime"]["permissions"] == {
+    "actions": "read",
+    "contents": "read",
+    "packages": "read",
+    "pull-requests": "read",
+}
+assert jobs["verify-runtime"]["permissions"] == {
+    "contents": "read",
+    "pull-requests": "read",
+    "issues": "write",
+}
+assert jobs["destroy-runtime"]["permissions"] == {
+    "contents": "read",
+    "pull-requests": "read",
+    "issues": "write",
+}
+assert jobs["retire-identity"]["permissions"] == {
+    "contents": "read",
+    "pull-requests": "read",
+}
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 for fragment in (
@@ -148,6 +179,51 @@ source_step = next(step for step in validate_job["steps"] if step.get("id") == "
 assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
+requested_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+apply_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Apply validated PR runtime artifact"
+)
+deployed_step_index = next(
+    index
+    for index, step in enumerate(deploy_steps)
+    if step.get("name") == "Record exact deployed preview head"
+)
+assert requested_step_index < apply_step_index < deployed_step_index
+apply_step = deploy_steps[apply_step_index]
+deployed_step = deploy_steps[deployed_step_index]
+assert apply_step["id"] == "deploy-runtime-artifact"
+assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
+assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
+
+preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
+preview_requested_index = next(
+    index
+    for index, step in enumerate(preview_steps)
+    if step.get("name") == "Record reconciled preview target"
+)
+preview_deploy_index = next(
+    index
+    for index, step in enumerate(preview_steps)
+    if step.get("name") == "Deploy preview release"
+)
+preview_deployed_index = next(
+    index
+    for index, step in enumerate(preview_steps)
+    if step.get("name") == "Record exact deployed preview head"
+)
+assert preview_requested_index < preview_deploy_index < preview_deployed_index
+preview_deployed_step = preview_steps[preview_deployed_index]
+assert "steps.deploy-release.outcome == 'success'" in preview_deployed_step["if"]
+assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in preview_deployed_step["run"]
+assert "firemud.dev/requested-preview-head-sha=${head_sha}" in preview_annotator
+assert "firemud.dev/last-preview-head-sha=${head_sha}" not in preview_annotator
+
 projection_wait = next(
     step["run"]
     for step in deploy_steps

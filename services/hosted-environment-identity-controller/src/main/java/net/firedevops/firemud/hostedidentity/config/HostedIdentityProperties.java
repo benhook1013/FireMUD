@@ -7,6 +7,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "firemud.hosted-identity")
 public class HostedIdentityProperties implements InitializingBean {
+  public static final Duration INTERNAL_CERTIFICATE_DURATION = Duration.ofDays(30);
+  public static final Duration MINIMUM_GRPC_RENEW_BEFORE = Duration.ofMinutes(5);
+  private static final int CANONICAL_PREVIEW_TELNET_PORT_BASE = 32000;
+  private static final int CANONICAL_DEV_DEMO_TELNET_PORT = 32016;
+
   public enum ActivationMode {
     PAUSED,
     OBSERVE,
@@ -26,12 +31,14 @@ public class HostedIdentityProperties implements InitializingBean {
   private String grpcTrustAnchorSha256 = "";
   private String ingressLeafSha256 = "";
   private String telnetLeafSha256 = "";
-  private String previewHeadAnnotation = "firemud.dev/last-preview-head-sha";
+  private String previewRequestedHeadAnnotation = "firemud.dev/requested-preview-head-sha";
+  private String previewDeployedHeadAnnotation = "firemud.dev/last-preview-head-sha";
+  private String devDemoRequestedHeadAnnotation = "firemud.dev/requested-dev-demo-head-sha";
   private String devDemoHeadAnnotation = "firemud.dev/last-dev-demo-head-sha";
   private String previewTelnetPortAnnotation = "firemud.dev/last-preview-telnet-port";
   private String devDemoTelnetPortAnnotation = "firemud.dev/last-dev-demo-telnet-port";
-  private int previewTelnetPortBase = 32000;
-  private int devDemoTelnetPort = 32016;
+  private int previewTelnetPortBase = CANONICAL_PREVIEW_TELNET_PORT_BASE;
+  private int devDemoTelnetPort = CANONICAL_DEV_DEMO_TELNET_PORT;
   private Duration reconcileInterval = Duration.ofSeconds(30);
   private Duration grpcRenewBefore = Duration.ofDays(7);
 
@@ -40,6 +47,27 @@ public class HostedIdentityProperties implements InitializingBean {
     if (!HostedIdentityContract.CONTROL_NAMESPACE.equals(controlNamespace)) {
       throw new IllegalStateException(
           "hosted identity control namespace must be " + HostedIdentityContract.CONTROL_NAMESPACE);
+    }
+    requireCanonicalTelnetPort(
+        "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
+    requireCanonicalTelnetPort(
+        "dev-demo Telnet port", devDemoTelnetPort, CANONICAL_DEV_DEMO_TELNET_PORT);
+    requireValidGrpcRenewBefore(grpcRenewBefore);
+  }
+
+  private static void requireCanonicalTelnetPort(
+      String propertyName, int actualPort, int canonicalPort) {
+    if (actualPort != canonicalPort) {
+      throw new IllegalStateException(propertyName + " must be " + canonicalPort);
+    }
+  }
+
+  public static void requireValidGrpcRenewBefore(Duration renewBefore) {
+    if (renewBefore == null
+        || renewBefore.compareTo(MINIMUM_GRPC_RENEW_BEFORE) < 0
+        || renewBefore.compareTo(INTERNAL_CERTIFICATE_DURATION) >= 0) {
+      throw new IllegalStateException(
+          "gRPC renewal window must be at least 5 minutes and shorter than 30 days");
     }
   }
 
@@ -159,16 +187,32 @@ public class HostedIdentityProperties implements InitializingBean {
     this.telnetLeafSha256 = telnetLeafSha256;
   }
 
-  public String getPreviewHeadAnnotation() {
-    return previewHeadAnnotation;
+  public String getPreviewRequestedHeadAnnotation() {
+    return previewRequestedHeadAnnotation;
   }
 
-  public void setPreviewHeadAnnotation(String previewHeadAnnotation) {
-    this.previewHeadAnnotation = previewHeadAnnotation;
+  public void setPreviewRequestedHeadAnnotation(String previewRequestedHeadAnnotation) {
+    this.previewRequestedHeadAnnotation = previewRequestedHeadAnnotation;
+  }
+
+  public String getPreviewDeployedHeadAnnotation() {
+    return previewDeployedHeadAnnotation;
+  }
+
+  public void setPreviewDeployedHeadAnnotation(String previewDeployedHeadAnnotation) {
+    this.previewDeployedHeadAnnotation = previewDeployedHeadAnnotation;
   }
 
   public String getDevDemoHeadAnnotation() {
     return devDemoHeadAnnotation;
+  }
+
+  public String getDevDemoRequestedHeadAnnotation() {
+    return devDemoRequestedHeadAnnotation;
+  }
+
+  public void setDevDemoRequestedHeadAnnotation(String devDemoRequestedHeadAnnotation) {
+    this.devDemoRequestedHeadAnnotation = devDemoRequestedHeadAnnotation;
   }
 
   public void setDevDemoHeadAnnotation(String devDemoHeadAnnotation) {

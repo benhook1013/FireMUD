@@ -11,5 +11,13 @@ public final class ResourceContexts {
           .withNamespaced(true)
           .build();
 
+  public static final ResourceDefinitionContext CERTIFICATE_REQUESTS =
+      new ResourceDefinitionContext.Builder()
+          .withGroup("cert-manager.io")
+          .withVersion("v1")
+          .withPlural("certificaterequests")
+          .withNamespaced(true)
+          .build();
+
   private ResourceContexts() {}
 }

@@ -3,6 +3,7 @@ set -euo pipefail
 
 delete_runtime_namespace() {
   local runtime_namespace="$1"
+  local runtime_lookup wait_status
   if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
     echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
     return 2
@@ -17,7 +18,17 @@ delete_runtime_namespace() {
   fi
 
   kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false
-  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${PREVIEW_DELETE_TIMEOUT:-10m}"
+  wait_status=0
+  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${PREVIEW_DELETE_TIMEOUT:-10m}" \
+    || wait_status=$?
+  if ((wait_status != 0)); then
+    runtime_lookup="$(
+      kubectl get namespace "$runtime_namespace" --ignore-not-found -o name
+    )" || return "$wait_status"
+    if [[ -n "$runtime_lookup" ]]; then
+      return "$wait_status"
+    fi
+  fi
   echo "Runtime namespace ${runtime_namespace} is absent."
 }
 

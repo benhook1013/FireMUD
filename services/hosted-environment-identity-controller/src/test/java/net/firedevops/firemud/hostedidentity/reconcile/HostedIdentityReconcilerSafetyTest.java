@@ -3,6 +3,8 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -63,6 +65,59 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 class HostedIdentityReconcilerSafetyTest {
+  @Test
+  void deferredDriftReturnsNonsyncedWithoutWritingAProjection() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlanner planner = new EnvironmentIdentityPlanner(properties);
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    SecretProjectionService projectionService = mock(SecretProjectionService.class);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            planner,
+            mock(CertificateMaterialService.class),
+            projectionService,
+            mock(HostedIdentityScopeService.class),
+            mock(RuntimeProfileService.class),
+            mock(DeploymentRolloutService.class),
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(planner),
+            properties);
+    Secret accepted =
+        new SecretBuilder()
+            .withNewMetadata()
+            .withName(plan.telnetSecretName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(
+                HostedIdentityContract.managedLabels(
+                    plan.name(), HostedIdentityContract.TELNET_ROLE))
+            .endMetadata()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", "accepted", "tls.key", "accepted"))
+            .build();
+    String revision = "1".repeat(64);
+    var material =
+        new CertificateMaterialService.RoleMaterial(
+            HostedIdentityContract.TELNET_ROLE,
+            accepted,
+            new SecretMaterialValidator.MaterialSummary(
+                revision, "2".repeat(64), Instant.EPOCH, Instant.MAX, "3".repeat(64)),
+            1,
+            1,
+            "cert-manager",
+            "serialized-deferred-drift");
+
+    SecretProjectionService.ProjectionResult result =
+        reconciler.project(plan, material, HostedIdentityContract.TELNET_ROLE);
+
+    assertEquals("serialized-deferred-drift", result.state());
+    assertEquals(revision, result.revision());
+    assertEquals(false, result.isSynced());
+    verifyNoInteractions(projectionService);
+  }
+
   @Test
   void projectionAcceptanceStatusUsesTheFirstUnsyncedProjection() {
     var status =
@@ -139,6 +194,85 @@ class HostedIdentityReconcilerSafetyTest {
         "Reconciled",
         "served-bridge-and-grpc-accepted",
         true);
+  }
+
+  @Test
+  void rolloutAndServedProofStayBlockedUntilSuccessfulDeploymentMatchesTheRequest() {
+    var beforeHelm =
+        new RuntimeProfileService.RuntimeProfile("uid", "a".repeat(40), null, 32016, true);
+    var staleDeployment =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "b".repeat(40), 32016, true);
+    var deployed =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+
+    assertReadinessStatus(
+        HostedIdentityReconciler.deploymentHeadStatus(beforeHelm),
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RuntimeDeploymentPending",
+        "waiting for successful Helm deployment evidence",
+        false);
+    assertReadinessStatus(
+        HostedIdentityReconciler.deploymentHeadStatus(staleDeployment),
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RuntimeDeploymentPending",
+        "deployed runtime head does not match the requested head",
+        false);
+    assertReadinessStatus(
+        HostedIdentityReconciler.deploymentHeadStatus(deployed),
+        HostedEnvironmentIdentityStatus.Phase.Ready,
+        "RuntimeDeploymentCurrent",
+        "deployed runtime head matches the requested head",
+        true);
+  }
+
+  @Test
+  void reconcileBlocksRolloutAndServedProofUntilTheExactDeploymentHeadIsRecorded() {
+    for (var profile :
+        java.util.List.of(
+            new RuntimeProfileService.RuntimeProfile("uid", "a".repeat(40), null, 32016, true),
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "b".repeat(40), 32016, true))) {
+      DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
+
+      UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+      assertEquals(
+          HostedEnvironmentIdentityStatus.Phase.Verifying,
+          result.getResource().orElseThrow().getStatus().getPhase());
+      assertEquals(
+          "RuntimeDeploymentPending",
+          result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+      verifyNoInteractions(fixture.rollout, fixture.probes);
+    }
+
+    DeploymentHeadGateFixture aligned =
+        new DeploymentHeadGateFixture(
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "a".repeat(40), 32016, true));
+    when(aligned.rollout.sync(
+            org.mockito.ArgumentMatchers.eq(aligned.client),
+            org.mockito.ArgumentMatchers.eq(aligned.plan),
+            anyString(),
+            anyString()))
+        .thenThrow(new IllegalStateException("downstream-rollout-boundary"));
+
+    UpdateControl<HostedEnvironmentIdentity> result = aligned.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "downstream-rollout-boundary",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getMessage());
+    verify(aligned.rollout)
+        .sync(
+            org.mockito.ArgumentMatchers.eq(aligned.client),
+            org.mockito.ArgumentMatchers.eq(aligned.plan),
+            anyString(),
+            anyString());
+    verifyNoInteractions(aligned.probes);
   }
 
   @Test
@@ -594,9 +728,15 @@ class HostedIdentityReconcilerSafetyTest {
     var unchanged = material(4, 2, priorSpki, "old");
     var advanced = material(5, 3, "2".repeat(64), "new");
     var reusedKey = material(5, 3, priorSpki, "new");
+    var deferredAccepted = material(3, 2, "2".repeat(64), "old", "serialized-deferred");
+    var deferredDrift = material(3, 2, "2".repeat(64), "old", "serialized-deferred-drift");
 
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(unchanged, previous));
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(advanced, previous));
+    assertDoesNotThrow(
+        () -> HostedIdentityReconciler.validateSourceProgress(deferredAccepted, previous));
+    assertDoesNotThrow(
+        () -> HostedIdentityReconciler.validateSourceProgress(deferredDrift, previous));
     assertThrows(
         IllegalStateException.class,
         () -> HostedIdentityReconciler.validateSourceProgress(rollback, previous));
@@ -632,6 +772,11 @@ class HostedIdentityReconcilerSafetyTest {
 
   private static CertificateMaterialService.RoleMaterial material(
       long generation, long objectGeneration, String spki, String certificate) {
+    return material(generation, objectGeneration, spki, certificate, "source-ready");
+  }
+
+  private static CertificateMaterialService.RoleMaterial material(
+      long generation, long objectGeneration, String spki, String certificate, String state) {
     return new CertificateMaterialService.RoleMaterial(
         "ingress",
         new SecretBuilder()
@@ -643,7 +788,7 @@ class HostedIdentityReconcilerSafetyTest {
         generation,
         objectGeneration,
         "cert-manager",
-        "source-ready");
+        state);
   }
 
   private static String sha256(String value) {
@@ -689,6 +834,114 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         "IdentityCleanupPending",
         result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+  }
+
+  private static final class DeploymentHeadGateFixture {
+    private final KubernetesClient client = mock(KubernetesClient.class);
+    private final HostedIdentityProperties properties = new HostedIdentityProperties();
+    private final EnvironmentIdentityPlanner planner;
+    private final net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan;
+    private final CertificateMaterialService certificates = mock(CertificateMaterialService.class);
+    private final SecretProjectionService projections = mock(SecretProjectionService.class);
+    private final HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
+    private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    private final DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    private final ServedEnvironmentProbe probes = mock(ServedEnvironmentProbe.class);
+    private final HostedIdentityReconciler reconciler;
+    private final HostedEnvironmentIdentity resource;
+
+    private DeploymentHeadGateFixture(RuntimeProfileService.RuntimeProfile runtimeProfile) {
+      properties.setActivationMode("active");
+      planner = new EnvironmentIdentityPlanner(properties);
+      plan = planner.plan("dev-demo");
+      when(runtime.read(client, plan)).thenReturn(runtimeProfile);
+
+      CertificateMaterialService.MaterializationBatch batch =
+          mock(CertificateMaterialService.MaterializationBatch.class);
+      when(certificates.beginMaterialization(client, plan)).thenReturn(batch);
+      when(batch.ingress()).thenReturn(material(plan, HostedIdentityContract.INGRESS_ROLE, "1"));
+      when(batch.telnet()).thenReturn(material(plan, HostedIdentityContract.TELNET_ROLE, "2"));
+      when(batch.gatewayInternalWs())
+          .thenReturn(material(plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, "3"));
+      when(batch.tcpProxyBridge())
+          .thenReturn(material(plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
+      when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
+      when(projections.project(
+              org.mockito.ArgumentMatchers.eq(client),
+              org.mockito.ArgumentMatchers.eq(plan),
+              anyString(),
+              any(Secret.class),
+              anyLong(),
+              anyLong(),
+              anyString(),
+              anyString()))
+          .thenAnswer(
+              invocation ->
+                  SecretProjectionService.ProjectionResult.synced(
+                      "revision-" + invocation.getArgument(2, String.class)));
+
+      reconciler =
+          new HostedIdentityReconciler(
+              client,
+              mock(AdmissionValidator.class),
+              planner,
+              certificates,
+              projections,
+              scope,
+              runtime,
+              rollout,
+              probes,
+              new HostedStatusService(planner),
+              properties);
+      resource = new HostedEnvironmentIdentity();
+      resource.setMetadata(
+          new ObjectMetaBuilder()
+              .withName(plan.name())
+              .withNamespace(HostedIdentityContract.CONTROL_NAMESPACE)
+              .withGeneration(1L)
+              .withFinalizers(HostedIdentityContract.FINALIZER)
+              .build());
+      resource.setSpec(
+          new net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec());
+      resource
+          .getSpec()
+          .setDesiredState(
+              net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
+                  .Active);
+    }
+
+    private UpdateControl<HostedEnvironmentIdentity> reconcile() {
+      return reconciler.reconcile(resource, mock(Context.class));
+    }
+
+    private static CertificateMaterialService.RoleMaterial material(
+        net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
+        String role,
+        String fingerprintDigit) {
+      Secret source =
+          new SecretBuilder()
+              .withNewMetadata()
+              .withName(role)
+              .withNamespace(plan.identityNamespace())
+              .withLabels(HostedIdentityContract.managedLabels(plan.name(), role))
+              .endMetadata()
+              .withType("Opaque")
+              .withData(Map.of("tls.crt", encoded(role)))
+              .build();
+      return new CertificateMaterialService.RoleMaterial(
+          role,
+          source,
+          new SecretMaterialValidator.MaterialSummary(
+              fingerprintDigit.repeat(64),
+              fingerprintDigit.repeat(64),
+              Instant.EPOCH,
+              Instant.MAX,
+              "a".repeat(64)),
+          1,
+          1,
+          "fixture",
+          "source-ready");
+    }
   }
 
   private static final class RetirementDeletionFixture {

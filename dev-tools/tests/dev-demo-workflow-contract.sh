@@ -10,6 +10,7 @@ workflow="$ROOT_DIR/.github/workflows/dev-demo.yml"
 reconciler="$ROOT_DIR/.github/workflows/dev-demo-reconciler.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
+annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
@@ -44,7 +45,7 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: standalon
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: true\n'
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controller\n'
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" <<'PY'
 from __future__ import annotations
 
 import subprocess
@@ -53,11 +54,14 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path = map(Path, sys.argv[1:])
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path = map(
+    Path, sys.argv[1:]
+)
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
 requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
+annotator = annotator_path.read_text(encoding="utf-8")
 
 if workflow["concurrency"] != {
     "group": "dev-demo-${{ github.workflow }}",
@@ -99,6 +103,7 @@ ordered = (
     "Restore dev-demo runtime kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
+    "Record exact deployed dev-demo head",
     "Wait for dev-demo runtime rollouts",
     "Wait for exact dev-demo controller readiness",
     "Validate controller-projected dev-demo identity",
@@ -109,7 +114,15 @@ positions = [deploy_names.index(name) for name in ordered]
 if positions != sorted(positions):
     raise SystemExit(f"dev-demo hosted-controller lifecycle order is invalid: {ordered}")
 
-controller_steps = ordered[1:5] + ordered[6:9]
+controller_steps = (
+    "Write hosted identity requester kubeconfig",
+    "Apply fixed dev-demo Active request",
+    "Restore dev-demo runtime kubeconfig",
+    "Wait for all controller identity projections",
+    "Wait for dev-demo runtime rollouts",
+    "Wait for exact dev-demo controller readiness",
+    "Validate controller-projected dev-demo identity",
+)
 for name in controller_steps:
     condition = deploy_by_name[name].get("if", "")
     if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in condition:
@@ -121,6 +134,15 @@ if "request-hosted-identity.sh dev-demo Active" not in deploy_by_name[
     "Apply fixed dev-demo Active request"
 ]["run"]:
     raise SystemExit("dev-demo activation is not the fixed-shape shared request")
+if "firemud.dev/requested-dev-demo-head-sha=${head_sha}" not in annotator:
+    raise SystemExit("pre-Helm namespace preparation lacks requested-head evidence")
+if "firemud.dev/last-dev-demo-head-sha=${head_sha}" in annotator:
+    raise SystemExit("pre-Helm namespace preparation falsely records deployed-head evidence")
+deployed_head_step = deploy_by_name["Record exact deployed dev-demo head"]
+if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if", ""):
+    raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
+if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
+    raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
 if "success()" not in deploy_by_name["Smoke dev-demo over TCP"].get("if", ""):
     raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
@@ -167,6 +189,12 @@ for required in (
     '.metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller"',
     '.metadata.labels["firemud.dev/identity-name"] == $identity',
     '.metadata.labels["firemud.dev/role"] == $role',
+    '.status.profile.requestedHeadSha // empty',
+    '.status.profile.deployedHeadSha // empty',
+    '.metadata.annotations["firemud.dev/requested-preview-head-sha"] // empty',
+    '.metadata.annotations["firemud.dev/last-preview-head-sha"] // empty',
+    '"$normalized_profile_requested_head" != "$expected_head_sha"',
+    '"$normalized_profile_deployed_head" != "$expected_head_sha"',
 ):
     if required not in waiter:
         raise SystemExit(f"projection waiter lacks {required}")
@@ -409,6 +437,370 @@ if selected_run is not None or failure_count != 0:
         f"candidate={selected_run!r}, failures={failure_count}"
     )
 PY
+
+# Execute the exact Helm and deployed-head workflow run blocks with strict
+# command stubs. The static `if`/ordering assertions above establish which
+# block GitHub selects; these fixtures prove the selected blocks preserve the
+# required command order and mutation boundary.
+deploy_release_step="$fixture_dir/deploy-release-step.sh"
+record_deployed_head_step="$fixture_dir/record-deployed-head-step.sh"
+python3 - "$workflow" >"$deploy_release_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
+run = next(step["run"] for step in steps if step.get("name") == "Deploy dev-demo release")
+run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev-demo")
+run = run.replace("${{ needs.dev-demo-plan.outputs.namespace }}", "dev")
+print(run)
+PY
+python3 - "$workflow" >"$record_deployed_head_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
+print(
+    next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Record exact deployed dev-demo head"
+    )
+)
+PY
+
+deployment_stub_dir="$fixture_dir/deployment-evidence-stubs"
+mkdir -p "$deployment_stub_dir"
+cat >"$deployment_stub_dir/helm" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+expected=(
+  upgrade --install dev-demo k8s/helm/firemud
+  -f /tmp/dev-demo-values.yaml
+  --namespace dev
+  --wait
+  --timeout 15m
+)
+actual=("$@")
+[[ $# -eq ${#expected[@]} ]]
+for index in "${!expected[@]}"; do
+  [[ "${actual[$index]}" == "${expected[$index]}" ]]
+done
+printf 'helm-start\n' >>"${TEST_DEPLOYMENT_LOG:?}"
+if [[ "${TEST_HELM_RESULT:?}" == failure ]]; then
+  printf 'helm-failure\n' >>"$TEST_DEPLOYMENT_LOG"
+  exit 42
+fi
+[[ "$TEST_HELM_RESULT" == success ]]
+printf 'helm-success\n' >>"$TEST_DEPLOYMENT_LOG"
+SH
+cat >"$deployment_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 5 ]]
+[[ "$1" == annotate ]]
+[[ "$2" == namespace ]]
+[[ "$3" == dev ]]
+[[ "$4" == "firemud.dev/last-dev-demo-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
+[[ "$5" == --overwrite ]]
+printf 'kubectl-deployed-head=%s\n' "$4" >>"${TEST_DEPLOYMENT_LOG:?}"
+SH
+chmod +x "$deployment_stub_dir/helm" "$deployment_stub_dir/kubectl"
+
+run_deployment_evidence_fixture() {
+  local scenario="$1"
+  local deployment_log="$fixture_dir/deployment-${scenario}.log"
+  local github_env="$fixture_dir/deployment-${scenario}.env"
+  local head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local deploy_status
+
+  : >"$deployment_log"
+  : >"$github_env"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    env \
+      PATH="$deployment_stub_dir:$PATH" \
+      GITHUB_ENV="$github_env" \
+      TEST_DEPLOYMENT_LOG="$deployment_log" \
+      TEST_HELM_RESULT="$scenario" \
+      bash "$deploy_release_step"
+  )
+  deploy_status=$?
+  set -e
+
+  if [[ "$deploy_status" -eq 0 ]]; then
+    (
+      cd "$ROOT_DIR"
+      env \
+        PATH="$deployment_stub_dir:$PATH" \
+        RUNTIME_NAMESPACE=dev \
+        HEAD_SHA="$head_sha" \
+        TEST_DEPLOYMENT_LOG="$deployment_log" \
+        TEST_EXPECTED_HEAD="$head_sha" \
+        bash "$record_deployed_head_step"
+    )
+  fi
+
+  if [[ "$scenario" == failure ]]; then
+    [[ "$deploy_status" -eq 42 ]]
+    mapfile -t actual <"$deployment_log"
+    [[ "${actual[*]}" == "helm-start helm-failure" ]]
+    if grep -q '^kubectl-deployed-head=' "$deployment_log"; then
+      echo "failed Helm attempt recorded deployed-head evidence" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  [[ "$scenario" == success && "$deploy_status" -eq 0 ]]
+  mapfile -t actual <"$deployment_log"
+  [[ "${actual[*]}" == "helm-start helm-success kubectl-deployed-head=firemud.dev/last-dev-demo-head-sha=${head_sha}" ]]
+  grep -Fxq 'DEV_DEMO_STAGE=deploy' "$github_env"
+}
+
+run_deployment_evidence_fixture failure
+run_deployment_evidence_fixture success
+
+# Execute the Ready waiter against strict bounded Kubernetes fixtures so each
+# requested/deployed head component and the complete projection evidence are
+# behaviorally required, rather than merely present as source fragments.
+waiter_stub_dir="$fixture_dir/waiter-stubs"
+mkdir -p "$waiter_stub_dir"
+real_jq="$(command -v jq)"
+
+cat >"$waiter_stub_dir/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 && "$1" == 5 ]]
+/bin/sleep 0.05
+SH
+
+cat >"$waiter_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -eq 5 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == pr-42 ) && "$4" == -o && "$5" == json ]]; then
+  if [[ "$3" == dev ]]; then
+    requested_annotation="firemud.dev/requested-dev-demo-head-sha"
+    deployed_annotation="firemud.dev/last-dev-demo-head-sha"
+  else
+    requested_annotation="firemud.dev/requested-preview-head-sha"
+    deployed_annotation="firemud.dev/last-preview-head-sha"
+  fi
+  "$REAL_JQ" -cn \
+    --arg requested "${FAKE_NAMESPACE_REQUESTED_HEAD:?}" \
+    --arg deployed "${FAKE_NAMESPACE_DEPLOYED_HEAD:?}" \
+    --arg requested_annotation "$requested_annotation" \
+    --arg deployed_annotation "$deployed_annotation" '
+      {metadata:{uid:"runtime-uid",annotations:{}}}
+      | if $requested == "__missing__" then .
+        else .metadata.annotations[$requested_annotation] = $requested end
+      | if $deployed == "__missing__" then .
+        else .metadata.annotations[$deployed_annotation] = $deployed end
+    '
+  exit 0
+fi
+
+if [[ $# -eq 7 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" == hostedenvironmentidentity && ( "$5" == dev-demo || "$5" == pr-42 ) && "$6" == -o && "$7" == json ]]; then
+  revision="sha256:$(printf 'a%.0s' {1..64})"
+  grpc_revision="$revision"
+  if [[ "${FAKE_MISSING_ROLE:-}" == grpc ]]; then
+    grpc_revision=""
+  fi
+  "$REAL_JQ" -cn \
+    --arg requested "${FAKE_REQUESTED_HEAD:?}" \
+    --arg deployed "${FAKE_DEPLOYED_HEAD:?}" \
+    --arg profile_uid "${FAKE_PROFILE_UID:?}" \
+    --arg revision "$revision" \
+    --arg grpc_revision "$grpc_revision" '
+      {
+        metadata:{generation:7},
+        status:{
+          observedGeneration:7,
+          phase:"Ready",
+          conditions:[{type:"Ready",status:"True",reason:"Reconciled",message:"served"}],
+          profile:{runtimeNamespaceUid:$profile_uid},
+          ingress:{revision:$revision},
+          telnet:{revision:$revision},
+          gatewayInternalWs:{revision:$revision},
+          tcpProxyBridge:{revision:$revision},
+          grpc:{revision:$grpc_revision}
+        }
+      }
+      | if $requested == "__missing__" then .
+        else .status.profile.requestedHeadSha = $requested end
+      | if $deployed == "__missing__" then .
+        else .status.profile.deployedHeadSha = $deployed end
+    '
+  exit 0
+fi
+
+printf 'unexpected kubectl invocation: %q' "$1" >&2
+printf ' %q' "${@:2}" >&2
+printf '\n' >&2
+exit 2
+SH
+chmod +x "$waiter_stub_dir/kubectl" "$waiter_stub_dir/sleep"
+
+expected_waiter_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+mismatched_waiter_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+assert_waiter_rejects() {
+  local name="$1"
+  local namespace_requested_head="$2"
+  local namespace_deployed_head="$3"
+  local requested_head="$4"
+  local deployed_head="$5"
+  local profile_uid="$6"
+  local missing_role="$7"
+  local expected_message="$8"
+  local output="$fixture_dir/waiter-${name}.out"
+  local actual_status
+
+  set +e
+  PATH="$waiter_stub_dir:$PATH" \
+    REAL_JQ="$real_jq" \
+    FAKE_NAMESPACE_REQUESTED_HEAD="$namespace_requested_head" \
+    FAKE_NAMESPACE_DEPLOYED_HEAD="$namespace_deployed_head" \
+    FAKE_REQUESTED_HEAD="$requested_head" \
+    FAKE_DEPLOYED_HEAD="$deployed_head" \
+    FAKE_PROFILE_UID="$profile_uid" \
+    FAKE_MISSING_ROLE="$missing_role" \
+    bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$output" 2>&1
+  actual_status=$?
+  set -e
+
+  if [[ "$actual_status" -eq 0 ]]; then
+    echo "waiter accepted invalid Ready fixture: ${name}" >&2
+    cat "$output" >&2
+    exit 1
+  fi
+  grep -Fq -- "$expected_message" "$output" || {
+    echo "waiter rejection ${name} lacked expected evidence: ${expected_message}" >&2
+    cat "$output" >&2
+    exit 1
+  }
+}
+
+assert_waiter_rejects \
+  namespace-requested-missing __missing__ "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "Runtime namespace dev has no canonical requested head; observed missing."
+assert_waiter_rejects \
+  namespace-requested-mismatch "$mismatched_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "Runtime namespace dev requested head is stale; expected ${expected_waiter_head}, observed ${mismatched_waiter_head}."
+assert_waiter_rejects \
+  namespace-deployed-missing "$expected_waiter_head" __missing__ \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "Runtime namespace dev has no canonical deployed head; observed missing."
+assert_waiter_rejects \
+  namespace-deployed-mismatch "$expected_waiter_head" "$mismatched_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "Runtime namespace dev deployed head is stale; expected ${expected_waiter_head}, observed ${mismatched_waiter_head}."
+assert_waiter_rejects \
+  requested-missing "$expected_waiter_head" "$expected_waiter_head" \
+  __missing__ "$expected_waiter_head" runtime-uid "" \
+  "requested head missing, deployed head ${expected_waiter_head}"
+assert_waiter_rejects \
+  requested-mismatch "$expected_waiter_head" "$expected_waiter_head" \
+  "$mismatched_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "requested head ${mismatched_waiter_head}, deployed head ${expected_waiter_head}"
+assert_waiter_rejects \
+  deployed-missing "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" __missing__ runtime-uid "" \
+  "requested head ${expected_waiter_head}, deployed head missing"
+assert_waiter_rejects \
+  deployed-mismatch "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$mismatched_waiter_head" runtime-uid "" \
+  "requested head ${expected_waiter_head}, deployed head ${mismatched_waiter_head}"
+assert_waiter_rejects \
+  namespace-uid-mismatch "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" other-runtime-uid "" \
+  "namespace UID other-runtime-uid, requested head ${expected_waiter_head}"
+assert_waiter_rejects \
+  projection-missing "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid grpc \
+  "Ready identity has incomplete projected revisions"
+
+waiter_success_output="$fixture_dir/waiter-success.out"
+uppercase_waiter_head="${expected_waiter_head^^}"
+PATH="$waiter_stub_dir:$PATH" \
+  REAL_JQ="$real_jq" \
+  FAKE_NAMESPACE_REQUESTED_HEAD="$uppercase_waiter_head" \
+  FAKE_NAMESPACE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_REQUESTED_HEAD="$uppercase_waiter_head" \
+  FAKE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_PROFILE_UID="runtime-uid" \
+  FAKE_MISSING_ROLE="" \
+  bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$waiter_success_output"
+for expected_line in \
+  'identity=dev-demo' \
+  'phase=Ready' \
+  'observedGeneration=7' \
+  'ingressRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'telnetRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'gatewayInternalWsRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'tcpProxyBridgeRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'grpcRevision=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
+  grep -Fxq -- "$expected_line" "$waiter_success_output"
+done
+
+assert_preview_waiter_rejects() {
+  local name="$1"
+  local namespace_requested_head="$2"
+  local namespace_deployed_head="$3"
+  local expected_message="$4"
+  local output="$fixture_dir/preview-waiter-${name}.out"
+  local actual_status
+
+  set +e
+  PATH="$waiter_stub_dir:$PATH" \
+    REAL_JQ="$real_jq" \
+    FAKE_NAMESPACE_REQUESTED_HEAD="$namespace_requested_head" \
+    FAKE_NAMESPACE_DEPLOYED_HEAD="$namespace_deployed_head" \
+    FAKE_REQUESTED_HEAD="$expected_waiter_head" \
+    FAKE_DEPLOYED_HEAD="$expected_waiter_head" \
+    FAKE_PROFILE_UID="runtime-uid" \
+    FAKE_MISSING_ROLE="" \
+    bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$output" 2>&1
+  actual_status=$?
+  set -e
+
+  if [[ "$actual_status" -eq 0 ]]; then
+    echo "preview waiter accepted invalid namespace heads: ${name}" >&2
+    cat "$output" >&2
+    exit 1
+  fi
+  grep -Fq -- "$expected_message" "$output"
+}
+
+assert_preview_waiter_rejects \
+  requested-missing __missing__ "$expected_waiter_head" \
+  "Runtime namespace pr-42 has no canonical requested head; observed missing."
+assert_preview_waiter_rejects \
+  deployed-missing "$expected_waiter_head" __missing__ \
+  "Runtime namespace pr-42 has no canonical deployed head; observed missing."
+
+preview_waiter_success_output="$fixture_dir/preview-waiter-success.out"
+PATH="$waiter_stub_dir:$PATH" \
+  REAL_JQ="$real_jq" \
+  FAKE_NAMESPACE_REQUESTED_HEAD="$uppercase_waiter_head" \
+  FAKE_NAMESPACE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_REQUESTED_HEAD="$uppercase_waiter_head" \
+  FAKE_DEPLOYED_HEAD="$uppercase_waiter_head" \
+  FAKE_PROFILE_UID="runtime-uid" \
+  FAKE_MISSING_ROLE="" \
+  bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$preview_waiter_success_output"
+grep -Fxq -- "identity=pr-42" "$preview_waiter_success_output"
 
 # Execute the exact reconciler workflow step against deterministic GitHub and
 # Kubernetes command fixtures. The reference model above keeps the cases easy
@@ -720,17 +1112,20 @@ run_reconcile_fixture() {
   rm -f "$active_marker"
 
   set +e
-  env \
-    PATH="$stub_dir:$PATH" \
-    GITHUB_REPOSITORY="benhook1013/FireMUD" \
-    GH_TOKEN="fixture-token" \
-    TEST_SCENARIO="$scenario" \
-    TEST_HEAD_SHA="$test_head_sha" \
-    TEST_OTHER_HEAD_SHA="$test_other_head_sha" \
-    TEST_GH_LOG="$command_log" \
-    TEST_GH_TRACE="$trace_log" \
-    TEST_ACTIVE_MARKER="$active_marker" \
-    bash "$reconcile_step" >"$output" 2>&1
+  (
+    cd "$ROOT_DIR"
+    env \
+      PATH="$stub_dir:$PATH" \
+      GITHUB_REPOSITORY="benhook1013/FireMUD" \
+      GH_TOKEN="fixture-token" \
+      TEST_SCENARIO="$scenario" \
+      TEST_HEAD_SHA="$test_head_sha" \
+      TEST_OTHER_HEAD_SHA="$test_other_head_sha" \
+      TEST_GH_LOG="$command_log" \
+      TEST_GH_TRACE="$trace_log" \
+      TEST_ACTIVE_MARKER="$active_marker" \
+      bash "$reconcile_step"
+  ) >"$output" 2>&1
   actual_status=$?
   set -e
 

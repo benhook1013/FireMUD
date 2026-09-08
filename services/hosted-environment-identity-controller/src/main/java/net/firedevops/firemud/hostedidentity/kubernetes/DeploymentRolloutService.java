@@ -92,16 +92,26 @@ public class DeploymentRolloutService {
           .edit(current -> applyRevision(current, annotationKey, revision));
       return false;
     }
-    if (deployment.getStatus() == null || deployment.getSpec().getReplicas() == null) {
+    return activeRolloutObserved(deployment);
+  }
+
+  static boolean activeRolloutObserved(Deployment deployment) {
+    if (deployment == null
+        || deployment.getMetadata() == null
+        || deployment.getSpec() == null
+        || deployment.getSpec().getReplicas() == null
+        || deployment.getStatus() == null) {
       return false;
     }
     int replicas = deployment.getSpec().getReplicas();
-    return deployment.getStatus().getObservedGeneration() != null
+    return replicas > 0
+        && deployment.getStatus().getObservedGeneration() != null
         && deployment.getMetadata().getGeneration() != null
         && deployment.getStatus().getObservedGeneration()
             >= deployment.getMetadata().getGeneration()
         && replicas == value(deployment.getStatus().getUpdatedReplicas())
-        && replicas <= value(deployment.getStatus().getAvailableReplicas());
+        && replicas == value(deployment.getStatus().getAvailableReplicas())
+        && replicas == value(deployment.getStatus().getReplicas());
   }
 
   static Deployment applyRevision(Deployment deployment, String annotationKey, String revision) {

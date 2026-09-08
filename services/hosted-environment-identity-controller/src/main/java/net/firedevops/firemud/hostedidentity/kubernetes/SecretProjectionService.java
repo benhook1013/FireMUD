@@ -55,22 +55,29 @@ public class SecretProjectionService {
           throw new IllegalStateException(
               "source identity changed without a material revision change");
         }
-        return accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)
-            ? ProjectionResult.synced(revision)
-            : ProjectionResult.awaiting("awaiting-acceptance", revision);
-      }
-      if (!accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)) {
-        return ProjectionResult.awaiting("predecessor-not-accepted", oldRevision);
-      }
-      validateAdvancement(
-          sourceGeneration,
-          sourceObjectGeneration,
-          spkiSha256,
-          oldGeneration,
-          oldObjectGeneration,
-          oldSpki);
-      if (!preservePredecessor(client, plan, role, name, existing)) {
-        return ProjectionResult.awaiting("predecessor-cas-conflict", oldRevision);
+        if (data.equals(existing.getData())) {
+          return accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)
+              ? ProjectionResult.synced(revision)
+              : ProjectionResult.awaiting("awaiting-acceptance", revision);
+        }
+      } else {
+        if (!materialMatchesRevision(existing, oldRevision)) {
+          throw new IllegalStateException(
+              "runtime projection revision does not match its material");
+        }
+        if (!accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)) {
+          return ProjectionResult.awaiting("predecessor-not-accepted", oldRevision);
+        }
+        validateAdvancement(
+            sourceGeneration,
+            sourceObjectGeneration,
+            spkiSha256,
+            oldGeneration,
+            oldObjectGeneration,
+            oldSpki);
+        if (!preservePredecessor(client, plan, role, name, existing)) {
+          return ProjectionResult.awaiting("predecessor-cas-conflict", oldRevision);
+        }
       }
     }
     Map<String, String> annotations = new LinkedHashMap<>();
@@ -142,6 +149,9 @@ public class SecretProjectionService {
         || expectedObjectGeneration != sourceObjectGeneration
         || !expectedSpki.equals(spki)) {
       return ProjectionResult.awaiting("projection-tuple-changed", revision);
+    }
+    if (!materialMatchesRevision(current, expectedRevision)) {
+      return ProjectionResult.awaiting("projection-material-changed", revision);
     }
     if (accepted(annotations, revision, sourceGeneration, sourceObjectGeneration, spki))
       return ProjectionResult.synced(revision);
@@ -265,13 +275,23 @@ public class SecretProjectionService {
     return revisionForData(projectedData(role, data));
   }
 
+  private static boolean materialMatchesRevision(Secret secret, String revision) {
+    try {
+      return revision.equals(revisionForData(secret.getData()));
+    } catch (IllegalArgumentException exception) {
+      return false;
+    }
+  }
+
   private static boolean accepted(
       Map<String, String> annotations,
       String revision,
       long generation,
       long objectGeneration,
       String spki) {
-    return revision.equals(value(annotations, HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION))
+    return "accepted"
+            .equals(value(annotations, HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION))
+        && revision.equals(value(annotations, HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION))
         && Long.toString(generation)
             .equals(
                 value(annotations, HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION))
@@ -285,12 +305,18 @@ public class SecretProjectionService {
 
   private static void carryAcceptedSnapshot(
       Map<String, String> existing, Map<String, String> candidate) {
-    for (String key :
+    var acceptedKeys =
         java.util.List.of(
             HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION,
             HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION,
             HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION,
-            HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION)) {
+            HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
+    boolean anyAcceptedField =
+        existing != null && acceptedKeys.stream().anyMatch(existing::containsKey);
+    if (!anyAcceptedField) {
+      return;
+    }
+    for (String key : acceptedKeys) {
       String value = value(existing, key);
       if (value == null || value.isBlank()) {
         throw new IllegalStateException("accepted projection snapshot is incomplete");

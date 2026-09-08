@@ -67,18 +67,156 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
-EXPECTED_SERVICE_PORTS = {
+
+
+def _application_service_spec(
+    name: str,
+    ports: tuple[tuple[str, int, int], ...],
+    service_type: str = "ClusterIP",
+) -> dict:
+    return {
+        "selector": {"app": name},
+        "ports": [
+            {
+                "port": port,
+                "name": port_name,
+                "targetPort": target_port,
+                "protocol": "TCP",
+            }
+            for port_name, port, target_port in ports
+        ],
+        "type": service_type,
+    }
+
+
+EXPECTED_SERVICE_SPECS = {
     **{
-        service: [("tcp-8080", 8080, 8080), ("tcp-6565", 6565, 6565)]
+        service: _application_service_spec(
+            service,
+            (("tcp-8080", 8080, 8080), ("tcp-6565", 6565, 6565)),
+        )
         for service in SERVICE_IMAGES - {"spring-cloud-gateway", "tcp-proxy-service"}
     },
-    "spring-cloud-gateway": [("tcp-80", 80, 8080), ("tcp-6565", 6565, 6565)],
-    "spring-cloud-gateway-mtls": [("wss-mtls", 443, 8443)],
-    "tcp-proxy-service": [("tcp-2323", 2323, 2323)],
-    "postgres": [("tcp-5432", 5432, 5432)],
-    "redis-coord": [("tcp-6379", 6379, 6379)],
-    "redis-cache": [("tcp-6379", 6379, 6379)],
-    "minio": [("tcp-9000", 9000, 9000)],
+    "spring-cloud-gateway": _application_service_spec(
+        "spring-cloud-gateway",
+        (("tcp-80", 80, 8080), ("tcp-6565", 6565, 6565)),
+    ),
+    "spring-cloud-gateway-mtls": {
+        "selector": {"app": "spring-cloud-gateway"},
+        "ports": [
+            {
+                "name": "wss-mtls",
+                "port": 443,
+                "targetPort": 8443,
+                "protocol": "TCP",
+            }
+        ],
+        "type": "ClusterIP",
+    },
+    "tcp-proxy-service": _application_service_spec(
+        "tcp-proxy-service",
+        (("tcp-2323", 2323, 2323),),
+        "NodePort",
+    ),
+    "postgres": {
+        "selector": {"app": "postgres"},
+        "ports": [{"port": 5432, "targetPort": 5432}],
+    },
+    "redis-coord": {
+        "selector": {"app": "redis-coord"},
+        "ports": [{"port": 6379, "targetPort": 6379}],
+    },
+    "redis-cache": {
+        "selector": {"app": "redis-cache"},
+        "ports": [{"port": 6379, "targetPort": 6379}],
+    },
+    "minio": {
+        "selector": {"app": "minio"},
+        "ports": [{"port": 9000, "targetPort": 9000}],
+    },
+}
+INTERNAL_SERVICE_APPS = [
+    "account-service",
+    "automation-scripting-service",
+    "entity-management-service",
+    "game-design-service",
+    "game-logic-service",
+    "game-session-service",
+    "logging-admin-service",
+    "social-groups-service",
+    "world-management-service",
+]
+INTERNAL_SERVICES_SELECTOR = {
+    "matchExpressions": [
+        {
+            "key": "app",
+            "operator": "In",
+            "values": INTERNAL_SERVICE_APPS,
+        }
+    ]
+}
+INTERNAL_SERVICES_EGRESS = [
+    {
+        "to": [
+            {
+                "namespaceSelector": {
+                    "matchLabels": {
+                        "kubernetes.io/metadata.name": "kube-system"
+                    }
+                },
+                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+            }
+        ],
+        "ports": [
+            {"protocol": "UDP", "port": 53},
+            {"protocol": "TCP", "port": 53},
+        ],
+    },
+    {
+        "to": [{"podSelector": INTERNAL_SERVICES_SELECTOR}],
+        "ports": [
+            {"protocol": "TCP", "port": 8080},
+            {"protocol": "TCP", "port": 6565},
+            {"protocol": "TCP", "port": 4317},
+        ],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "postgres"}}}],
+        "ports": [{"protocol": "TCP", "port": 5432}],
+    },
+    {
+        "to": [
+            {"podSelector": {"matchLabels": {"app": "redis-coord"}}},
+            {"podSelector": {"matchLabels": {"app": "redis-cache"}}},
+        ],
+        "ports": [{"protocol": "TCP", "port": 6379}],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "minio"}}}],
+        "ports": [{"protocol": "TCP", "port": 9000}],
+    },
+]
+EXPECTED_INTERNAL_NETWORK_POLICY_SPECS = {
+    "internal-services": {
+        "podSelector": INTERNAL_SERVICES_SELECTOR,
+        "policyTypes": ["Ingress", "Egress"],
+        "ingress": [
+            {
+                "from": [{"podSelector": {}}],
+                "ports": [
+                    {"protocol": "TCP", "port": 8080},
+                    {"protocol": "TCP", "port": 6565},
+                    {"protocol": "TCP", "port": 4317},
+                ],
+            }
+        ],
+        "egress": INTERNAL_SERVICES_EGRESS,
+    },
+    "internal-services-egress": {
+        "podSelector": INTERNAL_SERVICES_SELECTOR,
+        "policyTypes": ["Egress"],
+        "egress": INTERNAL_SERVICES_EGRESS,
+    },
 }
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
 SANITIZER_FORBIDDEN_KINDS = {
@@ -538,20 +676,20 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
 
 
 def validate_services(documents: list[dict]) -> None:
-    """Require the exact preview Service selectors and port mappings."""
+    """Require the exact trusted preview Service specs."""
 
     for document in documents:
         if document.get("kind") != "Service":
             continue
         name = document.get("metadata", {}).get("name")
         spec = _require_mapping(document.get("spec"), f"Service/{name}.spec")
-        expected_type = "NodePort" if name == "tcp-proxy-service" else "ClusterIP"
+        expected_spec = EXPECTED_SERVICE_SPECS.get(name)
+        if expected_spec is None:
+            fail(f"Service/{name} is not an approved preview Service")
+        expected_type = expected_spec.get("type", "ClusterIP")
         if spec.get("type", "ClusterIP") != expected_type:
             fail(f"Service/{name} has an unsafe service type")
-        selector_name = (
-            "spring-cloud-gateway" if name == "spring-cloud-gateway-mtls" else name
-        )
-        if spec.get("selector") != {"app": selector_name}:
+        if spec.get("selector") != expected_spec["selector"]:
             fail(f"Service/{name} has an unsafe selector")
         service_ports = _require_mapping_list(
             spec.get("ports"), f"Service/{name}.spec.ports"
@@ -564,25 +702,28 @@ def validate_services(documents: list[dict]) -> None:
             )
             for item in service_ports
         ]
-        if ports != EXPECTED_SERVICE_PORTS[name]:
+        expected_ports = [
+            (
+                item.get("name"),
+                item.get("port"),
+                item.get("targetPort"),
+            )
+            for item in expected_spec["ports"]
+        ]
+        if ports != expected_ports:
             fail(f"Service/{name} has an unexpected port set")
-        if name == "spring-cloud-gateway-mtls" and spec != {
-            "selector": {"app": "spring-cloud-gateway"},
-            "ports": [
-                {
-                    "name": "wss-mtls",
-                    "port": 443,
-                    "targetPort": 8443,
-                    "protocol": "TCP",
-                }
-            ],
-            "type": "ClusterIP",
-        }:
+        if spec != expected_spec:
             fail(f"Service/{name} has an unsafe spec")
 
 
+def _validate_internal_network_policies(policies: dict[str, dict]) -> None:
+    for name, expected_spec in EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items():
+        if policies[name].get("spec") != expected_spec:
+            fail(f"NetworkPolicy/{name} has an unsafe spec")
+
+
 def validate_network_policies(documents: list[dict]) -> None:
-    """Keep runtime policy additions closed and the controller exception exact."""
+    """Keep the runtime policy set and every allowed traffic exception exact."""
 
     raw_policies = [
         document for document in documents if document.get("kind") == "NetworkPolicy"
@@ -598,6 +739,8 @@ def validate_network_policies(documents: list[dict]) -> None:
             f"(missing={sorted(expected_names - set(policies))}, "
             f"extra={sorted(set(policies) - expected_names)})"
         )
+    _validate_internal_network_policies(policies)
+
     controller_policy = policies["account-service-controller-ingress"]
     spec = controller_policy.get("spec") or {}
     if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:

@@ -93,14 +93,83 @@ class RuntimeProfileServiceTest {
     Resource<Namespace> namespace = mock(Resource.class);
     when(client.namespaces()).thenReturn(namespaces);
     when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
-    when(namespace.get()).thenReturn(previewRuntimeNamespace("a".repeat(40), "32002"));
+    when(namespace.get())
+        .thenReturn(previewRuntimeNamespace("A".repeat(40), "a".repeat(40), "32002"));
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
 
     assertEquals("runtime-uid", profile.runtimeNamespaceUid());
+    assertEquals("a".repeat(40), profile.requestedHeadSha());
     assertEquals("a".repeat(40), profile.deployedHeadSha());
+    assertTrue(profile.deployedHeadMatchesRequest());
     assertEquals(32002, profile.telnetPort());
     assertTrue(profile.present());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void previewSeparatesRequestedHeadFromSuccessfulDeploymentEvidence() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(
+            previewRuntimeNamespace("a".repeat(40), null, "32002"),
+            previewRuntimeNamespace("a".repeat(40), "b".repeat(40), "32002"),
+            previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"),
+            previewRuntimeNamespace("a".repeat(40), "not-a-head", "32002"));
+
+    RuntimeProfileService.RuntimeProfile beforeDeployment = service.read(client, plan);
+    assertEquals("a".repeat(40), beforeDeployment.requestedHeadSha());
+    assertEquals(null, beforeDeployment.deployedHeadSha());
+    assertFalse(beforeDeployment.deployedHeadMatchesRequest());
+
+    RuntimeProfileService.RuntimeProfile staleDeployment = service.read(client, plan);
+    assertEquals("b".repeat(40), staleDeployment.deployedHeadSha());
+    assertFalse(staleDeployment.deployedHeadMatchesRequest());
+
+    RuntimeProfileService.RuntimeProfile deployed = service.read(client, plan);
+    assertTrue(deployed.deployedHeadMatchesRequest());
+
+    assertEquals(
+        "runtime Namespace has an invalid canonical deployed head identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void devDemoSeparatesRequestedHeadFromSuccessfulDeploymentEvidence() {
+    var plan = planner.plan("dev-demo");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(
+            devDemoRuntimeNamespace("a".repeat(40), null),
+            devDemoRuntimeNamespace("a".repeat(40), "b".repeat(40)),
+            devDemoRuntimeNamespace("a".repeat(40), "a".repeat(40)),
+            devDemoRuntimeNamespace("a".repeat(40), "not-a-head"));
+
+    RuntimeProfileService.RuntimeProfile beforeHelm = service.read(client, plan);
+    assertEquals("a".repeat(40), beforeHelm.requestedHeadSha());
+    assertEquals(null, beforeHelm.deployedHeadSha());
+    assertFalse(beforeHelm.deployedHeadMatchesRequest());
+
+    RuntimeProfileService.RuntimeProfile staleDeployment = service.read(client, plan);
+    assertEquals("b".repeat(40), staleDeployment.deployedHeadSha());
+    assertFalse(staleDeployment.deployedHeadMatchesRequest());
+
+    RuntimeProfileService.RuntimeProfile deployed = service.read(client, plan);
+    assertTrue(deployed.deployedHeadMatchesRequest());
+
+    assertEquals(
+        "runtime Namespace has an invalid canonical deployed head identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
   }
 
   @Test
@@ -120,19 +189,19 @@ class RuntimeProfileServiceTest {
         "runtime Namespace has no stable UID",
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
 
-    Namespace missingHead = previewRuntimeNamespace(null, "32001");
+    Namespace missingHead = previewRuntimeNamespace(null, "a".repeat(40), "32001");
     when(namespace.get()).thenReturn(missingHead);
     assertEquals(
-        "runtime Namespace has no canonical deployed head identity",
+        "runtime Namespace has no canonical requested head identity",
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
 
-    Namespace missingPort = previewRuntimeNamespace("a".repeat(40), null);
+    Namespace missingPort = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), null);
     when(namespace.get()).thenReturn(missingPort);
     assertEquals(
         "runtime Namespace has no canonical Telnet port identity",
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
 
-    Namespace invalidPort = previewRuntimeNamespace("a".repeat(40), "32016");
+    Namespace invalidPort = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32016");
     when(namespace.get()).thenReturn(invalidPort);
     assertEquals(
         "runtime Namespace has an invalid Telnet port identity",
@@ -310,18 +379,40 @@ class RuntimeProfileServiceTest {
     assertFalse(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
   }
 
-  private static Namespace previewRuntimeNamespace(String head, String port) {
+  private static Namespace previewRuntimeNamespace(
+      String requestedHead, String deployedHead, String port) {
     var builder =
         new NamespaceBuilder()
             .withNewMetadata()
             .withName("pr-42")
             .withUid("runtime-uid")
             .withLabels(Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "42"));
-    if (head != null) {
-      builder.addToAnnotations("firemud.dev/last-preview-head-sha", head);
+    if (requestedHead != null) {
+      builder.addToAnnotations("firemud.dev/requested-preview-head-sha", requestedHead);
+    }
+    if (deployedHead != null) {
+      builder.addToAnnotations("firemud.dev/last-preview-head-sha", deployedHead);
     }
     if (port != null) {
       builder.addToAnnotations("firemud.dev/last-preview-telnet-port", port);
+    }
+    return builder.endMetadata().build();
+  }
+
+  private static Namespace devDemoRuntimeNamespace(String requestedHead, String deployedHead) {
+    var builder =
+        new NamespaceBuilder()
+            .withNewMetadata()
+            .withName("dev")
+            .withUid("runtime-uid")
+            .withLabels(
+                Map.of(
+                    "firemud.dev/dev-demo", "true",
+                    "firemud.dev/environment-class", "dev-demo-cluster"))
+            .addToAnnotations("firemud.dev/requested-dev-demo-head-sha", requestedHead)
+            .addToAnnotations("firemud.dev/last-dev-demo-telnet-port", "32016");
+    if (deployedHead != null) {
+      builder.addToAnnotations("firemud.dev/last-dev-demo-head-sha", deployedHead);
     }
     return builder.endMetadata().build();
   }

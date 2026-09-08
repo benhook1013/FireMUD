@@ -13,6 +13,11 @@ import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.api.model.SecretList;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.MixedOperation;
+import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
@@ -32,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import org.bouncycastle.asn1.DERPrintableString;
@@ -46,6 +52,8 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class SecretMaterialValidatorTest {
   @Test
@@ -181,20 +189,46 @@ class SecretMaterialValidatorTest {
 
   @Test
   void conflictRereadMustFindTheWinningSecret() {
-    Secret winner =
-        new SecretBuilder()
-            .withNewMetadata()
-            .addToAnnotations("firemud.dev/issuance-generation", "4")
-            .endMetadata()
-            .withType("Opaque")
-            .build();
-    assertEquals(winner, GrpcTransportBundleGenerator.requireConflictWinner(winner, 4));
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret winner = new GrpcTransportBundleGenerator().generate(plan);
+    winner
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.ISSUANCE_GENERATION_ANNOTATION, "4");
+    assertEquals(winner, GrpcTransportBundleGenerator.requireConflictWinner(winner, 4, plan));
     assertThrows(
         IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.requireConflictWinner(null, 4));
+        () -> GrpcTransportBundleGenerator.requireConflictWinner(null, 4, plan));
     assertThrows(
         IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.requireConflictWinner(winner, 5));
+        () -> GrpcTransportBundleGenerator.requireConflictWinner(winner, 5, plan));
+  }
+
+  @ParameterizedTest(name = "rejects conflict winner with invalid {0}")
+  @ValueSource(
+      strings = {
+        HostedIdentityContract.MANAGED_BY_LABEL,
+        HostedIdentityContract.ENVIRONMENT_LABEL,
+        HostedIdentityContract.ROLE_LABEL,
+        HostedIdentityContract.RETENTION_LABEL
+      })
+  void conflictRereadRejectsEveryUnownedWinningSecret(String ownershipLabel) {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret winner = new GrpcTransportBundleGenerator().generate(plan);
+    winner
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.ISSUANCE_GENERATION_ANNOTATION, "5");
+    winner.getMetadata().getLabels().put(ownershipLabel, "not-controller-owned");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> GrpcTransportBundleGenerator.requireConflictWinner(winner, 4, plan));
+
+    assertEquals("identity source Secret is not controller-owned", failure.getMessage());
   }
 
   @Test
@@ -286,6 +320,97 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void ensureRegeneratesTimeCurrentBundleWhenTheValidatedCaRotates() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret oldCa = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion("7");
+    String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
+    Secret rotatedCa = generatedCa(now, Duration.ofDays(60));
+    String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
+    assertFalse(GrpcTransportBundleGenerator.renewalRequired(existing, renewBefore, Instant.now()));
+    assertNotEquals(rotatedTrustAnchor, SecretMaterialValidator.trustAnchorFingerprint(existing));
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> controlSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    Resource<Secret> caResource = mock(Resource.class);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
+    when(caResource.get()).thenReturn(rotatedCa);
+    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(replacementResource);
+    when(replacementResource.replace()).thenReturn(existing);
+
+    IllegalStateException stalePin =
+        assertThrows(
+            IllegalStateException.class,
+            () -> generator.ensure(client, plan, 4L, renewBefore, oldTrustAnchor));
+    assertEquals("configured gRPC CA trust anchor mismatch", stalePin.getMessage());
+    verify(identitySecrets, org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+
+    generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
+
+    org.mockito.ArgumentCaptor<Secret> replacement =
+        org.mockito.ArgumentCaptor.forClass(Secret.class);
+    verify(identitySecrets).resource(replacement.capture());
+    Secret rotated = replacement.getValue();
+    assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));
+    assertEquals("7", rotated.getMetadata().getResourceVersion());
+    assertEquals(rotatedCa.getData().get("ca.crt"), rotated.getData().get("ca.crt"));
+    certificate(rotated.getData().get("tls.crt"))
+        .verify(certificate(rotatedCa.getData().get("ca.crt")).getPublicKey());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void ensureRejectsUnownedExistingBundleBeforeCaReadOrIdentityWrite() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret existing = new GrpcTransportBundleGenerator().generate(plan);
+    existing
+        .getMetadata()
+        .getLabels()
+        .put(HostedIdentityContract.MANAGED_BY_LABEL, "another-controller");
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GrpcTransportBundleGenerator()
+                    .ensure(client, plan, 1L, Duration.ofDays(7), "0".repeat(64)));
+
+    assertEquals("identity source Secret is not controller-owned", failure.getMessage());
+    verify(secrets, org.mockito.Mockito.never()).inNamespace(plan.controlNamespace());
+    verify(identitySecrets, org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
   void productionGenerationCapsLeafExpiryAtTheSigningCaExpiry() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     EnvironmentIdentityPlan plan =
@@ -315,6 +440,25 @@ class SecretMaterialValidatorTest {
                     .generate(plan, caSource, 2, Duration.ofDays(7), now));
 
     assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
+  }
+
+  @Test
+  void productionGenerationRejectsRenewalWindowBelowCertManagerMinimum() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, Duration.ofDays(60));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GrpcTransportBundleGenerator()
+                    .generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
+
+    assertEquals(
+        "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+        failure.getMessage());
   }
 
   @Test

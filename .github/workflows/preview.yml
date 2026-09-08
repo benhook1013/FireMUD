@@ -517,6 +517,21 @@ jobs:
             --wait \
             --timeout 15m
 
+      - name: Record exact deployed preview head
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.deploy-release.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+            "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
+            --overwrite >/dev/null
+
       - name: Show deployed preview services
         if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
         run: |

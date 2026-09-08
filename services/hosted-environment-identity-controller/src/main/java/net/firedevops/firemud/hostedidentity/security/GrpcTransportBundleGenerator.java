@@ -26,6 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -73,6 +74,9 @@ public class GrpcTransportBundleGenerator {
             .inNamespace(plan.identityNamespace())
             .withName(plan.grpcSecretName())
             .get();
+    if (existing != null) {
+      requireOwned(existing, plan);
+    }
     Secret caSource =
         client.secrets().inNamespace(plan.controlNamespace()).withName(plan.caSecretName()).get();
     if (caSource == null) {
@@ -95,12 +99,16 @@ public class GrpcTransportBundleGenerator {
                 .inNamespace(plan.identityNamespace())
                 .withName(plan.grpcSecretName())
                 .get(),
-            attemptedGeneration);
+            attemptedGeneration,
+            plan);
       }
     }
     long currentGeneration = issuanceGeneration(existing);
     validateAcceptedGeneration(currentGeneration, accepted);
-    if (!renewalRequired(existing, renewBefore, now)) {
+    boolean trustAnchorChanged =
+        !normalizeFingerprint(expectedTrustAnchorSha256)
+            .equals(SecretMaterialValidator.trustAnchorFingerprint(existing));
+    if (!trustAnchorChanged && !renewalRequired(existing, renewBefore, now)) {
       return existing;
     }
     long attemptedGeneration = nextGeneration(currentGeneration);
@@ -118,7 +126,8 @@ public class GrpcTransportBundleGenerator {
               .inNamespace(plan.identityNamespace())
               .withName(plan.grpcSecretName())
               .get(),
-          attemptedGeneration);
+          attemptedGeneration,
+          plan);
     }
   }
 
@@ -285,10 +294,26 @@ public class GrpcTransportBundleGenerator {
     }
   }
 
-  static Secret requireConflictWinner(Secret reread, long minimumGeneration) {
+  private static void requireOwned(Secret secret, EnvironmentIdentityPlan plan) {
+    Map<String, String> labels =
+        secret.getMetadata() == null ? null : secret.getMetadata().getLabels();
+    if (labels == null
+        || !HostedIdentityContract.CONTROLLER_NAME.equals(
+            labels.get(HostedIdentityContract.MANAGED_BY_LABEL))
+        || !plan.name().equals(labels.get(HostedIdentityContract.ENVIRONMENT_LABEL))
+        || !HostedIdentityContract.GRPC_ROLE.equals(labels.get(HostedIdentityContract.ROLE_LABEL))
+        || !HostedIdentityContract.RETAINED.equals(
+            labels.get(HostedIdentityContract.RETENTION_LABEL))) {
+      throw new IllegalStateException("identity source Secret is not controller-owned");
+    }
+  }
+
+  static Secret requireConflictWinner(
+      Secret reread, long minimumGeneration, EnvironmentIdentityPlan plan) {
     if (reread == null) {
       throw new IllegalStateException("gRPC source conflict winner is absent after reread");
     }
+    requireOwned(reread, plan);
     if (issuanceGeneration(reread) < minimumGeneration) {
       throw new IllegalStateException(
           "gRPC source conflict winner did not reach the attempted issuance generation");
@@ -304,10 +329,7 @@ public class GrpcTransportBundleGenerator {
         throw new IllegalStateException(
             "configured gRPC CA Secret must be Opaque and contain exactly ca.crt and ca.key");
       }
-      String expected =
-          expectedTrustAnchorSha256 == null
-              ? ""
-              : expectedTrustAnchorSha256.toLowerCase(Locale.ROOT).replace(":", "").trim();
+      String expected = normalizeFingerprint(expectedTrustAnchorSha256);
       if (!expected.matches("[0-9a-f]{64}")
           || !expected.equals(SecretMaterialValidator.trustAnchorFingerprint(caSource))) {
         throw new IllegalStateException("configured gRPC CA trust anchor mismatch");
@@ -332,6 +354,10 @@ public class GrpcTransportBundleGenerator {
     } catch (Exception exception) {
       throw new IllegalStateException("configured gRPC CA material is invalid", exception);
     }
+  }
+
+  private static String normalizeFingerprint(String fingerprint) {
+    return fingerprint == null ? "" : fingerprint.toLowerCase(Locale.ROOT).replace(":", "").trim();
   }
 
   private static X509Certificate certificate(
@@ -396,9 +422,7 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static void requirePositiveRenewalWindow(Duration renewBefore) {
-    if (renewBefore == null || renewBefore.isNegative() || renewBefore.isZero()) {
-      throw new IllegalStateException("gRPC renewal window must be positive");
-    }
+    HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);
   }
 
   static long nextGeneration(long current) {

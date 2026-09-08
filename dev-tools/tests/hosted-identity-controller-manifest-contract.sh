@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")" && pwd
 MANIFEST_DIR="$ROOT_DIR/k8s/hosted-identity-controller"
 CONTROLLER_DIR="$ROOT_DIR/dev-tools/hosted/controller"
 ARTIFACT_VALIDATOR="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+APPLICATION_CONFIG="$ROOT_DIR/services/hosted-environment-identity-controller/src/main/resources/application.yml"
 
 fail() {
   echo "hosted identity controller manifest contract: $*" >&2
@@ -141,9 +142,13 @@ require_literal "$CRD" "!has(oldSelf.desiredState)"
 forbid_literal "$CRD" "self.metadata.namespace == 'firemud-system'"
 forbid_literal "$CRD" "x-kubernetes-preserve-unknown-fields"
 require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
-for field in observedGeneration phase conditions profile runtimeNamespaceUid deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc; do
+for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc; do
   require_literal "$CRD" "$field"
 done
+require_literal "$APPLICATION_CONFIG" "dev-demo-requested-head-annotation: firemud.dev/requested-dev-demo-head-sha"
+require_literal "$APPLICATION_CONFIG" "dev-demo-head-annotation: firemud.dev/last-dev-demo-head-sha"
+require_literal "$APPLICATION_CONFIG" "preview-requested-head-annotation: firemud.dev/requested-preview-head-sha"
+require_literal "$APPLICATION_CONFIG" "preview-deployed-head-annotation: firemud.dev/last-preview-head-sha"
 require_regex "$CRD" "format: date-time"
 require_regex "$CRD" 'pattern: "\^\[0-9a-fA-F\]\{40\}\$"'
 CRD="$CRD" python3 - <<'PY'
@@ -168,10 +173,6 @@ done
 [[ "$(grep -Ec '^                [A-Za-z][A-Za-z0-9]*:' <<<"$spec_block")" == "1" ]] || \
   fail "CR spec is not limited to desiredState"
 
-[[ "$(grep -Fc 'failurePolicy: Fail' "$ADMISSION")" -ge 7 ]] || \
-  fail "all admission policies must use failurePolicy Fail"
-[[ "$(grep -Fc 'validationActions:' "$ADMISSION")" -ge 7 ]] || \
-  fail "all policy bindings must specify validationActions"
 for text_value in \
   firemud-hosted-identity-requester \
   firemud-hosted-identity-controller \
@@ -193,6 +194,8 @@ for text_value in \
   "firemud.dev/retention" \
   firemud-hosted-identity-scope-roles \
   firemud-hosted-identity-scope-rolebindings \
+  certificaterequests \
+  'object.rules.size() == 7' \
   'object.rules.size() == 6' \
   'object.rules.all' \
   'object.subjects.size() == 1' \
@@ -223,11 +226,29 @@ from pathlib import Path
 
 import yaml
 
-policies = {
-    document["metadata"]["name"]: document
-    for document in yaml.safe_load_all(Path(os.environ["ADMISSION"]).read_text(encoding="utf-8"))
+documents = list(
+    yaml.safe_load_all(Path(os.environ["ADMISSION"]).read_text(encoding="utf-8"))
+)
+policy_documents = [
+    document
+    for document in documents
     if isinstance(document, dict) and document.get("kind") == "ValidatingAdmissionPolicy"
-}
+]
+binding_documents = [
+    document
+    for document in documents
+    if isinstance(document, dict)
+    and document.get("kind") == "ValidatingAdmissionPolicyBinding"
+]
+assert len(policy_documents) >= 7
+assert all(policy.get("spec", {}).get("failurePolicy") == "Fail" for policy in policy_documents)
+assert len(binding_documents) >= 7
+assert all(
+    binding.get("spec", {}).get("validationActions") == ["Deny"]
+    for binding in binding_documents
+)
+policies = {document["metadata"]["name"]: document for document in policy_documents}
+assert len(policies) == len(policy_documents)
 break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
 callers = {
     "firemud-hosted-identity-main": "firemud-hosted-identity-requester",
@@ -345,7 +366,7 @@ assert requester_finalizers_accepted("CREATE", absent_finalizers)
 assert requester_finalizers_accepted("CREATE", {"finalizers": []})
 assert not requester_finalizers_accepted("CREATE", present_finalizer)
 
-optional_metadata_fields = ("labels", "annotations", "ownerReferences")
+optional_metadata_fields = ("labels", "annotations", "ownerReferences", "finalizers")
 
 
 def optional_metadata_unchanged(new_metadata, old_metadata):
@@ -362,7 +383,7 @@ assert optional_metadata_unchanged(
     absent_optional_metadata.copy(),
 )
 for field in optional_metadata_fields:
-    present_value = [] if field == "ownerReferences" else {}
+    present_value = [] if field in ("ownerReferences", "finalizers") else {}
     with_field = {**absent_optional_metadata, field: present_value}
     assert not optional_metadata_unchanged(with_field, absent_optional_metadata)
     assert not optional_metadata_unchanged(absent_optional_metadata, with_field)
@@ -383,7 +404,10 @@ assert not optional_metadata_unchanged(
 role_expression = policies["firemud-hosted-identity-scope-roles"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in role_expression
 assert "object.metadata.labels.size() == 6" in role_expression
+assert "object.rules.size() == 7" in role_expression
 assert "object.rules.size() == 6" in role_expression
+assert "r.resources == ['certificaterequests']" in role_expression
+assert "r.verbs == ['list']" in role_expression
 binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
 assert "object.metadata.labels.size() == 5" in binding_expression
@@ -395,6 +419,12 @@ assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression
 assert "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
+for field in optional_metadata_fields:
+    assert f"has(object.metadata.{field}) == has(oldObject.metadata.{field})" in namespace_expression
+    assert (
+        f"(!has(object.metadata.{field}) || "
+        f"object.metadata.{field} == oldObject.metadata.{field})"
+    ) in namespace_expression
 secret_policy = policies["firemud-hosted-identity-secret-boundary"]
 secret_match = secret_policy["spec"]["matchConditions"][0]["expression"]
 normalized_secret_match = " ".join(secret_match.split())
@@ -600,6 +630,17 @@ import yaml
 policy = yaml.safe_load(Path(os.environ["NETWORKPOLICY"]).read_text(encoding="utf-8"))
 assert policy["spec"]["policyTypes"] == ["Ingress", "Egress"]
 assert policy["spec"]["ingress"] == []
+telnet_rules = [
+    rule
+    for rule in policy["spec"]["egress"]
+    if rule.get("ports")
+    == [{"protocol": "TCP", "port": 32000, "endPort": 32016}]
+]
+assert len(telnet_rules) == 1, "controller Telnet NodePort egress rule is missing"
+assert telnet_rules[0]["to"] == [
+    {"ipBlock": {"cidr": "0.0.0.0/0", "except": ["169.254.0.0/16"]}},
+    {"ipBlock": {"cidr": "::/0", "except": ["fe80::/10"]}},
+], "controller Telnet NodePort egress must exclude IPv4 and IPv6 link-local ranges"
 grpc_targets = [
     target
     for rule in policy["spec"]["egress"]
@@ -924,6 +965,7 @@ done
 # Untrusted Service and Ingress shape errors must remain deliberate validator
 # rejections rather than Python attribute/index tracebacks.
 python3 - "$ARTIFACT_VALIDATOR" <<'PY'
+import copy
 import importlib.util
 import sys
 import tempfile
@@ -948,8 +990,104 @@ def assert_rejected(call, expected):
         raise AssertionError(f"validator accepted malformed artifact: {expected}")
 
 
+internal_policies = {
+    name: {"spec": copy.deepcopy(spec)}
+    for name, spec in validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
+}
+validator._validate_internal_network_policies(internal_policies)
+
+unsafe_internal_policy_cases = []
+widened_selector = copy.deepcopy(internal_policies)
+widened_selector["internal-services"]["spec"]["podSelector"]["matchExpressions"][0][
+    "values"
+].append("spring-cloud-gateway")
+unsafe_internal_policy_cases.append(("internal-services", widened_selector))
+
+widened_destination = copy.deepcopy(internal_policies)
+widened_destination["internal-services-egress"]["spec"]["egress"][2]["to"].append(
+    {"ipBlock": {"cidr": "10.0.0.0/8"}}
+)
+unsafe_internal_policy_cases.append(
+    ("internal-services-egress", widened_destination)
+)
+
+widened_port = copy.deepcopy(internal_policies)
+widened_port["internal-services"]["spec"]["ingress"][0]["ports"].append(
+    {"protocol": "TCP", "port": 8443}
+)
+unsafe_internal_policy_cases.append(("internal-services", widened_port))
+
+widened_rule = copy.deepcopy(internal_policies)
+widened_rule["internal-services-egress"]["spec"]["egress"].append(
+    {"to": [{"podSelector": {}}]}
+)
+unsafe_internal_policy_cases.append(("internal-services-egress", widened_rule))
+
+for policy_name, policies in unsafe_internal_policy_cases:
+    assert_rejected(
+        lambda policies=policies: validator._validate_internal_network_policies(
+            policies
+        ),
+        f"NetworkPolicy/{policy_name} has an unsafe spec",
+    )
+
+
 with tempfile.TemporaryDirectory() as directory:
     temp_dir = Path(directory)
+    for name, expected_spec in validator.EXPECTED_SERVICE_SPECS.items():
+        service = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": name, "namespace": "pr-42"},
+            "spec": copy.deepcopy(expected_spec),
+        }
+        validator.validate_services([service])
+
+        service["spec"]["externalIPs"] = ["203.0.113.42"]
+        assert_rejected(
+            lambda service=service: validator.validate_services([service]),
+            f"Service/{name} has an unsafe spec",
+        )
+
+    tcp_proxy = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service", "namespace": "pr-42"},
+        "spec": copy.deepcopy(
+            validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
+        ),
+    }
+    for field, value in (
+        ("allocateLoadBalancerNodePorts", True),
+        ("externalTrafficPolicy", "Local"),
+        ("healthCheckNodePort", 32001),
+        ("internalTrafficPolicy", "Local"),
+        ("sessionAffinity", "ClientIP"),
+    ):
+        unsafe_service = copy.deepcopy(tcp_proxy)
+        unsafe_service["spec"][field] = value
+        assert_rejected(
+            lambda unsafe_service=unsafe_service: validator.validate_services(
+                [unsafe_service]
+            ),
+            "Service/tcp-proxy-service has an unsafe spec",
+        )
+
+    tcp_source = temp_dir / "tcp-proxy-service.yaml"
+    tcp_output = temp_dir / "tcp-proxy-service-with-port.yaml"
+    tcp_source.write_text(yaml.safe_dump(tcp_proxy), encoding="utf-8")
+    validator.inject_telnet_port(tcp_source, tcp_output, 32000)
+    injected = yaml.safe_load(tcp_output.read_text(encoding="utf-8"))
+    assert injected["spec"]["ports"] == [
+        {
+            "name": "tcp-2323",
+            "nodePort": 32000,
+            "port": 2323,
+            "protocol": "TCP",
+            "targetPort": 2323,
+        }
+    ]
+
     for index, malformed_spec in enumerate((None, [], "not-a-spec")):
         service = {
             "apiVersion": "v1",

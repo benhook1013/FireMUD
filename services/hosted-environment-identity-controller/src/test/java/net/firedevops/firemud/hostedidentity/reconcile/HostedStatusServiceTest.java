@@ -19,14 +19,18 @@ class HostedStatusServiceTest {
   void runtimeNamespaceRecreationInvalidatesPreviouslyReadyTuple() {
     RuntimeProfile previous = new RuntimeProfile();
     previous.setRuntimeNamespaceUid("uid-before");
+    previous.setRequestedHeadSha("head-before");
     previous.setDeployedHeadSha("head-before");
-    var current = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32002, true);
+    var current =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid-after", "head-after", "head-after", 32002, true);
 
     assertFalse(HostedStatusService.profileMatches(previous, current));
     assertTrue(
         HostedStatusService.profileMatches(
             previous,
-            new RuntimeProfileService.RuntimeProfile("uid-before", "head-before", 32002, true)));
+            new RuntimeProfileService.RuntimeProfile(
+                "uid-before", "head-before", "head-before", 32002, true)));
   }
 
   @Test
@@ -41,13 +45,16 @@ class HostedStatusServiceTest {
     HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
     RuntimeProfile oldProfile = new RuntimeProfile();
     oldProfile.setRuntimeNamespaceUid("uid-before");
+    oldProfile.setRequestedHeadSha("head-before");
     oldProfile.setDeployedHeadSha("head-before");
     oldStatus.setProfile(oldProfile);
     resource.setStatus(oldStatus);
     var service =
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
 
-    var changed = new RuntimeProfileService.RuntimeProfile("uid-after", "head-after", 32002, true);
+    var changed =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid-after", "head-after", "head-after", 32002, true);
     service.status(
         resource,
         HostedEnvironmentIdentityStatus.Phase.Ready,
@@ -76,6 +83,7 @@ class HostedStatusServiceTest {
     HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
     RuntimeProfile oldProfile = new RuntimeProfile();
     oldProfile.setRuntimeNamespaceUid("uid-recorded");
+    oldProfile.setRequestedHeadSha("head-recorded");
     oldProfile.setDeployedHeadSha("head-recorded");
     oldProfile.setTelnetPort(32007);
     oldStatus.setProfile(oldProfile);
@@ -94,6 +102,7 @@ class HostedStatusServiceTest {
         null,
         null);
     assertEquals("uid-recorded", resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
     assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
     assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
 
@@ -108,6 +117,7 @@ class HostedStatusServiceTest {
         null,
         null);
     assertEquals(null, resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals(null, resource.getStatus().getProfile().getRequestedHeadSha());
     assertEquals(null, resource.getStatus().getProfile().getDeployedHeadSha());
     assertEquals(null, resource.getStatus().getProfile().getTelnetPort());
   }
@@ -202,7 +212,9 @@ class HostedStatusServiceTest {
             .build());
     var service =
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
-    var profile = new RuntimeProfileService.RuntimeProfile("uid", "a".repeat(40), 32001, true);
+    var profile =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32001, true);
     var role = new HostedEnvironmentIdentityStatus.RoleStatus();
     role.setRevision("sha256:" + "b".repeat(64));
 
@@ -240,6 +252,58 @@ class HostedStatusServiceTest {
   }
 
   @Test
+  void readyRequiresDeployedHeadToMatchTheRequestedHead() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("dev-demo")
+            .withNamespace("firemud-system")
+            .withGeneration(11L)
+            .build());
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    var profile =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "b".repeat(40), 32016, true);
+    var role = new HostedEnvironmentIdentityStatus.RoleStatus();
+    role.setRevision("sha256:" + "c".repeat(64));
+
+    resource.setStatus(
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Verifying,
+            "RuntimeDeploymentPending",
+            "waiting",
+            false,
+            profile,
+            role,
+            role,
+            role,
+            role,
+            role));
+    resource.setStatus(
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Ready,
+            "Reconciled",
+            "served",
+            true,
+            profile,
+            role,
+            role,
+            role,
+            role,
+            role));
+
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, resource.getStatus().getPhase());
+    assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());
+    assertEquals(
+        "RuntimeDeploymentPending", resource.getStatus().getConditions().get(0).getReason());
+    assertEquals("a".repeat(40), resource.getStatus().getProfile().getRequestedHeadSha());
+    assertEquals("b".repeat(40), resource.getStatus().getProfile().getDeployedHeadSha());
+  }
+
+  @Test
   void statusDtoDefensivelyCopiesNestedJacksonAndKubernetesState() {
     HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
     HostedCondition condition = new HostedCondition("Ready", "False", "Pending", "pending");
@@ -248,6 +312,7 @@ class HostedStatusServiceTest {
     role.setRevision("sha256:" + "a".repeat(64));
     RuntimeProfile profile = new RuntimeProfile();
     profile.setRuntimeNamespaceUid("uid-before");
+    profile.setRequestedHeadSha("head-before");
     status.setConditions(java.util.List.of(condition));
     status.setGatewayInternalWs(role);
     status.setProfile(profile);
@@ -255,15 +320,18 @@ class HostedStatusServiceTest {
     condition.setReason("mutated-input");
     role.setRevision("mutated-input");
     profile.setRuntimeNamespaceUid("mutated-input");
+    profile.setRequestedHeadSha("mutated-input");
     HostedCondition returnedCondition = status.getConditions().get(0);
     HostedEnvironmentIdentityStatus.RoleStatus returnedRole = status.getGatewayInternalWs();
     RuntimeProfile returnedProfile = status.getProfile();
     returnedCondition.setReason("mutated-output");
     returnedRole.setRevision("mutated-output");
     returnedProfile.setRuntimeNamespaceUid("mutated-output");
+    returnedProfile.setRequestedHeadSha("mutated-output");
 
     assertEquals("Pending", status.getConditions().get(0).getReason());
     assertEquals("sha256:" + "a".repeat(64), status.getGatewayInternalWs().getRevision());
     assertEquals("uid-before", status.getProfile().getRuntimeNamespaceUid());
+    assertEquals("head-before", status.getProfile().getRequestedHeadSha());
   }
 }

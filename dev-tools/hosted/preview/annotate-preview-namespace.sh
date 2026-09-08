@@ -15,7 +15,7 @@ allocation_timestamp="$6"
 sync_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 kubectl annotate namespace "$namespace" \
-  "firemud.dev/last-preview-head-sha=${head_sha}" \
+  "firemud.dev/requested-preview-head-sha=${head_sha}" \
   "firemud.dev/last-preview-image-tag=${image_tag}" \
   "firemud.dev/last-preview-telnet-port=${telnet_port}" \
   "firemud.dev/preview-allocated-at=${allocation_timestamp}" \

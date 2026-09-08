@@ -6,16 +6,18 @@ on:
     types: [completed]
 
 permissions:
-  actions: read
-  contents: read
-  issues: read
-  pull-requests: read
+  actions: read # Inspect the completed source workflow and its artifacts.
+  contents: read # Check out the trusted default-branch workflow implementation.
 
 jobs:
   validate-target:
     name: Validate Trusted Preview Target
     if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.name == 'PR Preview Environment' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read # Inspect the completed source workflow and its artifacts.
+      contents: read # Check out the trusted default-branch validation implementation.
+      pull-requests: read # Read immutable pull-request target metadata.
     outputs:
       action: ${{ steps.target.outputs.action }}
       pr_number: ${{ steps.target.outputs.pr_number }}
@@ -185,10 +187,10 @@ jobs:
       cancel-in-progress: false
       queue: max
     permissions:
-      actions: read
-      contents: read
-      packages: read
-      pull-requests: read
+      actions: read # Download the validated source workflow artifact.
+      contents: read # Check out the trusted default-branch deployment implementation.
+      packages: read # Pull the trusted runtime images from GHCR.
+      pull-requests: read # Revalidate the current pull-request target before deployment.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -432,12 +434,27 @@ jobs:
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Apply validated PR runtime artifact
+        id: deploy-runtime-artifact
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
         run: |
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
+
+      - name: Record exact deployed preview head
+        if: ${{ steps.deploy-runtime-artifact.outcome == 'success' }}
+        env:
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+            "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
+            --overwrite >/dev/null
 
       - name: Wait for exact controller identity readiness
         run: |
@@ -486,9 +503,9 @@ jobs:
       cancel-in-progress: false
       queue: max
     permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+      contents: read # Check out the trusted default-branch verification implementation.
+      pull-requests: read # Revalidate the pull-request state and exact head before publication.
+      issues: write # GitHub's issue-comment API owns pull-request comments.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -606,8 +623,9 @@ jobs:
       cancel-in-progress: false
       queue: max
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Check out the trusted default-branch cleanup implementation.
+      pull-requests: read # Revalidate the closed pull request before runtime deletion.
+      issues: write # Publish the required closed-pull-request removal state.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -684,8 +702,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Check out the trusted default-branch retirement implementation.
+      pull-requests: read # Revalidate the closed pull request before identity retirement.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

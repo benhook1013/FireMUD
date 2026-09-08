@@ -109,6 +109,11 @@ public class HostedIdentityScopeService {
                     List.of("list", "watch")),
                 rule(
                     List.of("cert-manager.io"),
+                    List.of("certificaterequests"),
+                    List.of(),
+                    List.of("list")),
+                rule(
+                    List.of("cert-manager.io"),
                     List.of("certificates"),
                     List.of(
                         plan.ingressCertificateName(),
