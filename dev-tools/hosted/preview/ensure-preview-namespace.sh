@@ -13,4 +13,7 @@ kubectl get namespace "$namespace" >/dev/null 2>&1 || kubectl create namespace "
 kubectl label namespace "$namespace" \
   firemud.dev/preview=true \
   "firemud.dev/pr-number=${pr_number}" \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/audit=restricted \
+  pod-security.kubernetes.io/warn=restricted \
   --overwrite >/dev/null

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONTRACT_TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$CONTRACT_TEMP_DIR"' EXIT
 
 assert_job_condition() {
   local workflow="$1"
@@ -34,6 +36,48 @@ assert_job_contains() {
   ' "$path"; then
     echo "$workflow job $job must contain: $expected" >&2
     exit 1
+  fi
+}
+
+assert_step_contains() {
+  local workflow="$1"
+  local job="$2"
+  local step="$3"
+  local expected="$4"
+  local path="${5:-$ROOT_DIR/.github/workflows/$workflow}"
+
+  if ! awk -v job="$job" -v step="$step" -v expected="$expected" '
+    $0 == "  " job ":" { in_job = 1; found_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && $0 == "      - name: " step { in_step = 1; found_step = 1; next }
+    in_step && /^      - / { exit }
+    in_step && index($0, expected) { matched = 1 }
+    END { exit !(found_job && found_step && matched) }
+  ' "$path"; then
+    echo "$workflow job $job step $step must contain: $expected" >&2
+    exit 1
+  fi
+}
+
+assert_step_immediately_followed_by() {
+  local workflow="$1"
+  local job="$2"
+  local step="$3"
+  local following_step="$4"
+  local path="${5:-$ROOT_DIR/.github/workflows/$workflow}"
+
+  if ! awk -v job="$job" -v step="$step" -v following_step="$following_step" '
+    $0 == "  " job ":" { in_job = 1; found_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit }
+    in_job && $0 == "      - name: " step { in_step = 1; found_step = 1; next }
+    in_step && /^      - / {
+      matched = ($0 == "      - name: " following_step)
+      exit
+    }
+    END { exit !(found_job && found_step && matched) }
+  ' "$path"; then
+    echo "$workflow job $job step $step must be immediately followed by: $following_step" >&2
+    return 1
   fi
 }
 
@@ -256,6 +300,7 @@ image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 preview_janitor_path="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+hosted_identity_workflow_path="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
 preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
 
@@ -337,18 +382,146 @@ require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying w
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! publisher_payload="$('
-if grep -Eq '^concurrency:' "$preview_path"; then
-  echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
+# shellcheck disable=SC2016 # Assert the literal PR-number workflow expression.
+assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event.pull_request.number }}'
+assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+# Pause removal stays in the untrusted render-only workflow: removing the
+# exact pause label must produce a fresh eligible render that the trusted
+# workflow can consume, without giving the PR workflow lifecycle credentials.
+require_contains "$preview_path" '      - unlabeled'
+assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:priority'"
+assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:paused'"
+assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'"
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+assert_job_contains preview.yml preview-plan 'EVENT_ACTION: ${{ github.event.action }}'
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+assert_job_contains preview.yml preview-plan 'EVENT_LABEL_NAME: ${{ github.event.label.name }}'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+assert_job_contains preview.yml preview-plan 'case "$EVENT_ACTION" in'
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+assert_job_contains preview.yml preview-plan 'case "$EVENT_LABEL_NAME" in'
+# shellcheck disable=SC2016 # Assert the literal PR-number workflow expression.
+assert_job_contains preview.yml preview-deploy 'group: preview-render-${{ github.event.pull_request.number }}'
+assert_job_contains preview.yml preview-deploy 'cancel-in-progress: true'
+require_contains "$preview_path" 'retention-days: 7'
+require_contains "$preview_path" 'PR_LABELS_JSON:'
+# shellcheck disable=SC2016 # Assert literal label transport in workflow source.
+require_contains "$preview_path" '--labels-json "$PR_LABELS_JSON"'
+assert_job_contains preview.yml preview-deploy 'Revalidate preview target before render'
+# shellcheck disable=SC2016 # Assert the immutable head bound to the render revalidation.
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  'EXPECTED_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}'
+# shellcheck disable=SC2016 # Assert the shared revalidation arguments and input transport.
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  '--expected-repository "$GITHUB_REPOSITORY"'
+# shellcheck disable=SC2016 # Assert the shared revalidation arguments and input transport.
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  '--expected-head-sha "$EXPECTED_HEAD_SHA" <<<"$pull_request_json"'
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  '--revalidate-deploy'
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  'current pull request metadata is unavailable'
+# shellcheck disable=SC2016 # Assert the fail-closed shared-authority fallback.
+assert_step_contains preview.yml preview-deploy 'Revalidate preview target before render' \
+  '${refusal_reason:-preview eligibility evaluation failed}'
+assert_step_immediately_followed_by preview.yml preview-deploy \
+  'Revalidate preview target before render' \
+  'Render chart without hosted credentials'
+if [[ "$(grep -Fc -- '--revalidate-deploy' "$preview_path")" -ne 1 ]]; then
+  echo "Untrusted preview renderer must use one centralized pre-render revalidation" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}"
-assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'group: preview-allocation-lifecycle'
-  assert_job_contains preview.yml "$job" 'cancel-in-progress: false'
-  assert_job_contains preview.yml "$job" 'queue: max'
-  assert_job_contains preview.yml "$job" 'persist-credentials: false'
+allocator_path="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+revalidation_helper_path="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+# shellcheck disable=SC2016 # Assert the allocator's fail-closed live-target gate.
+require_contains "$allocator_path" 'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"'
+require_contains "$revalidation_helper_path" '--revalidate-deploy'
+# shellcheck disable=SC2016 # Assert exact repository and head binding in the shared helper.
+require_contains "$revalidation_helper_path" '--expected-repository "$GITHUB_REPOSITORY"'
+# shellcheck disable=SC2016 # Assert exact repository and head binding in the shared helper.
+require_contains "$revalidation_helper_path" '--expected-head-sha "$expected_head_sha" <<<"$pull_request_json"'
+require_contains "$revalidation_helper_path" 'current pull request metadata is unavailable'
+# shellcheck disable=SC2016 # Assert the helper fails closed when eligibility emits no detail.
+require_contains "$revalidation_helper_path" '${refusal_reason:-preview eligibility evaluation failed}'
+assert_job_excludes preview.yml preview-deploy 'preview-access'
+assert_job_excludes preview.yml preview-deploy 'helm upgrade --install'
+if grep -Fq 'def labels_valid:' "$preview_path"; then
+  echo "Preview workflow must use the centralized label authority" >&2
+  exit 1
+fi
+if grep -Eq '^  preview-destroy:' "$preview_path"; then
+  echo "PR-controlled preview workflow must not keep a no-op closed-preview cleanup job" >&2
+  exit 1
+fi
+# Privileged lifecycle checks belong to the trusted default-branch workflow, not
+# to the PR-controlled renderer. Every mutation boundary must call the shared
+# fail-closed revalidation helper against current PR metadata.
+for revalidation_step in \
+  'Revalidate open PR before privileged deployment' \
+  'Revalidate unpaused PR before Active request' \
+  'Final revalidate open PR before server dry-run and apply'; do
+  # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
+  assert_step_contains hosted-identity-request.yml deploy-runtime "$revalidation_step" \
+    'EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}'
+  assert_step_contains hosted-identity-request.yml deploy-runtime "$revalidation_step" \
+    'revalidate-preview-deploy.sh'
+  # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
+  assert_step_contains hosted-identity-request.yml deploy-runtime "$revalidation_step" \
+    '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 done
+
+if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)|any\(\.labels\[\]\?; \.name == "preview:paused"\)' "$hosted_identity_workflow_path"; then
+  echo "Trusted hosted workflow must use the centralized label authority" >&2
+  exit 1
+fi
+# The initial target check and both cleanup freshness gates inspect labels;
+# all three deploy mutation gates delegate their complete predicate to the
+# shared helper without retaining local predicate copies.
+# shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
+test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$hosted_identity_workflow_path")" -eq 3
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$hosted_identity_workflow_path")" -eq 3
+test "$(grep -Fc -- '--revalidate-deploy' "$hosted_identity_workflow_path")" -eq 0
+test "$(grep -Fc -- '--operation deploy' "$hosted_identity_workflow_path")" -eq 0
+# shellcheck disable=SC2016 # Assert centralized label inspection in workflow source.
+assert_job_contains hosted-identity-request.yml validate-target \
+  '--inspect-labels --labels-json "$labels_json"'
+assert_job_contains hosted-identity-request.yml validate-target \
+  'PR label metadata is missing or malformed'
+assert_job_contains hosted-identity-request.yml validate-target \
+  'PR is labelled preview:paused'
+# shellcheck disable=SC2016 # Assert the literal allocated Telnet port workflow argument.
+require_contains "$hosted_identity_workflow_path" '--expected-hosted-telnet-node-port "$TELNET_PORT"'
+assert_job_contains hosted-identity-request.yml deploy-runtime 'Enforce priority-aware preview capacity'
+require_ordered_sequence "$hosted_identity_workflow_path" \
+  '      - name: Revalidate open PR before privileged deployment' \
+  '      - name: Enforce priority-aware preview capacity' \
+  '      - name: Revalidate unpaused PR before Active request' \
+  '      - name: Validate trusted hosted bridge render' \
+  '      - name: Final revalidate open PR before server dry-run and apply' \
+  '      - name: Apply validated PR runtime artifact' \
+  '      - name: Wait for exact controller identity readiness' \
+  '      - name: Wait for runtime rollouts before operator validation' \
+  '      - name: Validate controller-projected preview identity'
+assert_step_immediately_followed_by hosted-identity-request.yml deploy-runtime \
+  'Final revalidate open PR before server dry-run and apply' \
+  'Apply validated PR runtime artifact'
+assert_step_contains hosted-identity-request.yml deploy-runtime \
+  'Apply validated PR runtime artifact' 'kubectl apply --dry-run=server'
+assert_step_contains hosted-identity-request.yml deploy-runtime \
+  'Apply validated PR runtime artifact' 'kubectl apply --server-side'
+mutated_hosted_identity_path="$CONTRACT_TEMP_DIR/mutated-hosted-identity-request.yml"
+awk '
+  $0 == "      - name: Apply validated PR runtime artifact" {
+    print "      - uses: actions/checkout@0000000000000000000000000000000000000000"
+  }
+  { print }
+' "$hosted_identity_workflow_path" > "$mutated_hosted_identity_path"
+if assert_step_immediately_followed_by hosted-identity-request.yml deploy-runtime \
+  'Final revalidate open PR before server dry-run and apply' \
+  'Apply validated PR runtime artifact' "$mutated_hosted_identity_path"; then
+  echo "trusted apply adjacency contract accepted an unnamed intervening step" >&2
+  exit 1
+fi
 require_contains "$preview_janitor_path" 'group: preview-allocation-lifecycle'
 require_contains "$preview_janitor_path" 'cancel-in-progress: false'
 require_contains "$preview_janitor_path" 'queue: max'
@@ -356,22 +529,19 @@ if grep -Eq '^concurrency:' "$preview_janitor_path"; then
   echo "Preview janitor must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
-assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
-assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'
-assert_job_excludes preview.yml preview-plan 'write-preview-summary.sh'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'publish-preview-comment.js'
-  assert_job_contains preview.yml "$job" 'publishPreviewComment({'
-done
-assert_job_contains preview.yml preview-deploy 'mode: "deploying"'
-assert_job_contains preview.yml preview-deploy 'markerPolicy: "preserve-reclaimed"'
-assert_job_contains preview.yml preview-deploy 'statePolicy: "expected-open"'
-assert_job_contains preview.yml preview-destroy 'mode: "cleanup"'
-assert_job_contains preview.yml preview-destroy 'markerPolicy: "replace"'
-assert_job_contains preview.yml preview-destroy 'statePolicy ='
-assert_job_contains preview.yml preview-destroy '"expected-closed"'
-assert_job_contains preview.yml preview-destroy '"manual-any"'
+assert_job_excludes preview.yml preview-plan 'secrets.'
+assert_job_excludes preview.yml preview-deploy 'secrets.'
+require_contains "$preview_path" 'validate-preview-artifact.py'
+# shellcheck disable=SC2016 # Assert literal sanitizer variables in workflow source.
+require_contains "$preview_path" 'sanitize "$rendered" "$sanitized"'
+require_contains "$preview_path" 'actions/upload-artifact@'
+require_contains "$preview_path" 'PR_LABELS_JSON:'
+# shellcheck disable=SC2016 # Assert literal label transport in workflow source.
+require_contains "$preview_path" '--labels-json "$PR_LABELS_JSON"'
+if grep -Eq 'PREVIEW_(RUNTIME|KUBECONFIG)|HOSTED_IDENTITY_REQUESTER_KUBECONFIG|ensure-grpc-tls-secret|delete-hosted-namespace' "$preview_path"; then
+  echo "PR-controlled preview render must not receive hosted credentials or lifecycle helpers" >&2
+  exit 1
+fi
 for duplicate in \
   'const isBotAuthored' \
   'const isWorkflowComment' \
@@ -395,35 +565,104 @@ for helper in \
   'module.exports = { publishPreviewComment };'; do
   require_contains "$preview_comment_publisher_path" "$helper"
 done
-if [[ "$(grep -Fc 'publish-preview-comment.js' "$preview_path")" -ne 4 ]]; then
-  echo "Preview workflow must load the canonical publisher from all four comment steps" >&2
-  exit 1
-fi
-assert_job_contains preview.yml preview-destroy 'Revalidate preview cleanup target before deletion'
-assert_job_contains preview.yml preview-destroy 'const requiresClosedState ='
-assert_job_contains preview.yml preview-destroy 'context.eventName === "pull_request" && context.payload.action === "closed"'
-assert_job_contains preview.yml preview-destroy '(requiresClosedState && currentPullRequest.state !== "closed") ||'
-assert_job_contains preview.yml preview-destroy 'currentPullRequest.head?.sha !== expectedHeadSha'
-# shellcheck disable=SC2016 # This assertion intentionally matches literal JavaScript template syntax.
-assert_job_contains preview.yml preview-destroy 'expected ${requiresClosedState ? "closed" : "any"}/${expectedHeadSha}'
-assert_job_contains preview.yml preview-destroy 'core.setFailed('
-require_ordered_sequence "$preview_path" \
-  'Revalidate preview cleanup target before deletion' \
-  'context.eventName === "pull_request" && context.payload.action === "closed"' \
-  '(requiresClosedState && currentPullRequest.state !== "closed") ||' \
-  'currentPullRequest.head?.sha !== expectedHeadSha' \
-  'Delete preview namespace and release'
-for job in preview-deploy preview-destroy; do
-  assert_job_contains preview.yml "$job" 'always() && !cancelled()'
+require_contains "$hosted_identity_workflow_path" 'workflow_run:'
+require_contains "$hosted_identity_workflow_path" 'pull_request_target:'
+# Pause addition and removal produce successful render-only workflow runs. The
+# trusted consumer re-reads current labels, so a queued stale pause run cannot
+# delete a resumed preview and an unpaused run deploys only its exact artifact.
+assert_job_contains hosted-identity-request.yml validate-target 'preview:paused'
+assert_job_contains hosted-identity-request.yml validate-target 'ACTION=inspect'
+assert_job_contains hosted-identity-request.yml validate-target 'ACTION=destroy'
+assert_job_contains hosted-identity-request.yml validate-target 'DESTROY_REASON=paused'
+assert_job_contains hosted-identity-request.yml validate-target 'DESTROY_REASON=closed'
+assert_job_contains hosted-identity-request.yml validate-target 'emit_no_action'
+# shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
+assert_job_contains hosted-identity-request.yml validate-target \
+  'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"'
+# shellcheck disable=SC2016 # Assert the literal exact-artifact refusal diagnostic.
+assert_job_contains hosted-identity-request.yml validate-target \
+  'without exactly one current ${expected_artifact_name} artifact'
+# Both destructive mutation boundaries must re-read the exact head and current
+# pause state so queued cleanup cannot delete or retire a resumed preview.
+assert_job_contains hosted-identity-request.yml destroy-runtime \
+  'Revalidate preview cleanup target before runtime deletion'
+assert_job_contains hosted-identity-request.yml retire-identity \
+  'Revalidate preview cleanup target before identity retirement'
+# shellcheck disable=SC2016 # Assert the literal expected-head workflow expression.
+assert_step_contains hosted-identity-request.yml destroy-runtime \
+  'Revalidate preview cleanup target before runtime deletion' \
+  'EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}'
+# shellcheck disable=SC2016 # Assert the literal destroy-reason workflow expression.
+assert_step_contains hosted-identity-request.yml destroy-runtime \
+  'Revalidate preview cleanup target before runtime deletion' \
+  'DESTROY_REASON: ${{ needs.validate-target.outputs.destroy_reason }}'
+for cleanup_gate in \
+  'destroy-runtime|Revalidate preview cleanup target before runtime deletion' \
+  'retire-identity|Revalidate preview cleanup target before identity retirement'; do
+  cleanup_job="${cleanup_gate%%|*}"
+  cleanup_step="${cleanup_gate#*|}"
+  # shellcheck disable=SC2016 # Assert centralized label inspection in each trusted cleanup gate.
+  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
+    '--inspect-labels --labels-json "$labels_json"'
+  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
+    'label metadata is malformed'
+  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
+    'preview:paused is no longer present'
+  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
+    'pull request is no longer closed'
+  assert_job_contains hosted-identity-request.yml "$cleanup_job" \
+    'group: preview-allocation-lifecycle'
+  assert_job_contains hosted-identity-request.yml "$cleanup_job" 'cancel-in-progress: false'
+  assert_job_contains hosted-identity-request.yml "$cleanup_job" 'queue: max'
 done
-if grep -Fq 'Clear previous preview summary comments' "$preview_path"; then
-  echo "Preview workflow must update the canonical summary instead of clearing it" >&2
+assert_step_immediately_followed_by hosted-identity-request.yml destroy-runtime \
+  'Revalidate preview cleanup target before runtime deletion' \
+  'Delete runtime and wait for NotFound'
+assert_step_immediately_followed_by hosted-identity-request.yml retire-identity \
+  'Revalidate preview cleanup target before identity retirement' \
+  'Apply canonical Retired request'
+# shellcheck disable=SC2016 # Assert the literal GitHub default-branch expression.
+require_contains "$hosted_identity_workflow_path" 'ref: ${{ github.event.repository.default_branch }}'
+require_contains "$hosted_identity_workflow_path" 'apiVersion: platform.firemud.dev/v1alpha1'
+require_contains "$hosted_identity_workflow_path" 'kind: HostedEnvironmentIdentity'
+require_contains "$hosted_identity_workflow_path" 'namespace: firemud-system'
+require_contains "$hosted_identity_workflow_path" 'desiredState: Active'
+require_contains "$hosted_identity_workflow_path" 'desiredState: Retired'
+# shellcheck disable=SC2016 # Assert the literal identity variable passed to retirement.
+require_contains "$hosted_identity_workflow_path" '--retired "$IDENTITY_NAME"'
+# shellcheck disable=SC2016 # Assert the literal identity variable passed to deletion.
+require_contains "$hosted_identity_workflow_path" 'delete hostedenvironmentidentity "$IDENTITY_NAME"'
+require_contains "$hosted_identity_workflow_path" 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG'
+require_contains "$hosted_identity_workflow_path" 'PREVIEW_RUNTIME_KUBECONFIG'
+assert_job_excludes hosted-identity-request.yml deploy-runtime 'pull-requests: write'
+assert_job_excludes hosted-identity-request.yml deploy-runtime 'issues: write'
+assert_job_contains hosted-identity-request.yml verify-runtime 'pull-requests: write'
+assert_job_contains hosted-identity-request.yml verify-runtime 'issues: write'
+require_contains "$hosted_identity_workflow_path" 'gh api --paginate --slurp'
+require_contains "$hosted_identity_workflow_path" 'preview:paused'
+require_contains "$hosted_identity_workflow_path" 'labels_valid='
+# shellcheck disable=SC2016 # Reject the literal legacy workflow-run query.
+if grep -Fq 'gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs' "$hosted_identity_workflow_path"; then
+  echo "trusted hosted workflow must select render runs without the SIGPIPE-prone gh-api/head pipeline" >&2
   exit 1
 fi
-require_contains "$preview_path" 'PREVIEW_CLEANUP_OUTCOME'
-require_contains "$preview_path" '? "removed"'
-require_contains "$preview_path" 'mode: "deploying"'
-require_contains "$preview_path" 'mode: "cleanup"'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.observedGeneration'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.ingress.revision'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.telnet.revision'
+require_contains "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh" '.status.grpc.revision'
+require_contains "$hosted_identity_workflow_path" 'validate-preview-artifact.py'
+# shellcheck disable=SC2016 # Assert literal sanitized artifact injection variables.
+require_contains "$hosted_identity_workflow_path" 'inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml"'
+require_contains "$hosted_identity_workflow_path" 'prune-stale-preview-namespaces.sh'
+for forbidden in 'ensure-grpc-tls-secret' 'ensure-preview-namespace' 'ensure-dev-demo-identity' 'mint-token'; do
+  if grep -Fq "$forbidden" "$hosted_identity_workflow_path"; then
+    echo "trusted hosted workflow must not call shell identity lifecycle helper: $forbidden" >&2
+    exit 1
+  fi
+done
+for job in deploy-runtime destroy-runtime retire-identity; do
+  assert_job_contains hosted-identity-request.yml "$job" 'persist-credentials: false'
+done
 for mode in deploying target unavailable success cleanup removed reclaimed failure; do
   require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" "  $mode)"
 done
@@ -432,7 +671,7 @@ require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/write-preview-summary.sh" '- TCP: pending'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name}"'
-# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
+# shellcheck disable=SC2016 # Match the literal existing reconciler branch expression.
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
@@ -546,8 +785,21 @@ require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_P
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher deadline.
 require_contains "$image_wait_path" 'local publisher_deadline=$((SECONDS + publisher_timeout_seconds))'
 
-contract_fixture_dir="$(mktemp -d)"
-trap 'rm -rf "$contract_fixture_dir"' EXIT
+contract_fixture_dir="$CONTRACT_TEMP_DIR/fixtures"
+mkdir -p "$contract_fixture_dir"
+cat >"$contract_fixture_dir/unnamed-step-boundary.yml" <<'EOF'
+jobs:
+  preview-deploy:
+    steps:
+      - name: Deploy preview release
+        run: echo "target step without Helm"
+      - run: helm upgrade --install leaked-from-following-step
+EOF
+if (assert_step_contains preview.yml preview-deploy 'Deploy preview release' \
+  'helm upgrade --install' "$contract_fixture_dir/unnamed-step-boundary.yml") 2>/dev/null; then
+  echo "preview step-content contract accepted content from an unnamed following step" >&2
+  exit 1
+fi
 cat >"$contract_fixture_dir/ordered-sequence.txt" <<'EOF'
 prefix first second suffix
 third

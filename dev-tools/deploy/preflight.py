@@ -36,6 +36,7 @@ from observability_contract import (
 USAGE = """Usage:
   preflight.py <staging|production|hobby-self-hosted>
   preflight.py hosted-bridge <render-path> <namespace> <release-name>
+      [--expected-hosted-telnet-node-port <port>]
 
 Environment variables:
   FIREMUD_PREFLIGHT_CONTEXT          Context for applicability (default: operator)
@@ -50,7 +51,9 @@ Environment variables:
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
 
 The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
-Helm apply. Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the render;
+apply. The optional expected port validates a trusted post-render Telnet NodePort
+injection; without it, hosted-controller renders must omit explicit nodePorts.
+Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the candidate manifest;
 operator context also verifies the controller-projected TLS Secret keys.
 """
 
@@ -108,6 +111,7 @@ GATEWAY_WS_SERVER_PATHS = {
 GATEWAY_WS_SERVER_SECRET_ITEM_PATHS = BRIDGE_WS_SECRET_ITEM_PATHS
 GATEWAY_WS_LISTENER_PORT = 8443
 GATEWAY_WS_SERVICE_PORT = 443
+TCP_PROXY_TELNET_SERVICE_PORT = 2323
 GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_CERT_CHAIN_PATH",
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
@@ -4436,8 +4440,14 @@ def validate_gateway_ws_network_policy(
 def validate_hosted_telnet_tls_values(
     documents: list[dict[str, Any]],
     required_identity_mode: str | None = None,
+    expected_hosted_telnet_node_port: int | None = None,
 ) -> list[str]:
-    """Validate the hosted NodePort Telnet direct-TLS binding."""
+    """Validate the hosted NodePort Telnet direct-TLS binding.
+
+    Hosted-controller renders omit explicit nodePorts. A trusted caller may
+    supply the exact post-render allocation to validate the final candidate.
+    """
+
     if required_identity_mode is not None and required_identity_mode not in {
         "standalone",
         "hosted-controller",
@@ -4456,7 +4466,7 @@ def validate_hosted_telnet_tls_values(
         if (document.get("spec") or {}).get("type") == "NodePort"
     ]
     if not nodeport_services:
-        if required_identity_mode is not None:
+        if required_identity_mode is not None or expected_hosted_telnet_node_port is not None:
             issues.append(
                 "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
             )
@@ -4535,40 +4545,41 @@ def validate_hosted_telnet_tls_values(
                 f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"
             )
         identity_mode = required_identity_mode
+    service_ports = (tcp_service.get("spec") or {}).get("ports") or []
     if identity_mode == "hosted-controller":
-        metadata = tcp_service.get("metadata") or {}
-        annotations = metadata.get("annotations") or {}
-        allocated_port = (
-            annotations.get("firemud.dev/allocated-telnet-port")
-            if isinstance(annotations, dict)
-            else None
-        )
-        if not isinstance(allocated_port, str) or not re.fullmatch(
-            r"[1-9][0-9]*", allocated_port
-        ):
-            issues.append(
-                "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
-            )
-        telnet_ports = [
+        explicit_node_port_entries = [
             port
-            for port in ((tcp_service.get("spec") or {}).get("ports") or [])
-            if isinstance(port, dict)
-            and port.get("port") == 2323
-            and port.get("targetPort") == 2323
-            and port.get("protocol", "TCP") == "TCP"
+            for port in service_ports
+            if isinstance(port, dict) and "nodePort" in port
         ]
-        if len(telnet_ports) != 1 or "nodePort" not in telnet_ports[0]:
-            issues.append(
-                "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
-            )
-        elif (
-            isinstance(allocated_port, str)
-            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
-            and telnet_ports[0]["nodePort"] != int(allocated_port)
-        ):
-            issues.append(
-                "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
-            )
+        if expected_hosted_telnet_node_port is None:
+            if explicit_node_port_entries:
+                issues.append(
+                    "hosted-controller TCP Proxy Service must not declare an explicit nodePort"
+                )
+        else:
+            telnet_ports = [
+                port
+                for port in service_ports
+                if isinstance(port, dict)
+                and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
+            ]
+            if len(telnet_ports) != 1:
+                issues.append(
+                    "trusted hosted-controller TCP Proxy Service must contain exactly one Telnet service port"
+                )
+            elif telnet_ports[0].get("nodePort") != expected_hosted_telnet_node_port:
+                issues.append(
+                    "trusted hosted-controller TCP Proxy Telnet nodePort must equal "
+                    f"{expected_hosted_telnet_node_port}"
+                )
+            if any(
+                port.get("port") != TCP_PROXY_TELNET_SERVICE_PORT
+                for port in explicit_node_port_entries
+            ):
+                issues.append(
+                    "trusted hosted-controller TCP Proxy Service must not declare any other explicit nodePorts"
+                )
     certificates = {
         metadata_name(document): document
         for document in documents
@@ -6742,7 +6753,11 @@ def hosted_bridge_expected_bindings(
 
 
 def hosted_bridge_preflight(
-    render_path: Path, namespace: str, release_name: str, context: str
+    render_path: Path,
+    namespace: str,
+    release_name: str,
+    context: str,
+    expected_hosted_telnet_node_port: int | None = None,
 ) -> int:
     try:
         expected = hosted_bridge_expected_bindings(namespace, release_name)
@@ -6762,7 +6777,9 @@ def hosted_bridge_preflight(
             metadata["namespace"] = namespace
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
     telnet_issues = validate_hosted_telnet_tls_values(
-        documents, required_identity_mode="hosted-controller"
+        documents,
+        required_identity_mode="hosted-controller",
+        expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
     )
     issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
     if context == "operator":
@@ -6805,12 +6822,20 @@ def hosted_bridge_preflight(
 
 
 def main() -> int:
-    if len(sys.argv) == 5 and sys.argv[1] == "hosted-bridge":
+    if len(sys.argv) in {5, 7} and sys.argv[1] == "hosted-bridge":
+        expected_hosted_telnet_node_port = None
+        if len(sys.argv) == 7:
+            if sys.argv[5] != "--expected-hosted-telnet-node-port":
+                usage()
+            if not re.fullmatch(r"[1-9][0-9]*", sys.argv[6]):
+                fail("--expected-hosted-telnet-node-port must be a positive integer")
+            expected_hosted_telnet_node_port = int(sys.argv[6])
         return hosted_bridge_preflight(
             Path(sys.argv[2]),
             sys.argv[3],
             sys.argv[4],
             os.environ.get("FIREMUD_PREFLIGHT_CONTEXT", "operator"),
+            expected_hosted_telnet_node_port,
         )
     if len(sys.argv) != 2:
         usage()

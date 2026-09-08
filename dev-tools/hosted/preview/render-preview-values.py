@@ -60,6 +60,7 @@ def main() -> int:
         "__TELNET_PORT__": telnet_port,
         "__IMAGE_TAG__": image_tag,
         "__TLS_SECRET_NAME__": f"{release_name}-tls",
+        "__TELNET_TLS_SECRET_NAME__": f"{release_name}-telnet-tls",
         "__JWT_SIGNING_KEY__": signing_key,
         "__JWKS_JSON__": jwks_json,
         "__SEED_GAME_NAME__": "Preview Demo Game",

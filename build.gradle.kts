@@ -180,7 +180,9 @@ subprojects {
         }
     }
 
-    if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
+    if (projectDir.parentFile.name == "services" &&
+        !name.startsWith("common-") &&
+        name != "hosted-environment-identity-controller") {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
 
@@ -455,6 +457,7 @@ tasks.register("buildDockerImages") {
     dependsOn(
         "buildBaseImage",
         "buildPgDumpCronImage",
+        ":hosted-environment-identity-controller:bootBuildImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",
@@ -467,6 +470,12 @@ tasks.register("buildDockerImages") {
         ":tcp-proxy-service:bootBuildImage",
         ":world-management-service:bootBuildImage"
     )
+}
+
+tasks.register("buildHostedEnvironmentIdentityControllerImage") {
+    group = "build"
+    description = "Builds the Kubernetes hosted-environment identity controller image."
+    dependsOn(":hosted-environment-identity-controller:bootBuildImage")
 }
 
 tasks.register("buildDockerImagesSmoke") {

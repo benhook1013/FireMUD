@@ -3,8 +3,39 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+extract_workflow_step_run() {
+  local workflow="$1"
+  local step_name="$2"
+  local output="$3"
+  local body_type="${4:-run}"
+  python3 - "$workflow" "$step_name" "$output" "$body_type" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for job in workflow["jobs"].values():
+    for step in job.get("steps", []):
+        if step.get("name") == sys.argv[2]:
+            body = (
+                step["run"]
+                if sys.argv[4] == "run"
+                else step.get("with", {}).get("script")
+            )
+            if not isinstance(body, str):
+                raise SystemExit(
+                    f"workflow step {sys.argv[2]} has no {sys.argv[4]} body"
+                )
+            Path(sys.argv[3]).write_text(body, encoding="utf-8")
+            raise SystemExit(0)
+raise SystemExit(f"workflow step not found: {sys.argv[2]}")
+PY
+}
 
 mkdir -p "$TEMP_DIR/bin"
 cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
@@ -68,13 +99,41 @@ cat > "$TEMP_DIR/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 resource=""
+has_jq=false
 for arg in "$@"; do
   if [[ "$arg" == repos/* ]]; then
     resource="$arg"
-    break
+  elif [[ "$arg" == "--jq" ]]; then
+    has_jq=true
   fi
 done
+encode_fake_labels() {
+  local priority="$1"
+  local paused="$2"
+  local labels_valid="$3"
+  local labels_json='[]'
+  if [[ "$labels_valid" != valid ]]; then
+    labels_json='{}'
+  elif [[ "$priority" == true && "$paused" == true ]]; then
+    labels_json='[{"name":"preview:priority"},{"name":"preview:paused"}]'
+  elif [[ "$priority" == true ]]; then
+    labels_json='[{"name":"preview:priority"}]'
+  elif [[ "$paused" == true ]]; then
+    labels_json='[{"name":"preview:paused"}]'
+  fi
+  printf '%s' "$labels_json" | base64 | tr -d '\n'
+}
 case "$resource" in
+  */actions/runs/42)
+    if [[ "$*" == *".path"* ]]; then
+      printf '%s' '.github/workflows/preview.yml'
+    else
+      printf '%s' 900
+    fi
+    ;;
+  */actions/runs/42/artifacts\?per_page=100)
+    printf '%s' '[{"artifacts":[{"name":"preview-render-pr-900-head-900","expired":false}]}]'
+    ;;
   */pulls\?state=*)
     if [[ "${FAKE_PRIORITY_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
@@ -82,19 +141,56 @@ case "$resource" in
     printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
     ;;
   */pulls/900)
+    priority="${FAKE_TARGET_PRIORITY:-true}"
+    paused="${FAKE_TARGET_PAUSED:-false}"
+    labels_valid="${FAKE_TARGET_LABELS_VALID:-valid}"
+    if [[ "$has_jq" != true ]]; then
+      if [[ "${FAKE_TARGET_RAW_QUERY_FAIL:-false}" == true ]]; then
+        exit 1
+      fi
+      labels_json="$(encode_fake_labels "$priority" "$paused" "$labels_valid" | base64 --decode)"
+      jq -cn \
+        --arg state "${FAKE_TARGET_STATE:-open}" \
+        --arg head "$FAKE_TARGET_HEAD" \
+        --arg repository "${FAKE_TARGET_REPOSITORY:-example/FireMUD}" \
+        --arg base "${FAKE_TARGET_BASE_REF:-develop}" \
+        --arg author "${FAKE_TARGET_AUTHOR:-human}" \
+        --argjson labels "$labels_json" \
+        '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
+      exit 0
+    fi
     count=0
     if [[ -f "$FAKE_TARGET_CALLS" ]]; then
       count="$(<"$FAKE_TARGET_CALLS")"
     fi
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_TARGET_CALLS"
-    priority="${FAKE_TARGET_PRIORITY:-true}"
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
-    printf 'open\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$priority"
+    printf 'open\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$(encode_fake_labels "$priority" "$paused" "$labels_valid")"
     ;;
   */pulls/101)
+    if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then
+      exit 1
+    fi
+    if [[ "${FAKE_PRUNE_JQ_FAIL:-false}" == "true" ]]; then
+      jq_query='.'
+      previous=''
+      for arg in "$@"; do
+        if [[ "$previous" == '--jq' ]]; then
+          jq_query="$arg"
+          break
+        fi
+        previous="$arg"
+      done
+      jq -r "$jq_query" <<<'{invalid-json'
+      exit 0
+    fi
+    if [[ -n "${FAKE_PRUNE_METADATA:-}" ]]; then
+      printf '%b' "$FAKE_PRUNE_METADATA"
+      exit 0
+    fi
     count=0
     if [[ -f "$FAKE_PR_101_CALLS" ]]; then
       count="$(<"$FAKE_PR_101_CALLS")"
@@ -102,12 +198,14 @@ case "$resource" in
     count=$((count + 1))
     printf '%s' "$count" > "$FAKE_PR_101_CALLS"
     priority="${FAKE_PR_101_PRIORITY:-false}"
+    paused="${FAKE_PR_101_PAUSED:-false}"
+    labels_valid="${FAKE_PR_101_LABELS_VALID:-valid}"
     if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=true
     fi
-    printf 'open\thead-101\t%s\n' "$priority"
-    ;;
-  */pulls/102) printf 'open\thead-102\t%s\n' "${FAKE_PR_102_PRIORITY:-true}" ;;
+    printf 'open\thead-101\t%s\n' "$(encode_fake_labels "$priority" "$paused" "$labels_valid")"
+  ;;
+  */pulls/102) printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" "${FAKE_PR_102_PAUSED:-false}" valid)" ;;
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
@@ -189,6 +287,12 @@ EOF
 cat > "$TEMP_DIR/eligibility-fail.py" <<'EOF'
 raise SystemExit(1)
 EOF
+cat > "$TEMP_DIR/eligibility-output.py" <<'EOF'
+import os
+import sys
+
+sys.stdout.write(os.environ["FAKE_ELIGIBILITY_OUTPUT"])
+EOF
 chmod +x "$TEMP_DIR/bin/kubectl" "$TEMP_DIR/bin/gh" "$TEMP_DIR/delete" "$TEMP_DIR/publish"
 
 export PATH="$TEMP_DIR/bin:$PATH"
@@ -209,19 +313,34 @@ export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
+priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
+paused_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"preview:paused"}]' | base64 | tr -d '\n')"
+adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
+adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
+invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
   rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
+  export FAKE_TARGET_PAUSED=false
+  export FAKE_TARGET_LABELS_VALID=valid
+  export FAKE_TARGET_RAW_QUERY_FAIL=false
+  export FAKE_TARGET_STATE=open
+  export FAKE_TARGET_REPOSITORY=example/FireMUD
+  export FAKE_TARGET_BASE_REF=develop
+  export FAKE_TARGET_AUTHOR=human
   export FAKE_TARGET_LOSES_PRIORITY=false
   export FAKE_PR_101_PRIORITY=false
+  export FAKE_PR_101_PAUSED=false
+  export FAKE_PR_101_LABELS_VALID=valid
   export FAKE_PR_101_GAINS_PRIORITY=false
   export FAKE_PR_101_OWNER=101
   export FAKE_PR_101_IMAGE='image-101'
   export FAKE_NAMESPACE_JSON_QUERY_FAIL=false
   export FAKE_NAMESPACE_JSON_PARSE_FAIL=false
   export FAKE_PR_102_PRIORITY=true
+  export FAKE_PR_102_PAUSED=false
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_QUERY_FAIL=false
   export FAKE_PR_901_OWNER=''
@@ -234,6 +353,10 @@ reset_case() {
   export FAKE_EXISTING_COMMENT_ID=''
   export FAKE_COMMENT_JSON=''
   export FAKE_PREVIOUS_COMMENT_BODY=''
+  export FAKE_PRUNE_METADATA=''
+  export FAKE_PRUNE_QUERY_FAIL=false
+  export FAKE_PRUNE_JQ_FAIL=false
+  export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
@@ -481,9 +604,12 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
-bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "existing ordinary preview did not yield to an unsatisfied priority PR" >&2
+  exit 1
+fi
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
@@ -577,7 +703,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -585,9 +711,9 @@ fi
 test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
-  '901\thead-901\tother/FireMUD\thuman\tdevelop\topen\n' \
-  '901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\n' \
-  '901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\n'
+  "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n" \
+  "901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -605,13 +731,176 @@ if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
 fi
 
 reset_case
+export FAKE_TARGET_PAUSED=true
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "paused target was allowed to enter preview allocation" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_LABELS_VALID=invalid
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "malformed target labels were treated as eligible" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+for target_contract_case in repository head base author metadata; do
+  reset_case
+  case "$target_contract_case" in
+    repository) export FAKE_TARGET_REPOSITORY=other/FireMUD ;;
+    head) expected_target_head=other-head ;;
+    base) export FAKE_TARGET_BASE_REF=feature/stack ;;
+    author) export FAKE_TARGET_AUTHOR='renovate[bot]' ;;
+    metadata) export FAKE_TARGET_RAW_QUERY_FAIL=true ;;
+  esac
+  if bash "$ALLOCATOR" pr-900 3 900 "${expected_target_head:-$FAKE_TARGET_HEAD}"; then
+    echo "allocator accepted invalid live target ${target_contract_case} metadata" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
+  unset expected_target_head
+done
+
+reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS='901\thead-901\texample/FireMUD\thuman\tdevelop\topen\n'
+# The centralized authority must derive pause state from the transported labels.
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${paused_labels_base64}\n"
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
   exit 1
 fi
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_priority_labels_base64}\n"
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation ignored a priority label alongside quoted and backslashed label data" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_paused_labels_base64}\n"
+bash "$PRUNER" --apply
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+
+for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export "$prune_failure"=true
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after ${prune_failure}" >&2
+    exit 1
+  fi
+done
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA=$'open\tdevelop\thuman\tnot-valid-base64!\n'
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after malformed label transport" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA=$'open\tdevelop\thuman\tmalformed\n'
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after explicit malformed-label metadata" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${invalid_json_labels_base64}\n"
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after decoded label JSON was invalid" >&2
+  exit 1
+fi
+
+for malformed_pr_metadata in \
+  $'open\tdevelop\thuman\n' \
+  "open\tdevelop\thuman\t${priority_labels_base64}\textra\n" \
+  "open\tdevelop\thuman\t${priority_labels_base64}\nclosed\tdevelop\thuman\t${priority_labels_base64}\n"
+do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="$malformed_pr_metadata"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after malformed metadata record framing" >&2
+    exit 1
+  fi
+done
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
+bash "$PRUNER" --apply
+if [[ -e "$FAKE_DELETE_LOG" ]]; then
+  echo "prune deleted a namespace after eligibility evaluation failed" >&2
+  exit 1
+fi
+
+for malformed_eligibility_output in \
+  'eligible=false' \
+  $'eligible=false\nreason=preview-paused\neligible=false' \
+  $'eligible=false\nreason=preview-paused\nextra=value' \
+  $'reason=preview-paused\neligible=false' \
+  $'eligible=maybe\nreason=preview-paused' \
+  $'eligible=false\nreason='
+do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="$malformed_eligibility_output"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace after malformed eligibility output" >&2
+    exit 1
+  fi
+done
+
+for non_authoritative_reason in malformed-label-metadata future-eligibility-reason; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="eligible=false
+reason=${non_authoritative_reason}"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "prune deleted a namespace for non-authoritative reason ${non_authoritative_reason}" >&2
+    exit 1
+  fi
+done
+
+for authoritative_prune_reason in preview-paused dependency-bot unsupported-base-branch pr-not-open; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"
+  export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-output.py"
+  export FAKE_ELIGIBILITY_OUTPUT="eligible=false
+reason=${authoritative_prune_reason}"
+  bash "$PRUNER" --apply
+  grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+done
 
 reset_case
 if bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"; then
@@ -626,10 +915,139 @@ bash "$ALLOCATOR" pr-900 1 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 preview_workflow="$ROOT_DIR/.github/workflows/preview.yml"
+trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
+eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
+TRUSTED_TARGET_RUN="$TEMP_DIR/hosted-identity-target.sh"
+extract_workflow_step_run \
+  "$trusted_workflow" \
+  "Verify workflow source and immutable PR metadata" \
+  "$TRUSTED_TARGET_RUN"
+
+run_trusted_target_fixture() {
+  local source_event_action="$1"
+  local paused="$2"
+  local labels_valid="$3"
+  local expected_head="$4"
+  local output="$5"
+  rm -f "$output"
+  (
+    cd "$ROOT_DIR"
+    FAKE_TARGET_PAUSED="$paused" \
+      FAKE_TARGET_LABELS_VALID="$labels_valid" \
+      EVENT_NAME=workflow_run \
+      EVENT_ACTION="$source_event_action" \
+      WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_HEAD_SHA="$expected_head" \
+      EVENT_PR_NUMBER='' \
+      EVENT_HEAD_SHA='' \
+      INPUT_PR_NUMBER='' \
+      INPUT_HEAD_SHA='' \
+      INPUT_ACTION='' \
+      GITHUB_OUTPUT="$output" \
+      bash "$TRUSTED_TARGET_RUN"
+  )
+}
+
+# Every source event arrives at the privileged owner as workflow_run. Current
+# labels, rather than the stale triggering action, select trusted cleanup.
+for paused_source_event in opened synchronize reopened; do
+  reset_case
+  target_output="$TEMP_DIR/trusted-target-${paused_source_event}.out"
+  run_trusted_target_fixture \
+    "$paused_source_event" true valid "$FAKE_TARGET_HEAD" "$target_output"
+  grep -qx 'action=destroy' "$target_output"
+  grep -qx 'destroy_reason=paused' "$target_output"
+done
+
+
+reset_case
+run_trusted_target_fixture \
+  synchronize false malformed "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-malformed.out"
+grep -qx 'action=none' "$TEMP_DIR/trusted-target-malformed.out"
+grep -qx 'destroy_reason=' "$TEMP_DIR/trusted-target-malformed.out"
+
+reset_case
+run_trusted_target_fixture \
+  synchronize false valid stale-head "$TEMP_DIR/trusted-target-stale.out"
+grep -qx 'action=none' "$TEMP_DIR/trusted-target-stale.out"
+
+reset_case
+run_trusted_target_fixture \
+  unlabeled false valid "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-unpaused.out"
+grep -qx 'action=deploy' "$TEMP_DIR/trusted-target-unpaused.out"
+grep -qx 'head_sha=head-900' "$TEMP_DIR/trusted-target-unpaused.out"
+
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
-test "$(grep -h -c 'group: preview-allocation-lifecycle' "$preview_workflow" "$janitor_workflow" | awk '{ total += $1 } END { print total }')" -eq 3
+grep -q 'github.event.label.name == '\''preview:paused'\''' "$preview_workflow"
+grep -q '^      - unlabeled$' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+grep -Fq 'EVENT_ACTION: ${{ github.event.action }}' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
+grep -Fq 'EVENT_LABEL_NAME: ${{ github.event.label.name }}' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+grep -Fq 'case "$EVENT_ACTION" in' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
+grep -Fq 'case "$EVENT_LABEL_NAME" in' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert the literal render-only workflow concurrency expression.
+grep -q 'group: preview-render-${{ github.event.pull_request.number }}' "$preview_workflow"
+grep -q 'PR_LABELS_JSON:' "$preview_workflow"
+# shellcheck disable=SC2016 # Assert the literal label transport passed by the workflow.
+grep -q -- '--labels-json "\$PR_LABELS_JSON"' "$preview_workflow"
+# Pause addition and removal wake the untrusted render-only workflow above.
+# Its successful completion is inspected by the trusted workflow, which uses
+# current labels to select cleanup or exact-artifact deployment.
+grep -q 'ACTION=inspect' "$trusted_workflow"
+grep -q 'DESTROY_REASON=paused' "$trusted_workflow"
+grep -q 'DESTROY_REASON=closed' "$trusted_workflow"
+grep -q 'emit_no_action' "$trusted_workflow"
+# shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
+grep -Fq 'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"' "$trusted_workflow"
+grep -q 'Revalidate preview cleanup target before runtime deletion' "$trusted_workflow"
+grep -q 'Revalidate preview cleanup target before identity retirement' "$trusted_workflow"
+# shellcheck disable=SC2016 # Assert centralized label inspection in trusted workflow source.
+grep -q -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow"
+grep -q 'preview:paused' "$trusted_workflow"
+grep -q 'preview:paused' "$eligibility_script"
+grep -q 'malformed-label-metadata' "$eligibility_script"
+test "$(grep -Fc -- '--revalidate-deploy' "$preview_workflow")" -eq 1
+# shellcheck disable=SC2016 # Assert centralized exact-label inspection in trusted workflow source.
+test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow")" -eq 3
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 3
+test "$(grep -Fc -- '--revalidate-deploy' "$trusted_workflow")" -eq 0
+test "$(grep -Fc -- '--operation deploy' "$trusted_workflow")" -eq 0
+revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
+test "$(grep -Fc -- '--revalidate-deploy' "$revalidation_helper")" -eq 1
+# shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
+grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
+# shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
+grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+grep -q -- '--inspect-labels --labels-json "$labels_json"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
+  "$preview_workflow" \
+  "$trusted_workflow" \
+  "$trusted_workflow" \
+  "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
+  echo "A live preview callsite duplicates the centralized label predicate" >&2
+  exit 1
+fi
+if grep -Fq 'group: preview-allocation-lifecycle' "$preview_workflow"; then
+  echo "PR-controlled preview rendering must not use the global allocation lifecycle group" >&2
+  exit 1
+fi
+grep -q 'group: preview-allocation-lifecycle' "$trusted_workflow"
+test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
+grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
 

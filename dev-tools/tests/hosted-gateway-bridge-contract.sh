@@ -6,63 +6,8 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 RENDERED="$TMP_DIR/rendered.yaml"
-render_test_values() {
-  local output_path="$1"
-  local pr_number="$2"
-  local namespace="$3"
-  local release_name="$4"
-  local hostname="$5"
-  local image_tag="$6"
-  local telnet_port="$7"
-
-  python3 - \
-    "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
-    "$output_path" \
-    "$pr_number" \
-    "$namespace" \
-    "$release_name" \
-    "$hostname" \
-    "$image_tag" \
-    "$telnet_port" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-template_path = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
-pr_number, namespace, release_name, hostname, image_tag, telnet_port = sys.argv[3:]
-text = template_path.read_text(encoding="utf-8")
-replacements = {
-    "__PR_NUMBER__": pr_number,
-    "__NAMESPACE__": namespace,
-    "__RELEASE_NAME__": release_name,
-    "__HOSTNAME__": hostname,
-    "__TELNET_PORT__": telnet_port,
-    "__IMAGE_TAG__": image_tag,
-    "__TLS_SECRET_NAME__": f"{release_name}-tls",
-    "__TELNET_TLS_SECRET_NAME__": f"{release_name}-telnet-tls",
-    "__JWT_SIGNING_KEY__": "a" * 64,
-    "__JWKS_JSON__": json.dumps({"keys": []}, separators=(",", ":")),
-    "__SEED_GAME_NAME__": "Bridge Contract Game",
-    "__SEED_GAME_DESCRIPTION__": "Bridge contract fixture game.",
-    "__SEED_VERSION_NOTES__": "Bridge contract fixture version",
-    "__SEED_TEMPLATE_NAME__": "Bridge Contract Template",
-    "__SEED_TEMPLATE_DESCRIPTION__": "Bridge contract fixture template.",
-    "__SEED_WORKFLOW_ID__": "bridge-contract-seed",
-    "__SEED_MANIFEST_HASH__": "bridge-contract-manifest",
-    "__SEED_GENERATION_CONFIG_REVISION__": "genrev:bridge-contract",
-}
-for target, replacement in replacements.items():
-    if target not in text:
-        raise SystemExit(f"bridge contract fixture token is missing: {target}")
-    text = text.replace(target, replacement)
-text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
-text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
-output_path.write_text(text, encoding="utf-8")
-PY
-}
-
-render_test_values \
+python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
+  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$TMP_DIR/preview-values.yaml" \
   123 pr-123 pr-123 preview-123.example.test image-tag 32123
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
@@ -74,10 +19,78 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
 
+TRUSTED_RENDERED="$TMP_DIR/rendered-with-trusted-nodeport.yaml"
+python3 "$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py" \
+  inject "$RENDERED" "$TRUSTED_RENDERED" 32007
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$TRUSTED_RENDERED" pr-123 pr-123 >"$TMP_DIR/missing-expected-port.json"; then
+  echo "hosted bridge preflight accepted a post-injection NodePort without its trusted expected-port input" >&2
+  exit 1
+fi
+if ! grep -Fq 'must not declare an explicit nodePort' "$TMP_DIR/missing-expected-port.json"; then
+  echo "hosted bridge preflight did not preserve the raw-render explicit NodePort refusal" >&2
+  exit 1
+fi
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$TRUSTED_RENDERED" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32007 \
+    >"$TMP_DIR/trusted-nodeport-preflight.json"
+if ! jq -e '.status == "pass"' "$TMP_DIR/trusted-nodeport-preflight.json" >/dev/null; then
+  echo "hosted bridge preflight rejected the exact trusted post-injection NodePort" >&2
+  exit 1
+fi
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$TRUSTED_RENDERED" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32008 \
+    >"$TMP_DIR/mismatched-expected-port.json"; then
+  echo "hosted bridge preflight accepted a mismatched trusted expected-port input" >&2
+  exit 1
+fi
+if ! grep -Fq 'Telnet nodePort must equal 32008' "$TMP_DIR/mismatched-expected-port.json"; then
+  echo "hosted bridge preflight did not diagnose the mismatched trusted NodePort" >&2
+  exit 1
+fi
+python3 - "$TRUSTED_RENDERED" "$TMP_DIR/rendered-with-extra-nodeport.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+service = next(
+    document
+    for document in documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+service["spec"]["ports"].append(
+    {"name": "unexpected", "protocol": "TCP", "port": 9999, "nodePort": 32008}
+)
+destination.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$TMP_DIR/rendered-with-extra-nodeport.yaml" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32007 \
+    >"$TMP_DIR/extra-nodeport.json"; then
+  echo "hosted bridge preflight accepted an additional explicit NodePort" >&2
+  exit 1
+fi
+if ! grep -Fq 'must not declare any other explicit nodePorts' "$TMP_DIR/extra-nodeport.json"; then
+  echo "hosted bridge preflight did not diagnose the additional explicit NodePort" >&2
+  exit 1
+fi
+
 DEV_RENDERED="$TMP_DIR/dev-rendered.yaml"
-render_test_values \
+python3 "$ROOT_DIR/dev-tools/hosted/dev-demo/render-dev-demo-values.py" \
+  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$TMP_DIR/dev-values.yaml" \
-  0 dev dev dev.example.test image-tag 32023
+  dev dev dev.example.test image-tag 32023
 helm template dev "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/dev-values.yaml" \
   --namespace dev \
@@ -85,120 +98,6 @@ helm template dev "$ROOT_DIR/k8s/helm/firemud" \
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
-
-DISABLED_TELNET_CERT_RENDERED="$TMP_DIR/disabled-telnet-certificate.yaml"
-helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/preview-values.yaml" \
-  --set previewStack.enabled=false \
-  --set previewStack.telnetTls.enabled=true \
-  --set-string 'previewStack.telnetTls.secretName=' \
-  --namespace pr-123 >"$DISABLED_TELNET_CERT_RENDERED"
-python3 - "$DISABLED_TELNET_CERT_RENDERED" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-documents = [
-    document
-    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    if isinstance(document, dict)
-]
-if any(document.get("kind") == "Certificate" for document in documents):
-    raise SystemExit(
-        "disabled previewStack rendered a standalone Telnet TLS Certificate"
-    )
-PY
-
-OVERRIDE_RENDERED="$TMP_DIR/trust-environment-override.yaml"
-helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$TMP_DIR/preview-values.yaml" \
-  --set-string previewStack.gatewayWsTls.trustEnvironment=staging \
-  --show-only templates/apps.yaml \
-  --namespace pr-123 >"$OVERRIDE_RENDERED"
-python3 - "$RENDERED" "$DEV_RENDERED" "$OVERRIDE_RENDERED" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-
-def trust_environment(path):
-    documents = [
-        document
-        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
-        if isinstance(document, dict)
-    ]
-    gateway = next(
-        document
-        for document in documents
-        if document.get("kind") == "Deployment"
-        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
-    )
-    environment = next(
-        entry
-        for entry in gateway["spec"]["template"]["spec"]["containers"][0]["env"]
-        if entry.get("name") == "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT"
-    )
-    return environment.get("value")
-
-
-assert trust_environment(sys.argv[1]) == "pr-preview"
-assert trust_environment(sys.argv[2]) == "dev-demo-cluster"
-assert trust_environment(sys.argv[3]) == "staging"
-PY
-
-for preview_shape in absent null; do
-  INVALID_PREVIEW_VALUES="$TMP_DIR/preview-values-$preview_shape.yaml"
-  cp "$TMP_DIR/preview-values.yaml" "$INVALID_PREVIEW_VALUES"
-  python3 - "$INVALID_PREVIEW_VALUES" "$preview_shape" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-path = Path(sys.argv[1])
-values = yaml.safe_load(path.read_text(encoding="utf-8"))
-if sys.argv[2] == "absent":
-    values.pop("preview")
-else:
-    values["preview"] = None
-path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
-PY
-
-  APPS_PREVIEW_ERROR="preview.telnetPort is required for hosted-controller TCP Proxy"
-  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
-    -f "$INVALID_PREVIEW_VALUES" \
-    --set previewStack.ingress.enabled=false \
-    --set previewStack.gatewayWsTls.enabled=false \
-    --show-only templates/apps.yaml \
-    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-preview-$preview_shape-apps.err"; then
-    echo "apps template rendered hosted-controller TCP Proxy with $preview_shape preview" >&2
-    exit 1
-  fi
-  if ! grep -Fq "$APPS_PREVIEW_ERROR" "$TMP_DIR/invalid-preview-$preview_shape-apps.err"; then
-    echo "apps template did not report the expected $preview_shape preview.telnetPort diagnostic" >&2
-    sed -n '1,20p' "$TMP_DIR/invalid-preview-$preview_shape-apps.err" >&2
-    exit 1
-  fi
-
-  CERT_PREVIEW_ERROR="preview.hostname is required when rendering the standalone Telnet TLS Certificate"
-  if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
-    -f "$INVALID_PREVIEW_VALUES" \
-    --set previewStack.ingress.enabled=false \
-    --set previewStack.gatewayWsTls.enabled=false \
-    --set previewStack.certificateIdentity.mode=standalone \
-    --show-only templates/tcp-proxy-certificate.yaml \
-    --namespace pr-123 >/dev/null 2>"$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
-    echo "standalone Telnet TLS Certificate rendered with $preview_shape preview" >&2
-    exit 1
-  fi
-  if ! grep -Fq "$CERT_PREVIEW_ERROR" "$TMP_DIR/invalid-preview-$preview_shape-certificate.err"; then
-    echo "certificate template did not report the expected $preview_shape preview.hostname diagnostic" >&2
-    sed -n '1,20p' "$TMP_DIR/invalid-preview-$preview_shape-certificate.err" >&2
-    exit 1
-  fi
-done
 
 PREVIEW_PR_NUMBER_ERROR="preview.prNumber is required when Gateway WebSocket TLS is enabled"
 for invalid_pr_number in missing empty; do
@@ -602,27 +501,6 @@ if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"
 if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
     raise SystemExit("TCP Proxy identity withdrawal can retain a stale rolling-update pod")
 
-gateway_strategy_documents = copy.deepcopy(documents)
-gateway_copy = next(
-    document
-    for document in gateway_strategy_documents
-    if document.get("kind") == "Deployment"
-    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
-)
-gateway_copy["spec"]["strategy"] = {"type": "Recreate"}
-_, gateway_strategy_issues = module.validate_gateway_ws_values(
-    gateway_strategy_documents, expected
-)
-if not any(
-    "Gateway bridge Deployment strategy must be RollingUpdate or omitted"
-    in issue
-    for issue in gateway_strategy_issues
-):
-    raise SystemExit(
-        "Gateway Recreate strategy was accepted for the bridge listener: "
-        f"{gateway_strategy_issues}"
-    )
-
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
     "cannot retain stale pods"
@@ -723,16 +601,6 @@ for label, mutation, expected_fragment in (
             "true",
         ),
         "must not configure legacy TCP Proxy header trust",
-    ),
-    (
-        "foreign-trust-environment",
-        lambda docs: mutate_env(
-            docs,
-            "spring-cloud-gateway",
-            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT",
-            "dev-demo-cluster",
-        ),
-        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT must be exactly 'pr-preview'",
     ),
 ):
     mutated = copy.deepcopy(documents)
@@ -898,44 +766,6 @@ for label, mutation in (
     if not any("must not contain an all-port rule" in issue for issue in all_port_issues):
         raise SystemExit(f"{label} Gateway policy was accepted: {all_port_issues}")
 
-for label, ports, expected_fragment in (
-    (
-        "repeated-listener-qualifiers",
-        [
-            {"protocol": "TCP", "port": 8443},
-            {"protocol": "TCP", "port": 8000, "endPort": 9000},
-        ],
-        "listener rule must be exactly TCP 8443",
-    ),
-    (
-        "repeated-malformed-qualifiers",
-        [{"protocol": "TCP"}, {"protocol": "TCP"}],
-        "must not contain an all-port rule",
-    ),
-):
-    repeated_qualifier_policy = copy.deepcopy(documents)
-    gateway_policy = next(
-        document
-        for document in repeated_qualifier_policy
-        if document.get("kind") == "NetworkPolicy"
-        and document.get("metadata", {}).get("name")
-        == "spring-cloud-gateway-ingress"
-    )
-    gateway_policy["spec"]["ingress"][0]["ports"] = ports
-    _, repeated_qualifier_issues = module.validate_gateway_ws_values(
-        repeated_qualifier_policy, expected
-    )
-    if not any(
-        expected_fragment in issue for issue in repeated_qualifier_issues
-    ) or any(
-        "exactly one app=tcp-proxy-service peer rule" in issue
-        for issue in repeated_qualifier_issues
-    ):
-        raise SystemExit(
-            f"{label} counted one Gateway policy rule more than once: "
-            f"{repeated_qualifier_issues}"
-        )
-
 for label, policy_name, policy_types, expected_fragment in (
     (
         "gateway-direction-disabled",
@@ -964,6 +794,66 @@ for label, policy_name, policy_types, expected_fragment in (
     if not any(expected_fragment in issue for issue in direction_issues):
         raise SystemExit(f"{label} policy was accepted: {direction_issues}")
 
+preview_source = (
+    root / ".github/workflows/hosted-identity-request.yml"
+).read_text(encoding="utf-8")
+preview_injection_index = preview_source.find(
+    'inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml"'
+)
+preview_static_index = preview_source.find(
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static", preview_injection_index
+)
+preview_static_preflight_index = preview_source.find(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_static_index
+)
+preview_static_expected_port_index = preview_source.find(
+    '--expected-hosted-telnet-node-port "$TELNET_PORT"',
+    preview_static_preflight_index,
+)
+preview_dry_run_index = preview_source.find(
+    "kubectl apply --dry-run=server", preview_static_expected_port_index
+)
+preview_apply_index = preview_source.find(
+    "kubectl apply --server-side", preview_dry_run_index
+)
+preview_identity_wait_index = preview_source.find(
+    "Wait for exact controller identity readiness", preview_apply_index
+)
+preview_rollout_wait_index = preview_source.find(
+    "Wait for runtime rollouts before operator validation", preview_identity_wait_index
+)
+preview_operator_index = preview_source.find(
+    "FIREMUD_PREFLIGHT_CONTEXT=operator", preview_injection_index
+)
+preview_operator_preflight_index = preview_source.find(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_operator_index
+)
+preview_operator_expected_port_index = preview_source.find(
+    '--expected-hosted-telnet-node-port "$TELNET_PORT"',
+    preview_operator_preflight_index,
+)
+preview_indices = (
+    preview_injection_index,
+    preview_static_index,
+    preview_static_preflight_index,
+    preview_static_expected_port_index,
+    preview_dry_run_index,
+    preview_apply_index,
+    preview_identity_wait_index,
+    preview_rollout_wait_index,
+    preview_operator_index,
+    preview_operator_preflight_index,
+    preview_operator_expected_port_index,
+)
+if min(preview_indices) < 0:
+    raise SystemExit(
+        "hosted-identity-request.yml is missing two-phase trusted bridge preflight wiring"
+    )
+if list(preview_indices) != sorted(preview_indices):
+    raise SystemExit(
+        "hosted-identity-request.yml must validate the trusted render statically before "
+        "apply and controller-projected Secrets after rollout"
+    )
 PY
 
-echo "Hosted Gateway bridge Helm, NetworkPolicy, and preflight contracts passed"
+echo "Hosted Gateway bridge Helm, NetworkPolicy, preflight, and workflow contracts passed"

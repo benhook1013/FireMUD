@@ -1,5 +1,4 @@
 {{- if .Values.previewStack.enabled }}
-{{- $preview := $.Values.preview | default (dict) }}
 {{- $previewJwt := .Values.previewStack.jwt | default (dict) }}
 {{- $telnetTls := .Values.previewStack.telnetTls | default (dict) }}
 {{- $gatewayWsTls := .Values.previewStack.gatewayWsTls | default (dict) }}
@@ -9,11 +8,12 @@
 {{- $gatewayWsTlsTargetPort = required "previewStack.gatewayWsTls.targetPort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.targetPort }}
 {{- $gatewayWsTlsServicePort = required "previewStack.gatewayWsTls.servicePort is required when Gateway WebSocket TLS is enabled" $gatewayWsTls.servicePort }}
 {{- end }}
-{{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . | trim }}
+{{- $telnetTlsSecretName := include "firemud.telnetTlsSecretName" . }}
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
 {{- $certificateIdentityMode := include "firemud.certificateIdentityMode" . | trim }}
+{{- $hostedControllerMode := include "firemud.hostedControllerMode" . | trim }}
 {{- range $service := .Values.previewStack.services }}
 {{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 {{- $mountGatewayWsServerTls := and $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
@@ -45,6 +45,13 @@ spec:
         app: {{ $service.name }}
     spec:
       serviceAccountName: firemud-app
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       {{- with $.Values.previewStack.imagePullSecrets }}
       imagePullSecrets:
         {{- range $secret := . }}
@@ -57,6 +64,13 @@ spec:
       {{- end }}
       containers:
         - name: {{ $service.name }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
           image: "{{ $service.image.repository }}:{{ default $.Values.previewStack.defaultImageTag $service.image.tag }}"
           imagePullPolicy: Always
           env:
@@ -212,10 +226,6 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $service.name }}
-  {{- if and (eq $service.name "tcp-proxy-service") (eq $certificateIdentityMode "hosted-controller") }}
-  annotations:
-    firemud.dev/allocated-telnet-port: {{ required "preview.telnetPort is required for hosted-controller TCP Proxy" (get $preview "telnetPort") | quote }}
-  {{- end }}
   labels:
 {{ include "firemud.commonLabels" $ | indent 4 }}
   {{- if eq $service.name "tcp-proxy-service" }}
@@ -231,7 +241,7 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
-      {{- if $port.nodePort }}
+      {{- if and $port.nodePort (ne $hostedControllerMode "true") }}
       nodePort: {{ $port.nodePort }}
       {{- end }}
     {{- end }}

@@ -5,44 +5,9 @@ ROOT_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-python3 - \
+python3 "$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py" \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
-  "$TMP_DIR/values-controller.yaml" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-template_path = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
-text = template_path.read_text(encoding="utf-8")
-replacements = {
-    "__PR_NUMBER__": "42",
-    "__NAMESPACE__": "pr-42",
-    "__RELEASE_NAME__": "preview-release",
-    "__HOSTNAME__": "preview-42.preview.example.test",
-    "__TELNET_PORT__": "32042",
-    "__IMAGE_TAG__": "image-tag",
-    "__TLS_SECRET_NAME__": "preview-release-tls",
-    "__TELNET_TLS_SECRET_NAME__": "preview-release-telnet-tls",
-    "__JWT_SIGNING_KEY__": "a" * 64,
-    "__JWKS_JSON__": json.dumps({"keys": []}, separators=(",", ":")),
-    "__SEED_GAME_NAME__": "Telnet TLS Contract Game",
-    "__SEED_GAME_DESCRIPTION__": "Telnet TLS contract fixture game.",
-    "__SEED_VERSION_NOTES__": "Telnet TLS contract fixture version",
-    "__SEED_TEMPLATE_NAME__": "Telnet TLS Contract Template",
-    "__SEED_TEMPLATE_DESCRIPTION__": "Telnet TLS contract fixture template.",
-    "__SEED_WORKFLOW_ID__": "telnet-tls-contract-seed",
-    "__SEED_MANIFEST_HASH__": "telnet-tls-contract-manifest",
-    "__SEED_GENERATION_CONFIG_REVISION__": "genrev:telnet-tls-contract",
-}
-for target, replacement in replacements.items():
-    if target not in text:
-        raise SystemExit(f"Telnet TLS contract fixture token is missing: {target}")
-    text = text.replace(target, replacement)
-text = text.replace("        # __TCP_PROXY_GATEWAY_BASE_URL_LINE__", "")
-text = text.replace("        # __TCP_PROXY_ADDITIONAL_SERVICE_PORTS__", "")
-output_path.write_text(text, encoding="utf-8")
-PY
+  "$TMP_DIR/values-controller.yaml" 42 pr-42 preview-release preview-42.preview.example.test image-tag 32042
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-controller.yaml" \
   --namespace pr-42 >"$TMP_DIR/rendered-controller.yaml"
@@ -74,6 +39,10 @@ path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-omitted.yaml" --namespace pr-42 >"$TMP_DIR/rendered-omitted.yaml"
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
+  --namespace pr-42 >"$TMP_DIR/rendered-standalone.yaml"
 cp "$TMP_DIR/values.yaml" "$TMP_DIR/values-configured-mode.yaml"
 python3 - "$TMP_DIR/values-configured-mode.yaml" <<'PY'
 import sys
@@ -117,6 +86,10 @@ else:
     raise SystemExit("tcp-proxy-service fixture is missing")
 path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
+helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/values.yaml" \
+  --set-string previewStack.certificateIdentity.mode= \
+  --namespace pr-42 >"$TMP_DIR/rendered-default.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values-managed-env.yaml" --namespace pr-42 >"$TMP_DIR/rendered-managed-env.yaml"
 helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
@@ -234,6 +207,7 @@ helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
 TELNET_TLS_CLUSTER_ISSUER_ERROR="previewStack.telnetTls.clusterIssuer is required when rendering the standalone Telnet TLS Certificate"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
   --set-string 'previewStack.telnetTls.clusterIssuer=' \
   --namespace pr-42 >/dev/null 2>"$TMP_DIR/missing-cluster-issuer.err"; then
   echo "chart rendered a standalone Telnet TLS Certificate with no ClusterIssuer" >&2
@@ -248,6 +222,7 @@ fi
 PREVIEW_HOSTNAME_ERROR="preview.hostname is required when rendering the standalone Telnet TLS Certificate"
 if helm template preview-release "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/values.yaml" \
+  --set previewStack.certificateIdentity.mode=standalone \
   --set-string 'preview.hostname=' \
   --namespace pr-42 >/dev/null 2>"$TMP_DIR/missing-preview-hostname.err"; then
   echo "chart rendered a standalone Telnet TLS Certificate with no preview hostname" >&2
@@ -259,7 +234,7 @@ if ! grep -Fq "$PREVIEW_HOSTNAME_ERROR" "$TMP_DIR/missing-preview-hostname.err";
   exit 1
 fi
 
-ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" NULL_IDENTITY_RENDERED="$TMP_DIR/rendered-null-certificate-identity.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" MANAGED_ENV_RENDERED="$TMP_DIR/rendered-managed-env.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" RENDERED="$TMP_DIR/rendered.yaml" CONTROLLER_RENDERED="$TMP_DIR/rendered-controller.yaml" NULL_IDENTITY_RENDERED="$TMP_DIR/rendered-null-certificate-identity.yaml" DEFAULT_RENDERED="$TMP_DIR/rendered-default.yaml" OMITTED_RENDERED="$TMP_DIR/rendered-omitted.yaml" CONFIGURED_ENABLED_RENDERED="$TMP_DIR/rendered-configured-enabled.yaml" MANAGED_ENV_RENDERED="$TMP_DIR/rendered-managed-env.yaml" DISABLED_RENDERED="$TMP_DIR/rendered-disabled.yaml" EMPTY_PULL_SECRETS_RENDERED="$TMP_DIR/rendered-empty-pull-secrets.yaml" SPRING_PROFILE_RENDERED="$TMP_DIR/rendered-spring-profile.yaml" python3 - <<'PY'
 import os
 import sys
 from copy import deepcopy
@@ -270,7 +245,6 @@ import yaml
 root = Path(os.environ["ROOT_DIR"])
 sys.path.insert(0, str(root / "dev-tools" / "deploy"))
 import preflight
-
 
 def load_yaml_mappings(path):
     return [
@@ -327,17 +301,9 @@ for document in (controller_deployment, controller_service):
     assert document["metadata"]["labels"][
         "firemud.dev/certificate-identity-mode"
     ] == "hosted-controller"
-controller_telnet_port = next(
-    port
-    for port in controller_service["spec"]["ports"]
-    if port.get("port") == 2323
-)
-assert controller_telnet_port["nodePort"] == 32042, (
-    "hosted-controller render did not bind the allocated Telnet NodePort"
-)
-assert controller_service["metadata"]["annotations"][
-    "firemud.dev/allocated-telnet-port"
-] == "32042"
+assert all(
+    "nodePort" not in port for port in controller_service["spec"]["ports"]
+), "hosted-controller render retained a chart-selected NodePort"
 controller_volume = next(
     volume
     for volume in controller_deployment["spec"]["template"]["spec"]["volumes"]
@@ -365,6 +331,15 @@ assert any(
     "requires exactly one tcp-proxy-service NodePort Service" in issue
     for issue in missing_nodeport_issues
 ), "required hosted identity mode accepted a missing TCP Proxy NodePort Service"
+missing_trusted_service_issues = preflight.validate_hosted_telnet_tls_values(
+    controller_without_nodeport_service,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32007,
+)
+assert any(
+    "requires exactly one tcp-proxy-service NodePort Service" in issue
+    for issue in missing_trusted_service_issues
+), "trusted expected-port validation accepted a missing TCP Proxy Service"
 
 controller_with_certificate = deepcopy(controller_documents)
 controller_with_certificate.append(
@@ -417,73 +392,74 @@ assert any(
     for issue in missing_modes_issues
 ), "Helm-rendered controller ownership downgraded to standalone when both labels were removed"
 
-controller_missing_nodeport = deepcopy(controller_documents)
-next(
-    port
-    for document in controller_missing_nodeport
-    if document.get("kind") == "Service"
-    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-    for port in document["spec"]["ports"]
-    if port.get("port") == 2323
-).pop("nodePort")
-missing_explicit_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_missing_nodeport
-)
-assert any(
-    "requires exactly one explicit allocated nodePort" in issue
-    for issue in missing_explicit_nodeport_issues
-), "hosted-controller mode accepted a missing allocated TCP Proxy nodePort"
-
-controller_missing_allocation = deepcopy(controller_documents)
-next(
+controller_with_nodeport = deepcopy(controller_documents)
+nodeport_service = next(
     document
-    for document in controller_missing_allocation
+    for document in controller_with_nodeport
     if document.get("kind") == "Service"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-)["metadata"]["annotations"].pop("firemud.dev/allocated-telnet-port")
-missing_allocation_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_missing_allocation
+)
+nodeport_service["spec"]["ports"][0]["nodePort"] = 32042
+nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    controller_with_nodeport
 )
 assert any(
-    "requires an allocated Telnet port annotation" in issue
-    for issue in missing_allocation_issues
-), "hosted-controller mode accepted missing allocator metadata"
+    "must not declare an explicit nodePort" in issue for issue in nodeport_issues
+), "hosted-controller mode accepted an explicit TCP Proxy nodePort"
 
-controller_wrong_nodeport = deepcopy(controller_documents)
-next(
-    port
-    for document in controller_wrong_nodeport
-    if document.get("kind") == "Service"
-    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-    for port in document["spec"]["ports"]
-    if port.get("port") == 2323
-)["nodePort"] = 32043
-wrong_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_wrong_nodeport
-)
-assert any(
-    "nodePort must match its allocated Telnet port" in issue
-    for issue in wrong_nodeport_issues
-), "hosted-controller mode accepted the wrong allocated TCP Proxy nodePort"
-
-controller_additional_nodeport = deepcopy(controller_documents)
-next(
+trusted_controller_nodeport = deepcopy(controller_documents)
+trusted_nodeport_service = next(
     document
-    for document in controller_additional_nodeport
+    for document in trusted_controller_nodeport
     if document.get("kind") == "Service"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-)["spec"]["ports"].append(
-    {
-        "name": "unrelated",
-        "port": 9000,
-        "targetPort": 9000,
-        "protocol": "TCP",
-        "nodePort": 32043,
-    }
 )
-assert not preflight.validate_hosted_telnet_tls_values(
-    controller_additional_nodeport
-), "an unrelated NodePort was mistaken for the allocated Telnet listener"
+trusted_nodeport_service["spec"]["ports"][0]["nodePort"] = 32007
+trusted_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32007,
+)
+assert not trusted_nodeport_issues, trusted_nodeport_issues
+
+missing_trusted_input_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_nodeport,
+    required_identity_mode="hosted-controller",
+)
+assert any(
+    "must not declare an explicit nodePort" in issue
+    for issue in missing_trusted_input_issues
+), "trusted NodePort was accepted without the exact expected-port input"
+
+mismatched_trusted_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32008,
+)
+assert any(
+    "Telnet nodePort must equal 32008" in issue
+    for issue in mismatched_trusted_nodeport_issues
+), "trusted NodePort was accepted against a mismatched expected-port input"
+
+trusted_controller_extra_nodeport = deepcopy(trusted_controller_nodeport)
+extra_nodeport_service = next(
+    document
+    for document in trusted_controller_extra_nodeport
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+extra_nodeport_service["spec"]["ports"].append(
+    {"name": "unexpected", "protocol": "TCP", "port": 9999, "nodePort": 32008}
+)
+extra_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_extra_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32007,
+)
+assert any(
+    "must not declare any other explicit nodePorts" in issue
+    for issue in extra_nodeport_issues
+), "trusted NodePort input allowed an additional explicit NodePort"
 
 unknown_mode = deepcopy(controller_documents)
 for document in unknown_mode:
@@ -500,6 +476,12 @@ assert any(
     for issue in unknown_mode_issues
 ), "preflight accepted an unsupported certificate identity mode"
 
+documents = list(
+    yaml.safe_load_all(Path(os.environ["RENDERED"]).read_text(encoding="utf-8"))
+)
+issues = preflight.validate_hosted_telnet_tls_values(documents)
+assert not issues, issues
+
 standalone_without_certificate = deepcopy(documents)
 standalone_without_certificate = [
     document
@@ -514,6 +496,14 @@ assert any(
     "requires exactly one dedicated -telnet-tls Certificate" in issue
     for issue in standalone_missing_issues
 ), "standalone mode accepted a missing Telnet Certificate"
+
+default_documents = list(yaml.safe_load_all(Path(os.environ["DEFAULT_RENDERED"]).read_text(encoding="utf-8")))
+default_certificate = next(d for d in default_documents if d.get("kind") == "Certificate")
+default_ingress = next(d for d in default_documents if d.get("kind") == "Ingress")
+assert default_certificate["metadata"]["name"] == "preview-release-telnet-tls"
+assert default_ingress["metadata"]["annotations"]["cert-manager.io/cluster-issuer"] == "letsencrypt-prod"
+default_service = next(d for d in default_documents if d.get("kind") == "Service" and d["metadata"]["name"] == "tcp-proxy-service")
+assert any("nodePort" in port for port in default_service["spec"]["ports"]), "standalone default dropped the allocated NodePort"
 
 deployment = next(d for d in documents if d.get("kind") == "Deployment" and d["metadata"]["name"] == "tcp-proxy-service")
 target_namespace = preflight.workload_namespace(deployment)
