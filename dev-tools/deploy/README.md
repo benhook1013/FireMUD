@@ -17,7 +17,7 @@ They are not generic CI utilities. They enforce the deployment contract for play
   - It renders the target manifests, validates FireMUD deployment policy, writes a JSON report, and fails when required policy checks do not pass.
   - Supports `staging`, `production`, and `hobby-self-hosted` environment classes.
   - Its `hosted-bridge <render-path> <namespace> <release-name>` form applies the same `PREFLIGHT-BRIDGE-001` validator to preview/dev-demo Helm output; operator context additionally checks that the controller-projected `<release>-gateway-internal-ws` and `<release>-tcp-proxy-bridge` Secrets exist with `tls.crt`, `tls.key`, and `ca.crt`, and that `<release>-telnet-tls` exists with `tls.crt` and `tls.key`.
-  - The ordinary environment form is used by operator deployment workflows and CI static-policy validation; hosted workflow integration for the `hosted-bridge` form is tracked separately from the validator capability.
+  - Hosted preview uses this form twice: `ci-static` validates the trusted render after the allocator injects the exact Telnet port and before server dry-run/apply, while `operator` validates controller-projected identity after rollout and before smoke/publication. Fixed dev-demo uses the `operator` form after render and before server dry-run/apply. The ordinary environment form remains the operator deployment and CI static-policy entrypoint.
 
 - `write-traffic-open-evidence.py`
   - Canonical writer for hobby traffic-open projection records.

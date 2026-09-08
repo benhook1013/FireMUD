@@ -68,6 +68,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 from smoke_common import (
     gameplay_item_container_equipment_steps,
     http_readiness_up,
+    is_localhost_equivalent,
     login_play_look_steps,
     recv_until_socket,
     run_telnet_smoke_session,
@@ -94,6 +95,13 @@ look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unavailable")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
+
+if not is_localhost_equivalent(host):
+    raise RuntimeError(
+        "Plaintext Telnet smoke requires a localhost-equivalent target; "
+        f"{host!r} requires TLS before credentials may be sent"
+    )
+
 
 def verify_pre_readiness_telnet_admission():
     readiness_url = f"{tcp_proxy_api_base}/actuator/health/readiness"
@@ -170,7 +178,13 @@ else:
         play_expect,
         look_expect,
     )
-run_telnet_smoke_session(host, port, steps, timeout_seconds)
+run_telnet_smoke_session(
+    host,
+    port,
+    steps,
+    timeout_seconds,
+    tls_enabled=False,
+)
 
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")

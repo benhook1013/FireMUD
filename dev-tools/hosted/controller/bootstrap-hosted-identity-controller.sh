@@ -15,6 +15,7 @@ FIELD_MANAGER="firemud-hosted-identity-bootstrap"
 ACTIVATION_MODE="paused"
 IMAGE_REF="${FIREMUD_HOSTED_IDENTITY_CONTROLLER_IMAGE:-}"
 GRPC_TRUST_ANCHOR_SHA256="${FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256:-}"
+IDENTITY_NAME=""
 WAIT_SECONDS="${FIREMUD_HOSTED_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-180}"
 
 fail() {
@@ -28,6 +29,7 @@ Usage: bootstrap-hosted-identity-controller.sh --image ghcr.io/benhook1013/hoste
 
 Options:
   --activation-mode MODE  paused (default), observe, or active
+  --identity-name NAME    apply one derived scope as an operator bootstrap/debug fallback
   --wait-seconds N        deployment wait timeout (default: 180)
   --image IMAGE           immutable controller image (also accepted by env)
   --grpc-trust-anchor-sha256 SHA256
@@ -41,6 +43,11 @@ while (($# > 0)); do
     --activation-mode)
       (($# >= 2)) || usage
       ACTIVATION_MODE="$2"
+      shift 2
+      ;;
+    --identity-name)
+      (($# >= 2)) || usage
+      IDENTITY_NAME="$2"
       shift 2
       ;;
     --wait-seconds)
@@ -89,6 +96,9 @@ if [[ "$ACTIVATION_MODE" == "active" ]]; then
   initial_activation_mode="paused"
 fi
 [[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || fail "--wait-seconds must be a positive integer"
+if [[ -n "$IDENTITY_NAME" && ! "$IDENTITY_NAME" =~ ^(dev-demo|pr-[1-9][0-9]*)$ ]]; then
+  fail "--identity-name must be dev-demo or pr-N"
+fi
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
 
@@ -236,5 +246,9 @@ expect_can_i no --as="$controller_sa" --all-namespaces create certificates.cert-
 expect_can_i yes --as="$controller_sa" create namespaces
 expect_can_i no --as="$requester_sa" --all-namespaces list secrets
 expect_can_i no --as="$requester_sa" --namespace=dev get hostedenvironmentidentities.platform.firemud.dev
+
+if [[ -n "$IDENTITY_NAME" ]]; then
+  "$SCRIPT_DIR/ensure-hosted-identity-scope.sh" --name "$IDENTITY_NAME"
+fi
 
 echo "hosted identity controller bootstrap applied in $CONTROL_NAMESPACE (activation=$ACTIVATION_MODE)"

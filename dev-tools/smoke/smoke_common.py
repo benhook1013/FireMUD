@@ -1,6 +1,8 @@
+import ipaddress
 import json
 import os
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -18,6 +20,24 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
 
 
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
+
+
+def is_localhost_equivalent(host):
+    if not isinstance(host, str):
+        return False
+    normalized = host.strip().casefold()
+    if normalized in {"localhost", "localhost."}:
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped is not None and mapped.is_loopback
 
 
 def compose_postgres_container_name():
@@ -243,6 +263,100 @@ def login_play_look_steps(
     ]
 
 
+def redact_login_credential(response, command):
+    if not isinstance(response, str) or not isinstance(command, str):
+        return response
+    command_parts = command.strip().split(maxsplit=2)
+    if len(command_parts) != 3 or command_parts[0].casefold() != "login":
+        return response
+
+    credential = command_parts[2]
+    normalized_credential = " ".join(credential.split())
+    credential_variants = sorted(
+        {value for value in (credential, normalized_credential) if value},
+        key=len,
+        reverse=True,
+    )
+    redacted = response
+    for value in credential_variants:
+        redacted = redacted.replace(value, "[REDACTED]")
+    return redacted
+
+
+def redact_login_command(command):
+    if not isinstance(command, str):
+        return command
+    command_parts = command.strip().split(maxsplit=2)
+    if len(command_parts) != 3 or command_parts[0].casefold() != "login":
+        return command
+    return f"{command_parts[0]} {command_parts[1]} [REDACTED]"
+
+
+def unexpected_explicit_failure_line(
+    response, explicit_failure_prefixes, expected_substrings
+):
+    expected_failures = [
+        substring
+        for substring in expected_substrings
+        if any(
+            substring.startswith(prefix) for prefix in explicit_failure_prefixes
+        )
+    ]
+    accepted_expected_failures = set()
+    response_ends_with_line_break = response.endswith(("\n", "\r"))
+    response_lines = response.splitlines()
+    for index, line in enumerate(response_lines):
+        stripped = line.strip()
+        if not any(
+            stripped.startswith(prefix) for prefix in explicit_failure_prefixes
+        ):
+            continue
+        matching_expected_failure = next(
+            (
+                expected_index
+                for expected_index, expected in enumerate(expected_failures)
+                if expected_index not in accepted_expected_failures
+                and stripped.startswith(expected)
+            ),
+            None,
+        )
+        if matching_expected_failure is not None:
+            accepted_expected_failures.add(matching_expected_failure)
+            continue
+        if (
+            index == len(response_lines) - 1
+            and not response_ends_with_line_break
+            and any(expected.startswith(stripped) for expected in expected_failures)
+        ):
+            continue
+        return stripped
+    return None
+
+
+def raise_for_explicit_failure(
+    response,
+    explicit_failure_prefixes,
+    expected_substrings,
+    retry_upstream_failure,
+    sanitize_response,
+):
+    failure_line = unexpected_explicit_failure_line(
+        response, explicit_failure_prefixes, expected_substrings
+    )
+    if failure_line is None:
+        return
+    diagnostic_response = (
+        sanitize_response(response) if sanitize_response else response
+    ).strip()
+    if retry_upstream_failure and failure_line.startswith(
+        ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
+    ):
+        raise TransientUpstreamSmokeFailure(
+            f"Command failed explicitly: {diagnostic_response}"
+        )
+    raise ProbeOperationalFailure(f"Command failed explicitly: {diagnostic_response}")
+
+
 def wait_for_incremental_response(
     next_chunk,
     responses,
@@ -254,40 +368,43 @@ def wait_for_incremental_response(
     explicit_failure_prefixes=("ERROR ", "DISCONNECT "),
     idle_sleep_seconds=0.05,
     retry_upstream_failure=False,
+    sanitize_response=None,
 ):
     deadline = time.time() + timeout
-    expects_explicit_failure = any(
-        any(substring.startswith(prefix) for prefix in explicit_failure_prefixes)
-        for substring in expected_substrings
-    )
     response = combine_responses(responses[start_index:])
     while time.time() < deadline:
         chunk = next_chunk()
         if chunk:
             responses.append(chunk)
             response = combine_responses(responses[start_index:])
-            stripped = response.strip()
-            if not expects_explicit_failure and any(
-                stripped.startswith(prefix) for prefix in explicit_failure_prefixes
-            ):
-                if retry_upstream_failure and stripped.startswith(
-                    ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
-                ):
-                    raise TransientUpstreamSmokeFailure(
-                        f"Command failed explicitly: {stripped}"
-                    )
-                raise ProbeOperationalFailure(f"Command failed explicitly: {stripped}")
+            raise_for_explicit_failure(
+                response,
+                explicit_failure_prefixes,
+                expected_substrings,
+                retry_upstream_failure,
+                sanitize_response,
+            )
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
                     trailing = drain_remaining()
                     if trailing:
                         responses.append(trailing)
-                        response = combine_responses(responses[start_index:])
+                    drained_response = combine_responses(responses[start_index:])
+                    raise_for_explicit_failure(
+                        drained_response,
+                        explicit_failure_prefixes,
+                        expected_substrings,
+                        retry_upstream_failure,
+                        sanitize_response,
+                    )
+                    if trailing:
+                        response = drained_response
                 return response
         else:
             time.sleep(idle_sleep_seconds)
+    diagnostic_response = sanitize_response(response) if sanitize_response else response
     raise ProbeOperationalFailure(
-        f"Expected response containing {expected_substrings}, got '{response}'"
+        f"Expected response containing {expected_substrings}, got '{diagnostic_response}'"
     )
 
 
@@ -406,16 +523,18 @@ def send_telnet_command_and_expect(
         "".join,
         lambda: drain_available_socket(sock, drain_timeout),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        sanitize_response=lambda value: redact_login_credential(value, line),
     )
+    diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
-    print(response.strip() or "<no data>")
+    print(diagnostic_response.strip() or "<no data>")
     if step_results is not None:
         step_results.append(
             {
                 "label": label,
-                "command": line,
+                "command": redact_login_command(line),
                 "latencyMs": round((time.time() - started_at) * 1000, 3),
-                "response": response.strip(),
+                "response": diagnostic_response.strip(),
             }
         )
     return response
@@ -446,6 +565,45 @@ def run_telnet_command_plan(
     return responses
 
 
+def open_telnet_socket(
+    host,
+    port,
+    timeout_seconds,
+    *,
+    tls_enabled,
+    tls_server_hostname=None,
+    tls_ca_file=None,
+):
+    if not isinstance(tls_enabled, bool):
+        raise TypeError("tls_enabled must be explicitly set to true or false")
+    if tls_enabled:
+        if not isinstance(tls_server_hostname, str) or not tls_server_hostname.strip():
+            raise ValueError("TLS Telnet connections require an explicit server hostname")
+    elif tls_server_hostname is not None or tls_ca_file is not None:
+        raise ValueError(
+            "TLS server hostname and CA file are only valid for TLS Telnet connections"
+        )
+
+    raw_socket = socket.create_connection((host, port), timeout=timeout_seconds)
+    if not tls_enabled:
+        return raw_socket
+    try:
+        context = (
+            ssl.create_default_context(cafile=str(tls_ca_file))
+            if tls_ca_file is not None
+            else ssl.create_default_context()
+        )
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        return context.wrap_socket(
+            raw_socket,
+            server_hostname=tls_server_hostname,
+        )
+    except Exception:
+        raw_socket.close()
+        raise
+
+
 def run_telnet_smoke_session(
     host,
     port,
@@ -457,10 +615,23 @@ def run_telnet_smoke_session(
     play_drain_timeout=1.0,
     default_drain_timeout=0.25,
     step_results=None,
+    *,
+    tls_enabled,
+    tls_server_hostname=None,
+    tls_ca_file=None,
 ):
     return run_transport_session(
         open_session
-        or (lambda: socket.create_connection((host, port), timeout=timeout_seconds)),
+        or (
+            lambda: open_telnet_socket(
+                host,
+                port,
+                timeout_seconds,
+                tls_enabled=tls_enabled,
+                tls_server_hostname=tls_server_hostname,
+                tls_ca_file=tls_ca_file,
+            )
+        ),
         lambda sock: run_telnet_command_plan(
             sock,
             steps,
@@ -534,16 +705,18 @@ def send_websocket_command_and_expect(
         lambda parts: "\n".join(chunk for chunk in parts if chunk),
         lambda: drain_available_websocket(ws, responses),
         retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        sanitize_response=lambda value: redact_login_credential(value, line),
     )
+    diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
-    print(response.strip() or "<empty>")
+    print(diagnostic_response.strip() or "<empty>")
     if step_results is not None:
         step_results.append(
             {
                 "label": label,
-                "command": line,
+                "command": redact_login_command(line),
                 "latencyMs": round((time.time() - started_at) * 1000, 3),
-                "response": response.strip(),
+                "response": diagnostic_response.strip(),
             }
         )
     return response
