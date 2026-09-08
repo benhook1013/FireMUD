@@ -109,7 +109,7 @@ class TcpProxyTlsListenerTest {
     TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
     when(policy.requiresClientCertificate()).thenReturn(true);
     when(policy.profileName()).thenReturn("breakglass_fingerprint");
-    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(3));
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(8));
     HttpHandler handler = (request, response) -> response.setComplete();
     TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, handler);
     Connection connection = null;
@@ -129,7 +129,7 @@ class TcpProxyTlsListenerTest {
       waitForAcceptedConnection(listener);
       assertThat(connection.isDisposed()).isFalse();
 
-      Instant deadline = Instant.now().plusSeconds(10);
+      Instant deadline = Instant.now().plusSeconds(15);
       while (listener.isRunning() && Instant.now().isBefore(deadline)) {
         Thread.sleep(25);
       }

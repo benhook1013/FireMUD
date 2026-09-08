@@ -297,6 +297,9 @@ cat > "$TEMP_DIR/revalidate" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\t%s\n' "$1" "$2" >> "$FAKE_REVALIDATE_LOG"
+if [[ "${FAKE_REVALIDATE_FAIL:-false}" == true ]]; then
+  exit 1
+fi
 EOF
 
 cat > "$TEMP_DIR/eligibility-fail.py" <<'EOF'
@@ -355,6 +358,7 @@ reset_case() {
   export FAKE_TARGET_BASE_REF=develop
   export FAKE_TARGET_AUTHOR=human
   export FAKE_TARGET_LOSES_PRIORITY=false
+  export FAKE_REVALIDATE_FAIL=false
   export FAKE_PR_101_PRIORITY=false
   export FAKE_PR_101_PAUSED=false
   export FAKE_PR_101_LABELS_VALID=valid
@@ -417,6 +421,19 @@ export PREVIEW_REVALIDATE_DEPLOY_SCRIPT="$TEMP_DIR/revalidate"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 grep -qx $'900\thead-900' "$FAKE_REVALIDATE_LOG"
 test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export PREVIEW_REVALIDATE_DEPLOY_SCRIPT="$TEMP_DIR/revalidate"
+export FAKE_REVALIDATE_FAIL=true
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" 2>"$TEMP_DIR/revalidate-failure.stderr"; then
+  echo "capacity allocation continued after deploy revalidation failed" >&2
+  exit 1
+fi
+grep -qx $'900\thead-900' "$FAKE_REVALIDATE_LOG"
+grep -q 'target deploy eligibility could not be revalidated' "$TEMP_DIR/revalidate-failure.stderr"
+test ! -e "$FAKE_DELETE_LOG"
+test ! -e "$FAKE_PUBLISH_LOG"
+test ! -e "$GITHUB_OUTPUT"
 
 reset_case
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"

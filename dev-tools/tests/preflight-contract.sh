@@ -2813,6 +2813,46 @@ bridge_values, bridge_issues = module.validate_gateway_ws_values(
 )
 if bridge_issues or not bridge_values:
     raise SystemExit(f"canonical bridge fixture did not pass: {bridge_issues}")
+
+mixed_port_documents = copy.deepcopy(rendered_documents)
+gateway_ingress_policy = next(
+    document
+    for document in mixed_port_documents
+    if document.get("kind") == "NetworkPolicy"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-ingress"
+)
+gateway_ingress_policy["spec"]["ingress"][0]["ports"].append(
+    {"protocol": "TCP", "port": "gateway-ws"}
+)
+_, mixed_port_issues = module.validate_gateway_ws_values(
+    mixed_port_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if not any("must not use a named port" in issue for issue in mixed_port_issues):
+    raise SystemExit(
+        "named port after canonical numeric listener port was skipped: "
+        f"{mixed_port_issues}"
+    )
+
+for workload_kind in ("StatefulSet", "DaemonSet"):
+    non_deployment_documents = copy.deepcopy(rendered_documents)
+    bridge_workload = next(
+        document
+        for document in non_deployment_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )
+    bridge_workload["kind"] = workload_kind
+    bridge_workload["spec"].pop("strategy")
+    _, non_deployment_issues = module.validate_gateway_ws_values(
+        non_deployment_documents,
+        yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+    )
+    if any("bridge Deployment strategy must be Recreate" in issue for issue in non_deployment_issues):
+        raise SystemExit(
+            f"{workload_kind} bridge incorrectly required Deployment strategy: "
+            f"{non_deployment_issues}"
+        )
 if not module.path_is_under_mount("/grpc-tls/client.crt", "/grpc-tls"):
     raise SystemExit("gRPC TLS path was not recognized beneath its mount")
 if module.path_is_under_mount("/grpc-tls-shadow/client.crt", "/grpc-tls"):

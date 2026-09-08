@@ -96,7 +96,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private volatile long lastActivityNanos;
   private volatile long connectionStartNanos;
   private volatile boolean mcpNegotiated;
-  private WebSocket webSocket;
+  private final AtomicReference<WebSocket> webSocket = new AtomicReference<>();
   private volatile boolean connectedOnce;
   private final Queue<String> buffer = new ConcurrentLinkedQueue<>();
   private final Set<CompletableFuture<WebSocket>> outstandingSends = ConcurrentHashMap.newKeySet();
@@ -238,8 +238,14 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     setWebSocket(webSocket, false);
   }
 
-  private void setWebSocket(WebSocket webSocket, boolean reconnected) {
-    this.webSocket = webSocket;
+  private boolean setWebSocket(WebSocket webSocket, boolean reconnected) {
+    this.webSocket.set(webSocket);
+    if (closing) {
+      this.webSocket.compareAndSet(webSocket, null);
+      webSocket.abort();
+      reconnecting = false;
+      return false;
+    }
     reconnecting = false;
     startHeartbeat();
     touchActivity();
@@ -247,9 +253,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       // On gateway reconnect, simply drain the existing buffer over the WebSocket
       // bridge; no side-channel gRPC replay is used.
       drainBuffer();
-      return;
+      return true;
     }
     drainBuffer();
+    return true;
   }
 
   int getBufferedSize() {
@@ -318,7 +325,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void sendHeartbeat() {
-    WebSocket socket = this.webSocket;
+    WebSocket socket = this.webSocket.get();
     if (socket == null || closing) {
       return;
     }
@@ -340,14 +347,15 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private synchronized void drainBuffer() {
-    if (webSocket == null || inFlightSend != null || closing) {
+    WebSocket socket = webSocket.get();
+    if (socket == null || inFlightSend != null || closing) {
       return;
     }
     String next = buffer.peek();
     if (next == null) {
       return;
     }
-    CompletableFuture<WebSocket> sendFuture = webSocket.sendText(next, true);
+    CompletableFuture<WebSocket> sendFuture = socket.sendText(next, true);
     inFlightSend = sendFuture;
     outstandingSends.add(sendFuture);
     sendFuture.whenComplete(
@@ -501,8 +509,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void closeGatewayWebSocket() {
-    WebSocket socket = this.webSocket;
-    webSocket = null;
+    WebSocket socket = webSocket.getAndSet(null);
     if (socket != null) {
       try {
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye");
@@ -513,7 +520,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void ensureGatewayConnected() {
-    if (closing || webSocket != null || reconnecting) {
+    if (closing || webSocket.get() != null || reconnecting) {
       return;
     }
     connectToGateway();
@@ -801,7 +808,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
           }
           boolean wasConnected = connectedOnce;
           connectedOnce = true;
-          setWebSocket(webSocket, wasConnected);
+          if (!setWebSocket(webSocket, wasConnected)) {
+            return;
+          }
           webSocket.request(1);
           reconnectAttempts.set(0);
           logger.info("WebSocket connected to {}", gatewayWsUrl);

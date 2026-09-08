@@ -68,6 +68,19 @@ def _argparse_timeout(name: str) -> Callable[[str], float]:
     return parse
 
 
+def _argparse_port(value: str) -> int:
+    """Parse a usable remote TCP port before connection dispatch."""
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "port must be an integer between 1 and 65535"
+        ) from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be an integer between 1 and 65535")
+    return port
+
+
 class _TransportArgumentParser(argparse.ArgumentParser):
     """Reject raw-socket mode combined with TLS-only configuration."""
 
@@ -671,7 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="mode", required=True)
     connect = subparsers.add_parser("connect", help="maintain an interactive Telnet session")
     connect.add_argument("--host", required=True)
-    connect.add_argument("--port", required=True, type=int)
+    connect.add_argument("--port", required=True, type=_argparse_port)
     connect.add_argument("--transcript", required=True, type=Path)
     connect.add_argument(
         "--timeout",

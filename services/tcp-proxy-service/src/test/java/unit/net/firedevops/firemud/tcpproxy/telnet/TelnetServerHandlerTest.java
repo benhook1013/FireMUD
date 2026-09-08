@@ -349,6 +349,27 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void socketAttachedAfterCloseStartedIsDetachedAndAborted() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler = newHandler(registry, false);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    WebSocket lateWebSocket = mock(WebSocket.class);
+
+    handler.channelInactive(ctx);
+    handler.setWebSocket(lateWebSocket);
+    handler.channelInactive(ctx);
+
+    verify(lateWebSocket).abort();
+    verify(lateWebSocket, Mockito.never()).sendClose(WebSocket.NORMAL_CLOSURE, "bye");
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void failCloseCancelsStalledGatewayConnectionWithoutDuplicateDisconnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     AtomicInteger cancellationAttempts = new AtomicInteger();

@@ -186,7 +186,10 @@ find_unsatisfied_priority_pr() {
 # Fail closed on the complete live PR contract before evaluating or mutating
 # shared preview capacity. The workflow repeats this check immediately before
 # Helm so both race-sensitive deploy boundaries stay protected.
-bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"
+if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
+  echo "Refusing capacity action because target deploy eligibility could not be revalidated" >&2
+  exit 1
+fi
 
 mapfile -t namespace_rows < <(
   kubectl get namespaces -l firemud.dev/preview=true \

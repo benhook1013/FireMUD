@@ -4104,7 +4104,9 @@ def validate_gateway_ws_values(
             bridge_containers.append((container, volumes))
         if not bridge_containers:
             continue
-        if (document.get("spec") or {}).get("strategy") != {"type": "Recreate"}:
+        if document.get("kind") == "Deployment" and (document.get("spec") or {}).get(
+            "strategy"
+        ) != {"type": "Recreate"}:
             issues.append(
                 "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal cannot retain stale pods"
             )
@@ -4147,15 +4149,15 @@ def validate_gateway_ws_values(
             }
 
             grpc_mounts = [
-                mount
-                for mount in container.get("volumeMounts") or []
-                if isinstance(mount, dict)
-                and mount.get("readOnly") is True
-                and volumes.get(mount.get("name"))
-                and isinstance(mount.get("mountPath"), str)
+                grpc_mount
+                for grpc_mount in container.get("volumeMounts") or []
+                if isinstance(grpc_mount, dict)
+                and grpc_mount.get("readOnly") is True
+                and volumes.get(grpc_mount.get("name"))
+                and isinstance(grpc_mount.get("mountPath"), str)
                 and any(
-                    path_is_under_mount(path, mount["mountPath"])
-                    for path in grpc_paths
+                    path_is_under_mount(grpc_path, grpc_mount["mountPath"])
+                    for grpc_path in grpc_paths
                 )
             ]
             if len(grpc_mounts) != 1:
@@ -4163,7 +4165,8 @@ def validate_gateway_ws_values(
                     "exactly one dedicated read-only Secret-backed gRPC TLS mount is required"
                 )
             grpc_secret_names = {
-                volumes.get(mount.get("name")) for mount in grpc_mounts
+                volumes.get(grpc_mount.get("name"))
+                for grpc_mount in grpc_mounts
             }
             telnet_paths = {
                 env.get(name)
@@ -4389,10 +4392,11 @@ def validate_gateway_ws_network_policy(
                 issues.append(f"{label} must not contain an all-port rule")
                 matching.append(rule)
                 continue
+            matches_listener = False
             for port in ports:
                 if not isinstance(port, dict) or "port" not in port:
                     issues.append(f"{label} must not contain an all-port rule")
-                    matching.append(rule)
+                    matches_listener = True
                     break
                 value = port.get("port")
                 end_port = port.get("endPort")
@@ -4401,12 +4405,13 @@ def validate_gateway_ws_network_policy(
                     and isinstance(end_port, int)
                     and value <= GATEWAY_WS_LISTENER_PORT <= end_port
                 ):
-                    matching.append(rule)
-                    break
+                    matches_listener = True
                 elif isinstance(value, str):
                     issues.append(
                         f"{label} must not use a named port that could widen listener access"
                     )
+            if matches_listener:
+                matching.append(rule)
         if len(matching) != 1 or not canonical_bridge_peer(matching[0], peer):
             issues.append(
                 f"{label} must allow TCP 8443 through exactly one app={peer} peer rule"
