@@ -910,20 +910,70 @@ for label, policy_name, policy_types, expected_fragment in (
     if not any(expected_fragment in issue for issue in direction_issues):
         raise SystemExit(f"{label} policy was accepted: {direction_issues}")
 
-for workflow_name, render_name in (
-    ("preview.yml", "preview-rendered.yaml"),
-    ("dev-demo.yml", "dev-demo-rendered.yaml"),
-):
-    source = (root / ".github/workflows" / workflow_name).read_text(encoding="utf-8")
-    render_index = source.find(f">/tmp/{render_name}")
-    preflight_index = source.find("python3 ./dev-tools/deploy/preflight.py hosted-bridge", render_index)
-    operator_index = source.find("FIREMUD_PREFLIGHT_CONTEXT=operator", render_index)
-    dry_run_index = source.find("kubectl apply --dry-run=server", render_index)
-    deploy_index = source.find("helm upgrade --install", render_index)
-    if min(render_index, operator_index, preflight_index, dry_run_index, deploy_index) < 0:
-        raise SystemExit(f"{workflow_name} is missing hosted bridge preflight wiring")
-    if not render_index < operator_index < preflight_index < dry_run_index < deploy_index:
-        raise SystemExit(f"{workflow_name} does not fail bridge preflight before deploy")
+preview_source = (root / ".github/workflows/preview.yml").read_text(encoding="utf-8")
+preview_render_index = preview_source.find(">/tmp/preview-rendered.yaml")
+preview_static_index = preview_source.find(
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static", preview_render_index
+)
+preview_static_call_index = preview_source.find(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_static_index
+)
+preview_dry_run_index = preview_source.find(
+    "kubectl apply --dry-run=server", preview_static_call_index
+)
+preview_deploy_index = preview_source.find(
+    "helm upgrade --install", preview_dry_run_index
+)
+preview_operator_index = preview_source.find(
+    "FIREMUD_PREFLIGHT_CONTEXT=operator", preview_deploy_index
+)
+preview_operator_call_index = preview_source.find(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", preview_operator_index
+)
+preview_bootstrap_index = preview_source.find(
+    "- name: Wait for seeded preview login prerequisites", preview_operator_call_index
+)
+preview_indices = (
+    preview_render_index,
+    preview_static_index,
+    preview_static_call_index,
+    preview_dry_run_index,
+    preview_deploy_index,
+    preview_operator_index,
+    preview_operator_call_index,
+    preview_bootstrap_index,
+)
+if min(preview_indices) < 0:
+    raise SystemExit("preview.yml is missing two-phase hosted bridge preflight wiring")
+if list(preview_indices) != sorted(preview_indices):
+    raise SystemExit(
+        "preview.yml must validate render statically before deploy and projected "
+        "Secrets after rollout but before bootstrap"
+    )
+
+dev_source = (root / ".github/workflows/dev-demo.yml").read_text(encoding="utf-8")
+dev_render_index = dev_source.find(">/tmp/dev-demo-rendered.yaml")
+dev_operator_index = dev_source.find(
+    "FIREMUD_PREFLIGHT_CONTEXT=operator", dev_render_index
+)
+dev_preflight_index = dev_source.find(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge", dev_operator_index
+)
+dev_dry_run_index = dev_source.find(
+    "kubectl apply --dry-run=server", dev_preflight_index
+)
+dev_deploy_index = dev_source.find("helm upgrade --install", dev_dry_run_index)
+dev_indices = (
+    dev_render_index,
+    dev_operator_index,
+    dev_preflight_index,
+    dev_dry_run_index,
+    dev_deploy_index,
+)
+if min(dev_indices) < 0:
+    raise SystemExit("dev-demo.yml is missing hosted bridge preflight wiring")
+if list(dev_indices) != sorted(dev_indices):
+    raise SystemExit("dev-demo.yml does not fail bridge preflight before deploy")
 PY
 
 echo "Hosted Gateway bridge Helm, NetworkPolicy, preflight, and workflow contracts passed"
