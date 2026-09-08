@@ -26,6 +26,8 @@ import io.netty.handler.ssl.SslProvider;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -232,6 +234,38 @@ class GatewayWebSocketClientTest {
 
     assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
+  }
+
+  @Test
+  void cancelledReadinessDoesNotRecordFailureButHandshakeErrorDoes() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate, registry);
+    HttpClient replacementClient = mock(HttpClient.class);
+    CompletableFuture<HttpResponse<Void>> cancelledResponse = new CompletableFuture<>();
+    when(replacementClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+        .thenReturn(cancelledResponse);
+    replaceCurrentGeneration(client, replacementClient);
+
+    CompletableFuture<Boolean> cancelledReadiness = client.isReadyAsync();
+    assertTrue(cancelledReadiness.cancel(true));
+    assertTrue(cancelledResponse.isCancelled());
+    assertSame(replacementClient, client.clientIdentity());
+    assertEquals(
+        0.0, registry.counter("tcpproxy.gateway.handshake.failures", "reason", "unknown").count());
+
+    CompletableFuture<HttpResponse<Void>> failedResponse = new CompletableFuture<>();
+    when(replacementClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+        .thenReturn(failedResponse);
+    CompletableFuture<Boolean> failedReadiness = client.isReadyAsync();
+    failedResponse.completeExceptionally(new SSLHandshakeException("handshake failed"));
+
+    assertFalse(failedReadiness.get(5, TimeUnit.SECONDS));
+    assertEquals(
+        1.0,
+        registry
+            .counter("tcpproxy.gateway.handshake.failures", "reason", "handshake_protocol")
+            .count());
+    assertSame(replacementClient, client.clientIdentity());
   }
 
   @Test

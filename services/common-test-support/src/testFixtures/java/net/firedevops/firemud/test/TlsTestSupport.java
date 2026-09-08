@@ -17,8 +17,7 @@ public final class TlsTestSupport {
         String normalized = message.toLowerCase(Locale.ROOT);
         if (normalized.contains("certificate_required")
             || normalized.contains("bad_certificate")
-            || normalized.contains("empty client certificate chain")
-            || normalized.contains("connection prematurely closed before opening handshake")) {
+            || normalized.contains("empty client certificate chain")) {
           return true;
         }
       }

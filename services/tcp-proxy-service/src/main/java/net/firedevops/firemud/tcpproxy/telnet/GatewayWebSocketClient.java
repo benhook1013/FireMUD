@@ -247,7 +247,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
                     response.statusCode() >= 200
                         && response.statusCode() < 300
                         && hasUsableCertificateWatcher();
-              } else {
+              } else if (!readiness.isCancelled()) {
                 recordFailure(classifyFailure(error));
               }
             } finally {
