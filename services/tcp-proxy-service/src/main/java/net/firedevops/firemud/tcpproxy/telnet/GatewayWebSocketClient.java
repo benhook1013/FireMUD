@@ -60,6 +60,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   // Publication precedes retirement, so one fresh-state retry covers a raced rotation.
   private static final int GENERATION_ACQUIRE_ATTEMPTS = 2;
   private static final String CLIENT_AUTH_EKU = "1.3.6.1.5.5.7.3.2";
+  private static final String GAMEPLAY_WEBSOCKET_ROUTE = "/ws/game";
   private static final List<String> LOCAL_PROFILES = List.of("dev", "local", "test");
 
   private final URI gatewayUri;
@@ -517,11 +518,14 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         throw new IllegalArgumentException("missing Gateway WebSocket URI");
       }
       URI uri = URI.create(value);
+      String rawPath = uri.getRawPath();
       if (!("ws".equals(uri.getScheme()) || "wss".equals(uri.getScheme()))
           || uri.getHost() == null
           || uri.getUserInfo() != null
           || uri.getQuery() != null
-          || uri.getFragment() != null) {
+          || uri.getFragment() != null
+          || !(GAMEPLAY_WEBSOCKET_ROUTE.equals(rawPath)
+              || (rawPath != null && rawPath.startsWith(GAMEPLAY_WEBSOCKET_ROUTE + "/")))) {
         throw new IllegalArgumentException("unsupported Gateway WebSocket URI");
       }
       return uri;

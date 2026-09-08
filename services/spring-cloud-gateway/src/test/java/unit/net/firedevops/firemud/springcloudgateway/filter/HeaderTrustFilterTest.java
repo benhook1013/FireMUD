@@ -45,6 +45,26 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void stripsSpoofedRoutingBundleFromPublicGameplayIngress() {
+    HeaderTrustFilter filter = legacyFilter(new GatewayHeaderTrustProperties());
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+            .header("X-World-Slug", "spoofed-world")
+            .header("X-Realm-Slug", "spoofed-realm")
+            .header("X-Pointer-Version", "999")
+            .build();
+
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version")).isNull();
+  }
+
+  @Test
   void derivesClientIpFromForwardedHeadersOnlyWhenRemoteIsTrusted() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getForwardedClientIp().setTrustedProxyCidrs(List.of("1.2.3.4/32"));
@@ -96,6 +116,9 @@ class HeaderTrustFilterTest {
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "7")
+            .header("X-World-Slug", "demo")
+            .header("X-Realm-Slug", "production")
+            .header("X-Pointer-Version", "17")
             .build();
 
     ServerWebExchange mutatedExchange =
@@ -108,6 +131,12 @@ class HeaderTrustFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("7");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-World-Slug"))
+        .isEqualTo("demo");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Realm-Slug"))
+        .isEqualTo("production");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version"))
+        .isEqualTo("17");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Game-Instance-Id"))
         .isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Tenant-Id")).isNull();

@@ -536,16 +536,25 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     reconnecting = true;
-    CompletableFuture<WebSocket> connection =
-        webSocketConnector.connect(
-            clientIp,
-            proxyConnectionId,
-            sessionContext.gameInstanceId(),
-            sessionContext.tenantId(),
-            sessionContext.worldSlug(),
-            sessionContext.realmSlug(),
-            sessionContext.pointerVersion(),
-            gatewayListener());
+    CompletableFuture<WebSocket> connection;
+    try {
+      connection =
+          webSocketConnector.connect(
+              clientIp,
+              proxyConnectionId,
+              sessionContext.gameInstanceId(),
+              sessionContext.tenantId(),
+              sessionContext.worldSlug(),
+              sessionContext.realmSlug(),
+              sessionContext.pointerVersion(),
+              gatewayListener());
+    } catch (RuntimeException error) {
+      try (CombinedLoggingContext ignored = openLoggingContext()) {
+        logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+        failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+      }
+      return;
+    }
     inFlightGatewayConnection.set(connection);
     if (closing && inFlightGatewayConnection.compareAndSet(connection, null)) {
       reconnecting = false;

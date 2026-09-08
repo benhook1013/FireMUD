@@ -32,6 +32,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_CLIENT_IP = "X-Client-IP";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
+  private static final String HDR_WORLD_SLUG = "X-World-Slug";
+  private static final String HDR_REALM_SLUG = "X-Realm-Slug";
+  private static final String HDR_POINTER_VERSION = "X-Pointer-Version";
 
   private static final String HDR_PROXY_CLIENT_IP = "X-Proxy-Client-IP";
   private static final String HDR_PROXY_CONNECTION_ID = "X-Proxy-Connection-Id";
@@ -91,6 +94,18 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
         trustedTcpProxy && isSessionRoute
             ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_TENANT_ID)
             : null;
+    String incomingWorldSlug =
+        trustedTcpProxy && isSessionRoute
+            ? exchange.getRequest().getHeaders().getFirst(HDR_WORLD_SLUG)
+            : null;
+    String incomingRealmSlug =
+        trustedTcpProxy && isSessionRoute
+            ? exchange.getRequest().getHeaders().getFirst(HDR_REALM_SLUG)
+            : null;
+    String incomingPointerVersion =
+        trustedTcpProxy && isSessionRoute
+            ? exchange.getRequest().getHeaders().getFirst(HDR_POINTER_VERSION)
+            : null;
 
     if (trustedTcpProxy && isSessionRoute) {
       try {
@@ -128,6 +143,17 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                             if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);
                             }
+                            if (isSessionRoute) {
+                              if (incomingWorldSlug != null) {
+                                headers.set(HDR_WORLD_SLUG, incomingWorldSlug);
+                              }
+                              if (incomingRealmSlug != null) {
+                                headers.set(HDR_REALM_SLUG, incomingRealmSlug);
+                              }
+                              if (incomingPointerVersion != null) {
+                                headers.set(HDR_POINTER_VERSION, incomingPointerVersion);
+                              }
+                            }
                           }
                         }))
             .build();
@@ -146,6 +172,9 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_CLIENT_IP);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
+    headers.remove(HDR_WORLD_SLUG);
+    headers.remove(HDR_REALM_SLUG);
+    headers.remove(HDR_POINTER_VERSION);
 
     headers.remove(HDR_PROXY_CLIENT_IP);
     headers.remove(HDR_PROXY_CONNECTION_ID);

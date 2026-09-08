@@ -173,6 +173,43 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void gatewayUriAcceptsOnlyCanonicalGameplayRouteAndDescendants() {
+    for (String uri :
+        List.of(
+            "ws://localhost/ws/game", "ws://localhost/ws/game/", "ws://localhost/ws/game/realm")) {
+      GatewayWebSocketClient client = newLocalClient(uri);
+      assertEquals(uri, client.gatewayUri().toString());
+    }
+  }
+
+  @Test
+  void gatewayUriOutsideCanonicalGameplayRouteFailsWithBadUrlReason() {
+    for (String uri :
+        List.of(
+            "ws://localhost",
+            "ws://localhost/",
+            "ws://localhost/other-route",
+            "ws://localhost/ws/gameevil")) {
+      SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+
+      IllegalStateException ex =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  new GatewayWebSocketClient(
+                      uri, "", "", "", "", false, "", new String[] {"test"}, meterRegistry, false));
+
+      assertTrue(ex.getMessage().contains("reason=bad_url"));
+      assertEquals(1.0, meterRegistry.counter("tcpproxy.tls.misconfig").count());
+      assertEquals(
+          1.0,
+          meterRegistry
+              .counter("tcpproxy.gateway.handshake.failures", "reason", "bad_url")
+              .count());
+    }
+  }
+
+  @Test
   void nullGatewayUriFailsAtConstructionWithBadUrlReason() {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
@@ -1201,6 +1238,23 @@ class GatewayWebSocketClientTest {
 
   private GatewayWebSocketClient newClient(String host, int port, Path caCertificate) {
     return newClient(host, port, caCertificate, new SimpleMeterRegistry());
+  }
+
+  private GatewayWebSocketClient newLocalClient(String gatewayWsUrl) {
+    GatewayWebSocketClient client =
+        new GatewayWebSocketClient(
+            gatewayWsUrl,
+            "",
+            "",
+            "",
+            "",
+            false,
+            "",
+            new String[] {"test"},
+            new SimpleMeterRegistry(),
+            false);
+    clients.add(client);
+    return client;
   }
 
   private GatewayWebSocketClient newClient(

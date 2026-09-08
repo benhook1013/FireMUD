@@ -463,6 +463,43 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void synchronousGatewayConnectFailureFailClosesTelnetAndClearsReconnectState() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              throw new IllegalStateException("connector failed before returning a future");
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture closeFuture = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(closeFuture);
+    when(closeFuture.addListener(any(ChannelFutureListener.class))).thenReturn(closeFuture);
+
+    handler.channelActive(ctx);
+
+    verify(ctx)
+        .writeAndFlush(
+            "DISCONNECT backend_unavailable Gateway link unavailable; please reconnect\n");
+    verify(closeFuture).addListener(ChannelFutureListener.CLOSE);
+    assertFalse(booleanField(handler, "reconnecting"));
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void connectionClosedWhenBufferDepthExceeded() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
