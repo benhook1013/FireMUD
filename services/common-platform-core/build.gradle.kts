@@ -24,5 +24,4 @@ dependencies {
 
     compileOnly(libs.spotbugs.annotations)
     testImplementation(libs.spring.boot.starter.test)
-    testImplementation(libs.grpc.spring.boot.starter)
 }

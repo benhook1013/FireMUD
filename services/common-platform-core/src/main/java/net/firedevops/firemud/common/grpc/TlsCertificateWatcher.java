@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
-import org.springframework.boot.health.contributor.Health;
 
 /**
  * Watches a set of certificate files for modifications and invokes a callback when any of them
@@ -168,20 +167,6 @@ public class TlsCertificateWatcher implements AutoCloseable {
 
   public boolean hasAllRequiredRegistrations() {
     return running.get() && allRequiredRegistrationsValid.get();
-  }
-
-  static Health healthFor(TlsCertificateWatcher watcher) {
-    if (watcher == null) {
-      return Health.up().withDetail("tlsReload", "disabled_or_not_configured").build();
-    }
-
-    boolean allRequiredRegistrations = watcher.hasAllRequiredRegistrations();
-    Health.Builder health = allRequiredRegistrations ? Health.up() : Health.outOfService();
-    return health
-        .withDetail("tlsReload", allRequiredRegistrations ? "watching" : "watcher_unhealthy")
-        .withDetail("watcherRunning", watcher.isRunning())
-        .withDetail("allRequiredRegistrations", allRequiredRegistrations)
-        .build();
   }
 
   @Override

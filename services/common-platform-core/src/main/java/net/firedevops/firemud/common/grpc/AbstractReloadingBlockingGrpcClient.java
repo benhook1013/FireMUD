@@ -9,11 +9,9 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import org.slf4j.Logger;
-import org.springframework.boot.health.contributor.Health;
-import org.springframework.boot.health.contributor.HealthIndicator;
 
 public abstract class AbstractReloadingBlockingGrpcClient<TStub extends AbstractStub<TStub>>
-    implements AutoCloseable, HealthIndicator {
+    implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
@@ -22,7 +20,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   private ManagedChannel channel;
   private TStub stub;
-  private volatile TlsCertificateWatcher watcher;
+  private TlsCertificateWatcher watcher;
 
   protected AbstractReloadingBlockingGrpcClient(
       ServiceEndpointsProperties endpoints,
@@ -91,11 +89,6 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   protected final TStub applyStubCustomizer(TStub stub) {
     return stubCustomizer.customize(stub);
-  }
-
-  @Override
-  public final Health health() {
-    return TlsCertificateWatcher.healthFor(watcher);
   }
 
   protected abstract String configuredTarget(ServiceEndpointsProperties endpoints);
