@@ -1,6 +1,5 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -82,9 +81,6 @@ public final class TelnetServer {
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "MeterRegistry is a shared Spring singleton used to register proxy metrics")
   @Autowired
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,

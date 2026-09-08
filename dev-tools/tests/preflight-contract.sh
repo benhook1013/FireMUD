@@ -3539,6 +3539,11 @@ telnet_cross_namespace_decoys.extend(
             "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
             "spec": {"template": {"spec": {"containers": []}}},
         },
+        {
+            "kind": "Service",
+            "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
+            "spec": {"type": "NodePort"},
+        },
     ]
 )
 telnet_cross_namespace_issues = module.validate_hosted_telnet_tls_values(
@@ -3549,20 +3554,6 @@ if telnet_cross_namespace_issues:
         "same-name Telnet TLS resources in another namespace affected validation: "
         f"{telnet_cross_namespace_issues}"
     )
-telnet_ambiguous_nodeports = copy.deepcopy(telnet_documents)
-telnet_ambiguous_nodeports.append(
-    {
-        "kind": "Service",
-        "metadata": {"name": "tcp-proxy-service", "namespace": "other"},
-        "spec": {"type": "NodePort"},
-    }
-)
-telnet_ambiguity_issues = module.validate_hosted_telnet_tls_values(telnet_ambiguous_nodeports)
-if not any(
-    "exactly one tcp-proxy-service NodePort Service" in issue
-    for issue in telnet_ambiguity_issues
-):
-    raise SystemExit("multiple cross-namespace tcp-proxy-service NodePorts were accepted")
 
 redis_endpoints, redis_issues = module.effective_redis_endpoints(
     rendered_documents, yaml.safe_load(current_expected_path.read_text(encoding="utf-8"))

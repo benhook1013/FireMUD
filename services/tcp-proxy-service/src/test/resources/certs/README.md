@@ -18,7 +18,7 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 openssl genrsa -out "$work_dir/ca.key" 2048
-openssl genrsa -out "$fixture_dir/rotated-gateway-client.key" 2048
+openssl genrsa -out "$work_dir/rotated-gateway-client.key" 2048
 ```
 
 Create `$work_dir/ca.cnf` with this exact content:
@@ -75,38 +75,45 @@ Generate the CA, request, and signed leaf:
 ```bash
 openssl req -x509 -new -nodes -key "$work_dir/ca.key" -sha256 -days 365 \
   -config "$work_dir/ca.cnf" \
-  -out "$fixture_dir/rotated-gateway-client-ca.crt"
-openssl req -new -key "$fixture_dir/rotated-gateway-client.key" \
+  -out "$work_dir/rotated-gateway-client-ca.crt"
+openssl req -new -key "$work_dir/rotated-gateway-client.key" \
   -config "$work_dir/client.cnf" \
   -out "$work_dir/rotated-gateway-client.csr"
 openssl x509 -req -in "$work_dir/rotated-gateway-client.csr" \
-  -CA "$fixture_dir/rotated-gateway-client-ca.crt" \
-  -CAkey "$work_dir/ca.key" -CAcreateserial \
-  -out "$fixture_dir/rotated-gateway-client.crt" -days 365 -sha256 \
+  -CA "$work_dir/rotated-gateway-client-ca.crt" \
+  -CAkey "$work_dir/ca.key" \
+  -CAserial "$work_dir/rotated-gateway-client-ca.srl" -CAcreateserial \
+  -out "$work_dir/rotated-gateway-client.crt" -days 365 -sha256 \
   -extensions v3_req -extfile "$work_dir/client.cnf"
-rm -f "$fixture_dir/rotated-gateway-client-ca.srl"
-chmod 644 \
-  "$fixture_dir/rotated-gateway-client-ca.crt" \
-  "$fixture_dir/rotated-gateway-client.crt" \
-  "$fixture_dir/rotated-gateway-client.key"
 ```
 
-Verify the issuer relationship, key match, validity window, SANs, and EKUs before committing the regenerated fixtures:
+Verify the issuer relationship, key match, validity window, SANs, and EKUs before installing the regenerated fixtures:
 
 ```bash
 openssl verify \
-  -CAfile "$fixture_dir/rotated-gateway-client-ca.crt" \
-  "$fixture_dir/rotated-gateway-client.crt"
-openssl x509 -in "$fixture_dir/rotated-gateway-client.crt" -pubkey -noout \
+  -CAfile "$work_dir/rotated-gateway-client-ca.crt" \
+  "$work_dir/rotated-gateway-client.crt"
+openssl x509 -in "$work_dir/rotated-gateway-client.crt" -pubkey -noout \
   | openssl pkey -pubin -outform der | openssl sha256
-openssl pkey -in "$fixture_dir/rotated-gateway-client.key" -pubout -outform der \
+openssl pkey -in "$work_dir/rotated-gateway-client.key" -pubout -outform der \
   | openssl sha256
-openssl x509 -in "$fixture_dir/rotated-gateway-client-ca.crt" \
+openssl x509 -in "$work_dir/rotated-gateway-client-ca.crt" \
   -noout -subject -issuer -dates
-openssl x509 -in "$fixture_dir/rotated-gateway-client.crt" \
+openssl x509 -in "$work_dir/rotated-gateway-client.crt" \
   -noout -subject -issuer -dates -ext subjectAltName
-openssl x509 -in "$fixture_dir/rotated-gateway-client.crt" \
+openssl x509 -in "$work_dir/rotated-gateway-client.crt" \
   -noout -ext extendedKeyUsage
 ```
 
 The two public-key SHA-256 values must match, `openssl verify` must report `OK`, the CA must be self-issued as `CN = FireMUD-CA`, and the leaf issuer must be that same CA. Update the expiry date recorded above whenever the fixtures are regenerated.
+
+Only after every verification passes, install the staged fixtures with their final filenames and modes:
+
+```bash
+install -m 644 "$work_dir/rotated-gateway-client-ca.crt" \
+  "$fixture_dir/rotated-gateway-client-ca.crt"
+install -m 644 "$work_dir/rotated-gateway-client.crt" \
+  "$fixture_dir/rotated-gateway-client.crt"
+install -m 644 "$work_dir/rotated-gateway-client.key" \
+  "$fixture_dir/rotated-gateway-client.key"
+```

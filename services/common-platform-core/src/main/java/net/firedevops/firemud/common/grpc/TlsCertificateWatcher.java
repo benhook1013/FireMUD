@@ -88,36 +88,39 @@ public class TlsCertificateWatcher implements AutoCloseable {
   }
 
   private void processEvents() {
-    while (running.get()) {
-      if (keys.isEmpty()) {
-        running.set(false);
-        logger.error(
-            "TLS certificate watcher lost all registered directories; stopping credential reloads");
-        return;
-      }
-
-      WatchKey key;
-      try {
-        key = watchService.take();
-      } catch (ClosedWatchServiceException e) {
-        return;
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return;
-      }
-      if (processKey(key)) {
-        drainReloadBurst();
-        if (!running.get()) {
+    try {
+      while (running.get()) {
+        if (keys.isEmpty()) {
+          logger.error(
+              "TLS certificate watcher lost all registered directories; stopping credential reloads");
           return;
         }
-        logger.info("TLS certificate projection or file change detected; reloading credentials");
+
+        WatchKey key;
         try {
-          onChange.run();
-        } catch (RuntimeException e) {
-          logger.error(
-              "TLS certificate reload callback failed; continuing to watch credentials", e);
+          key = watchService.take();
+        } catch (ClosedWatchServiceException e) {
+          return;
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        }
+        if (processKey(key)) {
+          drainReloadBurst();
+          if (!running.get()) {
+            return;
+          }
+          logger.info("TLS certificate projection or file change detected; reloading credentials");
+          try {
+            onChange.run();
+          } catch (RuntimeException e) {
+            logger.error(
+                "TLS certificate reload callback failed; continuing to watch credentials", e);
+          }
         }
       }
+    } finally {
+      running.set(false);
     }
   }
 

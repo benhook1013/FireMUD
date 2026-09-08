@@ -7,11 +7,26 @@ trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 assert_balanced_preflight_group() {
   local context="$1"
-  local group_starts
-  local group_ends
-  group_starts="$(grep -c '^::group::Run canonical preflight policy checks (ci-static)$' "$OUTPUT_FILE" || true)"
-  group_ends="$(grep -c '^::endgroup::$' "$OUTPUT_FILE" || true)"
-  if [[ "$group_starts" -ne 1 || "$group_ends" -ne 1 ]]; then
+  if ! awk '
+    $0 == "::group::Run canonical preflight policy checks (ci-static)" {
+      starts++
+      if (open) {
+        invalid = 1
+      }
+      open = 1
+      next
+    }
+    open && /^::group::/ {
+      invalid = 1
+    }
+    open && $0 == "::endgroup::" {
+      closes++
+      open = 0
+    }
+    END {
+      exit !(starts == 1 && closes == 1 && !open && !invalid)
+    }
+  ' "$OUTPUT_FILE"; then
     echo "$context did not emit one balanced preflight log group" >&2
     cat "$OUTPUT_FILE" >&2
     exit 1

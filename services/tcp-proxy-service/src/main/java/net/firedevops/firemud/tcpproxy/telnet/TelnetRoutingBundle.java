@@ -57,9 +57,10 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
       return;
     }
     for (int index = 0; index < value.length(); index++) {
-      if (Character.isISOControl(value.charAt(index))) {
+      char character = value.charAt(index);
+      if (Character.isISOControl(character) || character > 0xFF) {
         throw new IllegalArgumentException(
-            "Header value for " + headerName + " contains a disallowed control character");
+            "Header value for " + headerName + " contains a disallowed character");
       }
     }
   }

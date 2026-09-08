@@ -4443,6 +4443,8 @@ def validate_gateway_ws_network_policy(
 def validate_hosted_telnet_tls_values(
     documents: list[dict[str, Any]],
     required_identity_mode: str | None = None,
+    *,
+    target_namespace: str = "firemud",
 ) -> list[str]:
     """Validate the hosted NodePort Telnet direct-TLS binding."""
     if required_identity_mode is not None and required_identity_mode not in {
@@ -4456,6 +4458,9 @@ def validate_hosted_telnet_tls_values(
         for document in documents
         if document.get("kind") == "Service"
         and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
     ]
     nodeport_services = [
         document
@@ -4474,7 +4479,7 @@ def validate_hosted_telnet_tls_values(
         )
         return issues
     tcp_service = nodeport_services[0]
-    tcp_namespace = workload_namespace(tcp_service)
+    tcp_namespace = target_namespace
 
     deployments = [
         document
@@ -6784,7 +6789,9 @@ def hosted_bridge_preflight(
             metadata["namespace"] = namespace
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
     telnet_issues = validate_hosted_telnet_tls_values(
-        documents, required_identity_mode="hosted-controller"
+        documents,
+        required_identity_mode="hosted-controller",
+        target_namespace=namespace,
     )
     issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
     if context == "operator":

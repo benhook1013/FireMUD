@@ -281,7 +281,7 @@ class GatewayWebSocketClientTest {
     CompletableFuture<HttpResponse<Void>> cancelledResponse = new CompletableFuture<>();
     when(replacementClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
         .thenReturn(cancelledResponse);
-    replaceCurrentGeneration(client, replacementClient);
+    client.installGenerationForTest(replacementClient);
 
     CompletableFuture<Boolean> cancelledReadiness = client.isReadyAsync();
     assertTrue(cancelledReadiness.cancel(true));
@@ -705,7 +705,7 @@ class GatewayWebSocketClientTest {
     IllegalArgumentException failure = new IllegalArgumentException("synchronous header failure");
     when(replacementClient.newWebSocketBuilder()).thenReturn(builder);
     when(builder.header("X-Client-IP", "invalid-client-ip")).thenThrow(failure);
-    replaceCurrentGeneration(client, replacementClient);
+    client.installGenerationForTest(replacementClient);
 
     assertSame(
         failure,
@@ -790,7 +790,7 @@ class GatewayWebSocketClientTest {
     IllegalStateException failure = new IllegalStateException("synchronous build failure");
     when(replacementClient.newWebSocketBuilder()).thenReturn(builder);
     when(builder.buildAsync(any(URI.class), any(WebSocket.Listener.class))).thenThrow(failure);
-    replaceCurrentGeneration(client, replacementClient);
+    client.installGenerationForTest(replacementClient);
 
     assertSame(
         failure,
@@ -1108,7 +1108,7 @@ class GatewayWebSocketClientTest {
             })
         .when(blockingClient)
         .close();
-    replaceCurrentGeneration(client, blockingClient);
+    client.installGenerationForTest(blockingClient);
 
     assertTrue(client.reloadNow());
     assertTrue(retirementTaskStarted.await(5, TimeUnit.SECONDS));
@@ -1393,24 +1393,6 @@ class GatewayWebSocketClientTest {
     try (var input = Files.newInputStream(path)) {
       return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
     }
-  }
-
-  private static void replaceCurrentGeneration(
-      GatewayWebSocketClient client, HttpClient replacementClient) throws Exception {
-    java.lang.reflect.Method newGeneration =
-        GatewayWebSocketClient.class.getDeclaredMethod("newGeneration", HttpClient.class);
-    newGeneration.setAccessible(true);
-    Object generation = newGeneration.invoke(client, replacementClient);
-
-    Class<?> stateType = Class.forName(GatewayWebSocketClient.class.getName() + "$ClientState");
-    java.lang.reflect.Method available =
-        stateType.getDeclaredMethod("available", newGeneration.getReturnType());
-    available.setAccessible(true);
-    Object availableState = available.invoke(null, generation);
-
-    java.lang.reflect.Field state = GatewayWebSocketClient.class.getDeclaredField("state");
-    state.setAccessible(true);
-    state.set(client, availableState);
   }
 
   private static void awaitTermination(HttpClient client) throws Exception {

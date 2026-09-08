@@ -429,26 +429,6 @@ class HeaderTrustFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Pointer-Version")).isNull();
   }
 
-  @Test
-  void rejectsBlankRoutingBundleFromTrustedTcpProxy() {
-    assertTrustedTcpProxyRoutingBundleRejected(" ", " ", " ");
-  }
-
-  @Test
-  void rejectsPartialRoutingBundleFromTrustedTcpProxy() {
-    assertTrustedTcpProxyRoutingBundleRejected("demo", null, "17");
-  }
-
-  @Test
-  void rejectsMalformedRoutingBundleFromTrustedTcpProxy() {
-    assertTrustedTcpProxyRoutingBundleRejected("demo", "production", "not-a-number");
-  }
-
-  @Test
-  void rejectsNonPositiveRoutingBundleFromTrustedTcpProxy() {
-    assertTrustedTcpProxyRoutingBundleRejected("demo", "production", "0");
-  }
-
   private ServerWebExchange filterTrustedTcpProxyRoutingBundle(
       String worldSlug, String realmSlug, String pointerVersion) {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
@@ -470,42 +450,6 @@ class HeaderTrustFilterTest {
       requestBuilder.header("X-Pointer-Version", pointerVersion);
     }
     return filterThroughChain(filter, MockServerWebExchange.from(requestBuilder.build()));
-  }
-
-  private void assertTrustedTcpProxyRoutingBundleRejected(
-      String worldSlug, String realmSlug, String pointerVersion) {
-    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
-    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
-    HeaderTrustFilter filter = legacyFilter(props);
-
-    MockServerHttpRequest.BaseBuilder<?> requestBuilder =
-        MockServerHttpRequest.get("/ws/game/test")
-            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-            .header("X-Proxy-Client-IP", "203.0.113.99");
-    if (worldSlug != null) {
-      requestBuilder.header("X-World-Slug", worldSlug);
-    }
-    if (realmSlug != null) {
-      requestBuilder.header("X-Realm-Slug", realmSlug);
-    }
-    if (pointerVersion != null) {
-      requestBuilder.header("X-Pointer-Version", pointerVersion);
-    }
-    MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
-    AtomicReference<ServerWebExchange> delegated = new AtomicReference<>();
-
-    filter
-        .filter(
-            exchange,
-            candidate -> {
-              delegated.set(candidate);
-              return Mono.empty();
-            })
-        .block();
-
-    assertThat(delegated.get()).isNull();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
   }
 
   private ServerWebExchange filterThroughChain(

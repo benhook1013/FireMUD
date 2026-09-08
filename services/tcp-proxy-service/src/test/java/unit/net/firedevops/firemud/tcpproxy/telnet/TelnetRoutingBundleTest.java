@@ -57,6 +57,18 @@ class TelnetRoutingBundleTest {
   }
 
   @Test
+  void configuredDefaultsRejectHeaderCharactersAboveByteRange() {
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> TelnetRoutingBundle.validateConfiguredDefaults("\u0100", null, null, null, null));
+
+    assertEquals(
+        "Header value for X-Game-Instance-Id contains a disallowed character",
+        exception.getMessage());
+  }
+
+  @Test
   void configuredDefaultsRejectPartialRoutingBundle() {
     assertThrows(
         IllegalArgumentException.class,

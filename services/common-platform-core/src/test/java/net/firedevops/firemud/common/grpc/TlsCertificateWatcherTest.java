@@ -152,6 +152,32 @@ class TlsCertificateWatcherTest {
   }
 
   @Test
+  void unexpectedWorkerFailureReportsStoppedUntilCloseRemovesWatcher(@TempDir Path directory)
+      throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    CountDownLatch callbackInvoked = new CountDownLatch(1);
+    WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(
+            List.of(certificate),
+            () -> {
+              callbackInvoked.countDown();
+              throw new AssertionError("simulated unexpected worker failure");
+            });
+    try {
+      Files.writeString(certificate, "certificate-2");
+      assertTrue(callbackInvoked.await(5, TimeUnit.SECONDS));
+      awaitStopped(watcher);
+      assertFalse(watcher.hasAllRequiredRegistrations());
+      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
+    assertHealthDelta(baseline, 0, 0, 0, TlsCertificateWatcher.health());
+  }
+
+  @Test
   void losingFinalWatchKeyStopsWatcher(@TempDir Path directory) throws Exception {
     Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
     Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
