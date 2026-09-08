@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: dev-demo-reconciler-${{ github.workflow }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   reconcile-dev-demo:
@@ -63,31 +63,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           workflow_name="Develop Dev Demo Environment"
           namespace="dev"
           desired_head_sha="$(
             gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
           )"
-          current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}' 2>/dev/null || true)"
-
-          if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
-            echo "Dev demo already aligned to develop head ${desired_head_sha}"
-            exit 0
-          fi
-
-          active_run_id="$(
+          [[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]]
+          current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
+          # shellcheck disable=SC2016 # jq receives the literal $head binding.
+          candidate_run="$(
             gh run list \
               --workflow "${workflow_name}" \
               --branch develop \
-              --limit 20 \
-              --json databaseId,status,displayTitle \
-              --jq '.[] | select(.displayTitle == "Develop Dev Demo Environment" and (.status == "queued" or .status == "in_progress")) | .databaseId' \
-              | head -n 1
+              --limit 50 \
+              --json databaseId,status,conclusion,displayTitle,headSha \
+              | jq -r --arg head "${desired_head_sha}" \
+              '(first(.[] | select(.displayTitle == "Develop Dev Demo Environment" and .headSha == $head)) // empty) | [.databaseId, .status, (.conclusion // "")] | @tsv'
           )"
+          IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
 
-          if [[ -n "${active_run_id}" ]]; then
-            echo "Skipping dispatch: dev-demo run ${active_run_id} is already queued or in progress."
+          if [[ "${candidate_status}" == queued || "${candidate_status}" == in_progress ]]; then
+            echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
             exit 0
+          fi
+
+          if [[ "${current_head_sha}" == "${desired_head_sha}" \
+            && "${candidate_status}" == completed \
+            && "${candidate_conclusion}" == success ]]; then
+            echo "Dev demo already aligned to successful develop head ${desired_head_sha}"
+            exit 0
+          fi
+
+          if [[ "${candidate_status}" == completed && "${candidate_conclusion}" != success ]]; then
+            echo "Redispatching failed dev-demo candidate ${candidate_run_id} for develop head ${desired_head_sha}."
           fi
 
           echo "Dispatching dev-demo deploy for develop head ${desired_head_sha}"

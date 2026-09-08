@@ -12,3 +12,6 @@ paths:
   .github/workflows/preview-janitor.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/hosted-identity-request.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

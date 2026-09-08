@@ -1,0 +1,25 @@
+name: Write kubeconfig
+description: Write a validated kubeconfig to a private runner file and export KUBECONFIG
+inputs:
+  content:
+    description: Kubeconfig content supplied by the caller's protected secret
+    required: true
+  path:
+    description: Private runner path for the kubeconfig
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Write private kubeconfig
+      shell: bash
+      env:
+        KUBECONFIG_CONTENT: ${{ inputs.content }}
+        KUBECONFIG_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        umask 077
+        test -n "$KUBECONFIG_CONTENT"
+        test -n "$KUBECONFIG_PATH"
+        printf '%s\n' "$KUBECONFIG_CONTENT" > "$KUBECONFIG_PATH"
+        chmod 600 "$KUBECONFIG_PATH"
+        echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
