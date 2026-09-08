@@ -285,6 +285,40 @@ documents = load_yaml_mappings(Path(os.environ["RENDERED"]))
 issues = preflight.validate_hosted_telnet_tls_values(documents)
 assert not issues, issues
 
+standalone_missing_listener = deepcopy(documents)
+next(
+    document
+    for document in standalone_missing_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"] = []
+missing_listener_issues = preflight.validate_hosted_telnet_tls_values(
+    standalone_missing_listener
+)
+assert any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in missing_listener_issues
+), "standalone mode accepted a missing direct TLS Service listener"
+
+standalone_mismatched_listener = deepcopy(documents)
+next(
+    port
+    for document in standalone_mismatched_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for port in document.get("spec", {}).get("ports", [])
+    if port.get("port") == 2323
+)["protocol"] = "UDP"
+mismatched_listener_issues = preflight.validate_hosted_telnet_tls_values(
+    standalone_mismatched_listener
+)
+assert any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in mismatched_listener_issues
+), "standalone mode accepted a mismatched direct TLS Service listener"
+
 controller_documents = load_yaml_mappings(Path(os.environ["CONTROLLER_RENDERED"]))
 controller_issues = preflight.validate_hosted_telnet_tls_values(controller_documents)
 assert not controller_issues, controller_issues

@@ -53,7 +53,7 @@ record TelnetRoutingBundle(String worldSlug, String realmSlug, String pointerVer
   }
 
   static void validateHeaderValue(String headerName, String value) {
-    if (value == null || value.isBlank()) {
+    if (value == null) {
       return;
     }
     for (int index = 0; index < value.length(); index++) {

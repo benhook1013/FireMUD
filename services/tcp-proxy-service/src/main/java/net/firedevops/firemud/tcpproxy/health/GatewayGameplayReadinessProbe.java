@@ -50,9 +50,11 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
             () -> {
               try {
                 pollState.refresh();
-              } catch (RuntimeException error) {
-                pollState.markUnreadyAfterRefreshFailure();
-                logger.debug("Gateway readiness poll failed; reporting unready", error);
+              } catch (Throwable error) {
+                logRefreshFailure(
+                    pollState.markUnreadyAfterRefreshFailure(),
+                    "Gateway readiness poll failed; reporting unready",
+                    error);
               }
             },
             0L,
@@ -76,6 +78,15 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
     pollExecutor.shutdownNow();
   }
 
+  private static void logRefreshFailure(
+      boolean transitionedToUnready, String message, Throwable error) {
+    if (transitionedToUnready) {
+      logger.warn(message, error);
+    } else {
+      logger.debug(message, error);
+    }
+  }
+
   private static final class PollState {
     private final GatewayWebSocketClient gatewayWebSocketClient;
     private final AtomicBoolean ready = new AtomicBoolean();
@@ -90,12 +101,13 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
       return ready.get();
     }
 
-    private synchronized void markUnreadyAfterRefreshFailure() {
-      ready.set(false);
+    private synchronized boolean markUnreadyAfterRefreshFailure() {
+      boolean transitionedToUnready = ready.getAndSet(false);
       CompletableFuture<Boolean> request = inFlight.getAndSet(null);
       if (request != null) {
         request.cancel(true);
       }
+      return transitionedToUnready;
     }
 
     private synchronized void refresh() {
@@ -107,9 +119,9 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
         request =
             Objects.requireNonNull(
                 gatewayWebSocketClient.isReadyAsync(), "Gateway readiness future");
-      } catch (RuntimeException e) {
-        ready.set(false);
-        logger.debug("Gateway readiness poll failed to start; reporting unready", e);
+      } catch (Throwable e) {
+        logRefreshFailure(
+            ready.getAndSet(false), "Gateway readiness poll failed to start; reporting unready", e);
         return;
       }
       inFlight.set(request);

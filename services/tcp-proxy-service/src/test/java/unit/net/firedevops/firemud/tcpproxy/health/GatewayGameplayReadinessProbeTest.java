@@ -10,8 +10,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.net.URI;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 class GatewayGameplayReadinessProbeTest {
 
@@ -114,7 +120,7 @@ class GatewayGameplayReadinessProbeTest {
     CompletableFuture<Boolean> retry = new CompletableFuture<>();
     when(client.isReadyAsync())
         .thenReturn(healthy)
-        .thenThrow(new IllegalStateException("synchronous failure"))
+        .thenThrow(new AssertionError("synchronous failure"))
         .thenReturn(retry);
     try (GatewayGameplayReadinessProbe probe =
         new GatewayGameplayReadinessProbe(client, Duration.ofMillis(100))) {
@@ -126,6 +132,33 @@ class GatewayGameplayReadinessProbeTest {
       awaitReadiness(probe, false);
       verify(client, org.mockito.Mockito.timeout(1000).times(3)).isReadyAsync();
       assertFalse(probe.isReady());
+    }
+  }
+
+  @Test
+  void synchronousPollingFailureWarnsOnlyForTheHealthyToUnreadyTransition() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> healthy = new CompletableFuture<>();
+    CompletableFuture<Boolean> pending = new CompletableFuture<>();
+    when(client.isReadyAsync())
+        .thenReturn(healthy)
+        .thenThrow(new IllegalStateException("first synchronous failure"))
+        .thenThrow(new IllegalStateException("repeated synchronous failure"))
+        .thenReturn(pending);
+    try (ReadinessLogCapture logs = new ReadinessLogCapture();
+        GatewayGameplayReadinessProbe probe =
+            new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      healthy.complete(true);
+      awaitReadiness(probe, true);
+
+      verify(client, org.mockito.Mockito.timeout(2000).times(4)).isReadyAsync();
+      awaitReadiness(probe, false);
+
+      assertEquals(
+          1, logs.count(Level.WARN, "Gateway readiness poll failed to start; reporting unready"));
+      assertEquals(
+          1, logs.count(Level.DEBUG, "Gateway readiness poll failed to start; reporting unready"));
     }
   }
 
@@ -157,7 +190,7 @@ class GatewayGameplayReadinessProbeTest {
           @Override
           public CompletableFuture<Boolean> whenComplete(
               BiConsumer<? super Boolean, ? super Throwable> action) {
-            throw new IllegalStateException("callback registration failure");
+            throw new AssertionError("callback registration failure");
           }
         };
     when(client.isReadyAsync()).thenReturn(throwingFuture, retry);
@@ -169,6 +202,29 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
       retry.complete(true);
       awaitReadiness(probe, true);
+    }
+  }
+
+  @Test
+  void callbackRegistrationFailureWarnsOnlyForTheHealthyToUnreadyTransition() throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    CompletableFuture<Boolean> healthy = new CompletableFuture<>();
+    CompletableFuture<Boolean> firstFailure = callbackRegistrationFailure();
+    CompletableFuture<Boolean> repeatedFailure = callbackRegistrationFailure();
+    CompletableFuture<Boolean> pending = new CompletableFuture<>();
+    when(client.isReadyAsync()).thenReturn(healthy, firstFailure, repeatedFailure, pending);
+    try (ReadinessLogCapture logs = new ReadinessLogCapture();
+        GatewayGameplayReadinessProbe probe =
+            new GatewayGameplayReadinessProbe(client, Duration.ofMillis(25))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      healthy.complete(true);
+      awaitReadiness(probe, true);
+
+      verify(client, org.mockito.Mockito.timeout(2000).times(4)).isReadyAsync();
+      awaitReadiness(probe, false);
+
+      assertEquals(1, logs.count(Level.WARN, "Gateway readiness poll failed; reporting unready"));
+      assertEquals(1, logs.count(Level.DEBUG, "Gateway readiness poll failed; reporting unready"));
     }
   }
 
@@ -254,5 +310,43 @@ class GatewayGameplayReadinessProbeTest {
       Thread.sleep(5);
     }
     assertEquals(expected, probe.isReady());
+  }
+
+  private static CompletableFuture<Boolean> callbackRegistrationFailure() {
+    return new CompletableFuture<>() {
+      @Override
+      public CompletableFuture<Boolean> whenComplete(
+          BiConsumer<? super Boolean, ? super Throwable> action) {
+        throw new IllegalStateException("callback registration failure");
+      }
+    };
+  }
+
+  private static final class ReadinessLogCapture implements AutoCloseable {
+    private final Logger logger =
+        (Logger) LoggerFactory.getLogger(GatewayGameplayReadinessProbe.class);
+    private final Level originalLevel = logger.getLevel();
+    private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+
+    private ReadinessLogCapture() {
+      logger.setLevel(Level.DEBUG);
+      appender.start();
+      logger.addAppender(appender);
+    }
+
+    private long count(Level level, String message) {
+      List<ILoggingEvent> events = List.copyOf(appender.list);
+      return events.stream()
+          .filter(event -> event.getLevel().equals(level))
+          .filter(event -> event.getFormattedMessage().equals(message))
+          .count();
+    }
+
+    @Override
+    public void close() {
+      logger.detachAppender(appender);
+      appender.stop();
+      logger.setLevel(originalLevel);
+    }
   }
 }

@@ -18,6 +18,14 @@
 {{- $mountTelnetTls := and $service.mountTelnetTls $telnetTls.enabled }}
 {{- $mountGatewayWsServerTls := and $service.mountGatewayWsServerTls $gatewayWsTls.enabled }}
 {{- $mountGatewayWsClientTls := and $service.mountGatewayWsClientTls $gatewayWsTls.enabled }}
+{{- $gatewayWsTlsTargetPortDeclared := false }}
+{{- if $mountGatewayWsServerTls }}
+{{- range $port := $service.ports }}
+{{- if eq (toString $port.targetPort) (toString $gatewayWsTlsTargetPort) }}
+{{- $gatewayWsTlsTargetPortDeclared = true }}
+{{- end }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -131,7 +139,7 @@ spec:
             {{- range $port := $service.ports }}
             - containerPort: {{ $port.targetPort }}
             {{- end }}
-            {{- if $mountGatewayWsServerTls }}
+            {{- if and $mountGatewayWsServerTls (not $gatewayWsTlsTargetPortDeclared) }}
             - containerPort: {{ $gatewayWsTlsTargetPort }}
               name: gateway-ws-mtls
             {{- end }}

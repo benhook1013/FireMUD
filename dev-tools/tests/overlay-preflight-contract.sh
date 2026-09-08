@@ -399,7 +399,7 @@ expected = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
 # contract's input is the real rendered overlay, while those prerequisites have
 # their own focused preflight coverage.
 module.canonical_gateway_ws_endpoint = lambda documents, expected: (
-    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:8443",
+    "spring-cloud-gateway-mtls.firemud.svc.cluster.local:443",
     [],
 )
 module.validate_gateway_ws_listener = lambda documents, expected: (set(), [])

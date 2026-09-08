@@ -15,7 +15,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class,
-    properties = {"TCP_PROXY_PORT=0", "GATEWAY_WS_URL=ws://localhost/ws"})
+    properties = {"TCP_PROXY_PORT=0", "GATEWAY_WS_URL=ws://localhost/ws/game"})
 class TcpProxyServiceApplicationIntegrationTest {
 
   @LocalServerPort private int port;

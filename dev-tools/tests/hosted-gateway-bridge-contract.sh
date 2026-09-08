@@ -74,6 +74,75 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
 
+DISABLED_GATEWAY_WS_TLS_RENDERED="$TMP_DIR/disabled-gateway-ws-tls.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.gatewayWsTls.enabled=false \
+  --show-only templates/network-policies.yaml \
+  --namespace pr-123 >"$DISABLED_GATEWAY_WS_TLS_RENDERED"
+python3 - "$RENDERED" "$DISABLED_GATEWAY_WS_TLS_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def policies(path):
+    return {
+        document["metadata"]["name"]: document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict) and document.get("kind") == "NetworkPolicy"
+    }
+
+
+def proxy_egress_destinations(policy):
+    destinations = set()
+    for rule in policy["spec"]["egress"]:
+        peer = rule["to"][0]
+        pod_labels = peer.get("podSelector", {}).get("matchLabels", {})
+        if pod_labels.get("k8s-app") == "kube-dns":
+            destinations.add(("kube-dns", tuple(port["port"] for port in rule["ports"])))
+        elif "app" in pod_labels:
+            destinations.add(
+                (pod_labels["app"], tuple(port["port"] for port in rule["ports"]))
+            )
+    return destinations
+
+
+enabled = policies(sys.argv[1])
+disabled = policies(sys.argv[2])
+required_base_egress = {
+    ("kube-dns", (53, 53)),
+    ("game-session-service", (6565,)),
+    ("otel-collector", (4317,)),
+}
+enabled_destinations = proxy_egress_destinations(
+    enabled["tcp-proxy-service-egress"]
+)
+if not required_base_egress.issubset(enabled_destinations) or (
+    "spring-cloud-gateway",
+    (8443,),
+) not in enabled_destinations:
+    raise SystemExit(
+        f"enabled Gateway TLS rendered incomplete TCP Proxy egress: {enabled_destinations}"
+    )
+if "spring-cloud-gateway-ingress" not in enabled:
+    raise SystemExit("enabled Gateway TLS omitted the Gateway listener ingress policy")
+
+disabled_destinations = proxy_egress_destinations(
+    disabled["tcp-proxy-service-egress"]
+)
+if not required_base_egress.issubset(disabled_destinations):
+    raise SystemExit(
+        "disabled Gateway TLS omitted required TCP Proxy base egress: "
+        f"{disabled_destinations}"
+    )
+if any(destination == "spring-cloud-gateway" for destination, _ in disabled_destinations):
+    raise SystemExit("disabled Gateway TLS retained TCP Proxy Gateway listener egress")
+if "spring-cloud-gateway-ingress" in disabled:
+    raise SystemExit("disabled Gateway TLS retained the Gateway listener ingress policy")
+PY
+
 LEGACY_NODEPORT_RENDERED="$TMP_DIR/legacy-nodeport.yaml"
 python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/legacy-nodeport-values.yaml" <<'PY'
 import sys
@@ -305,6 +374,20 @@ if ! grep -Fq "$TRUST_ENVIRONMENT_ERROR" "$TMP_DIR/invalid-trust-environment.err
   exit 1
 fi
 
+if helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set-string previewStack.gatewayWsTls.trustEnvironment=isolated-test \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >/dev/null 2>"$TMP_DIR/isolated-test-trust-environment.err"; then
+  echo "apps template rendered with the runtime-test-only Gateway trust environment" >&2
+  exit 1
+fi
+if ! grep -Fq "$TRUST_ENVIRONMENT_ERROR" "$TMP_DIR/isolated-test-trust-environment.err"; then
+  echo "apps template did not report the expected runtime-test-only Gateway trust environment diagnostic" >&2
+  sed -n '1,20p' "$TMP_DIR/isolated-test-trust-environment.err" >&2
+  exit 1
+fi
+
 for preview_shape in absent null; do
   INVALID_PREVIEW_VALUES="$TMP_DIR/preview-values-$preview_shape.yaml"
   cp "$TMP_DIR/preview-values.yaml" "$INVALID_PREVIEW_VALUES"
@@ -420,6 +503,66 @@ if ! grep -Fq "$GATEWAY_WS_SERVICE_PORT_ERROR" "$TMP_DIR/missing-gateway-service
   sed -n '1,20p' "$TMP_DIR/missing-gateway-service-port.err" >&2
   exit 1
 fi
+
+EXISTING_GATEWAY_TARGET_PORT_RENDERED="$TMP_DIR/existing-gateway-target-port.yaml"
+python3 - "$TMP_DIR/preview-values.yaml" "$TMP_DIR/existing-gateway-target-port-values.yaml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path, output_path = map(Path, sys.argv[1:])
+values = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+gateway = next(
+    service
+    for service in values["previewStack"]["services"]
+    if service["name"] == "spring-cloud-gateway"
+)
+gateway["ports"].append({"port": 8443, "targetPort": 8443})
+output_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
+PY
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/existing-gateway-target-port-values.yaml" \
+  --show-only templates/apps.yaml \
+  --namespace pr-123 >"$EXISTING_GATEWAY_TARGET_PORT_RENDERED"
+python3 - "$RENDERED" "$EXISTING_GATEWAY_TARGET_PORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def gateway_container(path):
+    documents = [
+        document
+        for document in yaml.safe_load_all(Path(path).read_text(encoding="utf-8"))
+        if isinstance(document, dict)
+    ]
+    deployment = next(
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+    )
+    return deployment["spec"]["template"]["spec"]["containers"][0]
+
+
+default_ports = gateway_container(sys.argv[1])["ports"]
+default_target_ports = [port for port in default_ports if port["containerPort"] == 8443]
+if default_target_ports != [{"containerPort": 8443, "name": "gateway-ws-mtls"}]:
+    raise SystemExit(
+        "chart did not append the named Gateway TLS port when the generic ports omitted it: "
+        f"{default_target_ports}"
+    )
+
+existing_ports = gateway_container(sys.argv[2])["ports"]
+existing_target_ports = [port for port in existing_ports if port["containerPort"] == 8443]
+if existing_target_ports != [{"containerPort": 8443}]:
+    raise SystemExit(
+        "chart duplicated the Gateway TLS target port already emitted by the generic loop: "
+        f"{existing_target_ports}"
+    )
+PY
 
 NON_DEFAULT_SERVICE_PORT_RENDERED="$TMP_DIR/non-default-service-port.yaml"
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
