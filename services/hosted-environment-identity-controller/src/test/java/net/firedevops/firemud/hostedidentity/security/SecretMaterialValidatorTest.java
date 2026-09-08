@@ -472,9 +472,12 @@ class SecretMaterialValidatorTest {
             "openTlsSocket", String.class, int.class, String.class, SSLSocket.class);
     method.setAccessible(true);
 
-    assertThrows(
-        InvocationTargetException.class,
-        () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
+    InvocationTargetException failure =
+        assertThrows(
+            InvocationTargetException.class,
+            () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
+    assertEquals(IOException.class, failure.getCause().getClass());
+    assertEquals("connect failed", failure.getCause().getMessage());
     verify(socket).close();
   }
 

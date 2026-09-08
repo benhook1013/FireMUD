@@ -134,7 +134,7 @@ require_literal "$CRD" "name: v1alpha1"
 require_literal "$CRD" "served: true"
 require_literal "$CRD" "storage: true"
 require_literal "$CRD" "status: {}"
-require_literal "$CRD" "additionalProperties: false"
+forbid_literal "$CRD" "additionalProperties: false"
 require_literal "$CRD" "desiredState"
 require_literal "$CRD" "- Active"
 require_literal "$CRD" "- Retired"
@@ -159,7 +159,22 @@ import yaml
 
 crd = yaml.safe_load(Path(os.environ["CRD"]).read_text(encoding="utf-8"))
 schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+assert crd["spec"].get("preserveUnknownFields", False) is False
 assert schema["properties"]["metadata"] == {"type": "object"}
+assert set(schema["properties"]["spec"]["properties"]) == {"desiredState"}
+
+
+def assert_structural(value, path="openAPIV3Schema"):
+    if isinstance(value, dict):
+        assert value.get("additionalProperties") is not False, path
+        for key, child in value.items():
+            assert_structural(child, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            assert_structural(child, f"{path}[{index}]")
+
+
+assert_structural(schema)
 rules = [validation["rule"] for validation in schema["x-kubernetes-validations"]]
 assert rules == ["self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"]
 PY
@@ -604,9 +619,24 @@ for text_value in \
   FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE \
   __ACTIVATION_MODE_REQUIRED__ \
   FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256 \
-  __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__; do
+  __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__ \
+  "medium: Memory" \
+  "sizeLimit: 64Mi"; do
   require_literal "$DEPLOYMENT" "$text_value"
 done
+DEPLOYMENT="$DEPLOYMENT" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+deployment = yaml.safe_load(Path(os.environ["DEPLOYMENT"]).read_text(encoding="utf-8"))
+pod_spec = deployment["spec"]["template"]["spec"]
+tmp_volumes = [volume for volume in pod_spec["volumes"] if volume.get("name") == "tmp"]
+assert tmp_volumes == [
+    {"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "64Mi"}}
+]
+PY
 for marker in ':latest' ':stable' ':main' ':develop'; do
   forbid_literal "$DEPLOYMENT" "$marker"
 done
@@ -1157,6 +1187,56 @@ with tempfile.TemporaryDirectory() as directory:
             "http": {"paths": [valid_path]},
         }
     ]
+    valid_ingress_spec = {
+        "ingressClassName": "traefik",
+        "tls": valid_tls,
+        "rules": valid_rules,
+    }
+    valid_ingress = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {"name": "firemud-preview", "namespace": "pr-42"},
+        "spec": valid_ingress_spec,
+    }
+    validator.validate_ingress(
+        valid_ingress,
+        "pr-42",
+        "pr-42.preview.example.test",
+    )
+
+    for field, value in (
+        (
+            "defaultBackend",
+            {
+                "service": {
+                    "name": "logging-admin-service",
+                    "port": {"number": 8080},
+                }
+            },
+        ),
+        ("untrustedExtension", {"enabled": True}),
+    ):
+        unsafe_ingress = copy.deepcopy(valid_ingress)
+        unsafe_ingress["spec"][field] = value
+        assert_rejected(
+            lambda unsafe_ingress=unsafe_ingress: validator.validate_ingress(
+                unsafe_ingress,
+                "pr-42",
+                "pr-42.preview.example.test",
+            ),
+            "Ingress/firemud-preview has an unsafe spec",
+        )
+
+    wrong_ingress_class = copy.deepcopy(valid_ingress)
+    wrong_ingress_class["spec"]["ingressClassName"] = "untrusted"
+    assert_rejected(
+        lambda: validator.validate_ingress(
+            wrong_ingress_class,
+            "pr-42",
+            "pr-42.preview.example.test",
+        ),
+        "Ingress/firemud-preview has an unsafe spec",
+    )
 
     shape_cases = [
         (None, "Ingress/firemud-preview.spec is not an object"),

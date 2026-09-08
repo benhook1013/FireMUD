@@ -74,6 +74,22 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
+  void rejectsReconcileIntervalsBelowOneSecond() {
+    for (Duration interval :
+        new Duration[] {null, Duration.ZERO, Duration.ofMillis(999), Duration.ofSeconds(-1)}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      properties.setReconcileInterval(interval);
+      IllegalStateException failure =
+          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      assertEquals("reconcile interval must be at least 1 second", failure.getMessage());
+    }
+
+    HostedIdentityProperties minimum = new HostedIdentityProperties();
+    minimum.setReconcileInterval(Duration.ofSeconds(1));
+    assertDoesNotThrow(minimum::afterPropertiesSet);
+  }
+
+  @Test
   void activationDefaultsAndInvalidValuesFailClosedToPaused() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());

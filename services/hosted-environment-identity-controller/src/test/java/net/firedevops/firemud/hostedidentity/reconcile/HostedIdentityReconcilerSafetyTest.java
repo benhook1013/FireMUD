@@ -46,6 +46,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -768,6 +769,24 @@ class HostedIdentityReconcilerSafetyTest {
         () ->
             HostedIdentityReconciler.validateDistinctIdentities(
                 ingress, telnet, gateway, bridge, material(2, 2, "4".repeat(64), "reused")));
+  }
+
+  @Test
+  void deferredBridgeDriftUsesAcceptedMaterialWithoutRereadingRuntimeSecret() {
+    CertificateMaterialService.RoleMaterial deferred =
+        material(3, 2, "2".repeat(64), "accepted", "serialized-deferred-drift");
+    AtomicBoolean runtimeRead = new AtomicBoolean();
+
+    Secret selected =
+        HostedIdentityReconciler.bridgeProbeMaterial(
+            deferred,
+            () -> {
+              runtimeRead.set(true);
+              return null;
+            });
+
+    assertEquals(deferred.source(), selected);
+    assertEquals(false, runtimeRead.get());
   }
 
   private static CertificateMaterialService.RoleMaterial material(

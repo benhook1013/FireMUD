@@ -179,6 +179,9 @@ source_step = next(step for step in validate_job["steps"] if step.get("id") == "
 assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
+deploy_by_name = {
+    step.get("name"): step for step in deploy_steps if isinstance(step, dict)
+}
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -200,6 +203,25 @@ deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"
 assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
+inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
+assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
+target_step = deploy_by_name["Validate trusted preview runtime target"]["run"]
+assert '[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]' in target_step
+assert "validate-preview-artifact.py" in target_step
+assert 'runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"' in target_step
+apply_run = apply_step["run"]
+target_validation = (
+    'runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"'
+)
+assert apply_run.count(target_validation) == 2
+dry_run = "kubectl apply --dry-run=server"
+actual_apply = "kubectl apply --server-side"
+first_validation = apply_run.index(target_validation)
+dry_run_position = apply_run.index(dry_run)
+second_validation = apply_run.index(target_validation, first_validation + 1)
+actual_apply_position = apply_run.index(actual_apply)
+assert first_validation < dry_run_position < second_validation < actual_apply_position
+assert "preflight.py hosted-bridge" not in Path(sys.argv[1]).read_text(encoding="utf-8")
 
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_requested_index = next(
@@ -354,6 +376,175 @@ fi
 grep -Fxq \
   'preview artifact rejected: Deployment/account-service.spec.template.spec is not a pod specification' \
   "$null_template_error"
+
+# Fixed-image infrastructure pods are accepted only in the exact shape emitted
+# by the hosted chart. In particular, a PR render cannot turn those trusted
+# images into a Secret-reading or arbitrary-command execution primitive.
+python3 - "$artifact_validator" <<'PY'
+import copy
+import runpy
+import sys
+
+validator = runpy.run_path(sys.argv[1])
+expected_specs = validator["EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS"]
+validate = validator["validate_infrastructure_deployments"]
+clean_config_map = validator["_clean_config_map"]
+
+
+def fixture():
+    return [
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": name},
+            "spec": copy.deepcopy(spec),
+        }
+        for name, spec in expected_specs.items()
+    ]
+
+
+validate(fixture())
+
+mutations = {}
+
+sensitive_mount = fixture()
+postgres_pod = sensitive_mount[0]["spec"]["template"]["spec"]
+postgres_pod["containers"][0]["volumeMounts"].append(
+    {
+        "name": "stolen-jwt",
+        "mountPath": "/stolen-jwt",
+        "readOnly": True,
+    }
+)
+postgres_pod["volumes"].append(
+    {"name": "stolen-jwt", "secret": {"secretName": "jwt-signing-keys"}}
+)
+mutations["sensitive Secret mount"] = sensitive_mount
+
+command = fixture()
+command[1]["spec"]["template"]["spec"]["containers"][0]["command"] = [
+    "/bin/sh",
+    "-c",
+]
+mutations["command override"] = command
+
+environment = fixture()
+environment[1]["spec"]["template"]["spec"]["containers"][0]["env"] = [
+    {"name": "UNTRUSTED", "value": "true"}
+]
+mutations["environment override"] = environment
+
+service_account = fixture()
+service_account[2]["spec"]["template"]["spec"]["serviceAccountName"] = "firemud-app"
+mutations["ServiceAccount override"] = service_account
+
+image = fixture()
+image[3]["spec"]["template"]["spec"]["containers"][0]["image"] = "postgres:16"
+mutations["image override"] = image
+
+pod_label = fixture()
+pod_label[2]["spec"]["template"]["metadata"]["labels"]["app"] = "unselected"
+mutations["egress-selector label override"] = pod_label
+
+for description, documents in mutations.items():
+    try:
+        validate(documents)
+    except ValueError as exc:
+        if "has an unsafe infrastructure spec" not in str(exc):
+            raise AssertionError((description, str(exc))) from exc
+    else:
+        raise AssertionError(f"validator accepted {description}")
+
+cleaned_config = clean_config_map(
+    {
+        "metadata": {"name": "firemud-config"},
+        "data": {"SAFE_VALUE": "retained", "API_TOKEN": "removed"},
+    }
+)
+assert cleaned_config["data"] == {"SAFE_VALUE": "retained"}
+for malformed_data in (["not", "a", "mapping"], "not-a-mapping"):
+    try:
+        clean_config_map(
+            {
+                "metadata": {"name": "firemud-config"},
+                "data": malformed_data,
+            }
+        )
+    except ValueError as exc:
+        assert str(exc) == "ConfigMap/firemud-config.data is not an object"
+    else:
+        raise AssertionError(f"sanitizer accepted ConfigMap data {malformed_data!r}")
+PY
+
+# Trusted post-validation preparation makes the runtime namespace explicit on
+# every object and permits exactly the allocator-owned TCP Proxy NodePort.
+python3 - "$artifact_validator" "$TEMP_DIR" <<'PY'
+import copy
+import runpy
+import sys
+from pathlib import Path
+
+import yaml
+
+validator = runpy.run_path(sys.argv[1])
+inject = validator["inject_telnet_port"]
+validate_target = validator["validate_runtime_target"]
+tmp = Path(sys.argv[2])
+source = tmp / "runtime-target-source.yaml"
+prepared = tmp / "runtime-target-prepared.yaml"
+documents = [
+    {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "tcp-proxy-service"},
+        "spec": {"ports": [{"port": 2323}]},
+    },
+    {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "firemud-config", "namespace": "pr-42"},
+        "data": {},
+    },
+]
+source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
+inject(source, prepared, 32000, "pr-42")
+validate_target(prepared, "pr-42", 32000)
+prepared_documents = list(yaml.safe_load_all(prepared.read_text(encoding="utf-8")))
+if any(document["metadata"].get("namespace") != "pr-42" for document in prepared_documents):
+    raise SystemExit("trusted runtime preparation left a namespace implicit")
+
+
+def expect_rejected(case_name, mutation):
+    mutated = copy.deepcopy(prepared_documents)
+    mutation(mutated)
+    path = tmp / f"runtime-target-{case_name}.yaml"
+    path.write_text(yaml.safe_dump_all(mutated), encoding="utf-8")
+    try:
+        validate_target(path, "pr-42", 32000)
+    except ValueError:
+        return
+    raise SystemExit(f"runtime target validator accepted {case_name}")
+
+
+expect_rejected(
+    "missing-namespace",
+    lambda current: current[1]["metadata"].pop("namespace"),
+)
+expect_rejected(
+    "wrong-namespace",
+    lambda current: current[1]["metadata"].__setitem__("namespace", "pr-43"),
+)
+expect_rejected(
+    "extra-node-port",
+    lambda current: current[1].setdefault("spec", {}).__setitem__("nodePort", 32001),
+)
+try:
+    validate_target(prepared, "pr-42", 32001)
+except ValueError:
+    pass
+else:
+    raise SystemExit("runtime target validator accepted the wrong allocated port")
+PY
 
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys

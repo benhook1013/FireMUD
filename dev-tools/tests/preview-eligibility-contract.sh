@@ -17,12 +17,17 @@ from pathlib import Path
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for job in workflow["jobs"].values():
-    for step in job.get("steps", []):
-        if step.get("name") == sys.argv[2]:
-            Path(sys.argv[3]).write_text(step["run"], encoding="utf-8")
-            raise SystemExit(0)
-raise SystemExit(f"workflow step not found: {sys.argv[2]}")
+matches = [
+    step
+    for job in workflow["jobs"].values()
+    for step in job.get("steps", [])
+    if step.get("name") == sys.argv[2]
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected exactly one workflow step named {sys.argv[2]!r}, found {len(matches)}"
+    )
+Path(sys.argv[3]).write_text(matches[0]["run"], encoding="utf-8")
 PY
 }
 

@@ -38,7 +38,6 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
-          additionalProperties: false
           required:
             - apiVersion
             - kind
@@ -53,7 +52,6 @@ spec:
               type: object
             spec:
               type: object
-              additionalProperties: false
               required:
                 - desiredState
               properties:
@@ -68,7 +66,6 @@ spec:
                   message: desiredState is monotonic; Active may transition only to Retired
             status:
               type: object
-              additionalProperties: false
               properties:
                 observedGeneration:
                   type: integer
@@ -90,7 +87,6 @@ spec:
                     - Retired
                 profile:
                   type: object
-                  additionalProperties: false
                   properties:
                     name:
                       type: string
@@ -137,7 +133,6 @@ spec:
                     - type
                   items:
                     type: object
-                    additionalProperties: false
                     required:
                       - type
                       - status
@@ -171,7 +166,6 @@ spec:
                         minimum: 0
                 ingress:
                   type: object
-                  additionalProperties: false
                   properties:
                     revision:
                       type: string
@@ -199,7 +193,6 @@ spec:
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
                 telnet:
                   type: object
-                  additionalProperties: false
                   properties:
                     revision:
                       type: string
@@ -227,7 +220,6 @@ spec:
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
                 gatewayInternalWs:
                   type: object
-                  additionalProperties: false
                   properties:
                     revision:
                       type: string
@@ -255,7 +247,6 @@ spec:
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
                 tcpProxyBridge:
                   type: object
-                  additionalProperties: false
                   properties:
                     revision:
                       type: string
@@ -283,7 +274,6 @@ spec:
                       pattern: "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
                 grpc:
                   type: object
-                  additionalProperties: false
                   properties:
                     revision:
                       type: string

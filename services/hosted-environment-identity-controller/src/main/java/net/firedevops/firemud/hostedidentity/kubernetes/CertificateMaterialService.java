@@ -7,6 +7,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -141,9 +142,15 @@ public class CertificateMaterialService {
             true,
             "Opaque",
             properties.getGrpcTrustAnchorSha256());
-    String selectedRotationRole = batch.selectedRotationRole();
-    if (selectedRotationRole != null
-        && !HostedIdentityContract.GRPC_ROLE.equals(selectedRotationRole)) {
+    RoleMaterial pinned =
+        batch.pinnedUnacceptedMaterial(HostedIdentityContract.GRPC_ROLE, expectation);
+    if (pinned != null) {
+      return pinned;
+    }
+    if (batch.deferBehindSelectedRotation(HostedIdentityContract.GRPC_ROLE)) {
+      return acceptedMaterial(client, plan, HostedIdentityContract.GRPC_ROLE, expectation);
+    }
+    if (batch.deferBehindPostSnapshotRotation(HostedIdentityContract.GRPC_ROLE)) {
       return acceptedMaterial(client, plan, HostedIdentityContract.GRPC_ROLE, expectation);
     }
     Secret source =
@@ -196,10 +203,15 @@ public class CertificateMaterialService {
     }
     String selectedRotationRole = batch.selectedRotationRole();
     if (selectedRotationRole == null) {
-      return candidate;
+      return batch.claimPostSnapshotRotation(candidate)
+          ? candidate
+          : acceptedMaterial(client, plan, candidate.role(), expectation);
     }
     if (candidate.role().equals(selectedRotationRole)) {
       return pendingMaterial(client, plan, candidate, expectation);
+    }
+    if (batch.initializing(candidate.role())) {
+      return candidate;
     }
     return acceptedMaterial(client, plan, candidate.role(), expectation);
   }
@@ -212,9 +224,7 @@ public class CertificateMaterialService {
       String secretName,
       RoleExpectation expectation,
       MaterializationBatch batch) {
-    if (batch.rotationSelectionResolved
-        && batch.selectedRotationRole != null
-        && !role.equals(batch.selectedRotationRole)) {
+    if (batch.rotationSelectionResolved && batch.deferBehindSelectedRotation(role)) {
       return acceptedMaterial(client, plan, role, expectation);
     }
     ReadyCertificate readyCertificate =
@@ -222,8 +232,12 @@ public class CertificateMaterialService {
     if (readyCertificate == null) {
       return RoleMaterial.pending(role, "certificate-pending");
     }
-    String selectedRotationRole = batch.selectedRotationRole();
-    if (selectedRotationRole != null && !role.equals(selectedRotationRole)) {
+    batch.selectedRotationRole();
+    RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
+    if (pinned != null) {
+      return pinned;
+    }
+    if (batch.deferBehindSelectedRotation(role)) {
       return acceptedMaterial(client, plan, role, expectation);
     }
     return serialize(
@@ -276,21 +290,24 @@ public class CertificateMaterialService {
     return pending && !projectionRevision.equals(candidateRevision);
   }
 
-  private String selectedRotationRole(KubernetesClient client, EnvironmentIdentityPlan plan) {
-    List<RotationState> states =
+  private RotationSnapshot rotationSnapshot(KubernetesClient client, EnvironmentIdentityPlan plan) {
+    Map<String, RotationObservation> observations = new LinkedHashMap<>();
+    for (String role :
         List.of(
-            rotationState(client, plan, HostedIdentityContract.INGRESS_ROLE),
-            rotationState(client, plan, HostedIdentityContract.TELNET_ROLE),
-            rotationState(client, plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE),
-            rotationState(client, plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE),
-            rotationState(client, plan, HostedIdentityContract.GRPC_ROLE));
-    return selectSerializedRole(states);
+            HostedIdentityContract.INGRESS_ROLE,
+            HostedIdentityContract.TELNET_ROLE,
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+            HostedIdentityContract.GRPC_ROLE)) {
+      observations.put(role, rotationObservation(client, plan, role));
+    }
+    String selectedRole =
+        selectSerializedRole(
+            observations.values().stream().map(RotationObservation::state).toList());
+    return new RotationSnapshot(selectedRole, Map.copyOf(observations));
   }
 
   static String selectSerializedRole(List<RotationState> states) {
-    if (states.stream().anyMatch(RotationState::uninitialized)) {
-      return null;
-    }
     String driftedRole =
         states.stream()
             .filter(RotationState::drifted)
@@ -300,20 +317,28 @@ public class CertificateMaterialService {
     if (driftedRole != null) {
       return driftedRole;
     }
-    return states.stream()
-        .filter(RotationState::pending)
-        .map(RotationState::role)
-        .findFirst()
-        .orElseGet(
-            () ->
-                states.stream()
-                    .filter(RotationState::changed)
-                    .map(RotationState::role)
-                    .findFirst()
-                    .orElse(null));
+    String pendingRole =
+        states.stream()
+            .filter(RotationState::pending)
+            .map(RotationState::role)
+            .findFirst()
+            .orElse(null);
+    if (pendingRole != null) {
+      return pendingRole;
+    }
+    String changedRole =
+        states.stream()
+            .filter(RotationState::changed)
+            .map(RotationState::role)
+            .findFirst()
+            .orElse(null);
+    if (changedRole != null) {
+      return changedRole;
+    }
+    return null;
   }
 
-  private RotationState rotationState(
+  private RotationObservation rotationObservation(
       KubernetesClient client, EnvironmentIdentityPlan plan, String role) {
     Secret projection =
         client
@@ -322,44 +347,43 @@ public class CertificateMaterialService {
             .withName(secretName(plan, role))
             .get();
     if (projection == null) {
-      return new RotationState(role, false, false, true, false);
+      return new RotationObservation(
+          new RotationState(role, false, false, true, false), null, null, false);
     }
     requireOwned(projection, plan, role, "runtime projection Secret");
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
     String currentRevision = runtimeProjectionRevision(role, projection);
     String recordedRevision = annotation(annotations, HostedIdentityContract.REVISION_ANNOTATION);
     if (currentRevision == null || !currentRevision.equals(recordedRevision)) {
-      return new RotationState(role, true, false, false, true);
+      return new RotationObservation(
+          new RotationState(role, true, false, false, true), projection, null, false);
     }
     String acceptedRevision =
         annotation(annotations, HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
     if (acceptedRevision == null || !acceptedRevision.matches("sha256:[0-9a-f]{64}")) {
-      return new RotationState(role, false, false, true, false);
+      return new RotationObservation(
+          new RotationState(role, false, false, true, false), projection, null, true);
     }
     boolean pending =
         !"accepted"
                 .equals(
                     annotation(annotations, HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION))
             || !currentRevision.equals(acceptedRevision);
-    return new RotationState(
-        role, pending, sourceDiffersFromAccepted(client, plan, role), false, false);
+    String sourceRevision = sourceRevision(client, plan, role);
+    return new RotationObservation(
+        new RotationState(
+            role,
+            pending,
+            sourceRevision != null && !sourceRevision.equals(acceptedRevision),
+            false,
+            false),
+        projection,
+        sourceRevision,
+        false);
   }
 
-  private static boolean sourceDiffersFromAccepted(
+  private static String sourceRevision(
       KubernetesClient client, EnvironmentIdentityPlan plan, String role) {
-    Secret projection =
-        client
-            .secrets()
-            .inNamespace(plan.runtimeNamespace())
-            .withName(secretName(plan, role))
-            .get();
-    if (projection == null || projection.getMetadata() == null) {
-      return false;
-    }
-    String acceptedRevision =
-        annotation(
-            projection.getMetadata().getAnnotations(),
-            HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
     Secret source =
         client
             .secrets()
@@ -369,10 +393,9 @@ public class CertificateMaterialService {
     if (source != null) {
       requireIdentitySourceBinding(source, plan, role);
     }
-    return source != null
-        && source.getData() != null
-        && !SecretProjectionService.revisionForRole(role, source.getData())
-            .equals(acceptedRevision);
+    return source == null || source.getData() == null
+        ? null
+        : SecretProjectionService.revisionForRole(role, source.getData());
   }
 
   private static String runtimeProjectionRevision(String role, Secret projection) {
@@ -709,7 +732,10 @@ public class CertificateMaterialService {
                         && certificate.uid().equals(owner.getUid()));
   }
 
-  private static Map<String, String> issuerReference(GenericKubernetesResource resource) {
+  static Map<String, String> issuerReference(GenericKubernetesResource resource) {
+    if (resource == null || resource.getAdditionalProperties() == null) {
+      throw new IllegalStateException("certificate issuer reference is unavailable");
+    }
     Object spec = resource.getAdditionalProperties().get("spec");
     if (!(spec instanceof Map<?, ?> specMap)
         || !(specMap.get("issuerRef") instanceof Map<?, ?> issuerMap)) {
@@ -777,7 +803,7 @@ public class CertificateMaterialService {
     requireCertManagerSourceBinding(source, plan, role, null);
   }
 
-  private static void applyCertificate(
+  static void applyCertificate(
       KubernetesClient client, String namespace, GenericKubernetesResource desired) {
     var operation =
         client
@@ -795,7 +821,7 @@ public class CertificateMaterialService {
       if (!"cert-manager.io/v1".equals(existing.getApiVersion())
           || !"Certificate".equals(existing.getKind())
           || existing.getMetadata() == null
-          || !containsDesiredLabels(
+          || !Objects.equals(
               existing.getMetadata().getLabels(), desired.getMetadata().getLabels())) {
         throw new IllegalStateException("owned Certificate identity metadata drifted");
       }
@@ -804,10 +830,42 @@ public class CertificateMaterialService {
           existing.getAdditionalProperties() == null
               ? null
               : existing.getAdditionalProperties().get("spec");
+      if (!hasOnlyDesiredShape(desiredSpec, existingSpec, "")) {
+        throw new IllegalStateException("owned Certificate spec has unknown drift");
+      }
       if (!desiredSubsetEquivalent(desiredSpec, existingSpec)) {
-        throw new IllegalStateException("owned Certificate spec drifted; refusing replacement");
+        String resourceVersion = existing.getMetadata().getResourceVersion();
+        if (resourceVersion == null || resourceVersion.isBlank()) {
+          throw new IllegalStateException("owned Certificate has no resourceVersion for repair");
+        }
+        desired.getMetadata().setResourceVersion(resourceVersion);
+        client
+            .genericKubernetesResources(ResourceContexts.CERTIFICATES)
+            .inNamespace(namespace)
+            .resource(desired)
+            .replace();
       }
     }
+  }
+
+  private static boolean hasOnlyDesiredShape(Object desired, Object existing, String path) {
+    if (desired instanceof Map<?, ?> desiredMap) {
+      if (!(existing instanceof Map<?, ?> existingMap)) {
+        return false;
+      }
+      for (Map.Entry<?, ?> entry : existingMap.entrySet()) {
+        if (!desiredMap.containsKey(entry.getKey())) {
+          if (!allowedCertificateDefault(path, entry.getKey(), entry.getValue())) {
+            return false;
+          }
+        } else if (!hasOnlyDesiredShape(
+            desiredMap.get(entry.getKey()), entry.getValue(), path + "/" + entry.getKey())) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return !(desired instanceof Collection<?>) || existing instanceof Collection<?>;
   }
 
   static boolean containsDesiredLabels(Map<String, String> existing, Map<String, String> desired) {
@@ -929,6 +987,8 @@ public class CertificateMaterialService {
     private final EnvironmentIdentityPlan plan;
     private boolean rotationSelectionResolved;
     private String selectedRotationRole;
+    private RotationSnapshot rotationSnapshot;
+    private String postSnapshotRotationRole;
 
     private MaterializationBatch(KubernetesClient client, EnvironmentIdentityPlan plan) {
       this.client = client;
@@ -957,10 +1017,53 @@ public class CertificateMaterialService {
 
     private String selectedRotationRole() {
       if (!rotationSelectionResolved) {
-        selectedRotationRole = CertificateMaterialService.this.selectedRotationRole(client, plan);
+        rotationSnapshot = CertificateMaterialService.this.rotationSnapshot(client, plan);
+        selectedRotationRole = rotationSnapshot.selectedRole();
         rotationSelectionResolved = true;
       }
       return selectedRotationRole;
+    }
+
+    private RoleMaterial pinnedUnacceptedMaterial(String role, RoleExpectation expectation) {
+      selectedRotationRole();
+      RotationObservation observation = rotationSnapshot.observations().get(role);
+      if (observation == null || !observation.unacceptedProjection()) {
+        return null;
+      }
+      return projectionMaterial(
+          observation.projection(), role, expectation, "serialized-in-flight");
+    }
+
+    private boolean initializing(String role) {
+      selectedRotationRole();
+      RotationObservation observation = rotationSnapshot.observations().get(role);
+      return observation != null && observation.state().uninitialized();
+    }
+
+    private boolean deferBehindSelectedRotation(String role) {
+      String selectedRole = selectedRotationRole();
+      return selectedRole != null && !role.equals(selectedRole) && !initializing(role);
+    }
+
+    private boolean claimPostSnapshotRotation(RoleMaterial candidate) {
+      selectedRotationRole();
+      RotationObservation observation = rotationSnapshot.observations().get(candidate.role());
+      if (observation == null || observation.state().uninitialized()) {
+        return true;
+      }
+      String candidateRevision =
+          SecretProjectionService.revisionForRole(candidate.role(), candidate.source().getData());
+      if (Objects.equals(candidateRevision, observation.sourceRevision())) {
+        return true;
+      }
+      if (postSnapshotRotationRole == null) {
+        postSnapshotRotationRole = candidate.role();
+      }
+      return candidate.role().equals(postSnapshotRotationRole);
+    }
+
+    private boolean deferBehindPostSnapshotRotation(String role) {
+      return postSnapshotRotationRole != null && !role.equals(postSnapshotRotationRole);
     }
   }
 
@@ -988,6 +1091,15 @@ public class CertificateMaterialService {
 
   record RotationState(
       String role, boolean pending, boolean changed, boolean uninitialized, boolean drifted) {}
+
+  private record RotationObservation(
+      RotationState state,
+      Secret projection,
+      String sourceRevision,
+      boolean unacceptedProjection) {}
+
+  private record RotationSnapshot(
+      String selectedRole, Map<String, RotationObservation> observations) {}
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",

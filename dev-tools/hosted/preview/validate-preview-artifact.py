@@ -135,6 +135,143 @@ EXPECTED_SERVICE_SPECS = {
         "ports": [{"port": 9000, "targetPort": 9000}],
     },
 }
+
+
+def _infrastructure_container_security(uid: int) -> dict:
+    return {
+        "allowPrivilegeEscalation": False,
+        "readOnlyRootFilesystem": False,
+        "runAsUser": uid,
+        "runAsGroup": uid,
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+
+def _infrastructure_deployment_spec(
+    name: str,
+    uid: int,
+    image: str,
+    args: list[str],
+    port: int,
+    volume_name: str,
+    mount_path: str,
+    env: list[dict] | None = None,
+) -> dict:
+    container = {
+        "name": name,
+        "securityContext": _infrastructure_container_security(uid),
+        "image": image,
+        "args": args,
+        "ports": [{"containerPort": port}],
+        "volumeMounts": [{"name": volume_name, "mountPath": mount_path}],
+    }
+    if env is not None:
+        container["env"] = env
+    return {
+        "replicas": 1,
+        "selector": {"matchLabels": {"app": name}},
+        "template": {
+            "metadata": {"labels": {"app": name}},
+            "spec": {
+                "securityContext": {
+                    "runAsNonRoot": True,
+                    "runAsUser": uid,
+                    "runAsGroup": uid,
+                    "fsGroup": uid,
+                    "seccompProfile": {"type": "RuntimeDefault"},
+                },
+                "containers": [container],
+                "volumes": [
+                    {
+                        "name": volume_name,
+                        "persistentVolumeClaim": {"claimName": volume_name},
+                    }
+                ],
+            },
+        },
+    }
+
+
+EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS = {
+    "postgres": _infrastructure_deployment_spec(
+        "postgres",
+        999,
+        "postgres:16",
+        ["postgres", "-c", "max_connections=200"],
+        5432,
+        "postgres-data",
+        "/var/lib/postgresql/data",
+        [
+            {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"},
+            {"name": "POSTGRES_DB", "value": "firemud"},
+            {
+                "name": "POSTGRES_USER",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "firemud-secret",
+                        "key": "FIREMUD_POSTGRES_USER",
+                    }
+                },
+            },
+            {
+                "name": "POSTGRES_PASSWORD",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "firemud-secret",
+                        "key": "FIREMUD_POSTGRES_PASSWORD",
+                    }
+                },
+            },
+        ],
+    ),
+    "redis-coord": _infrastructure_deployment_spec(
+        "redis-coord",
+        999,
+        "redis:7.4.3",
+        ["redis-server", "--appendonly", "yes"],
+        6379,
+        "redis-coord-data",
+        "/data",
+    ),
+    "redis-cache": _infrastructure_deployment_spec(
+        "redis-cache",
+        999,
+        "redis:7.4.3",
+        ["redis-server", "--appendonly", "yes"],
+        6379,
+        "redis-cache-data",
+        "/data",
+    ),
+    "minio": _infrastructure_deployment_spec(
+        "minio",
+        1000,
+        "minio/minio:RELEASE.2024-05-10T01-41-38Z",
+        ["server", "/data"],
+        9000,
+        "minio-data",
+        "/data",
+        [
+            {
+                "name": "MINIO_ROOT_USER",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "minio-credentials",
+                        "key": "accessKey",
+                    }
+                },
+            },
+            {
+                "name": "MINIO_ROOT_PASSWORD",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "minio-credentials",
+                        "key": "secretKey",
+                    }
+                },
+            },
+        ],
+    ),
+}
 INTERNAL_SERVICE_APPS = [
     "account-service",
     "automation-scripting-service",
@@ -328,7 +465,10 @@ def _clean_config_map(document: dict) -> dict | None:
         return None
     if metadata.get("name") != "firemud-config":
         return document
-    data = document.get("data") or {}
+    data = _require_mapping(
+        document.get("data"),
+        "ConfigMap/firemud-config.data",
+    )
     document["data"] = {
         key: value
         for key, value in data.items()
@@ -548,8 +688,13 @@ def sanitize(source: Path, destination: Path) -> None:
     )
 
 
-def inject_telnet_port(source: Path, destination: Path, port: int) -> None:
-    """Add only the trusted allocator result after artifact validation."""
+def inject_telnet_port(
+    source: Path,
+    destination: Path,
+    port: int,
+    expected_namespace: str | None = None,
+) -> None:
+    """Add only trusted runtime target data after artifact validation."""
 
     if not MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT:
         fail(
@@ -559,9 +704,21 @@ def inject_telnet_port(source: Path, destination: Path, port: int) -> None:
     documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
     matches = []
     for document in documents:
+        if not isinstance(document, dict):
+            fail("validated preview render contains a non-object document")
+        metadata = _require_mapping(
+            document.get("metadata"),
+            f"{document.get('kind', 'object')}.metadata",
+        )
+        if expected_namespace is not None:
+            namespace = metadata.get("namespace")
+            if namespace not in (None, expected_namespace):
+                fail(
+                    f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
+                )
+            metadata["namespace"] = expected_namespace
         if not isinstance(document, dict) or document.get("kind") != "Service":
             continue
-        metadata = document.get("metadata") or {}
         if metadata.get("name") != "tcp-proxy-service":
             continue
         for service_port in (document.get("spec") or {}).get("ports", []):
@@ -576,6 +733,48 @@ def inject_telnet_port(source: Path, destination: Path, port: int) -> None:
         "---\n".join(yaml.safe_dump(document, sort_keys=False) for document in documents),
         encoding="utf-8",
     )
+
+
+def validate_runtime_target(path: Path, expected_namespace: str, expected_port: int) -> None:
+    """Verify the only trusted mutations made after closed artifact validation."""
+
+    if not re.fullmatch(r"pr-[1-9][0-9]*", expected_namespace):
+        fail(f"runtime namespace is not canonical: {expected_namespace!r}")
+    if not MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT:
+        fail(
+            "preview telnet port must be between "
+            f"{MIN_PREVIEW_TELNET_PORT} and {MAX_PREVIEW_TELNET_PORT}"
+        )
+    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+    if not documents:
+        fail("prepared preview render is empty")
+    node_ports: list[tuple[str, object, object]] = []
+    for index, document in enumerate(documents):
+        if not isinstance(document, dict):
+            fail(f"prepared preview document {index} is not an object")
+        metadata = _require_mapping(
+            document.get("metadata"),
+            f"prepared preview document {index}.metadata",
+        )
+        name = metadata.get("name")
+        if metadata.get("namespace") != expected_namespace:
+            fail(
+                f"{document.get('kind')}/{name} must explicitly target namespace "
+                f"{expected_namespace!r}"
+            )
+        for location, value in walk(document):
+            if location.endswith(".nodePort"):
+                node_ports.append((f"{document.get('kind')}/{name}", location, value))
+    expected = (
+        "Service/tcp-proxy-service",
+        "object.spec.ports[0].nodePort",
+        expected_port,
+    )
+    if node_ports != [expected]:
+        fail(
+            "prepared preview render must contain only the exact allocated TCP Proxy "
+            f"NodePort {expected_port}; observed {node_ports!r}"
+        )
 
 
 def walk(value: object, path: str = "object"):
@@ -833,6 +1032,101 @@ def validate_network_policies(documents: list[dict]) -> None:
         fail("NetworkPolicy/tcp-proxy-service-egress has an unsafe exception")
 
 
+def validate_infrastructure_deployments(documents: list[dict]) -> None:
+    """Require exact trusted specs for fixed-image infrastructure pods."""
+
+    deployments = {
+        document.get("metadata", {}).get("name"): document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name")
+        in EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS
+    }
+    if set(deployments) != set(EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS):
+        fail("preview infrastructure Deployment set is incomplete")
+    for name, expected_spec in EXPECTED_INFRASTRUCTURE_DEPLOYMENT_SPECS.items():
+        if deployments[name].get("spec") != expected_spec:
+            fail(f"Deployment/{name} has an unsafe infrastructure spec")
+
+
+def validate_ingress(
+    document: dict,
+    expected_namespace: str,
+    expected_hostname: str,
+) -> None:
+    """Require the complete trusted preview Ingress routing contract."""
+
+    ingress_path = "Ingress/firemud-preview.spec"
+    spec = _require_mapping(document.get("spec"), ingress_path)
+    tls = _require_mapping_list(spec.get("tls"), f"{ingress_path}.tls")
+    rules = _require_mapping_list(spec.get("rules"), f"{ingress_path}.rules")
+    if (
+        len(tls) != 1
+        or tls[0].get("hosts") != [expected_hostname]
+        or tls[0].get("secretName") != f"{expected_namespace}-tls"
+    ):
+        fail("Ingress/firemud-preview has an unsafe TLS consumer")
+    if len(rules) != 1 or rules[0].get("host") != expected_hostname:
+        fail("Ingress/firemud-preview has an unsafe host")
+    http = _require_mapping(rules[0].get("http"), f"{ingress_path}.rules[0].http")
+    paths = _require_mapping_list(
+        http.get("paths"), f"{ingress_path}.rules[0].http.paths"
+    )
+    if len(paths) != 1:
+        fail("Ingress/firemud-preview has an unexpected route set")
+    route = paths[0]
+    backend = _require_mapping(
+        route.get("backend"),
+        f"{ingress_path}.rules[0].http.paths[0].backend",
+    )
+    service_backend = _require_mapping(
+        backend.get("service"),
+        f"{ingress_path}.rules[0].http.paths[0].backend.service",
+    )
+    service_port = _require_mapping(
+        service_backend.get("port"),
+        f"{ingress_path}.rules[0].http.paths[0].backend.service.port",
+    )
+    if (
+        route.get("path") != "/"
+        or route.get("pathType") != "Prefix"
+        or service_backend.get("name") != "spring-cloud-gateway"
+        or service_port.get("number") != 80
+    ):
+        fail("Ingress/firemud-preview has an unsafe backend")
+
+    expected_spec = {
+        "ingressClassName": "traefik",
+        "tls": [
+            {
+                "hosts": [expected_hostname],
+                "secretName": f"{expected_namespace}-tls",
+            }
+        ],
+        "rules": [
+            {
+                "host": expected_hostname,
+                "http": {
+                    "paths": [
+                        {
+                            "path": "/",
+                            "pathType": "Prefix",
+                            "backend": {
+                                "service": {
+                                    "name": "spring-cloud-gateway",
+                                    "port": {"number": 80},
+                                }
+                            },
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    if spec != expected_spec:
+        fail("Ingress/firemud-preview has an unsafe spec")
+
+
 def validate_manifest(
     path: Path,
     expected_namespace: str,
@@ -884,52 +1178,14 @@ def validate_manifest(
                 f"{document['kind']}/{name}.spec.template.spec",
             )
         if document["kind"] == "Ingress":
-            ingress_path = "Ingress/firemud-preview.spec"
-            spec = _require_mapping(document.get("spec"), ingress_path)
-            tls = _require_mapping_list(spec.get("tls"), f"{ingress_path}.tls")
-            rules = _require_mapping_list(
-                spec.get("rules"), f"{ingress_path}.rules"
-            )
-            if len(tls) != 1 or tls[0].get("hosts") != [expected_hostname] or tls[0].get(
-                "secretName"
-            ) != f"{expected_namespace}-tls":
-                fail("Ingress/firemud-preview has an unsafe TLS consumer")
-            if len(rules) != 1 or rules[0].get("host") != expected_hostname:
-                fail("Ingress/firemud-preview has an unsafe host")
-            http = _require_mapping(
-                rules[0].get("http"), f"{ingress_path}.rules[0].http"
-            )
-            paths = _require_mapping_list(
-                http.get("paths"), f"{ingress_path}.rules[0].http.paths"
-            )
-            if len(paths) != 1:
-                fail("Ingress/firemud-preview has an unexpected route set")
-            route = paths[0]
-            backend = _require_mapping(
-                route.get("backend"),
-                f"{ingress_path}.rules[0].http.paths[0].backend",
-            )
-            service_backend = _require_mapping(
-                backend.get("service"),
-                f"{ingress_path}.rules[0].http.paths[0].backend.service",
-            )
-            service_port = _require_mapping(
-                service_backend.get("port"),
-                f"{ingress_path}.rules[0].http.paths[0].backend.service.port",
-            )
-            if (
-                route.get("path") != "/"
-                or route.get("pathType") != "Prefix"
-                or service_backend.get("name") != "spring-cloud-gateway"
-                or service_port.get("number") != 80
-            ):
-                fail("Ingress/firemud-preview has an unsafe backend")
+            validate_ingress(document, expected_namespace, expected_hostname)
     if seen != EXPECTED_OBJECTS:
         missing = sorted(EXPECTED_OBJECTS - seen)
         extra = sorted(seen - EXPECTED_OBJECTS)
         fail(f"manifest object set is not closed (missing={missing}, extra={extra})")
     validate_services(documents)
     validate_network_policies(documents)
+    validate_infrastructure_deployments(documents)
     validate_service_consumers(documents, expected_namespace)
 
 
@@ -976,11 +1232,23 @@ def main() -> int:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(sys.argv) == 5 and sys.argv[1] == "inject":
+    if len(sys.argv) == 6 and sys.argv[1] == "inject":
         try:
-            inject_telnet_port(Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4]))
+            inject_telnet_port(
+                Path(sys.argv[2]),
+                Path(sys.argv[3]),
+                int(sys.argv[5]),
+                sys.argv[4],
+            )
         except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if len(sys.argv) == 5 and sys.argv[1] == "runtime-target":
+        try:
+            validate_runtime_target(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+        except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+            print(f"preview runtime target rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if len(sys.argv) != 11:
@@ -989,7 +1257,8 @@ def main() -> int:
             "<source-run-id> <pr-number> <base-sha> <head-sha> <merge-sha> "
             "<image-tag> <hostname>\n"
             "       validate-preview-artifact.py sanitize <render> <output>\n"
-            "       validate-preview-artifact.py inject <render> <output> <port>",
+            "       validate-preview-artifact.py inject <render> <output> <namespace> <port>\n"
+            "       validate-preview-artifact.py runtime-target <render> <namespace> <port>",
             file=sys.stderr,
         )
         return 2

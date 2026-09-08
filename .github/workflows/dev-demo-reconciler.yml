@@ -71,22 +71,9 @@ jobs:
           [[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]]
           current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
           max_failed_attempts=3
+          max_history_pages=10
           expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
           workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
-          develop_push_run="$(
-            gh api \
-              --method GET \
-              "${workflow_runs_api}" \
-              -f branch=develop \
-              -f event=push \
-              -f "head_sha=${desired_head_sha}" \
-              -F per_page=1
-          )"
-          history_not_before="$(jq -r '.workflow_runs[0].created_at // empty' <<<"${develop_push_run}")"
-          if [[ -z "$history_not_before" ]]; then
-            echo "::error title=Dev-demo history anchor missing::No develop push run records when ${desired_head_sha} became the dev-demo target; refusing an unbounded or history-blind dispatch."
-            exit 1
-          fi
 
           list_run_page() {
             local page="$1"
@@ -102,6 +89,83 @@ jobs:
             fi
             gh api "${api_args[@]}"
           }
+
+          develop_push_run="$(
+            gh api \
+              --method GET \
+              "${workflow_runs_api}" \
+              -f branch=develop \
+              -f event=push \
+              -f "head_sha=${desired_head_sha}" \
+              -F per_page=1
+          )"
+          history_not_before="$(jq -r '.workflow_runs[0].created_at // empty' <<<"${develop_push_run}")"
+          if [[ -z "$history_not_before" ]]; then
+            # The current develop head can predate this workflow, so it may
+            # legitimately have no push-triggered dev-demo run. Bootstrap only
+            # from bounded history that contains the exact immutable deploy
+            # target. A successful/nonterminal candidate or a complete retry
+            # budget is decisive without walking older unrelated history;
+            # otherwise the scan must reach the beginning of retained history.
+            bootstrap_oldest=""
+            bootstrap_candidate_status=""
+            bootstrap_candidate_conclusion=""
+            bootstrap_failed_attempts=0
+            bootstrap_complete=false
+            for ((bootstrap_page = 1; bootstrap_page <= max_history_pages; bootstrap_page += 1)); do
+              bootstrap_run_page="$(list_run_page "$bootstrap_page")"
+              bootstrap_page_size="$(jq -r '.workflow_runs | length' <<<"${bootstrap_run_page}")"
+              bootstrap_exact_runs="$(
+                jq -c \
+                  --arg head "${desired_head_sha}" \
+                  --arg title "${expected_deploy_title}" \
+                  '[.workflow_runs[] | select(.head_sha == $head and .display_title == $title)]' \
+                  <<<"${bootstrap_run_page}"
+              )"
+              if [[ -z "$bootstrap_candidate_status" ]]; then
+                bootstrap_candidate="$(
+                  jq -r '(first(.[]) // empty) | [.status, (.conclusion // "")] | @tsv' \
+                    <<<"${bootstrap_exact_runs}"
+                )"
+                IFS=$'\t' read -r bootstrap_candidate_status bootstrap_candidate_conclusion \
+                  <<<"${bootstrap_candidate}"
+              fi
+              page_bootstrap_failures="$(
+                jq -r '[.[] | select(.status == "completed" and .conclusion != "success")] | length' \
+                  <<<"${bootstrap_exact_runs}"
+              )"
+              bootstrap_failed_attempts=$((bootstrap_failed_attempts + page_bootstrap_failures))
+              page_bootstrap_oldest="$(jq -r '.[-1].created_at // empty' <<<"${bootstrap_exact_runs}")"
+              if [[ -n "$page_bootstrap_oldest" ]]; then
+                bootstrap_oldest="$page_bootstrap_oldest"
+              fi
+              if [[ -n "$bootstrap_candidate_status" \
+                && "$bootstrap_candidate_status" != completed ]]; then
+                bootstrap_complete=true
+                break
+              fi
+              if [[ "$bootstrap_candidate_status" == completed \
+                && "$bootstrap_candidate_conclusion" == success ]]; then
+                bootstrap_complete=true
+                break
+              fi
+              if (( bootstrap_failed_attempts >= max_failed_attempts )); then
+                bootstrap_complete=true
+                break
+              fi
+              if (( bootstrap_page_size < 100 )) && [[ -n "$bootstrap_candidate_status" ]]; then
+                bootstrap_complete=true
+                break
+              fi
+            done
+            if [[ "$bootstrap_complete" != true ]]; then
+              echo "::error title=Dev-demo history bootstrap exhausted::No decisive exact deploy history for ${desired_head_sha} with title '${expected_deploy_title}' was found within ${max_history_pages} pages; refusing a history-blind dispatch."
+              exit 1
+            fi
+            [[ -n "$bootstrap_oldest" ]]
+            history_not_before="$bootstrap_oldest"
+            echo "No develop push anchor exists for ${desired_head_sha}; using bounded exact-target dev-demo history from ${history_not_before}."
+          fi
 
           # Re-runs retain their original workflow-run identity and can therefore
           # sort behind newer completed attempts. Search every nonterminal state

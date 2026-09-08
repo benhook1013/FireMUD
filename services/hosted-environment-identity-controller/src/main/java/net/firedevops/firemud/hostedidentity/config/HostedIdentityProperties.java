@@ -53,6 +53,9 @@ public class HostedIdentityProperties implements InitializingBean {
     requireCanonicalTelnetPort(
         "dev-demo Telnet port", devDemoTelnetPort, CANONICAL_DEV_DEMO_TELNET_PORT);
     requireValidGrpcRenewBefore(grpcRenewBefore);
+    if (reconcileInterval == null || reconcileInterval.compareTo(Duration.ofSeconds(1)) < 0) {
+      throw new IllegalStateException("reconcile interval must be at least 1 second");
+    }
   }
 
   private static void requireCanonicalTelnetPort(

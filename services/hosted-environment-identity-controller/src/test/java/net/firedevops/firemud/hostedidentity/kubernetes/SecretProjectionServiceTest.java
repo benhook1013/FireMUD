@@ -72,6 +72,117 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void grpcProjectionCapturesTransportProvenance() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    Resource<Secret> absent = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.grpcSecretName())).thenReturn(absent);
+    when(absent.get()).thenReturn(null);
+    Secret source =
+        new SecretBuilder()
+            .withType("Opaque")
+            .withData(
+                Map.of(
+                    "tls.crt",
+                    encoded("certificate"),
+                    "tls.key",
+                    encoded("key"),
+                    "ca.crt",
+                    encoded("ca")))
+            .build();
+
+    new SecretProjectionService()
+        .project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.GRPC_ROLE,
+            source,
+            1,
+            1,
+            "1".repeat(64),
+            HostedIdentityContract.TRANSPORT_PROVENANCE);
+
+    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.runtimeSecrets()).resource(candidate.capture());
+    assertEquals(
+        HostedIdentityContract.TRANSPORT_PROVENANCE,
+        candidate
+            .getValue()
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.PROVENANCE_ANNOTATION));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void controlledCertificateFieldsAreRepairedButUnknownDriftIsRejected() {
+    EnvironmentIdentityPlan plan = plan();
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    GenericKubernetesResource existing = new GenericKubernetesResource();
+    existing.setApiVersion("cert-manager.io/v1");
+    existing.setKind("Certificate");
+    existing.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(desired.getMetadata().getName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(desired.getMetadata().getLabels())
+            .withResourceVersion("7")
+            .build());
+    Map<String, Object> existingSpec =
+        new LinkedHashMap<>((Map<String, Object>) desired.getAdditionalProperties().get("spec"));
+    existingSpec.put("secretName", "obsolete-secret-name");
+    existing.setAdditionalProperties(Map.of("spec", existingSpec));
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
+    Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(desired.getMetadata().getName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+
+    CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+
+    assertEquals("7", desired.getMetadata().getResourceVersion());
+    verify(replacementResource).replace();
+
+    existingSpec.put("isCA", true);
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+    existingSpec.remove("isCA");
+    existing.getMetadata().getLabels().put("unexpected", "metadata-drift");
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+  }
+
+  @Test
+  void issuerReferenceRejectsMissingResourceBodyExplicitly() {
+    GenericKubernetesResource certificate = new GenericKubernetesResource();
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> CertificateMaterialService.issuerReference(certificate));
+
+    assertEquals("certificate issuer reference is unavailable", failure.getMessage());
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void materializationBatchReusesOneRotationSelectionSnapshot() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
@@ -580,14 +691,225 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void serializedRotationDoesNotGateInitialProjectionUntilEveryRoleIsAccepted() {
+  void serializedRotationSelectsExistingChangeWhileAnotherRoleInitializes() {
     var ingress = new CertificateMaterialService.RotationState("ingress", true, true, false, false);
     var telnet = new CertificateMaterialService.RotationState("telnet", false, false, true, false);
     var grpc = new CertificateMaterialService.RotationState("grpc", true, true, false, false);
 
     assertEquals(
-        null,
+        "ingress",
         CertificateMaterialService.selectSerializedRole(java.util.List.of(ingress, telnet, grpc)));
+  }
+
+  @Test
+  void postSnapshotCertRotationsAdvanceOnlyTheFirstChangedRole() {
+    StableBatchFixture fixture = stableBatchFixture();
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+
+    assertEquals("source-ready", fixture.batch().ingress().state());
+
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
+    Secret telnetSource =
+        certManagerSource(
+            fixture.plan(),
+            HostedIdentityContract.TELNET_ROLE,
+            fixture.plan().telnetSecretName(),
+            telnetReplacement);
+    when(fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()).get())
+        .thenReturn(telnetSource);
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().telnetCertificateName(),
+        true,
+        2,
+        telnetReplacement);
+
+    CertificateMaterialService.RoleMaterial telnet = fixture.batch().telnet();
+
+    Map<String, String> gatewayReplacement =
+        Map.of("tls.crt", encoded("gateway-replacement"), "tls.key", encoded("gateway-key-2"));
+    Secret gatewaySource =
+        certManagerSource(
+            fixture.plan(),
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            fixture.plan().gatewayInternalWsSecretName(),
+            gatewayReplacement);
+    when(fixture
+            .secretClient()
+            .identitySecrets()
+            .withName(fixture.plan().gatewayInternalWsSecretName())
+            .get())
+        .thenReturn(gatewaySource);
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().gatewayInternalWsCertificateName(),
+        true,
+        2,
+        gatewayReplacement);
+
+    CertificateMaterialService.RoleMaterial gateway = fixture.batch().gatewayInternalWs();
+
+    assertEquals("source-ready", telnet.state());
+    assertEquals(telnetReplacement, telnet.source().getData());
+    assertEquals("serialized-deferred", gateway.state());
+    assertEquals(fixture.acceptedData(), gateway.source().getData());
+  }
+
+  @Test
+  void postSnapshotCertificateRotationDefersConcurrentGrpcGeneration() {
+    StableBatchFixture fixture = stableBatchFixture();
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    assertEquals("source-ready", fixture.batch().ingress().state());
+
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
+    when(fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()).get())
+        .thenReturn(
+            certManagerSource(
+                fixture.plan(),
+                HostedIdentityContract.TELNET_ROLE,
+                fixture.plan().telnetSecretName(),
+                telnetReplacement));
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().telnetCertificateName(),
+        true,
+        2,
+        telnetReplacement);
+    assertEquals("source-ready", fixture.batch().telnet().state());
+
+    Map<String, String> grpcReplacement =
+        Map.of(
+            "tls.crt",
+            encoded("grpc-replacement"),
+            "tls.key",
+            encoded("grpc-key-2"),
+            "ca.crt",
+            encoded("grpc-ca"));
+    Secret generated =
+        ownedSecret(
+            fixture.plan(),
+            HostedIdentityContract.GRPC_ROLE,
+            fixture.plan().grpcSecretName(),
+            grpcReplacement,
+            Map.of(HostedIdentityContract.ISSUANCE_GENERATION_ANNOTATION, "2"));
+    generated.setType("Opaque");
+    when(fixture
+            .grpcGenerator()
+            .ensure(
+                fixture.secretClient().client(),
+                fixture.plan(),
+                1L,
+                fixture.properties().getGrpcRenewBefore(),
+                fixture.properties().getGrpcTrustAnchorSha256()))
+        .thenReturn(generated);
+
+    CertificateMaterialService.RoleMaterial grpc = fixture.batch().grpc(1L);
+
+    assertEquals("serialized-deferred", grpc.state());
+    assertEquals(fixture.acceptedData(), grpc.source().getData());
+    verifyNoInteractions(fixture.grpcGenerator());
+  }
+
+  @Test
+  void unacceptedProjectionPinsItsMaterialUntilAcceptanceThenAdvancesOnRestart() {
+    StableBatchFixture fixture = stableBatchFixture();
+    Secret ingressProjection =
+        fixture.secretClient().runtimeSecrets().withName(fixture.plan().ingressSecretName()).get();
+    Map<String, String> pendingAnnotations =
+        new LinkedHashMap<>(ingressProjection.getMetadata().getAnnotations());
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    ingressProjection.getMetadata().setAnnotations(pendingAnnotations);
+
+    Map<String, String> replacement =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    when(fixture
+            .secretClient()
+            .identitySecrets()
+            .withName(fixture.plan().ingressSecretName())
+            .get())
+        .thenReturn(
+            certManagerSource(
+                fixture.plan(),
+                HostedIdentityContract.INGRESS_ROLE,
+                fixture.plan().ingressSecretName(),
+                replacement));
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        2,
+        replacement);
+
+    CertificateMaterialService.RoleMaterial pinned = fixture.batch().ingress();
+
+    assertEquals("serialized-in-flight", pinned.state());
+    assertEquals(fixture.acceptedData(), pinned.source().getData());
+    SecretProjectionService projections = new SecretProjectionService();
+    SecretProjectionService.ProjectionResult pending =
+        projections.project(
+            fixture.secretClient().client(),
+            fixture.plan(),
+            pinned.role(),
+            pinned.source(),
+            pinned.sourceGeneration(),
+            pinned.sourceObjectGeneration(),
+            pinned.summary().spkiSha256(),
+            pinned.provenance());
+    assertEquals("awaiting-acceptance", pending.state());
+    assertEquals(
+        true,
+        projections
+            .acknowledge(
+                fixture.secretClient().client(),
+                fixture.plan(),
+                pinned.role(),
+                pending.revision(),
+                pinned.sourceGeneration(),
+                pinned.sourceObjectGeneration(),
+                pinned.summary().spkiSha256())
+            .isSynced());
+
+    CertificateMaterialService restarted =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(),
+            fixture.validator(),
+            fixture.grpcGenerator(),
+            fixture.properties());
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        2,
+        replacement);
+
+    CertificateMaterialService.RoleMaterial advanced =
+        restarted.beginMaterialization(fixture.secretClient().client(), fixture.plan()).ingress();
+
+    assertEquals("source-ready", advanced.state());
+    assertEquals(replacement, advanced.source().getData());
   }
 
   @Test
@@ -1824,6 +2146,63 @@ class SecretProjectionServiceTest {
     return new SecretClient(client, runtimeSecrets, identitySecrets);
   }
 
+  private static StableBatchFixture stableBatchFixture() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    SecretClient secretClient = secretClient(plan);
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    for (String role :
+        List.of(
+            HostedIdentityContract.INGRESS_ROLE,
+            HostedIdentityContract.TELNET_ROLE,
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+            HostedIdentityContract.GRPC_ROLE)) {
+      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
+      secretClient
+          .runtimeSecrets()
+          .withName(secretName(plan, role))
+          .get()
+          .getMetadata()
+          .getAnnotations()
+          .put(
+              HostedIdentityContract.PROVENANCE_ANNOTATION,
+              HostedIdentityContract.GRPC_ROLE.equals(role)
+                  ? HostedIdentityContract.TRANSPORT_PROVENANCE
+                  : "cert-manager");
+    }
+    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
+    SecretMaterialValidator.MaterialSummary summary =
+        new SecretMaterialValidator.MaterialSummary(
+            "1".repeat(64),
+            "2".repeat(64),
+            java.time.Instant.EPOCH,
+            java.time.Instant.MAX,
+            "3".repeat(64));
+    when(validator.validateIdentity(
+            org.mockito.ArgumentMatchers.any(Secret.class),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(summary);
+    GrpcTransportBundleGenerator grpcGenerator = mock(GrpcTransportBundleGenerator.class);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(), validator, grpcGenerator, properties);
+    return new StableBatchFixture(
+        plan,
+        properties,
+        secretClient,
+        acceptedData,
+        validator,
+        grpcGenerator,
+        service.beginMaterialization(secretClient.client(), plan));
+  }
+
   private static DriftSelectionFixture driftSelectionFixture(boolean sourceAdvanced) {
     EnvironmentIdentityPlan plan = plan();
     SecretClient secretClient = secretClient(plan);
@@ -1934,6 +2313,15 @@ class SecretProjectionServiceTest {
       SecretClient secretClient,
       Secret ingressSource,
       CertificateMaterialService.MaterializationBatch materialization) {}
+
+  private record StableBatchFixture(
+      EnvironmentIdentityPlan plan,
+      HostedIdentityProperties properties,
+      SecretClient secretClient,
+      Map<String, String> acceptedData,
+      SecretMaterialValidator validator,
+      GrpcTransportBundleGenerator grpcGenerator,
+      CertificateMaterialService.MaterializationBatch batch) {}
 
   private record IssuanceObservation(
       CertificateMaterialService.RoleMaterial material,

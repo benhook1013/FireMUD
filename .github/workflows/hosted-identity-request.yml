@@ -369,12 +369,14 @@ jobs:
       - name: Inject trusted allocated Telnet port
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
-            "$RUNNER_TEMP/preview-rendered-with-port.yaml" "$TELNET_PORT"
+            "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
+            "$RUNTIME_NAMESPACE" "$TELNET_PORT"
 
       - name: Wait for fixed-head runtime images
         env:
@@ -411,18 +413,17 @@ jobs:
             | kubectl -n "$RUNTIME_NAMESPACE" create configmap jwt-jwks --from-file=jwks.json=/dev/stdin --dry-run=client -o yaml \
             | kubectl apply -f -
 
-      - name: Validate trusted hosted bridge render
+      - name: Validate trusted preview runtime target
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          RELEASE_NAME: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
-          FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
-            --expected-hosted-telnet-node-port "$TELNET_PORT"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
 
       - name: Final revalidate open PR before server dry-run and apply
         env:
@@ -438,8 +439,14 @@ jobs:
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
+          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
+          set -euo pipefail
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
 
       - name: Record exact deployed preview head
@@ -477,18 +484,17 @@ jobs:
             kubectl -n "$RUNTIME_NAMESPACE" rollout status "deployment/${deployment}" --timeout=120s
           done
 
-      - name: Validate controller-projected preview identity
+      - name: Revalidate prepared preview runtime target
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          RELEASE_NAME: ${{ needs.validate-target.outputs.namespace }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
         run: |
           set -euo pipefail
-          FIREMUD_PREFLIGHT_CONTEXT=operator \
-            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
-            "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$RELEASE_NAME" \
-            --expected-hosted-telnet-node-port "$TELNET_PORT"
+          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
 
   verify-runtime:
     name: Verify Hosted Preview Runtime

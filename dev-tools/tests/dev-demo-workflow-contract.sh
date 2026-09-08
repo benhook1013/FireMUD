@@ -223,13 +223,21 @@ for required in (
     '"${candidate_conclusion}" != success',
     "Redispatching failed dev-demo candidate",
     "max_failed_attempts=3",
+    "max_history_pages=10",
     'failed_attempts >= max_failed_attempts',
     "Dev-demo retry budget exhausted",
     "automatic redispatch is stopped",
     'expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"',
     'workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"',
     "history_not_before",
-    "Dev-demo history anchor missing",
+    "Dev-demo history bootstrap exhausted",
+    "bootstrap_complete=false",
+    'bootstrap_complete=true',
+    '[[ "$bootstrap_complete" != true ]]',
+    "bootstrap_failed_attempts",
+    ".head_sha == $head and .display_title == $title",
+    "No decisive exact deploy history",
+    "refusing a history-blind dispatch",
     "-f event=push",
     "-F per_page=100",
     "for nonterminal_status in requested waiting pending queued in_progress",
@@ -247,6 +255,10 @@ if reconcile_run.count('-f "head_sha=${desired_head_sha}"') != 1:
     raise SystemExit("only the one-result develop push anchor may use head_sha search")
 if reconcile_run.count("-f branch=develop") != 1:
     raise SystemExit("only the develop push anchor may use branch search")
+if "while true" in reconcile_run.split("bootstrap_complete=false", 1)[1].split(
+    'if [[ "$bootstrap_complete" != true ]]', 1
+)[0]:
+    raise SystemExit("dev-demo missing-anchor bootstrap must remain bounded")
 
 nonterminal_guard = '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]'
 for candidate_status in ("requested", "waiting", "pending"):
@@ -435,6 +447,90 @@ if selected_run is not None or failure_count != 0:
     raise SystemExit(
         "dev-demo no-history traversal did not stop safely at the develop push anchor: "
         f"candidate={selected_run!r}, failures={failure_count}"
+    )
+
+
+def bootstrap_history(
+    pages: list[list[dict[str, object]]], max_pages: int = 10
+):
+    oldest = None
+    candidate = None
+    failures = 0
+    for page in pages[:max_pages]:
+        exact_runs = [
+            run
+            for run in page
+            if run.get("head_sha") == head
+            and run.get("display_title") == expected_title
+        ]
+        if candidate is None and exact_runs:
+            candidate = exact_runs[0]
+        failures += sum(
+            run.get("status") == "completed"
+            and run.get("conclusion") != "success"
+            for run in exact_runs
+        )
+        if exact_runs:
+            oldest = exact_runs[-1]["created_at"]
+        if candidate is not None and (
+            candidate.get("status") != "completed"
+            or candidate.get("conclusion") == "success"
+            or failures >= 3
+            or len(page) < 100
+        ):
+            return oldest
+    raise RuntimeError(
+        f"no decisive exact deploy history within {max_pages} pages"
+    )
+
+
+bootstrap_exact_success = {
+    "id": 601,
+    "head_sha": head,
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-09-09T05:20:00Z",
+    "display_title": expected_title,
+}
+bootstrap_anchor = bootstrap_history([[bootstrap_exact_success]])
+if bootstrap_anchor != "2026-09-09T05:20:00Z":
+    raise SystemExit(
+        f"bounded exact bootstrap selected the wrong timestamp: {bootstrap_anchor}"
+    )
+
+try:
+    bootstrap_history([[]])
+except RuntimeError:
+    pass
+else:
+    raise SystemExit("bounded bootstrap accepted empty exact-target history")
+
+full_pages = [
+    [
+        {
+            "id": page_number * 100 + run_number,
+            "head_sha": other_target,
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-09-09T05:10:00Z",
+            "display_title": expected_title,
+        }
+        for run_number in range(100)
+    ]
+    for page_number in range(10)
+]
+try:
+    bootstrap_history(full_pages)
+except RuntimeError:
+    pass
+else:
+    raise SystemExit("bounded bootstrap accepted unrelated history at its page cap")
+
+bootstrap_failures = failed_exact_history + irrelevant_history[:97]
+bootstrap_anchor = bootstrap_history([bootstrap_failures])
+if bootstrap_anchor != anchor_time:
+    raise SystemExit(
+        f"bounded bootstrap did not accept a complete retry budget: {bootstrap_anchor}"
     )
 PY
 

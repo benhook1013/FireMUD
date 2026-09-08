@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.security;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -48,6 +49,13 @@ class CertificateResourceFactoryTest {
     assertFalse(telnetSpec.containsKey("renewBefore"));
     assertEquals("letsencrypt-prod", ((Map<?, ?>) ingressSpec.get("issuerRef")).get("name"));
     assertEquals("letsencrypt-prod", ((Map<?, ?>) telnetSpec.get("issuerRef")).get("name"));
+    for (Map<String, Object> certificateSpec :
+        java.util.List.of(ingressSpec, telnetSpec, gatewaySpec, bridgeSpec)) {
+      Map<?, ?> issuerRef = (Map<?, ?>) certificateSpec.get("issuerRef");
+      assertEquals("ClusterIssuer", issuerRef.get("kind"));
+      assertEquals("cert-manager.io", issuerRef.get("group"));
+      assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
+    }
     assertEquals(
         "pr-42.preview.firedevops.net", ((java.util.List<?>) ingressSpec.get("dnsNames")).get(0));
     assertEquals(
@@ -88,6 +96,18 @@ class CertificateResourceFactoryTest {
         java.util.List.of(Duration.ofMinutes(5).minusNanos(1), Duration.ofDays(30))) {
       assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, invalidRenewBefore));
       assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, invalidRenewBefore));
+    }
+  }
+
+  @Test
+  void internalCertificatesAcceptBothExactValidRenewalBoundaries() {
+    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    var factory = new CertificateResourceFactory();
+
+    for (Duration validRenewBefore :
+        java.util.List.of(Duration.ofMinutes(5), Duration.ofDays(30).minusNanos(1))) {
+      assertDoesNotThrow(() -> factory.gatewayInternalWs(plan, validRenewBefore));
+      assertDoesNotThrow(() -> factory.tcpProxyBridge(plan, validRenewBefore));
     }
   }
 

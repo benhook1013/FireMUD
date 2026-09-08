@@ -821,8 +821,12 @@ fi
 
 reset_case
 export FAKE_RUNTIME_LOOKUP_ERROR=true
-if bash "$PRUNER" --delete-runtime pr-101; then
+if runtime_lookup_output="$(bash "$PRUNER" --delete-runtime pr-101 2>&1)"; then
   echo "runtime deletion treated a namespace lookup error as NotFound" >&2
+  exit 1
+fi
+if [[ "$runtime_lookup_output" != "Unable to determine whether runtime namespace pr-101 exists." ]]; then
+  echo "runtime deletion did not distinguish lookup failure from confirmed absence" >&2
   exit 1
 fi
 grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"

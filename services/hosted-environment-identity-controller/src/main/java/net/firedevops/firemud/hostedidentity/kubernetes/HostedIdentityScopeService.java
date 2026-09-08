@@ -185,18 +185,7 @@ public class HostedIdentityScopeService {
                 rule(
                     List.of("apps"),
                     List.of("deployments"),
-                    List.of(
-                        "account-service",
-                        "automation-scripting-service",
-                        "entity-management-service",
-                        "game-design-service",
-                        "game-logic-service",
-                        "game-session-service",
-                        "logging-admin-service",
-                        "social-groups-service",
-                        "spring-cloud-gateway",
-                        "tcp-proxy-service",
-                        "world-management-service"),
+                    plan.grpcConsumers(),
                     List.of("get", "update", "patch")),
                 rule(
                     List.of(""),

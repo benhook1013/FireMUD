@@ -14,6 +14,7 @@ import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -244,7 +245,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               runtimeProfile.telnetPort(),
               ingress.summary().certificateFingerprint(),
               telnet.summary().certificateFingerprint(),
-              runtimeProjection(plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE),
+              bridgeProbeMaterial(
+                  tcpProxyBridge,
+                  () -> runtimeProjection(plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
               gatewayInternalWs.summary().certificateFingerprint(),
               grpc.source(),
               grpc.summary().certificateFingerprint());
@@ -419,6 +422,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     Secret secret = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     validateSourceLabels(secret, plan, role);
     return secret;
+  }
+
+  static Secret bridgeProbeMaterial(
+      CertificateMaterialService.RoleMaterial material, Supplier<Secret> runtimeProjection) {
+    return material.projectionDeferred() ? material.source() : runtimeProjection.get();
   }
 
   static void validateDistinctIdentities(CertificateMaterialService.RoleMaterial... materials) {
