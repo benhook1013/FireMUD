@@ -54,6 +54,8 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(GatewayWebSocketClient.class);
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final Duration READINESS_TIMEOUT = Duration.ofSeconds(2);
+  // Publication precedes retirement, so one fresh-state retry covers a raced rotation.
+  private static final int GENERATION_ACQUIRE_ATTEMPTS = 2;
   private static final String CLIENT_AUTH_EKU = "1.3.6.1.5.5.7.3.2";
   private static final List<String> LOCAL_PROFILES = List.of("dev", "local", "test");
 
@@ -222,13 +224,19 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     responseFuture.whenComplete(
         (response, error) -> {
           boolean ready = false;
-          if (error == null) {
-            ready = response.statusCode() >= 200 && response.statusCode() < 300;
-          } else {
-            recordFailure(classifyFailure(error));
+          try {
+            try {
+              if (error == null) {
+                ready = response.statusCode() >= 200 && response.statusCode() < 300;
+              } else {
+                recordFailure(classifyFailure(error));
+              }
+            } finally {
+              readiness.complete(ready);
+            }
+          } finally {
+            generation.release();
           }
-          generation.release();
-          readiness.complete(ready);
         });
     readiness.whenComplete(
         (ignored, error) -> {
@@ -358,14 +366,16 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   private ClientGeneration acquireCurrentGeneration() {
-    while (!closed.get()) {
+    ClientGeneration previous = null;
+    for (int attempt = 0; attempt < GENERATION_ACQUIRE_ATTEMPTS && !closed.get(); attempt++) {
       ClientGeneration generation = state.generation();
-      if (generation == null) {
+      if (generation == null || generation == previous) {
         return null;
       }
       if (generation.acquire()) {
         return generation;
       }
+      previous = generation;
     }
     return null;
   }

@@ -1126,9 +1126,11 @@ actual = workflow["jobs"]["preview-plan"]["if"]
 expected = (
     "${{ github.event_name != 'pull_request' || "
     "(github.event.pull_request.head.repo.full_name == github.repository && "
-    "(github.event.action != 'unlabeled' || "
+    "((github.event.action != 'labeled' && "
+    "github.event.action != 'unlabeled') || "
     "github.event.label.name == 'preview:paused' || "
-    "!(github.event.label.name == 'preview:priority'))) }}"
+    "(github.event.action == 'labeled' && "
+    "github.event.label.name == 'preview:priority'))) }}"
 )
 if actual != expected:
     raise SystemExit(f"unexpected preview-plan event condition: {actual}")
@@ -1136,7 +1138,12 @@ if actual != expected:
 
 def preview_plan_runs(event_name, action, label, same_repository=True):
     return event_name != "pull_request" or (
-        same_repository and (action != "unlabeled" or label != "preview:priority")
+        same_repository
+        and (
+            action not in {"labeled", "unlabeled"}
+            or label == "preview:paused"
+            or (action == "labeled" and label == "preview:priority")
+        )
     )
 
 
@@ -1145,8 +1152,10 @@ cases = (
     ("pull_request", "labeled", "preview:priority", True, True),
     ("pull_request", "unlabeled", "preview:paused", True, True),
     ("pull_request", "labeled", "preview:paused", True, True),
-    ("pull_request", "unlabeled", "unrelated", True, True),
-    ("pull_request", "labeled", "unrelated", True, True),
+    ("pull_request", "unlabeled", "unrelated", True, False),
+    ("pull_request", "unlabeled", "", True, False),
+    ("pull_request", "labeled", "unrelated", True, False),
+    ("pull_request", "labeled", "", True, False),
     ("pull_request", "synchronize", "", True, True),
     ("pull_request", "opened", "", False, False),
     ("workflow_dispatch", "", "", False, True),

@@ -48,6 +48,7 @@ import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 import org.springframework.web.server.adapter.WebHttpHandlerBuilder;
+import reactor.core.Disposable;
 import reactor.netty.http.client.HttpClient;
 
 class TcpProxyTlsListenerAdmissionIntegrationTest {
@@ -131,6 +132,10 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
         session -> {
           admittedHeaders.set(session.getHandshakeInfo().getHeaders());
           admittedConnections.incrementAndGet();
+          if ("no-frame"
+              .equals(session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"))) {
+            return reactor.core.publisher.Mono.never();
+          }
           return session.send(reactor.core.publisher.Mono.just(session.textMessage("admitted")));
         };
     GenericApplicationContext context = new GenericApplicationContext();
@@ -181,6 +186,18 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
           .isInstanceOf(RuntimeException.class)
           .hasMessageContaining("403 Forbidden");
       assertThat(admittedConnections).hasValue(1);
+
+      HttpHeaders noFrameHeaders = bridgeHeaders();
+      noFrameHeaders.set("X-Proxy-Connection-Id", "no-frame");
+      assertThatThrownBy(
+              () ->
+                  connect(
+                      port,
+                      noFrameHeaders,
+                      clientContext("tcp-proxy-client.pem", "tcp-proxy-client-key.pem"),
+                      Duration.ofSeconds(1)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Timeout on blocking read");
     } finally {
       listener.stop();
       context.close();
@@ -280,23 +297,33 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
   }
 
   private static String connect(int port, HttpHeaders headers, SslContext sslContext) {
-    AtomicReference<String> response = new AtomicReference<>();
+    return connect(port, headers, sslContext, Duration.ofSeconds(5));
+  }
+
+  private static String connect(
+      int port, HttpHeaders headers, SslContext sslContext, Duration responseTimeout) {
+    reactor.core.publisher.Sinks.One<String> response = reactor.core.publisher.Sinks.one();
     ReactorNettyWebSocketClient client =
         new ReactorNettyWebSocketClient(
             HttpClient.create().secure(spec -> spec.sslContext(sslContext)));
-    client
-        .execute(
-            URI.create("wss://127.0.0.1:" + port + "/ws/game"),
-            headers,
-            session ->
-                session
-                    .receive()
-                    .next()
-                    .map(WebSocketMessage::getPayloadAsText)
-                    .doOnNext(response::set)
-                    .then())
-        .block(Duration.ofSeconds(5));
-    return response.get();
+    Disposable execution =
+        client
+            .execute(
+                URI.create("wss://127.0.0.1:" + port + "/ws/game"),
+                headers,
+                session ->
+                    session
+                        .receive()
+                        .next()
+                        .map(WebSocketMessage::getPayloadAsText)
+                        .doOnNext(response::tryEmitValue)
+                        .then())
+            .subscribe(ignored -> {}, response::tryEmitError);
+    try {
+      return response.asMono().block(responseTimeout);
+    } finally {
+      execution.dispose();
+    }
   }
 
   private static SslContext clientContext(String certificate, String privateKey) throws Exception {

@@ -151,6 +151,14 @@ unset_telnet_config = runner_module.SmokeConfig.from_env(
     "contract-test", "telnet", None
 )
 try:
+    runner_module.validate_telnet_transport_config(
+        unset_telnet_config, {"telnet"}, simulate=False
+    )
+except ValueError as exc:
+    assert "--telnet-transport tls" in str(exc)
+else:
+    raise AssertionError("live exposed Telnet accepted an unset transport")
+try:
     runner_module.telnet_socket_options(unset_telnet_config)
 except ValueError as exc:
     assert "explicitly set to tls or plaintext" in str(exc)

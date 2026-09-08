@@ -39,8 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLHandshakeException;
 import okhttp3.Response;
+import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
 import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -168,6 +170,56 @@ class GatewayWebSocketClientTest {
 
     assertFalse(client.isReadyAsync().get(5, TimeUnit.SECONDS));
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS).getHandshake());
+  }
+
+  @Test
+  void readinessCompletionKeepsGenerationAcquiredUntilObserversRun() throws Exception {
+    CountDownLatch releaseResponse = new CountDownLatch(1);
+    CountDownLatch completionObserverEntered = new CountDownLatch(1);
+    CountDownLatch releaseCompletionObserver = new CountDownLatch(1);
+    MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
+    server.setDispatcher(
+        new Dispatcher() {
+          @Override
+          public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+            if (!releaseResponse.await(5, TimeUnit.SECONDS)) {
+              return new MockResponse().setResponseCode(503);
+            }
+            return new MockResponse().setResponseCode(200);
+          }
+        });
+    GatewayWebSocketClient client = newClient("localhost", server.getPort(), caCertificate);
+    HttpClient initialClient = (HttpClient) client.clientIdentity();
+    CompletableFuture<Boolean> readiness = client.isReadyAsync();
+    CompletableFuture<Void> completionObserver =
+        readiness.thenAccept(
+            ignored -> {
+              completionObserverEntered.countDown();
+              try {
+                if (!releaseCompletionObserver.await(5, TimeUnit.SECONDS)) {
+                  throw new AssertionError("completion observer was not released");
+                }
+              } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("completion observer was interrupted", error);
+              }
+            });
+
+    try {
+      assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+      assertTrue(client.reloadNow());
+      assertEquals(2, client.generationCount());
+      releaseResponse.countDown();
+
+      assertTrue(completionObserverEntered.await(5, TimeUnit.SECONDS));
+      assertFalse(initialClient.awaitTermination(java.time.Duration.ofMillis(200)));
+    } finally {
+      releaseResponse.countDown();
+      releaseCompletionObserver.countDown();
+    }
+    completionObserver.get(5, TimeUnit.SECONDS);
+    awaitTermination(initialClient);
+    awaitGenerationCount(client, 1);
   }
 
   @Test

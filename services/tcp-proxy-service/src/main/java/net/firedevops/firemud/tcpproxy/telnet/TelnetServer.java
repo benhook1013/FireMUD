@@ -67,7 +67,7 @@ public final class TelnetServer {
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
   private final BooleanSupplier gameplayTrafficReady;
-  private final GatewayWebSocketClient gatewayWebSocketClient;
+  private final String gatewayWsUrl;
   private final TelnetServerHandler.WebSocketConnector webSocketConnector;
   private final RuntimeIdentity runtimeIdentity;
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
@@ -126,7 +126,7 @@ public final class TelnetServer {
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
-    this.gatewayWebSocketClient = gatewayWebSocketClient;
+    this.gatewayWsUrl = gatewayWebSocketClient.gatewayUri().toString();
     this.webSocketConnector = gatewayWebSocketClient::connect;
     this.runtimeIdentity = runtimeIdentity;
     Gauge.builder(
@@ -261,7 +261,7 @@ public final class TelnetServer {
                       .addLast(new StringEncoder(StandardCharsets.ISO_8859_1))
                       .addLast(
                           new TelnetServerHandler(
-                              gatewayWebSocketClient.gatewayUri().toString(),
+                              gatewayWsUrl,
                               () -> {},
                               () -> {},
                               connectionCounter,

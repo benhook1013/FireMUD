@@ -535,6 +535,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             sessionContext.pointerVersion(),
             gatewayListener());
     inFlightGatewayConnection.set(connection);
+    if (closing && inFlightGatewayConnection.compareAndSet(connection, null)) {
+      connection.cancel(true);
+      return;
+    }
     connection.whenComplete(
         (socket, error) -> {
           if (!inFlightGatewayConnection.compareAndSet(connection, null) || error == null) {

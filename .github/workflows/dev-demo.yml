@@ -301,7 +301,7 @@ jobs:
           PREVIEW_TENANT_ID: "1"
         run: |
           echo "DEV_DEMO_STAGE=bootstrap" >> "$GITHUB_ENV"
-          BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
+          readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
           cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
           import json
           import os

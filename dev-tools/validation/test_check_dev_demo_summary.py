@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1453,6 +1454,52 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_requires_readonly_bootstrap_script_binding(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        protected_assignment = (
+            "readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
+        )
+        self.assertIn(protected_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            protected_assignment,
+            "BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py",
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must assign the canonical bootstrap script path exactly once",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_readonly_bootstrap_script_rejects_indirect_printf_reassignment(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        protected_assignment = (
+            "readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
+        )
+        self.assertIn(protected_assignment, bootstrap_manifest)
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"""{protected_assignment}
+bootstrap_variable=BOOTSTRAP_SCRIPT
+if printf -v "${{bootstrap_variable}}" %s /dev/null; then
+  exit 10
+fi
+test "${{BOOTSTRAP_SCRIPT}}" = /tmp/dev-demo-bootstrap.py
+""",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_validate_workflow_rejects_literal_path_duplicate_account_script(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
@@ -1515,7 +1562,7 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
 
     def test_validate_workflow_rejects_bootstrap_definition_inside_false_branch(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
-        assignment = "BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
+        assignment = "readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py"
         definition_start = bootstrap_manifest.index(assignment)
         definition_end = bootstrap_manifest.index("\nPY\n", definition_start) + len(
             "\nPY"

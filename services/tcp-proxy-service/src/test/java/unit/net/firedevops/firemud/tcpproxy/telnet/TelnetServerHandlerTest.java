@@ -32,6 +32,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -289,6 +290,61 @@ class TelnetServerHandlerTest {
     verify(lateWebSocket).abort();
     assertEquals(1, cancellationAttempts.get());
     verify(ctx, Mockito.never()).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void channelInactiveCancelsConnectionReturnedAfterCloseStarted() throws Exception {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    CountDownLatch connectorEntered = new CountDownLatch(1);
+    CountDownLatch returnConnection = new CountDownLatch(1);
+    AtomicInteger cancellationAttempts = new AtomicInteger();
+    CompletableFuture<WebSocket> pendingConnection =
+        new CompletableFuture<>() {
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            cancellationAttempts.incrementAndGet();
+            return super.cancel(mayInterruptIfRunning);
+          }
+        };
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (ip,
+                proxyConnectionId,
+                session,
+                tenant,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                listener) -> {
+              connectorEntered.countDown();
+              try {
+                assertTrue(returnConnection.await(5, TimeUnit.SECONDS));
+              } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(error);
+              }
+              return pendingConnection;
+            });
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(ctx.writeAndFlush(any())).thenReturn(null);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    CompletableFuture<Void> activation =
+        CompletableFuture.runAsync(() -> handler.channelActive(ctx));
+    assertTrue(connectorEntered.await(5, TimeUnit.SECONDS));
+    handler.channelInactive(ctx);
+    returnConnection.countDown();
+    activation.get(5, TimeUnit.SECONDS);
+
+    assertTrue(pendingConnection.isCancelled());
+    assertEquals(1, cancellationAttempts.get());
     executor.shutdownGracefully();
   }
 

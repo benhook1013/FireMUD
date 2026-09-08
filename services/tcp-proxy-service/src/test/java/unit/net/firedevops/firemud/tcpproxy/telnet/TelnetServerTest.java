@@ -85,6 +85,28 @@ class TelnetServerTest {
   }
 
   @Test
+  void missingGatewayUriFailsAtConstruction() {
+    GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
+
+    assertThrows(
+        NullPointerException.class,
+        () ->
+            new TelnetServer(
+                0,
+                false,
+                "",
+                "",
+                false,
+                0,
+                0,
+                4096,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                Mockito.mock(TcpProxyEventService.class),
+                readyProbe(),
+                client));
+  }
+
+  @Test
   void configuredTlsCertificateAcceptsTlsHandshake(@TempDir Path tempDir) throws Exception {
     Path certificatePath = tempDir.resolve("dev-cert.pem");
     Path keyPath = tempDir.resolve("dev-key.pem");

@@ -390,6 +390,7 @@ assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
 require_contains "$preview_path" '      - unlabeled'
 assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:priority'"
 assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:paused'"
+assert_job_contains preview.yml preview-plan "github.event.action != 'labeled'"
 assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'"
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
 assert_job_contains preview.yml preview-plan 'EVENT_ACTION: ${{ github.event.action }}'
