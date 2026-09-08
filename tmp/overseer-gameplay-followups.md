@@ -1,0 +1,38 @@
+# Overseer Gameplay Follow-ups
+
+## CI follow-up — 2026-09-09
+
+Two independent Sol-medium static reviews were conducted. Overseer owns adjudication and the follow-up independent dual-Sol review after fixes. The CI correction mini-project is the explicitly authorized next assignment after the current Gameplay delivery; Gameplay is the intended implementer in a separate CI PR. Handoff status: queued next-work scope communicated; execution not begun. Current review priority remains Gameplay stack #2713 -> #2694 -> #2686; Worker remains paused.
+
+Queue order, with the existing backlog retained:
+
+1. Finish the current #2713 -> #2694 -> #2686 Gameplay delivery and its relevant proof.
+2. Run the CI correction mini-project as the next authorized assignment, with no preview-runner isolation work. Its bounded phases are: reconcile the final stack with current CI/design; fix canonical image publication and immutable tested-artifact identity; complete shared-module/new-service test coverage and unified complete-scope/smoke/change classification; correct result selection and accurate paginated result summaries plus verified narrow API permissions; pin tooling versions and integrity and start service tests earlier on GitHub-hosted runners while preserving final gates; then deliver one coherent separate CI PR whose scope follows corrected invariants and the actual review cap, without pre-splitting unnecessarily. Disjoint groups may run in parallel under the lane owner. Overseer reviews implementation evidence, commissions fresh dual-Sol-medium reviews after the first integrated fixes, and adjudicates findings for Gameplay. Regular hosted/CLI review stays on the active merge target; no new merge authority is created.
+3. Continue the existing repository-wide shared-foundations, refactor, and simplification programme, including its saved Phase 1 backlog below.
+4. After Phase 1, perform the existing Phase 2 per-service or other coherent local maintainability cleanup for remaining internal patterns.
+
+Accepted CI problem pointers: competing SHA publishers in `docker-images.yml` versus `runtime-images.yml`; head-only `IMAGE_TAG` and first-tag-preserving publication across base changes in `publish-pr-runtime-images.yml`; the fixed service inventory in `ci.yml`/`classify-change-scope.cjs` omits shared-module and new identity-controller checks; `runtime-images.yml`/`smoke.yml` omit smoke inputs, and smoke/CodeQL checks lack file-list completeness; `static-analysis-summary.yml` uses older-success ranking and unpaginated checks/comments; tool install paths require integrity pinning. Missing `pulls.listFiles` permission needs confirmation before any change. These are accepted problem statements, not prescribed detailed architecture. Original static review baseline: `523b8b2`. Reconciliation stack: #2713 `16723a7d` -> #2694 `86b5e548` -> #2686 `41f8f6b6`; reconcile the latest state before implementation.
+
+Stronger preview-runner isolation is deferred for future consideration, outside the current CI fixes and not an active implementation task. Revisit after current gameplay/CI delivery or a material change in contributor trust or host sharing. Assess whether unmerged code is isolated from deployment credentials and persistent runner state, reusing existing trusted-artifact/controller machinery and choosing the simplest adequate boundary. Do not assume another controller, an ephemeral-runner fleet, or new infrastructure must be built. This is a design tradeoff, not a confirmed violation of the accepted current preview trust model.
+
+Recorded 2026-09-07. Updated 2026-09-09. The Astra Overseer owns this queue: maintain priorities and status until each item is completed or explicitly deferred with a reason and revisit trigger. Gameplay owns investigation, decomposition, and implementation. The current stack, #2713 bridge -> #2694 controller -> #2686 gameplay/lifecycle, and the authorized deployment/cutover/playable proof remain first.
+
+The existing finish-current-then-pause boundary remains for active work; the CI correction is authorized as the next assignment but has not been handed off. This queue update is not a token or pause override. The worker remains paused and the corpus lane remains separate.
+
+After the CI correction mini-project and its relevant proof, Phase 1 is one repository-wide shared-foundations, refactor, and simplification scope. Use [Shared Code, Tooling, And Pattern Consolidation Review](../design/project-management/ai-task-prompt-library/engineering-review-prompts/10-shared-code-tooling-and-pattern-consolidation.md) and [Pre-v1 Simplification And Deletion Review](../design/project-management/ai-task-prompt-library/engineering-review-prompts/11-pre-v1-simplification-and-deletion.md) as two perspectives in one combined scope. Use relevant categories in [Recurring Code Review Sweeps](../design/project-management/recurring-code-review-sweeps.md) as supporting patterns, not fourteen mandatory review lanes.
+
+Initial discovery must span the repository for repeated cross-service responsibilities, missing shared mechanisms, canonical-owner confusion, unnecessary layers, and obsolete machinery. Do not begin with service or directory silos; parallel investigations may follow cross-repository patterns once identified. Phase 1 includes creating missing shared machinery when concrete reviewed problems justify it, alongside consolidation, simplification, and deletion. Adjudicate valid findings and implement coherently while preserving canonical contracts, security, data-retention, and protocol constraints. Use the existing hosted and full-CLI review process and split rules. Repeat a fresh broad discovery on updated code until meaningful shared opportunities taper. PR CodeRabbit taper does not establish shared-phase completion; completion requires that fresh repository-wide assessment.
+
+Integrate the saved backlog into that scope, rechecking current implementation because the current Gameplay fixes may already consume old findings:
+
+- Simplify `check_dev_demo_summary.py` to a supported bootstrap command language, rejecting unsupported forms fail-closed rather than expanding a shell parser. Check its owner before implementation; this is direct Phase 1 work.
+- Converge deprecated gameplay JWT attestation on ADR0024’s canonical mTLS identity, method permissions, and typed `PlayerExecutionContext`. The new path must work and be proved before old JWT removal; distinguish this capability work from cleanup. It is a strong Phase 1 overlap.
+- Converge the gRPC non-OK/`RPCErrorDetail` error contract as a strong Phase 1 item.
+- Treat legacy global-role/god/`HIDDEN_STAFF` gameplay handling under ADR0026/ADR0046 as a Phase 1 candidate where shared policy or obsolete paths are involved; leave other local cleanup for Phase 2.
+- Track the Entity blank `effectId` replay bypass as an explicit correctness item, independent of whole-program completion, and combine it with related replay work when appropriate.
+
+Phase 2 follows Phase 1: per-service or other coherent local maintainability cleanup for remaining internal patterns.
+
+The Overseer maintains priorities; Gameplay decomposes and implements; consequential architecture decisions remain with the Overseer. Do not create another tracker.
+
+On Gameplay’s current-delivery or phase handoff, or recovery after restart, the Overseer must consult this file and explicitly carry forward or assign the next appropriate item. Update evidence and status at normal milestones. Do not silently drop entries or treat a queued message as completion. No automatic hourly scan or new automation is requested.

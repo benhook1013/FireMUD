@@ -1,0 +1,3413 @@
+{
+  "schemaVersion": 1,
+  "pr": {
+    "number": 2673,
+    "branch": "codex/corpus-review-5b-followup",
+    "publishedHead": "19f64e684",
+    "localHead": "19f64e684",
+    "localStatus": "Hosted round 12 completed at 7 presented/3 useful and CLI round 19 at 7 raw/1 useful; recovery, migration-classification, tenant-replay, and auth-boundary fixes are published at 19f64e684. CLI round 20 and three fresh complementary Luna reviews are active on the clean new head.",
+    "family": "Shared Runtime 5B persistence stack",
+    "sections": ["5B"],
+    "fileCount": 63,
+    "state": "active",
+    "baseBranch": "develop",
+    "baseHead": "57c0683a5",
+    "hostedRequestActive": false,
+    "lastHostedRequestStartedAt": "2026-09-03T16:02:12+12:00",
+    "nextHostedGateAt": "2026-09-03T17:02:12+12:00",
+    "stackedBehind": null
+  },
+  "slices": {
+    "front": {
+      "pr": 2662,
+      "branch": "codex/corpus-review-5ab-shared-contracts",
+      "sections": ["5A"],
+      "fileCount": 51,
+      "state": "merged",
+      "publishedHead": "ea802d050",
+      "localHead": "ea802d050",
+      "mergeCommit": "ba86d43f1",
+      "localStatus": "5A-only terminal slice merged into develop at ba86d43f1"
+    },
+    "back": {
+      "pr": 2661,
+      "branch": "codex/corpus-review-5a",
+      "sections": ["5C", "5D"],
+      "fileCount": 58,
+      "state": "downstream",
+      "stackedBehind": 2663,
+      "publishedHead": "721698ccf",
+      "localHead": "bc5d75b10",
+      "localStatus": "Local rebased HEAD is bc5d75b10 onto a3d462181; remote published head remains 721698ccf. Local allocator/namespace/ADMIN/link fixes are in progress; CLI pass found 4 raw/4 useful, overlapping Luna tick findings and ADR provenance remain pending, and the command-plan decision awaits Ben approval"
+    }
+  },
+  "backHandoff": "PR #2661 must reconcile valid Gateway tagged replay families; Automation Redis/cache families; Unit 5C disconnect dedupe; SF-2.2/2.3/2.4 detail; the resume transcript target-only correction; and Telnet current Redis dedupe wording. Do not reintroduce an invented durable PostgreSQL NotifyDisconnect target.",
+  "countSemantics": {
+    "reviewCounts": "raw/useful after main-thread adjudication",
+    "revision": "Increment after accepted fixes or a material external seam changes the section under review.",
+    "terminal": "The Luna floor is cumulative, but zero-useful confirmations count only on the current revision and only for whole-section-unrestricted reviews.",
+    "reviewModes": {
+      "whole-section-unrestricted": "Independent review of the complete declared section manifest and material unchanged-code/proof handoffs; counts toward floor and terminality.",
+      "narrow-focused": "Named-lens or focused review; supplemental only and never counts toward section floor or terminality.",
+      "legacy-unclassified": "Historical entry without reviewMode and without the explicit broad-followup label; retained for history but never treated as unrestricted evidence."
+    },
+    "implementationDisposition": "Track discovered/deferred implementation gaps separately from fixes admitted to the corpus PR; implementation admission is adjudicated per finding by correctness, coherence, risk, and review-focus cost."
+  },
+  "sections": [
+  {
+    "id": "5A",
+    "title": "Shared API, identity, tenant, time, and authorization primitives",
+    "plannedLunaFloor": 4,
+    "requiredZeroConfirmations": 2,
+    "currentRevision": 47,
+    "state": "terminal",
+      "revisionEvents": [
+        {
+          "revision": 0,
+          "cause": "Initial 5A corpus baseline"
+        },
+        {
+          "revision": 1,
+          "cause": "Pass-1 fixes plus material shared CodeRabbit identity and authority corrections"
+        },
+        {
+          "revision": 2,
+          "cause": "Pass-2 authorization, token-lifetime, auth-key, and local-secret documentation fixes"
+        },
+        {
+          "revision": 3,
+          "cause": "Pass-3 Account token-lifetime environment catalog correction"
+        },
+        {
+          "revision": 4,
+          "cause": "Pass-4 Gateway replay/deny/fence Coordination Redis architecture-edge correction"
+        },
+        {
+          "revision": 5,
+          "cause": "Pass-5 live public-header carrier and generic plaintext-profile guard corrections"
+        },
+        {
+          "revision": 6,
+          "cause": "Pass-7 target PostgreSQL versus current Redis NotifyDisconnect overview correction"
+        },
+        {
+          "revision": 7,
+          "cause": "Hosted current/target Gateway Redis, local JWT-secret, and Automation timer/scheduler wording corrections"
+        },
+        {
+          "revision": 8,
+          "cause": "Pass-9 remaining local JWT table and Gateway authority-summary corrections"
+        },
+        {
+          "revision": 9,
+          "cause": "CLI round-8 shared Game Session cache/rate-limit and presence-tracker authority corrections"
+        },
+        {
+          "revision": 10,
+          "cause": "Pass-10 cache topology, AuthLogin route, operator leaf revocation, TLS guard, Account prefix, and non-region Trigger Identity corrections"
+        },
+        {
+          "revision": 11,
+          "cause": "Pass-11 gameplay Trigger Identity, canonical operator credential binding, and Account connect-token result-family corrections"
+        },
+        {
+          "revision": 12,
+          "cause": "Pass-12 Account reset, namespace identity, onLoad observability, Gateway operator binding, and issuance-result summary corrections"
+        },
+        {
+          "revision": 13,
+          "cause": "Pass-13 scripting identity/onLoad consumer and complete Account reset-inventory corrections"
+        },
+        {
+          "revision": 14,
+          "cause": "Pass-14 route mode/carrier, endpoint-specific mTLS identity, and Account family-inventory corrections"
+        },
+        {
+          "revision": 15,
+          "cause": "Pass-15 caller-specific capacity-commit identity and context-policy correction"
+        },
+        {
+          "revision": 16,
+          "cause": "Pass-16 owner-specific Game Session and World Management capacity-handoff correction"
+        },
+        {
+          "revision": 17,
+          "cause": "Pass-17 split shared-module auto-configuration naming correction"
+        },
+        {
+          "revision": 18,
+          "cause": "Pass-18 internal transport trust and split TLS-utility ownership corrections"
+        },
+    {
+      "revision": 19,
+      "cause": "Pass-19 environment-catalog internal transport-scope correction"
+    },
+    {
+      "revision": 20,
+      "cause": "Pass-21 current-versus-target TCP Proxy Cache/Rate-Limit Redis correction"
+    },
+    {
+      "revision": 21,
+      "cause": "Hosted round-4 caller mTLS identity and Gateway Redis current-versus-target corrections"
+    },
+    {
+      "revision": 22,
+      "cause": "Pass-23 direct caller-identity authority-anchor corrections"
+    },
+    {
+      "revision": 23,
+      "cause": "CLI round-11 route live-check, operator-credential, and access-proof corrections"
+    },
+    {
+      "revision": 24,
+      "cause": "CLI round-12 capacity-caller, operator gRPC credential, and Account exact-retry corrections"
+    },
+    {
+      "revision": 25,
+      "cause": "Pass-28 and hosted-round-5 Account current-target, operator credential lifecycle/tooling, and capacity-route binding corrections"
+    },
+    {
+      "revision": 26,
+      "cause": "Pass-29 operator path/initial-issuance, token-storage secondary, anchor, and capacity attempt-fence validator corrections"
+    },
+    {
+      "revision": 27,
+      "cause": "Pass-31/32 TCP Proxy operator-path, shared-library scope, and realm-routing replay-status corrections"
+    },
+    {
+      "revision": 28,
+      "cause": "CLI round-13 capacity-policy cardinality, transport scope, and causal-floor terminology corrections"
+    },
+    {
+      "revision": 29,
+      "cause": "CLI round-14 operator endpoint/rotation, external-ingress scope, and EffectId source-boundary corrections"
+    },
+    {
+      "revision": 30,
+      "cause": "CLI round-15 Gateway live admission, operator binding source, owner-execution fence, and successful-versus-failed replay corrections"
+    },
+    {
+      "revision": 31,
+      "cause": "Pass-35 closed operator-credential binding-type and source-resolution correction"
+    },
+    {
+      "revision": 32,
+      "cause": "CLI round-16 operator lifecycle and Gateway deny-marker durability corrections"
+    },
+    {
+      "revision": 33,
+      "cause": "Hosted round-6 Account replay, operator target-status, and presence-owner corrections"
+    },
+    {
+      "revision": 34,
+      "cause": "CLI round-17 authz zero-delta outcome, Logging maintenance status, and Gateway Lua descriptor corrections"
+    },
+    {
+      "revision": 35,
+      "cause": "Luna round-36 and CLI round-18 signer-custody, tenant-parent, operator-binding, participant-guard, and text-login identity corrections"
+    },
+    {
+      "revision": 36,
+      "cause": "Front split PR #2662 first-review corrections at 13600d7ba and published fix ca525e2f2"
+    },
+      {
+        "revision": 37,
+        "cause": "Accepted local front corrections after ca525e2f2; current-revision terminal zero confirmations reset"
+      },
+      {
+        "revision": 38,
+        "cause": "CLI, hosted round 9, and independent Luna authority, identity, persistence, operator-credential, and current-versus-target corrections published as 083d629c3"
+      },
+      {
+        "revision": 39,
+        "cause": "CLI rounds 22/24 and Luna tracker, reservation-owner, membership-status, and public-boundary corrections committed locally as a4d765cb4 while hosted round 12 runs"
+      },
+      {
+        "revision": 40,
+        "cause": "Hosted round 12 corrections published as 5c6cd89b6"
+      },
+      {
+        "revision": 41,
+        "cause": "Post-5c6cd89b6 membership surface/status reconciliation batch pending a new local commit"
+      },
+      {
+        "revision": 42,
+        "cause": "Front cross-seam Redis authority dependency imported into the local reconciliation batch"
+      },
+      {
+        "revision": 43,
+        "cause": "Redis cleanup-gate correction remains pending in the uncommitted reconciliation batch"
+      },
+      {
+        "revision": 44,
+        "cause": "Postcommit 5A corrections plus membership, mechanical-hosted, and live-gap status reconciliation"
+      },
+      {
+        "revision": 45,
+        "cause": "Route review corrections from the first 2/2 finding batch"
+      },
+      {
+        "revision": 46,
+        "cause": "Route review correction from the second 1/1 finding batch"
+      },
+      {
+        "revision": 47,
+        "cause": "Route review correction from the third 1/1 finding batch"
+      }
+      ],
+      "reviews": [
+        {
+          "source": "luna",
+          "round": 1,
+          "revision": 0,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 2,
+          "revision": 1,
+          "raw": 5,
+          "useful": 5,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 3,
+          "revision": 2,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found two related omitted live Account token-lifetime environment controls as one catalog-authority finding."
+        },
+        {
+          "source": "luna",
+          "round": 4,
+          "revision": 3,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Gateway replay/deny/fence Coordination Redis usage was absent from the architecture overview and diagram."
+        },
+        {
+          "source": "luna",
+          "round": 5,
+          "revision": 4,
+          "raw": 14,
+          "useful": 2,
+          "status": "complete",
+          "note": "Accepted live public-header carrier drift and unenforced generic plaintext-profile toggle gaps; remaining observations were already explicitly tracked implementation gaps or implementation-detail suggestions."
+        },
+        {
+          "source": "luna",
+          "round": 6,
+          "revision": 5,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Current public-header drift and generic plaintext-profile corrections confirmed; no new current-revision finding."
+        },
+        {
+          "source": "luna",
+          "round": 7,
+          "revision": 5,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found the remaining target durable PostgreSQL versus current Redis NotifyDisconnect sequencing distinction missing from the architecture overview."
+        },
+        {
+          "source": "luna",
+          "round": 8,
+          "revision": 6,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "First current-revision zero confirmation before the hosted round-2 external seam was applied; the subsequent accepted hosted corrections require a revision bump and fresh confirmations."
+        },
+        {
+          "source": "luna",
+          "round": 9,
+          "revision": 7,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found a remaining local-dev generated-JWT table contradiction and two shared ownership summaries still attributing Gateway's later replay/deny/fence contract wholly to ADR 0009."
+        },
+        {
+          "source": "luna",
+          "round": 10,
+          "revision": 9,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found missing Game Session Cache/Rate-Limit topology edges, the current AuthLogin HTTP-route binding omission, and non-deterministic operator leaf revocation/readback."
+        },
+        {
+          "source": "luna",
+          "round": 11,
+          "revision": 10,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found the inconsistent rare non-region gameplay Trigger Identity exception, the missing canonical operator credential-binding record, and omitted Account connect-token issuance-result ownership summary."
+        },
+        {
+          "source": "luna",
+          "round": 12,
+          "revision": 11,
+          "raw": 6,
+          "useful": 6,
+          "status": "complete",
+          "note": "Found invalid wildcard Account-auth reset guidance, namespace/scope identity drift across scheduler and handoff consumers, incomplete onLoad observability identity, weak Gateway operator-binding admission, and missing connect-token issuance-result summaries."
+        },
+        {
+          "source": "luna",
+          "round": 13,
+          "revision": 12,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found remaining scope-as-identity wording in scripting consumers, a plugin-capable tenant-readiness onLoad ADR mapping, and incomplete Account connect-token/legacy projection reset inventory."
+        },
+        {
+          "source": "luna",
+          "round": 14,
+          "revision": 13,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found route variant mode/carrier drift, wrong shared mTLS credential-path guidance for WebSocket/HTTP clients, and an incomplete Account owner-local Redis family inventory."
+        },
+        {
+          "source": "luna",
+          "round": 15,
+          "revision": 14,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found that CommitTenantCapacityAdmission allowed Game Session and World Management under one route-wide World lifecycle context instead of caller-specific identity/context policies."
+        },
+        {
+          "source": "luna",
+          "round": 16,
+          "revision": 15,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found stale Game Session-only capacity status, vector, call, and final-commit wording after the caller-specific Game Session and World Management route split."
+        },
+        {
+          "source": "luna",
+          "round": 17,
+          "revision": 16,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found one obsolete monolithic `firemud-common` auto-configuration artifact reference after the shared-module split."
+        },
+        {
+          "source": "luna",
+          "round": 18,
+          "revision": 17,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found a blanket internal-mTLS claim contradicting the documented Gateway backend hops and one remaining monolithic `firemud-common` TLS-utility reference."
+        },
+        {
+          "source": "luna",
+          "round": 19,
+          "revision": 18,
+          "raw": 2,
+          "useful": 1,
+          "status": "complete",
+          "note": "Two environment documents repeated the same blanket internal-mTLS claim; normalized to one useful transport-scope finding."
+        },
+    {
+      "source": "luna",
+      "round": 20,
+      "revision": 19,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "First of two required current-revision zero confirmations; all 17 primary sources and necessary seams reviewed."
+    },
+    {
+      "source": "luna",
+      "round": 21,
+      "revision": 19,
+      "raw": 4,
+      "useful": 1,
+      "status": "complete",
+      "note": "Found one normalized contradiction: overview and diagram implied current TCP Proxy Cache/Rate-Limit Redis use despite owner docs and implementation limiting it to generic wiring and future optional key usage."
+    },
+    {
+      "source": "luna",
+      "round": 22,
+      "revision": 20,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh review of all 17 primary sources and relevant owner/seam sources confirmed the TCP Proxy correction and found no current-revision issue; later hosted findings will require a revision bump before this can count toward terminal taper."
+    },
+    {
+      "source": "luna",
+      "round": 23,
+      "revision": 21,
+      "raw": 2,
+      "useful": 1,
+      "status": "complete",
+      "note": "Found two direct authority anchors repeating one caller-identity error: Game Session and World Management were said to present Account's mTLS identity instead of their own exact caller identities."
+    },
+    {
+      "source": "luna",
+      "round": 24,
+      "revision": 22,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "First current-r22 zero; all 17 primary sources plus direct Account/runtime, route-matrix, subscription, and ADR seams confirmed caller identities and target/current status."
+    },
+    {
+      "source": "luna",
+      "round": 25,
+      "revision": 22,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Second independent current-r22 zero across all 17 sources and direct Account, Game Session, World, route, Gateway/security, environment, shared-library, scripting, and ADR seams."
+    },
+    {
+      "source": "luna",
+      "round": 26,
+      "revision": 23,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "First current-r23 zero; verified route live-check vocabulary, caller policies, credential cutover, and shipped transport-close proof across all 17 sources and direct seams."
+    },
+    {
+      "source": "luna",
+      "round": 27,
+      "revision": 23,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Second independent unchanged-r23 zero; verified route vocabulary/caller policy, credential cutover, and shipped transport-close proof with no actionable issue."
+    },
+    {
+      "source": "luna",
+      "round": 28,
+      "revision": 24,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "note": "Found current-versus-target drift in Account token-result storage, undefined operator gRPC inputs, routine-rotation overlap conflict, missing capacity_delta presence/rejection, and omitted FENCE_REJECTED route outcome."
+    },
+    {
+      "source": "luna",
+      "round": 29,
+      "revision": 25,
+      "raw": 8,
+      "useful": 5,
+      "status": "complete",
+      "note": "Found operator gRPC path sourcing drift, a bad runbook anchor, missing initial-issuance workflow proof, incomplete capacity attempt-fence validator enforcement, and secondary current-raw versus target-encrypted token-result drift."
+    },
+    {
+      "source": "luna",
+      "round": 30,
+      "revision": 25,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Independent reread found no actionable issue at r25, but pass 29's five accepted findings superseded this zero by advancing the section revision."
+    },
+    {
+      "source": "luna",
+      "round": 31,
+      "revision": 26,
+      "raw": 3,
+      "useful": 2,
+      "status": "complete",
+      "note": "Found residual TCP Proxy/shared-library operator gRPC path-source drift and a realm-routing tracker overclaim of exact current token replay."
+    },
+    {
+      "source": "luna",
+      "round": 32,
+      "revision": 26,
+      "raw": 2,
+      "useful": 1,
+      "status": "complete",
+      "note": "Independently confirmed the two residual TCP Proxy operator/tooling examples still used service workload FIREMUD_GRPC_* paths; no other useful issue."
+    },
+    {
+      "source": "luna",
+      "round": 33,
+      "revision": 27,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh full-manifest and direct-seam confirmation found no residual operator-path, Account replay-status, capacity-validator, lifecycle, authority, or dedup issue."
+    },
+    {
+      "source": "luna",
+      "round": 34,
+      "revision": 27,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Second independent unchanged-r27 confirmation found no residual operator/tooling path misuse, connect-token overclaim, capacity-contract drift, or issuance-lifecycle issue."
+    },
+        {
+          "source": "luna",
+          "round": 35,
+          "revision": 30,
+          "raw": 2,
+          "useful": 1,
+          "status": "complete",
+          "note": "Fresh full-manifest review found one underlying operator-credential source-type contradiction across the binding owner and Gateway/environment consumers; two textual seams express the same missing closed resolution rule."
+        },
+        {
+          "source": "luna",
+          "round": 36,
+          "revision": 34,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found shared JwtUtil wording that could make the application utility the target signer despite non-exportable custody, and a diagram overclaim that every tenant-scoped table directly carries tenantId."
+        },
+        {
+          "source": "luna",
+          "round": 37,
+          "revision": 35,
+          "raw": 8,
+          "useful": 6,
+          "status": "complete",
+          "head": "13600d7ba",
+          "note": "First split review for front Unit 5A."
+        },
+      {
+        "source": "luna",
+        "round": 38,
+          "revision": 36,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+        "head": "ca525e2f2",
+        "note": "Published-fix review for front Unit 5A."
+      },
+      {
+        "source": "luna",
+        "revision": 40,
+        "raw": 2,
+        "useful": 2,
+        "status": "complete",
+        "note": "Membership lane found two useful findings; both were included in the 5c6cd89b6 fix batch."
+      },
+      {
+        "source": "luna",
+        "revision": 41,
+        "raw": 2,
+        "useful": 2,
+        "status": "complete",
+        "note": "Follow-up surface/status review found two useful findings in the pending local reconciliation batch."
+      },
+      {
+        "source": "luna",
+        "revision": 41,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Terminal membership confirmation found no further useful findings on the current revision."
+      },
+      {
+        "source": "luna",
+        "revision": 42,
+        "raw": 1,
+        "useful": 1,
+        "status": "complete",
+        "note": "Front cross-seam review found one useful Redis authority dependency; it was imported into the pending reconciliation batch."
+      },
+      {
+        "source": "luna",
+        "revision": 43,
+        "raw": 2,
+        "useful": 1,
+        "status": "complete",
+        "note": "Redis terminal review found one useful cleanup-gate gap and one already-documented implementation drift/non-finding; the useful fix is pending."
+      },
+      {
+        "source": "luna",
+        "revision": 44,
+        "raw": 2,
+        "useful": 2,
+        "status": "complete",
+        "note": "Postcommit 5A review found two useful corrections; fixes remain in the local combined batch."
+      },
+      {
+        "source": "luna",
+        "revision": 44,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Membership terminal confirmation found no current-revision issue."
+      },
+      {
+        "source": "luna",
+        "revision": 44,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Mechanical hosted verification found no additional useful issue."
+      },
+      {
+        "source": "luna",
+        "revision": 44,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Live-gap status terminal confirmation found no additional useful issue."
+      },
+      {
+        "source": "luna",
+        "revision": 45,
+        "raw": 2,
+        "useful": 2,
+        "status": "complete",
+        "note": "Route review found two useful findings; fixes remain local."
+      },
+      {
+        "source": "luna",
+        "revision": 46,
+        "raw": 1,
+        "useful": 1,
+        "status": "complete",
+        "note": "Follow-up route review found one useful finding; fix remains local."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 1,
+        "useful": 1,
+        "status": "complete",
+        "note": "Third route review found one useful finding; fix remains local."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Current independent route recheck is clean after the local fixes."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Independent route-matrix recheck is clean after the final local fixes."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Independent replay-domain review is clean on the current 5A content."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Complete 5A terminal review found no current-content issue."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Independent tick-seam review is clean on the current 5A content."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Live-gap status review found no current-content issue."
+      },
+      {
+        "source": "luna",
+        "revision": 47,
+        "raw": 0,
+        "useful": 0,
+        "status": "complete",
+        "note": "Hosted mechanical verification found no additional current-content issue; this is section evidence only, not a hosted review zero."
+      }
+      ]
+    },
+  {
+    "id": "5B",
+      "title": "SQL, migrations, durable persistence, and retention",
+      "plannedLunaFloor": 3,
+      "requiredZeroConfirmations": 2,
+    "currentRevision": 108,
+    "state": "active",
+      "revisionEvents": [
+        {
+          "revision": 0,
+          "cause": "Initial 5B corpus baseline"
+        },
+        {
+          "revision": 1,
+          "cause": "Pass-1 accepted correction"
+        },
+        {
+          "revision": 2,
+          "cause": "Pass-2 accepted corrections"
+        },
+    {
+      "revision": 3,
+      "cause": "Pass-3 accepted corrections"
+    },
+    {
+      "revision": 4,
+      "cause": "CLI round-11 complete Entity tick-watermark key and replay-proof corrections"
+    },
+    {
+      "revision": 5,
+      "cause": "CLI round-12 Account encrypted exact-retry envelope and shared persistence authority-dedup corrections"
+    },
+    {
+      "revision": 6,
+      "cause": "Pass-6 Account concurrent issuance-gap, durable exact-result operation, encrypted envelope, retention, and tracker corrections"
+    },
+    {
+      "revision": 7,
+      "cause": "CLI round-13 immutable PUBLISHED terminality and post-publication reconciliation correction"
+    },
+    {
+      "revision": 8,
+      "cause": "CLI round-14 Entity watermark identity and target-versus-live schema corrections"
+    },
+    {
+      "revision": 9,
+      "cause": "CLI round-15 committed-attestation terminality and Account deterministic-failure replay corrections"
+    },
+    {
+      "revision": 10,
+      "cause": "Pass-8 Entity, Automation, and Social persistence-drift plus reputation-owner corrections"
+    },
+    {
+      "revision": 11,
+      "cause": "CLI round-16 asset publication terminality and Entity cache-status corrections"
+    },
+    {
+      "revision": 12,
+      "cause": "Hosted round-6 Account replay and exact no-attestation publication corrections"
+    },
+    {
+      "revision": 13,
+      "cause": "CLI round-17 Entity tenant-schema honesty, exact asset terminality, and AR-1.5 proof corrections"
+    },
+    {
+      "revision": 14,
+      "cause": "Luna round-9 and CLI round-18 admission-pointer isolation, response-envelope retention, and exact asset terminality corrections"
+    },
+    {
+      "revision": 15,
+      "cause": "Front split PR #2662 first-review corrections at 13600d7ba and published fix ca525e2f2"
+    },
+      {
+        "revision": 16,
+        "cause": "Accepted local front corrections after ca525e2f2; current-revision terminal zero confirmations reset"
+      },
+      {
+        "revision": 17,
+        "cause": "CLI, hosted round 9, and independent Luna validator, asset-proof, migration, and persistence corrections published as 083d629c3"
+      },
+        {
+          "revision": 18,
+          "cause": "CLI rounds 22/24 and Luna historical-lineage and Temporal partial-status corrections committed locally as a4d765cb4 while hosted round 12 runs"
+        },
+        {
+          "revision": 19,
+          "cause": "Hosted round 12 corrections published as 5c6cd89b6"
+        },
+        {
+          "revision": 20,
+          "cause": "Asset lane status-gap corrections recorded in the pending post-5c6cd89b6 local reconciliation batch"
+        },
+        {
+          "revision": 21,
+          "cause": "Wrong-tenant asset variant corrected in the pending local reconciliation batch"
+        },
+        {
+          "revision": 22,
+          "cause": "Postcommit 5B corrections"
+        },
+        {
+          "revision": 23,
+          "cause": "First asset terminal-cycle corrections remain in the local combined batch"
+        },
+        {
+          "revision": 24,
+          "cause": "Second asset terminal-cycle corrections remain in the local combined batch"
+        },
+        {
+          "revision": 25,
+          "cause": "Third asset terminal-cycle corrections remain in the local combined batch"
+        },
+        {
+          "revision": 26,
+          "cause": "Tick seam corrections remain in the local combined batch"
+        },
+        {
+          "revision": 27,
+          "cause": "Persistence seam corrections remain in the local combined batch"
+        },
+        {
+          "revision": 28,
+          "cause": "First subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 29,
+          "cause": "Second subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 30,
+          "cause": "Third subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 31,
+          "cause": "Fourth subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 32,
+          "cause": "Fifth subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 33,
+          "cause": "Sixth subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 34,
+          "cause": "Seventh subsequent asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 35,
+          "cause": "First subsequent non-asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 36,
+          "cause": "Second subsequent non-asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 37,
+          "cause": "Third subsequent non-asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 38,
+          "cause": "Fourth subsequent non-asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 39,
+          "cause": "Fifth subsequent non-asset review correction remains in the local combined batch"
+        },
+        {
+          "revision": 40,
+          "cause": "First subsequent cross-seam review correction remains in the local combined batch"
+        },
+    {
+      "revision": 41,
+      "cause": "Second subsequent cross-seam review correction remains in the local combined batch; freeze fix is ongoing"
+    },
+    {
+      "revision": 42,
+      "cause": "Eighth subsequent asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 43,
+      "cause": "Ninth subsequent asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 44,
+      "cause": "Tenth subsequent asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 45,
+      "cause": "Eleventh subsequent asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 46,
+      "cause": "First subsequent non-asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 47,
+      "cause": "Second subsequent non-asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 48,
+      "cause": "Third subsequent non-asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 49,
+      "cause": "Fourth subsequent non-asset review correction remains in the local combined batch"
+    },
+    {
+      "revision": 50,
+      "cause": "Third subsequent cross-seam publication-freeze correction remains in the local combined batch"
+    },
+    {
+      "revision": 51,
+      "cause": "Fourth subsequent cross-seam Temporal-to-Automation authorization correction carried into the split 5B branch"
+    },
+    {
+      "revision": 52,
+      "cause": "Post-split CodeRabbit CLI round-1 corrections committed locally on PR #2663; CLI round 2 and hosted review are active"
+    },
+    {
+      "revision": 53,
+      "cause": "Hosted round-1 and CodeRabbit CLI round-2 corrections published in rebased PR #2663 head ff8f83e9e; CLI round 3 retry is scheduled after a recoverable rate limit"
+    },
+    {
+      "revision": 54,
+      "cause": "Four useful CodeRabbit CLI round-3 corrections published in PR #2663 head 544920192; CLI round 4 is running"
+    },
+    {
+      "revision": 55,
+      "cause": "Seven useful findings from fresh 5B owner/publication and cross-owner/status Luna passes fixed in local committed head 1d8865e38"
+    },
+    {
+      "revision": 56,
+      "cause": "Six useful CodeRabbit CLI round-4 corrections committed in local PR #2663 head a1425c69b; CLI round 5 is running"
+    },
+    {
+      "revision": 57,
+      "cause": "Six useful hosted round-2 corrections published in PR #2663 head 6c1a4150c; CLI round 5 retry is running"
+    },
+    {
+      "revision": 58,
+      "cause": "Six useful CodeRabbit CLI round-5 corrections published in PR #2663 head 62c412369"
+    },
+    {
+      "revision": 59,
+      "cause": "Three useful Game Design/publication Luna corrections committed in local head d1540c5cc; one P1 ADR0009 fix and the access/ops review remain in progress"
+    },
+    {
+      "revision": 60,
+      "cause": "One Automation/Entity/shared-persistence P1 and three access/operations Luna corrections accepted and published"
+    },
+    {
+      "revision": 61,
+      "cause": "Eleven useful CodeRabbit CLI round-6 corrections published in PR #2663 head d50292fc4; CLI round 7 is rate-limited with a native retry scheduled"
+    },
+    {
+      "revision": 62,
+      "cause": "Two useful cross-runtime Luna corrections published in PR #2663 head a3393930c; hosted round 3 and owner/status Luna review 7 are active"
+    },
+    {
+      "revision": 63,
+      "cause": "One useful owner/status Luna correction committed in local head a3dc337b2 and held unpushed while hosted round 3 reviews published head a3393930c"
+    },
+    {
+      "revision": 64,
+      "cause": "Five useful access/persistence Luna corrections accepted and published with the owner/status correction"
+    },
+    {
+      "revision": 65,
+      "cause": "Seven useful hosted round-3 corrections accepted and published after thread adjudication"
+    },
+    {
+      "revision": 66,
+      "cause": "Four useful CodeRabbit CLI round-7 corrections published in PR #2663 head 33bd69cbd; CLI round 8 and publication Luna round 8 are active"
+    },
+    {
+      "revision": 67,
+      "cause": "Two useful CodeRabbit CLI round-8 corrections accepted and published"
+    },
+    {
+      "revision": 68,
+      "cause": "Seven useful publication and Automation/Entity Luna round-8 corrections published in PR #2663 head 8e400a8a2; runtime fixes, access review, and CLI round 9 remain active"
+    },
+    {
+      "revision": 69,
+      "cause": "Seven useful CodeRabbit CLI round-9 corrections published in PR #2663 head 8523b3276"
+    },
+    {
+      "revision": 70,
+      "cause": "Three useful Luna round-10 runtime/publication corrections fixed locally"
+    },
+    {
+      "revision": 71,
+      "cause": "Two useful independent Luna fix-verification precision corrections applied locally"
+    },
+    {
+      "revision": 72,
+      "cause": "Five useful CodeRabbit CLI round-10 corrections fixed in the local validated batch"
+    },
+    {
+      "revision": 73,
+      "cause": "Six useful hosted round-4 corrections fixed in the local validated batch"
+    },
+    {
+      "revision": 74,
+      "cause": "Three useful combined integration review-11 corrections fixed in the local validated batch"
+    },
+    {
+      "revision": 75,
+      "cause": "One useful combined post-fix review-12 correction fixed in the local validated batch; one downstream-owned finding excluded"
+    },
+    {
+      "revision": 76,
+      "cause": "Two useful terminal review-13 zero-handler and Social precision corrections fixed locally"
+    },
+    {
+      "revision": 77,
+      "cause": "Two useful terminal review-14 zero-handler propagation and Social precision corrections fixed locally"
+    },
+    {
+      "revision": 78,
+      "cause": "One useful terminal review-15 Entity stale-status correction fixed locally; one downstream-owned finding excluded"
+    },
+    {
+      "revision": 79,
+      "cause": "Terminal review-16 production-evidence correction fixed locally"
+    },
+    {
+      "revision": 80,
+      "cause": "Terminal review-17 tick-scheduler-key correction fixed locally"
+    },
+    {
+      "revision": 81,
+      "cause": "Terminal review-18 proto zero-handler correction fixed locally; one downstream-owned finding excluded"
+    },
+    {
+      "revision": 82,
+      "cause": "Terminal review-21 wire/current-target correction fixed locally"
+    },
+    {
+      "revision": 83,
+      "cause": "Final hosted review found eight apparent findings (seven inline and one outside-diff); fixes and adjudication remain in the local batch"
+    },
+    {
+      "revision": 84,
+      "cause": "CodeRabbit CLI round 11 found eight corrective/useful findings; fixes remain local"
+    },
+    {
+      "revision": 85,
+      "cause": "CLI 11 and final hosted-review corrections published in a3d462181; two fresh post-fix Luna zero audits completed"
+    },
+    {
+      "revision": 86,
+      "cause": "Hosted review completed with twelve inline findings (ten useful) and one rejected outside-diff compatibility item; hosted and three verifier residual fixes remain uncommitted locally"
+    },
+    {"revision": 87, "cause": "PR #2669 hosted round 1 accepted six fixes at c1dbb3e78"},
+    {"revision": 88, "cause": "PR #2669 CLI round 1 accepted five fixes at 33270eebd"},
+    {"revision": 89, "cause": "PR #2669 Luna redis review accepted one fix at 23cc2cbe1"},
+    {"revision": 90, "cause": "PR #2669 Luna cross-domain review accepted one fix at 23cc2cbe1"},
+    {"revision": 91, "cause": "PR #2669 CLI round 2 accepted three fixes at 23cc2cbe1"},
+    {"revision": 92, "cause": "PR #2669 CLI round 3 accepted validator and legacy-repair wording fixes at 0995278a2"},
+    {"revision": 93, "cause": "PR #2669 CLI round 4 accepted two fixes at af2c10fdc"},
+    {"revision": 94, "cause": "PR #2669 hosted round 2 accepted six fixes at af2c10fdc"},
+    {"revision": 95, "cause": "PR #2669 CLI round 5 accepted four fixes at 9680eb608"},
+    {"revision": 96, "cause": "PR #2669 CLI round 6 accepted one reset-selector correction at 589c9f8c5"},
+    {"revision": 97, "cause": "One-line exact cache reset selector fix published at 5bb35ed1e; fresh independent exact-fix Luna zero complete"},
+    {"revision": 98, "cause": "PR #2673 accepted-fix batch changed the 5B corpus; fresh section review evidence is required on the new content"},
+    {"revision": 99, "cause": "PR #2673 CLI round 12 and hosted round 6 accepted security-policy, legacy-writer, and duplicate-stop corrections published at e4f150222"},
+    {"revision": 100, "cause": "Fresh Luna activation-quarantine and Account security-authority corrections published at b600000ad"},
+    {"revision": 101, "cause": "Hosted round 7, CLI round 13, and fresh Luna terminal remote-followup replay corrections published at 7c4ba8949"},
+    {"revision": 102, "cause": "Hosted round 8, CLI round 14, and fresh Luna Automation normalization, nonterminal retry, and GameInstance preflight-compensation corrections published at 8569429c2"},
+    {"revision": 103, "cause": "Fresh Luna invalid-scope remote execution terminalization correction published at f98b760dc"},
+    {"revision": 104, "cause": "CLI round 16 drain-scope, rollback-example, and Saga OpenAPI response corrections committed at 2a5cb993c"},
+    {"revision": 105, "cause": "Hosted round 10 plus fresh Luna scope-normalization, timeout-retry, internal-caller authorization, and proof corrections published at e6a689847"},
+    {"revision": 106, "cause": "CLI round 17 and hosted round 11 scope, cancellation, acknowledgement, recovery-warning, and negative-proof corrections published at 8872910b9"},
+    {"revision": 107, "cause": "CLI round 18 security-lock and unsafe queue-rebuild containment corrections published at a1eccf74c"},
+    {"revision": 108, "cause": "Hosted round 12 and CLI round 19 recovery, migration-classification, tenant-replay, and auth-boundary corrections published at 19f64e684"}
+      ],
+      "reviews": [
+        {
+          "source": "luna",
+          "round": 1,
+          "revision": 0,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 2,
+          "revision": 1,
+          "raw": 3,
+          "useful": 2,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 3,
+          "revision": 2,
+          "raw": 9,
+          "useful": 7,
+          "status": "complete"
+        },
+    {
+      "source": "luna",
+      "round": 4,
+      "revision": 3,
+      "raw": 16,
+      "useful": 0,
+      "status": "complete",
+      "note": "All observations normalized to prior findings, already tracked gaps, or nonissues."
+    },
+    {
+      "source": "luna",
+      "round": 5,
+      "revision": 4,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh 18-source and tick/Entity seam review confirmed the complete target watermark key, nonblank-EffectId proof boundary, schema identity, retention, and current/target status with no actionable issue."
+    },
+    {
+      "source": "luna",
+      "round": 6,
+      "revision": 5,
+      "raw": 5,
+      "useful": 3,
+      "status": "complete",
+      "note": "Found non-atomic current Account connect-token issuance, current raw-token cache versus target encrypted-envelope drift, and missing durable issuance-operation schema/retention status. Rejected intentional owner/reset restatement and a disproven Flyway-table mismatch."
+    },
+    {
+      "source": "luna",
+      "round": 7,
+      "revision": 6,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh independent full-manifest review confirmed the live Account issuance race, raw-token storage, target durable operation/envelope, CAS/readback, reset, ADR-0163 retention, and tracker evidence with no actionable issue."
+    },
+        {
+          "source": "luna",
+          "round": 8,
+          "revision": 9,
+          "raw": 8,
+          "useful": 6,
+          "status": "complete",
+          "note": "Found five concrete live persistence/ownership gaps across Entity, Automation, and Social plus one unresolved reputation-owner contradiction. Excluded Entity cleanup and Automation queue observations already explicit in the corpus."
+        },
+        {
+          "source": "luna",
+          "round": 9,
+          "revision": 13,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found the live gameplay admission pointer unique index omitting tenant_id despite tenant-scoped lookup and target tenant/realm identity; record the implementation gap without adding schema implementation to this documentation parcel."
+        },
+        {
+          "source": "luna",
+          "round": 10,
+          "revision": 14,
+          "raw": 8,
+          "useful": 6,
+          "status": "complete",
+          "head": "13600d7ba",
+          "note": "First split review for front Unit 5B."
+        },
+        {
+          "source": "luna",
+          "round": 11,
+          "revision": 15,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "head": "ca525e2f2",
+          "note": "Published-fix review for front Unit 5B."
+        },
+        {
+          "source": "luna",
+          "revision": 20,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Asset/generation lane found four useful status gaps; corrections are in the pending post-5c6cd89b6 reconciliation batch."
+        },
+        {
+          "source": "luna",
+          "revision": 21,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal asset review found one wrong-tenant variant; the correction is pending the new local commit."
+        },
+        {
+          "source": "luna",
+          "revision": 22,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Postcommit 5B review found three useful corrections; fixes remain in the local combined batch."
+        },
+        {
+          "source": "luna",
+          "revision": 23,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Asset terminal cycle found three useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 24,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Second asset terminal cycle found three useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 25,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Third asset terminal cycle found four useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 26,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Tick seam review found two useful findings; fixes remain local."
+        },
+        {
+          "source": "luna",
+          "revision": 27,
+          "raw": 3,
+          "useful": 2,
+          "status": "complete",
+          "note": "Persistence seam review found two useful findings; one additional gap was already correct. Fixes remain local."
+        },
+        {
+          "source": "luna",
+          "revision": 27,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Asset terminal cycle found two useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 27,
+          "raw": 5,
+          "useful": 5,
+          "status": "complete",
+          "note": "Follow-up asset terminal cycle found five useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 27,
+          "raw": 4,
+          "useful": 3,
+          "status": "complete",
+          "note": "Non-asset 5B review found four raw observations: three genuinely residual/useful findings and one already-fixed duplicate; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 27,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Subsequent asset review found one useful finding; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 28,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Subsequent asset review found four useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 29,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Subsequent asset review found two useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 30,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Subsequent asset review found three useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 31,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Subsequent asset review found one useful finding; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 32,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Subsequent asset review found four useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 33,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Subsequent asset review found three useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 34,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Asset zero confirmation occurred before later findings reset the current revision."
+        },
+        {
+          "source": "luna",
+          "revision": 34,
+          "raw": 5,
+          "useful": 5,
+          "status": "complete",
+          "note": "Subsequent non-asset review found five useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 35,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Subsequent non-asset review found two useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 36,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Subsequent non-asset review found one useful finding; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 37,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Subsequent non-asset review found two useful findings; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 38,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Subsequent non-asset review found one useful finding; fixes remain ongoing locally."
+        },
+        {
+          "source": "luna",
+          "revision": 39,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Subsequent cross-seam review found two useful findings; fixes remain ongoing locally."
+        },
+    {
+      "source": "luna",
+      "revision": 40,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Follow-up cross-seam review found one useful finding; the current freeze fix remains ongoing."
+    },
+    {
+      "source": "luna",
+      "revision": 42,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "note": "Subsequent asset review found three useful findings; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 43,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "note": "Subsequent asset review found four useful findings; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 44,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "note": "Subsequent asset review found three useful findings; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 45,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "note": "Subsequent asset review found four useful findings; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 45,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Asset zero confirmation occurred before later findings reset the current revision."
+    },
+    {
+      "source": "luna",
+      "revision": 46,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Subsequent non-asset review found one useful finding; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 47,
+      "raw": 2,
+      "useful": 2,
+      "status": "complete",
+      "note": "Subsequent non-asset review found two useful findings; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 48,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Subsequent non-asset review found one useful finding; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 49,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Subsequent non-asset review found one useful finding; fixes remain ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 50,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Subsequent cross-seam review found one useful publication-freeze finding; the fix remains ongoing locally."
+    },
+    {
+      "source": "luna",
+      "revision": 51,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Subsequent cross-seam review found one useful Temporal-to-Automation authorization finding; the fix was carried into the split 5B branch."
+    },
+    {
+      "source": "luna",
+      "domain": "owner-publication",
+      "revision": 54,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "note": "Fresh owner/publication pass found four useful gaps; all are fixed locally in 1d8865e38."
+    },
+    {
+      "source": "luna",
+      "domain": "cross-owner-status",
+      "revision": 54,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "note": "Fresh cross-owner/status pass found three useful docs-only gaps; all are fixed locally in 1d8865e38."
+    },
+    {
+      "source": "luna",
+      "domain": "game-design-publication",
+      "revision": 58,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "note": "Fresh Game Design/publication pass found three useful findings; all fixes are published in d50292fc4."
+    },
+    {
+      "source": "luna",
+      "domain": "automation-entity-shared-persistence",
+      "revision": 58,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Fresh Automation/Entity/shared-persistence pass found one useful P1 ADR0009 status/authority gap; its fix is published in d50292fc4."
+    },
+    {
+      "source": "luna",
+      "domain": "access-operations",
+      "round": 12,
+      "revision": 58,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "note": "Fresh access/operations pass found three useful findings; all fixes are published in d50292fc4."
+    },
+    {
+      "source": "luna",
+      "domain": "cross-runtime",
+      "round": 7,
+      "revision": 61,
+      "raw": 2,
+      "useful": 2,
+      "status": "complete",
+      "note": "Found that WMS freeze gates must cover every Draft mutation and that tick-ledger storage evidence must remain distinct from guard uniqueness; both fixes are published in a3393930c."
+    },
+    {
+      "source": "luna",
+      "domain": "owner-status",
+      "round": 7,
+      "revision": 62,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Found that the Automation README incorrectly scoped deferred Weather to RoomInstanceRef; the correction is published in 33bd69cbd."
+    },
+    {
+      "source": "luna",
+      "domain": "access-persistence",
+      "round": 7,
+      "revision": 62,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "note": "Fresh access/persistence review found five useful findings; all fixes are published in 33bd69cbd."
+    },
+    {
+      "source": "luna",
+      "domain": "narrow-publication",
+      "round": 8,
+      "revision": 62,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "note": "Narrow publication review found five useful findings; all fixes are published in 8e400a8a2."
+    },
+    {
+      "source": "luna",
+      "domain": "automation-entity",
+      "round": 8,
+      "revision": 66,
+      "raw": 2,
+      "useful": 2,
+      "status": "complete",
+      "note": "Automation/Entity review found two useful findings; both fixes are published in 8e400a8a2."
+    },
+        {
+          "source": "luna",
+          "domain": "runtime-publication",
+          "round": 10,
+          "revision": 69,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Runtime/publication review found three useful findings; fixes are local."
+        },
+        {
+          "source": "luna",
+          "domain": "fix-verification",
+          "round": 10,
+          "revision": 70,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Independent fix verification found two useful precision corrections; both are applied locally."
+        },
+        {
+          "source": "luna",
+          "domain": "owner-access",
+          "round": 10,
+          "revision": 71,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Owner/access review found three useful findings; fixes are in progress."
+        },
+        {
+          "source": "luna",
+          "domain": "combined-integration",
+          "round": 11,
+          "revision": 74,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Combined integration review found three useful findings; fixes are local."
+        },
+        {
+          "source": "luna",
+          "domain": "combined-post-fix",
+          "round": 12,
+          "revision": 74,
+          "raw": 2,
+          "useful": 1,
+          "status": "complete",
+          "note": "Combined post-fix review found two findings: one useful correction fixed locally and one downstream-owned finding excluded."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 13,
+          "revision": 75,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Terminal review found one canonical zero-handler finding and one Social precision finding; both were fixed locally."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 14,
+          "revision": 76,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Terminal review found one zero-handler propagation finding and one Social precision finding; both were fixed locally."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 15,
+          "revision": 77,
+          "raw": 2,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review found one useful Entity stale-status finding fixed locally and one downstream-owned finding excluded."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 16,
+          "revision": 78,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review 16 found one useful production-evidence correction; the fix is local."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 17,
+          "revision": 79,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review 17 found one useful tick-scheduler-key correction; the fix is local."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 18,
+          "revision": 80,
+          "raw": 2,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review 18 found one useful proto zero-handler correction; the second finding is downstream-owned."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 19,
+          "revision": 81,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 19 found no useful finding before the later revision."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 20,
+          "revision": 81,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 20 found no useful finding on the corrected latest content."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 21,
+          "revision": 81,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review 21 found one useful wire/current-target correction; the fix is local."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 22,
+          "revision": 82,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 22 found no useful finding on the post-fix revision; together with review 20's fresh zero on corrected content, the current revision satisfies the terminal zero-confirmation gate."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "revision": 85,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Fresh post-fix Luna zero audit found no current-content issue on published head a3d462181."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "revision": 85,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Second fresh post-fix Luna zero audit found no current-content issue; 5B terminality is restored."
+        },
+        {"source":"luna","domain":"redis","round":1,"revision":89,"raw":1,"useful":1,"status":"complete","head":"23cc2cbe1","note":"PR #2669 redis review accepted one fix."},
+        {"source":"luna","domain":"scripting","round":1,"revision":89,"raw":0,"useful":0,"status":"complete","head":"23cc2cbe1","note":"PR #2669 scripting verifier found no actionable issue."},
+        {"source":"luna","domain":"cross-domain","round":1,"revision":90,"raw":1,"useful":1,"status":"complete","head":"23cc2cbe1","note":"PR #2669 cross-domain review accepted one fix."},
+        {"source":"luna","domain":"cross-domain-terminal","round":1,"revision":96,"raw":0,"useful":0,"status":"complete","head":"589c9f8c5","note":"Fresh cross-domain terminal zero on predecessor content."},
+        {"source":"luna","domain":"exact-fix","round":1,"revision":97,"raw":0,"useful":0,"status":"complete","head":"5bb35ed1e","note":"Independent exact-fix zero after published cache reset selector correction."},
+        {"source":"luna","domain":"broad-followup","round":1,"revision":99,"raw":2,"useful":2,"status":"complete","head":"e4f150222","note":"Fresh broad pass found GameInstance activation-quarantine and Account security-authority corrections, published at b600000ad."},
+        {"source":"luna","domain":"broad-followup","round":2,"revision":100,"raw":1,"useful":1,"status":"complete","head":"b600000ad","note":"Fresh broad pass found terminal remote-followup exact-retry evidence could be reopened; fixed in 7c4ba8949."},
+        {"source":"luna","domain":"broad-followup","round":3,"revision":100,"raw":0,"useful":0,"status":"complete","head":"b600000ad","note":"Fresh broad pass found no additional actionable issue before the terminal-retry correction changed the revision."},
+        {"source":"luna","domain":"broad-followup","round":4,"revision":101,"raw":2,"useful":2,"status":"complete","head":"7c4ba8949","note":"Fresh broad pass found nonterminal retry claim erasure and GameInstance preflight-compensation marker defects; both fixed in 8569429c2."},
+        {"source":"luna","domain":"broad-followup","round":5,"revision":101,"raw":1,"useful":1,"status":"complete","head":"7c4ba8949","note":"Independent exact-head pass confirmed the GameInstance preflight-compensation defect and found no other issue."},
+        {"source":"luna","domain":"fix-verification","revision":102,"raw":0,"useful":0,"status":"complete","head":"8569429c2","note":"Fresh focused verification found no residual in the API normalization, Automation game-scope normalization, or remote-followup retry fixes."},
+        {"source":"luna","domain":"broad-followup","round":6,"revision":102,"raw":0,"useful":0,"status":"complete","head":"8569429c2","note":"Fresh exact-head architecture/correctness pass reviewed the complete PR diff and found no actionable residual."},
+        {"source":"luna","domain":"runtime-integrity","round":7,"revision":102,"raw":1,"useful":1,"status":"complete","head":"8569429c2","note":"Fresh exact-head runtime pass found an invalid-scope remote execution pair-terminalization gap; fixed at f98b760dc."},
+        {"source":"coderabbit-cli","round":16,"revision":103,"raw":13,"useful":3,"status":"complete","head":"f98b760dc","note":"Accepted normalized drain scope, exact rollback-example scope, and Saga OpenAPI authorization responses; ten duplicates, optional refactors, or false claims were rejected."},
+        {"source":"coderabbit-hosted","round":10,"revision":103,"raw":10,"useful":4,"status":"complete","head":"f98b760dc","note":"The review headline counted 17 actionables; exact evidence contained ten presented comments and nine unique findings. Four were useful: platform-scoped global registration, canonical Saga-adopter authority, replacement-specific termination reason, and target-tuple repository proof."},
+        {"source":"luna","domain":"architecture","round":9,"revision":104,"raw":3,"useful":3,"status":"complete","head":"2a5cb993c","note":"Fresh exact-head pass found Automation tenant/game normalization, timeout-retry pairing, and EnqueueAutomationCommandIfAbsent internal-caller authorization gaps; fixed at e6a689847."},
+        {"source":"luna","domain":"persistence","round":10,"revision":105,"raw":0,"useful":0,"status":"complete","head":"e6a689847","note":"Fresh exact-head SQL/persistence/data review found no actionable issue."},
+        {"source":"luna","domain":"runtime-proof","round":10,"revision":105,"raw":1,"useful":0,"status":"complete","head":"e6a689847","note":"One alleged boxed-Long identity issue was self-retracted after verifying the entity fields are primitive long; no actionable runtime issue remained."},
+        {"source":"luna","domain":"architecture","round":10,"revision":105,"raw":1,"useful":0,"status":"complete","head":"e6a689847","note":"Only an already explicit target-state follow-up identity/index gap was observed; it was not a new or untracked correction."},
+        {"source":"coderabbit-cli","round":17,"revision":105,"raw":5,"useful":2,"status":"complete","head":"e6a689847","note":"Accepted exact coordinator-scope predicate dedup and positive target-scope linkage; rejected two cosmetic refactors and one impossible nullable-legacy claim."},
+        {"source":"coderabbit-hosted","round":11,"revision":105,"raw":5,"useful":3,"status":"complete","head":"e6a689847","requestedAt":"2026-09-03T15:01:27+12:00","completedAt":"2026-09-03T15:17:48+12:00","note":"Accepted acknowledgement-unavailable semantics, live unsafe rebuild warning, and cancellation tenant normalization. Rejected corrupt-scope terminalization that would invent authority and an optional bounded performance refactor."},
+        {"source":"luna","domain":"cross-owner","round":11,"revision":106,"raw":0,"useful":0,"status":"complete","head":"8872910b9","note":"Fresh cross-owner pass found no actionable contradiction."},
+        {"source":"luna","domain":"runtime-proof","round":11,"revision":106,"raw":1,"useful":0,"status":"complete","head":"8872910b9","note":"Observed the already tracked malformed-scope reconciliation/quarantine implementation gap; architecture and tracker remain correct and a safe fix is a separate migration-backed implementation slice."},
+        {"source":"luna","domain":"architecture","round":11,"revision":106,"raw":5,"useful":0,"status":"complete","head":"8872910b9","note":"Candidates normalized to unreachable compatibility hardening, defense-in-depth, or already tracked target-only remote quarantine, tuple-binding, dedup, and UNPINNED implementation gaps; no corpus correction required."},
+        {"source":"coderabbit-cli","round":18,"revision":106,"raw":5,"useful":2,"status":"complete","head":"8872910b9","note":"Accepted durable security-lock restriction and live unsafe queue-rebuild containment. Rejected test-fixture realism, bounded map refactoring, and unsafe malformed-scope terminalization."},
+        {"source":"luna","domain":"architecture","round":12,"revision":107,"raw":0,"useful":0,"status":"complete","head":"a1eccf74c","note":"Fresh complete 63-file architecture/authority review found no actionable contradiction."},
+        {"source":"luna","domain":"runtime-proof","round":12,"revision":107,"raw":0,"useful":0,"status":"complete","head":"a1eccf74c","note":"Fresh complete runtime/proof review found no actionable current defect."},
+        {"source":"luna","domain":"cross-owner","round":12,"revision":107,"raw":1,"useful":0,"status":"complete","head":"a1eccf74c","note":"Observed only the already explicit live queue-rebuild implementation gap; no corpus correction required."},
+        {"source":"coderabbit-cli","round":19,"revision":107,"raw":7,"useful":1,"status":"complete","head":"a1eccf74c","note":"Accepted authenticated bearer rejection proof for the internal-only automation handoff; six findings were schema-impossible, unsafe, duplicated, or optional performance/fixture changes."},
+        {"source":"coderabbit-hosted","round":12,"revision":107,"raw":7,"useful":3,"status":"complete","head":"a1eccf74c","requestedAt":"2026-09-03T16:02:02+12:00","completedAt":"2026-09-03T16:18:07+12:00","note":"Accepted queue-recovery cessation semantics, Java/nontransactional migration classification, and padded-tenant dead-letter replay normalization. Rejected unsafe incomplete-scope terminalization, impossible nullable-field claims, and cosmetic duplicates."}
+      ]
+    },
+  {
+    "id": "5C",
+    "title": "Redis roles, keys, reset, cache, and rate-limit semantics",
+    "plannedLunaFloor": 3,
+    "requiredZeroConfirmations": 1,
+    "currentRevision": 33,
+    "state": "active",
+      "revisionEvents": [
+        {
+          "revision": 0,
+          "cause": "Initial 5C corpus baseline"
+        },
+        {
+          "revision": 1,
+          "cause": "Pass-1 accepted corrections"
+        },
+        {
+          "revision": 2,
+          "cause": "Pass-2 fixes plus material shared CodeRabbit Redis corrections"
+        },
+        {
+          "revision": 3,
+          "cause": "Pass-3 reset-class and promotion-authority fixes"
+        },
+        {
+          "revision": 4,
+          "cause": "Pass-4 reset-drop, promotion-continuity, and Lua compatibility fixes"
+        },
+        {
+          "revision": 5,
+          "cause": "Pass-5 reset ordering, Automation pointer-loss, and Gateway deny-marker reset fixes"
+        },
+        {
+          "revision": 6,
+          "cause": "Pass-6 legacy presence, connect-token idempotency, disconnect dedup, LOOK cache, Gateway deny, and current-runbook catalog corrections"
+        },
+        {
+          "revision": 7,
+          "cause": "Pass-7 role separation, normative ownership, reset-runbook, Automation pointer, LOOK-cache, and disconnect-sequencing corrections"
+        },
+        {
+          "revision": 8,
+          "cause": "Pass-8 current-fallback/runbook honesty, Automation reset-readback, complete pending-envelope, and hosted Redis-family corrections"
+        },
+        {
+          "revision": 9,
+          "cause": "Cross-section scoped-reset maintenance-operation and replay-classification corrections"
+        },
+        {
+          "revision": 10,
+          "cause": "Pass-10 legacy tick-family reset, payload naming, reset-sensitive family, timer-domain, and cache writer-fence corrections"
+        },
+        {
+          "revision": 11,
+          "cause": "Pass-11 cache maintenance gate, legacy tick/runtime/IP families, due-point/time-domain, member-identity, and epoch-naming corrections"
+        },
+        {
+          "revision": 12,
+          "cause": "Pass-12 Cache gate fencing/attestation, clustered limiter, time-domain, and checklist corrections"
+        },
+        {
+          "revision": 13,
+          "cause": "Pass-13 legacy limiter/Entity lock inventory, Automation queue bound, and tuple-tag proof corrections"
+        },
+        {
+          "revision": 14,
+          "cause": "Pass-14 Gateway wrong-role writer, Cluster support, Automation drain, and disconnect-proof corrections"
+        },
+        {
+          "revision": 15,
+          "cause": "Pass-15 exact co-slotted Gateway replay-domain key and migration-contract correction"
+        },
+    {
+      "revision": 16,
+      "cause": "Pass-16 live replay-writer inventory, revoke durability, and reset-smoke acknowledgement corrections"
+    },
+    {
+      "revision": 17,
+      "cause": "Hosted round-4 Gateway routing, revocation descriptor, and current reset fallback corrections"
+    },
+    {
+      "revision": 18,
+      "cause": "CLI round-11 Gateway diagram, legacy presence-family, collapsed-role, and credential-rotation corrections"
+    },
+    {
+      "revision": 19,
+      "cause": "CLI round-12 reset-principal and Automation queue-bound corrections"
+    },
+    {
+      "revision": 20,
+      "cause": "Pass-20 Cache-role queue atomicity, named rebuild principal, complete-rebuild honesty, heuristic-loss, target-setting, and replay-fence terminology corrections"
+    },
+    {
+      "revision": 21,
+      "cause": "CLI round-13 tenant-reset index scope and Entity live-versus-target tick-lock corrections"
+    },
+    {
+      "revision": 22,
+      "cause": "CLI round-14 region-versus-tenant reset, Redis principal/current-role, and cache-diagram corrections"
+    },
+    {
+      "revision": 23,
+      "cause": "CLI round-15 registered hash-tag, legacy rate-limit drain, and break-glass family corrections"
+    },
+    {
+      "revision": 24,
+      "cause": "Pass-22 hosted Cache configuration and retry-safe capacity-reservation corrections"
+    },
+    {
+      "revision": 25,
+      "cause": "CLI round-16 reset preservation, Redis proof-routing, and cache-status corrections"
+    },
+    {
+      "revision": 26,
+      "cause": "Hosted round-6 Account connect-token Redis ownership correction"
+    },
+    {
+      "revision": 27,
+      "cause": "CLI round-17 validation-evidence routing and Gateway Lua descriptor corrections"
+    },
+    {
+      "revision": 28,
+      "cause": "Luna round-23 conflict-family ownership, reset, ACL, TTL, cardinality, and atomicity corrections"
+    },
+    {
+      "revision": 29,
+      "cause": "Fresh 5C post-fix review corrections, including downstream-owned local fixes and the base-owned Automation reset-class finding supplied to PR #2663"
+    },
+    {
+      "revision": 30,
+      "cause": "Fresh 5C review corrections fixed locally"
+    },
+    {
+      "revision": 31,
+      "cause": "Fresh 5C fix-verification corrections fixed locally; current revision received two terminal zero confirmations"
+        },
+        {
+          "revision": 32,
+          "cause": "Local five-file corrections on PR #2661 plus pending overlapping tick findings and ADR provenance audit"
+        },
+        {
+          "revision": 33,
+          "cause": "Current uncommitted allocator, namespace, ADMIN, and link fixes remain under correction and provenance audit; command-plan decision is pending approval"
+        }
+      ],
+      "reviews": [
+        {
+          "source": "luna",
+          "round": 1,
+          "revision": 0,
+          "raw": 12,
+          "useful": 7,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 2,
+          "revision": 1,
+          "raw": 14,
+          "useful": 6,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 3,
+          "revision": 2,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 4,
+          "revision": 3,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 5,
+          "revision": 4,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 6,
+          "revision": 5,
+          "raw": 5,
+          "useful": 4,
+          "status": "complete",
+          "note": "Three primary catalog/implementation-drift families plus one legacy LOOK-cache drift finding were accepted; metrics-only and already-tracked generic session-prefix observations were excluded."
+        },
+        {
+          "source": "luna",
+          "round": 7,
+          "revision": 6,
+          "raw": 6,
+          "useful": 5,
+          "status": "complete",
+          "note": "Accepted role separation, missing normative Account/Gateway ownership, legacy LOOK reset, target/current runbook, Automation pointer, and disconnect-sequencing corrections; excluded one concurrent 5D durable-recovery observation."
+        },
+        {
+          "source": "luna",
+          "round": 8,
+          "revision": 7,
+          "raw": 4,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found current runtime/fallback wording that still points operators at unavailable reset/AOF flows and two imperative maintenance CLI runbooks lacking local target-only notices."
+        },
+        {
+          "source": "luna",
+          "round": 9,
+          "revision": 8,
+          "raw": 6,
+          "useful": 0,
+          "status": "complete",
+          "note": "Six candidates normalized to globally scoped target-only notices, explicit current implementation gaps, or already-correct owner/fallback wording; current revision is terminal-clean."
+        },
+        {
+          "source": "luna",
+          "round": 10,
+          "revision": 9,
+          "raw": 5,
+          "useful": 4,
+          "status": "complete",
+          "note": "Accepted missing current-live legacy tick-family reset coverage, serialized observer payload naming drift, incomplete Game Session reset-sensitive family summary, and ambiguous timer due-domain storage wording; rejected the lease-TTL candidate because the pending evidence-calibrated setting gap is already explicit."
+        },
+        {
+          "source": "luna",
+          "round": 11,
+          "revision": 10,
+          "raw": 6,
+          "useful": 6,
+          "status": "complete",
+          "note": "Found the unimplemented cache writer fence, legacy tick-family schema/suffix error, missing legacy runtime-state family, target due-point contradiction, time-domain overclaim, and missing current IP-limiter catalog families."
+        },
+        {
+          "source": "luna",
+          "round": 12,
+          "revision": 11,
+          "raw": 5,
+          "useful": 5,
+          "status": "complete",
+          "note": "Found current IP-limiter CROSSSLOT/ADR-0087 drift, an under-specified and rebuild-deadlocking Cache maintenance gate, missing fail-closed role-collision checks, cooldown time-domain drift, and an incomplete Redis design checklist."
+        },
+        {
+          "source": "luna",
+          "round": 13,
+          "revision": 12,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Found missing live ratelimit inventory/ACL/reset coverage, an unscoped Entity tick-lock authority hidden by current docs, unbounded Automation queue pointers mislabeled TTL-only, and a non-canonical unvalidated Automation tuple hash tag."
+        },
+        {
+          "source": "luna",
+          "round": 14,
+          "revision": 13,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Found the current Gateway replay writer's wrong Cache-role placement, overclaimed current Redis Cluster support, Automation bounded-drain loss/KEYS behavior, and missing disconnect-dedup fail-open proof anchors."
+        },
+        {
+          "source": "luna",
+          "round": 15,
+          "revision": 14,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found that the required atomic Gateway replay/deny/fence script had no exact co-slotted Redis Cluster key contract."
+        },
+        {
+          "source": "luna",
+          "round": 16,
+          "revision": 15,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found an overstated current replay/deny/fence writer inventory, missing durable acknowledgement for target deny writes, and a reset-smoke sequence that attempted a second acknowledgement after a non-mutating consume outcome."
+        },
+    {
+      "source": "luna",
+      "round": 17,
+      "revision": 16,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh pass confirmed the exact co-slot family, replay-only current writer inventory, deny/revoke durability, and one-mutation reset-smoke acknowledgement contract with no new actionable contradiction."
+    },
+    {
+      "source": "luna",
+      "round": 18,
+      "revision": 17,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh review of all 17 sources and direct Redis/Gateway/Automation seams confirmed the hosted fixes with no new actionable contradiction."
+    },
+    {
+      "source": "luna",
+      "round": 19,
+      "revision": 18,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh 17-source and direct-seam review confirmed Gateway routing, unregistered presence-family fallback, collapsed-role boundaries, and credential rotation with no actionable issue."
+    },
+    {
+      "source": "luna",
+      "round": 20,
+      "revision": 19,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "note": "Found missing Cache-role queue atomicity/Lua classification, unnamed reset/rebuild principals, incomplete page-zero-only Automation pointer rebuild, and a rate-limit eviction checklist conflict with ADR 0087 loss semantics."
+    },
+    {
+      "source": "luna",
+      "round": 21,
+      "revision": 20,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh independent reread of all 17 sources and direct Redis seams confirmed Cache-role queue atomicity, the named rebuild principal, complete-rebuild honesty, current-target settings, and replay-fence terminology with no actionable issue."
+    },
+        {
+          "source": "luna",
+          "round": 22,
+          "revision": 23,
+          "raw": 4,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found hosted Cache Redis configured as durable unbounded/noeviction storage and retry-unsafe Automation capacity reservations that can leak concurrency slots. Excluded two non-actionable generic Redis observations."
+        },
+        {
+          "source": "luna",
+          "round": 23,
+          "revision": 27,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found the live conflict diagnostic family missing from canonical Redis ownership/reset/ACL catalogs and its non-atomic increment-plus-expiry path capable of leaving immortal Coordination keys."
+        },
+        {
+          "source": "luna",
+          "domain": "post-fix",
+          "round": 24,
+          "revision": 29,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Fresh 5C post-fix review found three useful findings; two downstream-owned fixes are local and one base-owned Automation reset-class finding was supplied to PR #2663."
+        },
+        {
+          "source": "luna",
+          "domain": "fresh-review",
+          "round": 25,
+          "revision": 30,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Fresh 5C review found two useful findings; fixes are local."
+        },
+        {
+          "source": "luna",
+          "domain": "fix-verification",
+          "round": 25,
+          "revision": 31,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Fresh 5C fix verification found three useful findings; fixes are local."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 4,
+          "revision": 31,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 4 found no useful finding on the current revision."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 5,
+          "revision": 31,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 5 found no useful finding on the current revision."
+        }
+      ]
+    },
+  {
+    "id": "5D",
+    "title": "Idempotency, outbox, replay, saga, and workflow patterns",
+    "plannedLunaFloor": 3,
+    "requiredZeroConfirmations": 1,
+    "currentRevision": 37,
+    "state": "active",
+      "revisionEvents": [
+        {
+          "revision": 0,
+          "cause": "Initial 5D corpus baseline"
+        },
+        {
+          "revision": 1,
+          "cause": "Pass-1 fixes plus material shared CodeRabbit transaction/effect corrections"
+        },
+        {
+          "revision": 2,
+          "cause": "Pass-2 stale-DRAINED and Redis-first staging drift fixes"
+        },
+        {
+          "revision": 3,
+          "cause": "Hosted participant-guard scope evidence and deterministic effect-plan owner corrections"
+        },
+        {
+          "revision": 4,
+          "cause": "Pass-4 remote terminal-retry immutability and late-compensation implementation-drift corrections"
+        },
+        {
+          "revision": 5,
+          "cause": "Pass-5 spatial-barrier uniqueness alignment with Transaction Strategies"
+        },
+        {
+          "revision": 6,
+          "cause": "Verified hosted duplicate corrected Automation target-state versus current-wire labeling"
+        },
+        {
+          "revision": 7,
+          "cause": "Pass-6 durable recovery authority, maintenance-fence handoff, and TradeItem partition corrections"
+        },
+        {
+          "revision": 8,
+          "cause": "Pass-7 maintenance-handoff propagation, barrier scope evidence, and durable quota-authority corrections"
+        },
+        {
+          "revision": 9,
+          "cause": "Pass-8 concrete recovery-handoff, participant-scope, generated-child mapping, and tracker-authority corrections plus hosted wording fixes"
+        },
+        {
+          "revision": 10,
+          "cause": "Pass-9 PostgreSQL recovery-source, remaining maintenance-gate, and cross-region scope-evidence corrections"
+        },
+        {
+          "revision": 11,
+          "cause": "CLI round-8 tick replay corrections plus cross-section transaction and Automation maintenance-handoff classification"
+        },
+        {
+          "revision": 12,
+          "cause": "Pass-11 publish digest and reconciliation-authority fixes plus hosted actor-binding, serializer-stage, target-namespace, and tick uniqueness corrections"
+        },
+        {
+          "revision": 13,
+          "cause": "Pass-12 reconciliation API/schema status and preallocation publish-digest identity corrections"
+        },
+        {
+          "revision": 14,
+          "cause": "Pass-13 immutable reconciliation guard, maintenance selection, and action-ledger/CAS corrections"
+        },
+        {
+          "revision": 15,
+          "cause": "Pass-14 publication atomicity, crash-safe action intent/result, and mutationDigest profile corrections"
+        },
+        {
+          "revision": 16,
+          "cause": "Pass-15 publish/export recovery, exact digest mapping, action fencing, typed acknowledgement, and lifecycle signal corrections"
+        },
+        {
+          "revision": 17,
+          "cause": "Pass-16 action-family dedup, ambiguous export terminality, and World cleanup authority corrections"
+        },
+    {
+      "revision": 18,
+      "cause": "Root verification clarified ambiguous attestation-write terminality in the remaining publish-step wording"
+    },
+    {
+      "revision": 19,
+      "cause": "Hosted round-4 scripting namespace/audit alignment and tracker authority deduplication"
+    },
+    {
+      "revision": 20,
+      "cause": "CLI round-11 scripting identity, Entity replay-proof, and tick recovery/outcome corrections"
+    },
+    {
+      "revision": 21,
+      "cause": "CLI round-12 owner-local atomicity, stale-work reconciliation, and tracker authority-dedup corrections"
+    },
+    {
+      "revision": 22,
+      "cause": "Pass-20 preserved the closed tick-ledger status enum by expressing reconciliation-required as metadata on SCHEDULED"
+    },
+    {
+      "revision": 23,
+      "cause": "Hosted round-5 complete distinct-target identity, timer-audit current-target, pre-DSL queue-pointer, and tracker-owner corrections"
+    },
+    {
+      "revision": 24,
+      "cause": "CLI round-13 per-namespace timer-limit and direct continuity-example corrections"
+    },
+    {
+      "revision": 25,
+      "cause": "CLI round-14 orphan-cleanup proof, Trigger Identity, and tenant-readiness omission corrections"
+    },
+    {
+      "revision": 26,
+      "cause": "CLI round-15 Entity guard projection, scripting target-status, mode-limit, and epoch-persistence corrections"
+    },
+    {
+      "revision": 27,
+      "cause": "Pass-22 tracker-status plus CLI round-16 command-scope and tick-fallback corrections"
+    },
+    {
+      "revision": 28,
+      "cause": "Hosted round-6 timer recovery and scripting control-plane current-target corrections"
+    },
+    {
+      "revision": 29,
+      "cause": "CLI round-17 handoff idempotency, timer scope, target identity, resume-window, and epoch-model corrections"
+    },
+    {
+      "revision": 30,
+      "cause": "CLI round-18 namespace-complete schedule continuity plus conditional participant-guard propagation corrections"
+    },
+    {
+      "revision": 31,
+      "cause": "Fresh 5D review corrections fixed locally"
+    },
+        {
+          "revision": 32,
+          "cause": "Fresh 5D fix-verification precision correction fixed locally"
+        },
+        {
+          "revision": 33,
+          "cause": "Terminal review 4 useful corrections fixed locally in a57c728ab"
+        },
+        {
+          "revision": 34,
+          "cause": "Terminal review 5 useful corrections fixed locally in a57c728ab"
+        },
+        {
+      "revision": 35,
+      "cause": "Terminal review 7 Temporal per-invocation correction fixed locally in a57c728ab"
+        },
+        {
+          "revision": 36,
+          "cause": "Local five-file corrections on PR #2661 plus pending overlapping tick findings and ADR provenance audit"
+        },
+        {
+          "revision": 37,
+          "cause": "Current uncommitted allocator, namespace, ADMIN, and link fixes remain under correction and provenance audit; command-plan decision is pending approval"
+        }
+      ],
+      "reviews": [
+        {
+          "source": "luna",
+          "round": 1,
+          "revision": 0,
+          "raw": 10,
+          "useful": 9,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 2,
+          "revision": 1,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete"
+        },
+        {
+          "source": "luna",
+          "round": 3,
+          "revision": 2,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "No new in-manifest findings; one out-of-manifest command-handoff scope seam was reported separately for cross-section adjudication."
+        },
+        {
+          "source": "luna",
+          "round": 4,
+          "revision": 3,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Documented live terminal re-drive and late-result mutation drift without weakening the target immutable-outcome and separate-compensation contract."
+        },
+        {
+          "source": "luna",
+          "round": 5,
+          "revision": 4,
+          "raw": 15,
+          "useful": 1,
+          "status": "complete",
+          "note": "One new spatial-barrier uniqueness conflict was accepted; fourteen candidates restated implementation gaps already explicitly and correctly tracked against the target contract."
+        },
+        {
+          "source": "luna",
+          "round": 6,
+          "revision": 6,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Accepted durable recovery-source, ADR-0085 maintenance-fence handoff, and TradeItem allocation-partition corrections."
+        },
+        {
+          "source": "luna",
+          "round": 7,
+          "revision": 7,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Accepted concrete maintenance-handoff propagation, spatial-barrier namespace/scope evidence, and durable-versus-best-effort quota authority corrections."
+        },
+        {
+          "source": "luna",
+          "round": 8,
+          "revision": 8,
+          "raw": 3,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found incomplete ADR-0085 handoff/routine-replay classification propagation in concrete recovery paths and omitted playableStateScope comparison in generic participant-guard replay validation."
+        },
+        {
+          "source": "luna",
+          "round": 9,
+          "revision": 9,
+          "raw": 5,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found a remaining Redis-as-recovery-source overclaim, concrete outage/cleanup actions missing maintenance-handoff gates, and cross-region follow-up scope used as uniqueness rather than exact-bound evidence."
+        },
+        {
+          "source": "luna",
+          "round": 10,
+          "revision": 10,
+          "raw": 4,
+          "useful": 0,
+          "status": "complete",
+          "note": "Four possible handoff omissions normalized to globally governed maintenance paths or non-mutating coordinator cleanup; current revision was terminal-clean before the cross-seam external corrections."
+        },
+        {
+          "source": "luna",
+          "round": 11,
+          "revision": 11,
+          "raw": 5,
+          "useful": 2,
+          "status": "complete",
+          "note": "Accepted missing Game Design publish request-digest conflict detection and an unenforceable reconciliation-authority carrier; the Redis payload spelling candidate duplicated the concurrent 5C finding, and two observations were already covered."
+        },
+        {
+          "source": "luna",
+          "round": 12,
+          "revision": 12,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Found missing current-status/API/schema tracking for the target EffectReconciliationAuthority backlog and a publish-digest ambiguity caused by treating the owner-allocated version ID as request input."
+        },
+        {
+          "source": "luna",
+          "round": 13,
+          "revision": 13,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found a missing immutable effect guard on backlog rows, incomplete exact effect binding for external maintenance authority, and mutating retry/ack APIs without request identity, digest, CAS, or deterministic action results."
+        },
+        {
+          "source": "luna",
+          "round": 14,
+          "revision": 14,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found non-atomic Game Design publication terminalization, missing crash-atomic reconciliation action intent/result sequencing, and an unversioned action digest encoding."
+        },
+        {
+          "source": "luna",
+          "round": 15,
+          "revision": 15,
+          "raw": 6,
+          "useful": 6,
+          "status": "complete",
+          "note": "Found orphaned pre-version publish attempts, unrecoverable partial S3 export, mutationDigest mapping conflict, unfenced action-intent recovery, untyped participant acknowledgements, and lossy/stale Temporal world-lifecycle signal handling."
+        },
+        {
+          "source": "luna",
+          "round": 16,
+          "revision": 16,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Found action-intent dedup branching before complete-tuple conflict detection, ambiguous staged exports that could still terminalize as failed, and overstated current World cleanup acknowledgement authority."
+        },
+    {
+      "source": "luna",
+      "round": 17,
+      "revision": 18,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh pass re-read the root export-terminality clarification and found no new actionable authority, recovery, identity, target/current, or proof contradiction on revision 18."
+    },
+    {
+      "source": "luna",
+      "round": 18,
+      "revision": 19,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh 17-file and direct-seam review confirmed scripting namespace/audit alignment, terminality, replay/outbox/saga authority, and tracker deduplication with no actionable finding."
+    },
+    {
+      "source": "luna",
+      "round": 19,
+      "revision": 20,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Fresh 17-source and direct-seam pass confirmed complete Entity watermark identity, orphan cleanup, command outcomes, scripting identities/scope retention, and replay proof with no actionable issue."
+    },
+    {
+      "source": "luna",
+      "round": 20,
+      "revision": 21,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "note": "Found two phrases that could turn reconciliation-required metadata into a fourth tick-ledger status despite the closed SCHEDULED/APPLIED/ABANDONED enum."
+    },
+    {
+      "source": "luna",
+      "round": 21,
+      "revision": 23,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "note": "Full current-r23 reread confirmed the closed ledger enum, reconciliation metadata, complete Command-Handoff target identity, current-versus-target audit output, pre-DSL queue-pointer boundary, action atomicity, and tracker authority direction."
+    },
+        {
+          "source": "luna",
+          "round": 22,
+          "revision": 26,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Found the shared tracker overstating World termination as an implemented Temporal adopter despite the current synchronous single-owner cleanup seam and incomplete all-owner termination gate."
+        },
+        {
+          "source": "luna",
+          "round": 23,
+          "revision": 29,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Fresh pinned-head review found no new 5D finding; the later accepted CLI round-18 continuity and participant-guard corrections advance the section to r30, so this zero does not count toward terminal taper."
+        },
+        {
+          "source": "luna",
+          "domain": "fresh-review",
+          "round": 24,
+          "revision": 31,
+          "raw": 4,
+          "useful": 4,
+          "status": "complete",
+          "note": "Fresh 5D review found three useful findings and verified one Temporal residual; all four reviewed findings are useful and fixes are local."
+        },
+        {
+          "source": "luna",
+          "domain": "fix-verification",
+          "round": 24,
+          "revision": 32,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Fresh 5D fix verification found one useful precision finding; the fix is local."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 4,
+          "revision": 32,
+          "raw": 3,
+          "useful": 3,
+          "status": "complete",
+          "note": "Terminal review 4 found three useful findings; fixes are local in a57c728ab."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 5,
+          "revision": 33,
+          "raw": 2,
+          "useful": 2,
+          "status": "complete",
+          "note": "Terminal review 5 found two useful findings; fixes are local in a57c728ab."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 6,
+          "revision": 34,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 6 found no useful finding on the current revision."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 7,
+          "revision": 34,
+          "raw": 1,
+          "useful": 1,
+          "status": "complete",
+          "note": "Terminal review 7 found one useful Temporal per-invocation correction; the fix is local in a57c728ab."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 8,
+          "revision": 35,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 8 found no useful finding on the current revision."
+        },
+        {
+          "source": "luna",
+          "domain": "terminal",
+          "round": 9,
+          "revision": 35,
+          "raw": 0,
+          "useful": 0,
+          "status": "complete",
+          "note": "Terminal review 9 found no useful finding on the current revision."
+        }
+      ]
+    }
+  ],
+  "prReviews": [
+    {
+      "source": "coderabbit-cli",
+      "round": 1,
+      "raw": 6,
+      "useful": 6,
+      "status": "complete"
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 2,
+      "raw": 6,
+      "useful": 6,
+      "status": "complete"
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 3,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete"
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 4,
+      "raw": 8,
+      "useful": 7,
+      "status": "complete"
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 5,
+      "raw": 7,
+      "useful": 5,
+      "status": "complete",
+      "note": "Two findings were already correctly expressed; the reset-family finding was corrected at the canonical Redis owner rather than duplicated into the responsibility matrix."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 1,
+      "raw": 8,
+      "useful": 6,
+      "status": "complete",
+      "head": "2fb8f9c19b8e39fd18194410ebb140958faee8df"
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 6,
+      "raw": 8,
+      "useful": 6,
+      "status": "complete",
+      "head": "400167fd0",
+      "note": "Six contract corrections accepted; a shared-validation link suggestion and a reported live cleanup drift already documented against the target contract were nonissues."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 7,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "head": "0eb85adc2",
+      "note": "Accepted Automation pointer rebuild proof, legacy LOOK reset handling, disconnect-dedup store distinction, Automation queue role clarity, and TradeItem allocation-partition correction."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 2,
+      "raw": 17,
+      "useful": 11,
+      "status": "complete",
+      "head": "576ebb0b3",
+      "note": "Fourteen inline threads plus one outside-diff and two duplicate candidates. Accepted ten inline corrections and the outside-diff Automation wording; rejected the namespace barrier re-key, two already-correct typo reports, the already-qualified transitional tracker statement, and both duplicate identity/timeline suggestions. Several accepted findings were already covered by concurrent local 5C/5D fixes."
+    },
+    {
+      "source": "luna-cross-seam",
+      "round": 1,
+      "raw": 5,
+      "useful": 2,
+      "status": "complete",
+      "head": "f59931771",
+      "note": "Fresh 12-file recovery/reset/replay seam pass found under-specified scoped-reset maintenance binding and missing ADR-0085 classification/handoff in Transactions and Automation recovery paths. The proposed snake_case observer-payload normalization was rejected during main integration because the owning usage/profile contract uses camelCase serialized fields."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 8,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "head": "f59931771",
+      "note": "Accepted tracker presence deduplication, missing Game Session Cache/Rate-Limit usage, tick-batch versus entity-enqueue scope distinction, and evidence-gated staged-effect replay wording."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 9,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "head": "9af872fd9",
+      "note": "Accepted generic gRPC plaintext-guard scope, exact Account auth-session prefix families, non-region scripting Trigger Identity exception alignment, cache-reset writer fencing, and tick ledger projection/uniqueness terminology."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 3,
+      "raw": 8,
+      "useful": 7,
+      "status": "complete",
+      "head": "9af872fd9",
+      "note": "Seven inline findings were genuine: operator actor binding, fail-closed grammar, exact Account Redis families, pending-member scope evidence versus uniqueness, epoch logical/storage naming, serializer-size classification, and cross-region target namespace propagation. The Account-family item was already covered by concurrent local CLI fixes. Rejected the duplicate spatial-barrier namespace re-key because the accepted allocation partition remains tenant plus game instance."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 10,
+      "raw": 14,
+      "useful": 12,
+      "status": "complete",
+      "head": "4701927fe",
+      "note": "Accepted current/target and dedup corrections across preflight, Automation handoff, trackers, scripting identities/routing, Gateway/Redis wiring, TCP Proxy Redis status, runtime acceptance, and Cache reset fallback. Rejected two generic requests to add validation-workflow links because the architecture documents correctly own their focused proof obligations and do not need a duplicated execution ledger."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 4,
+      "raw": 8,
+      "useful": 7,
+      "status": "complete",
+      "head": "4701927fe",
+      "note": "Accepted caller identity, namespace/audit schema, Gateway Redis current-target, separate browser-revoke descriptor, current reset fallback, and tracker authority-dedup corrections. Rejected the duplicated-article report because the published head already contained the correct single article."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 11,
+      "raw": 14,
+      "useful": 13,
+      "status": "complete",
+      "head": "5fe14f101",
+      "note": "Accepted thirteen authority/current-target/proof corrections across route live checks, Entity watermark identity, Gateway/Redis diagrams and profiles, credential rotation, scripting identities, tick recovery/outcomes, and tracker proof claims. Rejected the scripting-observability omission report because the published head already contained the requested namespace field and onLoad omission."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 5,
+      "raw": 15,
+      "useful": 9,
+      "status": "complete",
+      "head": "5fe14f101",
+      "note": "Nine substantive findings covered target-only configuration labeling, capacity binding validation, initial operator issuance identity, replay-fence terminology, complete distinct-target identity, timer-audit current/target honesty, pre-DSL queue-pointer ownership, a missing scheduler owner link, and tracker authority deduplication. Four language-only suggestions were not counted useful; the EffectId namespace concern conflicted with the accepted fail-closed binding contract, and the reported presence-key typo did not exist on the reviewed head."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 12,
+      "raw": 9,
+      "useful": 9,
+      "status": "complete",
+      "head": "00fcce1be",
+      "note": "Accepted all nine findings across capacity callers, owner-local transaction atomicity, stale-work reconciliation, Redis reset principals, Automation queue bounds, operator gRPC credentials, Account encrypted exact-retry storage, and tracker authority deduplication."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 13,
+      "raw": 8,
+      "useful": 7,
+      "status": "complete",
+      "head": "0cdb2d9e4",
+      "note": "Accepted seven corrections covering capacity-policy cardinality proof, timer namespace scope, causal-floor terminology, tenant-reset index scope, transport current-state honesty, publish terminality, and Entity lock current-target honesty. Rejected the ADR 0072 resume-window report because the reviewed head already states the exact namespace/runtime/epoch/mode/generation tuple and separately excludes playableStateScope from identity."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 14,
+      "raw": 14,
+      "useful": 12,
+      "status": "complete",
+      "head": "baaf52e66",
+      "note": "Accepted twelve corrections covering operator TLS endpoint/rotation expiry, Entity watermark identity, tick orphan cleanup, region reset scope, Redis current/target roles and principals, cache diagrams, Trigger/onLoad identity, EffectId roots, and external-ingress scope. Rejected two requests to replace owner-local architecture proof contracts with generic validation-workflow links because that would weaken normative authority."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 15,
+      "raw": 16,
+      "useful": 12,
+      "status": "complete",
+      "head": "1d7478b30",
+      "note": "Accepted twelve corrections covering Gateway live admission, owner-execution rearm fencing, Entity guard projection, release-attestation terminality, Redis hash tags and legacy-family recovery, scripting target/current identity and mode limits, operator credential sources, Account success-versus-failure replay, and legacy rate-limit drain. Rejected the script-readiness pin-epoch change, the repeated capacity-proof workflow move, a validation-evidence storage restriction, and a presence-role claim already correctly marked unproved."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 16,
+      "raw": 12,
+      "useful": 9,
+      "status": "complete",
+      "head": "ad9831be2",
+      "note": "The first attempt received an explicit recoverable 12-minute rate limit at 10:26 and consumed no review; the zero-lane retry completed at 10:49. Accepted nine corrections covering operator rotation typing, asset terminality, Redis reset/proof boundaries, Entity target-cache labeling, cross-scope command identity, tick fallback semantics, and Gateway deny-marker durability. Rejected two ADR 0048 requests and one DSL pre-resolution exception already correct on the reviewed head."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 6,
+      "raw": 7,
+      "useful": 7,
+      "status": "complete",
+      "head": "ad9831be2",
+      "note": "Accepted all seven findings covering Account connect-token Redis ownership, catch-up-only resume-window identity, successful-versus-failed issuance replay precedence, exact no-attestation publication failure, complete operator lifecycle target-status, scripting control-plane output status, and gameplay-versus-friend presence ownership. Some asset terminality work overlapped CLI round 16, but the hosted finding identified and closed the remaining unqualified failure rule."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 17,
+      "raw": 12,
+      "useful": 12,
+      "status": "complete",
+      "head": "3ccf64da6",
+      "note": "Accepted all twelve findings covering the authz zero-delta vector, Logging maintenance availability, Game Session handoff idempotency, AR-1.5 post-bundle proof, validation-evidence routing, timer scope persistence, target-field cardinality, resume-window identity, target epoch mismatch, asset no-attestation terminality, Entity tenant-schema honesty, and distinct Gateway replay/revoke Lua descriptors."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 18,
+      "raw": 10,
+      "useful": 7,
+      "status": "complete",
+      "head": "84dc61447",
+      "note": "Accepted seven corrections covering exact asset no-attestation proof, Account response-envelope retention, operator-binding publication/readback, conditional participant-guard partitioning, namespace-complete schedule continuity, and pre-binding text-login identity. Rejected an already-explicit ADR 0072 identity request and two generic validation-workflow-link requests that would duplicate process routing in normative owner documents."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 7,
+      "raw": 0,
+      "useful": 0,
+      "status": "rate_limited",
+      "head": "84dc61447",
+      "note": "Full review requested at 11:23 after publishing the validated correction batch and resolving all seven verified-addressed hosted round-6 threads. CodeRabbit replied at 11:23 that the action was not completed and the next included review would be available in 11 minutes; no hosted review is pending."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 19,
+      "raw": 10,
+      "useful": 10,
+      "status": "complete",
+      "head": "13600d7ba",
+      "slice": "front",
+      "pr": 2662,
+      "note": "First split front review."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 8,
+      "raw": 10,
+      "useful": 10,
+      "status": "complete",
+      "head": "13600d7ba",
+      "slice": "front",
+      "pr": 2662,
+      "note": "First split front review."
+    },
+    {
+      "source": "luna-5A",
+      "round": 37,
+      "raw": 8,
+      "useful": 6,
+      "status": "complete",
+      "head": "13600d7ba",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-5B",
+      "round": 10,
+      "raw": 8,
+      "useful": 6,
+      "status": "complete",
+      "head": "13600d7ba",
+      "slice": "front",
+      "pr": 2662,
+      "note": "One duplicate and one rejected design selection excluded from main-adjudicated useful count."
+    },
+    {
+      "source": "luna-cross-seam",
+      "round": 2,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "head": "13600d7ba",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 20,
+      "raw": 6,
+      "useful": 4,
+      "status": "complete",
+      "head": "ca525e2f2",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-5A",
+      "round": 38,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "head": "ca525e2f2",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-5B",
+      "round": 11,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "head": "ca525e2f2",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-cross-seam",
+      "round": 3,
+      "raw": 5,
+      "useful": 5,
+      "status": "complete",
+      "head": "ca525e2f2",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 9,
+      "raw": 13,
+      "useful": 12,
+      "status": "complete",
+      "head": "492b6f5ad",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Twelve findings caused corrections; the V5/V17 retained-data gate was already satisfied. All thirteen exact threads were verified and resolved after publishing 083d629c3."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 21,
+      "raw": 5,
+      "useful": 3,
+      "status": "complete",
+      "head": "492b6f5ad",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Accepted fail-closed issued-token profile mapping, exact capacity required-fields validation, and narrowed asset proof; rejected two already-owned or already-explicit Account configuration observations."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 10,
+      "raw": 0,
+      "useful": 0,
+      "status": "rate_limited",
+      "head": "083d629c3",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Full review request was terminally rate-limited; no hosted review remained pending."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 22,
+      "raw": 2,
+      "useful": 2,
+      "status": "complete",
+      "head": "083d629c3",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-5A",
+      "round": 39,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "head": "083d629c3",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-5B",
+      "round": 12,
+      "raw": 1,
+      "useful": 1,
+      "status": "complete",
+      "head": "083d629c3",
+      "slice": "front",
+      "pr": 2662
+    },
+    {
+      "source": "luna-cross-seam",
+      "round": 4,
+      "raw": 1,
+      "useful": 0,
+      "status": "complete",
+      "head": "083d629c3",
+      "slice": "front",
+      "pr": 2662,
+      "note": "The sole candidate was already reconciled in the stacked back PR #2661 Entity operations change; no front correction was required."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 11,
+      "raw": 0,
+      "useful": 0,
+      "status": "rate_limited",
+      "head": "65a403332",
+      "slice": "front",
+      "pr": 2662,
+      "note": "First post-65a403332 request was terminally rate-limited for 30 seconds."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 23,
+      "raw": 0,
+      "useful": 0,
+      "status": "rate_limited",
+      "head": "65a403332",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Terminal CLI rate-limit response with a 42-second retry window."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 12,
+      "raw": 9,
+      "useful": 7,
+      "status": "complete",
+      "head": "65a403332",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Eight inline findings yielded six useful corrections; one outside-diff finding yielded one useful correction. All were fixed in 5c6cd89b6."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 24,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "head": "65a403332",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Accepted Logging/Admin reservation ownership, SF-2.4 partial status, current membership outcome/classification nuance after independent correction, and separate public static/assets ingress boundaries."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 25,
+      "status": "rate_limited",
+      "head": "65a403332",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Terminal rate-limit response with a 33-minute window; no retry has run yet."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 26,
+      "raw": 9,
+      "useful": 9,
+      "status": "complete",
+      "head": "3dd38f9a2",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Nine useful corrections found; fixes remain in the local combined batch."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 13,
+      "raw": 14,
+      "useful": 13,
+      "status": "complete",
+      "head": "3dd38f9a2",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Thirteen useful corrections found; one TCP duplicate was already fixed locally, and remaining fixes are pending locally."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 14,
+      "raw": 0,
+      "useful": 0,
+      "status": "complete",
+      "head": "3dd38f9a2",
+      "slice": "front",
+      "pr": 2662,
+      "note": "Local verification found zero residual regressions; this is local evidence only, not a hosted review result."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 1,
+      "raw": 3,
+      "useful": 3,
+      "status": "complete",
+      "head": "bc69ddce3",
+      "slice": "active",
+      "pr": 2663,
+      "note": "All three findings were accepted and fixed locally in b5db25ddf."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 2,
+      "raw": 9,
+      "useful": 9,
+      "status": "complete",
+      "head": "b5db25ddf",
+      "slice": "active",
+      "pr": 2663,
+      "note": "All nine findings were accepted and fixed in published rebased head ff8f83e9e."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 1,
+      "raw": 10,
+      "useful": 8,
+      "status": "complete",
+      "head": "bc69ddce3",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-30T09:28:31Z",
+      "completedAt": "2026-08-30T09:43:25Z",
+      "note": "Eight useful findings were accepted and fixed in published rebased head ff8f83e9e; two findings were already satisfied."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 3,
+      "raw": 5,
+      "useful": 4,
+      "status": "complete",
+      "head": "ff8f83e9e",
+      "slice": "active",
+      "pr": 2663,
+      "rateLimitedAt": "2026-08-30T10:03:00Z",
+      "note": "Retry completed with four useful findings, all fixed in published head 544920192; the fifth finding duplicated the existing inventory contract."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 4,
+      "raw": 7,
+      "useful": 6,
+      "status": "complete",
+      "head": "1d8865e38",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Six useful findings were fixed in local committed head a1425c69b; the seventh duplicated the timer inventory contract."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 2,
+      "raw": 10,
+      "useful": 6,
+      "status": "complete",
+      "head": "544920192",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-30T10:28:51Z",
+      "triggerConfirmedAt": "2026-08-30T10:28:58Z",
+      "completedAt": "2026-08-30T10:41:57Z",
+      "note": "Ten findings comprised nine inline and one outside-diff item. Six useful corrections are published in 6c1a4150c; typo, scaling, and scripting observations were already fixed, and the OpenAPI compatibility observation was a pre-v1 nonissue."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 5,
+      "raw": 10,
+      "useful": 6,
+      "status": "complete",
+      "head": "6c1a4150c",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Six useful findings were fixed and published in head 62c412369."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 6,
+      "raw": 13,
+      "useful": 11,
+      "status": "complete",
+      "head": "d1540c5cc",
+      "slice": "active",
+      "pr": 2663,
+      "rateLimitedAt": "2026-08-30T23:02:00+12:00",
+      "retryScheduledAt": "2026-08-30T23:07:00+12:00",
+      "note": "Retry completed with eleven useful corrections published across d1540c5cc, f938de9f4, 13bbc7f7f, fbf616825, and d50292fc4. Scaling target-state capacity inputs and procedural owningDomainIdentity were repeats already fixed; the namespace finding exposed remaining useful omissions."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 7,
+      "raw": 7,
+      "useful": 4,
+      "status": "complete",
+      "head": "a3393930c",
+      "slice": "active",
+      "pr": 2663,
+      "retryScheduledAt": "2026-08-30T23:35:00+12:00",
+      "note": "Four useful scaling, WMS freeze-ordering, participant-digest-schema, and Temporal-readiness corrections are published in 33bd69cbd. Procedural owningDomain, failed-asset tombstone, and tick shadow namespace findings were already correct."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 3,
+      "raw": 8,
+      "useful": 7,
+      "status": "complete",
+      "head": "a3393930c",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-30T11:29:17Z",
+      "triggerConfirmedAt": "2026-08-30T11:29:23Z",
+      "completedAt": "2026-08-30T11:40:33Z",
+      "note": "Seven useful findings were accepted and published in 33bd69cbd; the first-apply hyphen observation was a style nit. Six inline threads were verified, adjudicated, and manually resolved after fixes, and both outside-diff findings were fixed."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 8,
+      "raw": 2,
+      "useful": 2,
+      "status": "complete",
+      "head": "33bd69cbd",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Both useful findings were fixed and published in 8e400a8a2."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 9,
+      "raw": 10,
+      "useful": 7,
+      "status": "complete",
+      "head": "8e400a8a2",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Seven useful findings were fixed and published in 8523b3276."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 10,
+      "raw": 6,
+      "useful": 5,
+      "status": "complete",
+      "head": "8523b3276",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Five useful findings were fixed in the local validated batch; the Join/Play escape observation was rejected."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 4,
+      "raw": 7,
+      "useful": 6,
+      "status": "complete",
+      "head": "8523b3276",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-31T00:30:00+12:00",
+      "triggerConfirmedAt": "2026-08-31T00:30:00+12:00",
+      "completedAt": "2026-08-31T00:42:00+12:00",
+      "note": "Six useful findings were fixed in the local validated batch; the typo was already fixed/rejected, and the procedural finding overlapped CLI but was useful. Six hosted round-4 threads were resolved after verification."
+    },
+    {
+    "source": "coderabbit-cli",
+      "round": 11,
+      "raw": 8,
+      "useful": 8,
+      "status": "complete",
+      "head": "f773a73ce",
+      "slice": "active",
+      "pr": 2663,
+      "note": "Eight corrective/useful findings were identified; fixes remain local."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 5,
+      "raw": 8,
+      "useful": 8,
+      "status": "complete",
+      "head": "f773a73ce",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-31T03:04:00+12:00",
+      "triggerConfirmedAt": "2026-08-31T03:05:00+12:00",
+      "completedAt": "2026-08-31T03:20:00+12:00",
+      "note": "Final hosted review completed at 03:20 NZ with eight apparent findings: seven inline and one outside-diff; fixes and adjudication remain in progress locally."
+    },
+    {
+      "source": "coderabbit-cli",
+      "round": 1,
+      "raw": 4,
+      "useful": 4,
+      "status": "complete",
+      "head": "bc5d75b10",
+      "slice": "back",
+      "pr": 2661,
+      "note": "Current CLI pass found four raw/four useful findings; fixes remain local in the five-file batch at bc5d75b10."
+    },
+    {
+      "source": "luna",
+      "round": 1,
+      "status": "running",
+      "head": "721698ccf",
+      "slice": "back",
+      "pr": 2661,
+      "note": "Luna allocator/provenance findings, including overlapping tick findings and ADR provenance, remain pending."
+    },
+    {
+      "source": "coderabbit-hosted",
+      "round": 6,
+      "raw": 13,
+      "useful": 10,
+      "status": "complete",
+      "head": "a3d462181",
+      "slice": "active",
+      "pr": 2663,
+      "requestedAt": "2026-08-31T04:03:00+12:00",
+      "completedAt": "2026-08-31T04:38:00+12:00",
+      "note": "Hosted review completed with twelve inline raw findings, ten useful, two already-satisfied/duplicate, and one rejected outside-diff compatibility item; local hosted fixes and three verifier residual fixes remain uncommitted."
+    },
+    {"source":"coderabbit-hosted","round":1,"raw":6,"useful":6,"status":"complete","head":"c1dbb3e78","slice":"active","pr":2669},
+    {"source":"coderabbit-cli","round":1,"raw":5,"useful":5,"status":"complete","head":"33270eebd","slice":"active","pr":2669},
+    {"source":"luna","round":1,"raw":1,"useful":1,"status":"complete","head":"23cc2cbe1","slice":"active","pr":2669,"domain":"redis"},
+    {"source":"luna","round":1,"raw":0,"useful":0,"status":"complete","head":"23cc2cbe1","slice":"active","pr":2669,"domain":"scripting"},
+    {"source":"luna","round":1,"raw":1,"useful":1,"status":"complete","head":"23cc2cbe1","slice":"active","pr":2669,"domain":"cross-domain"},
+    {"source":"coderabbit-cli","round":2,"raw":3,"useful":3,"status":"complete","head":"23cc2cbe1","slice":"active","pr":2669},
+    {"source":"coderabbit-cli","round":3,"raw":5,"useful":2,"status":"complete","head":"0995278a2","slice":"active","pr":2669,"note":"Only validator and legacy-repair wording were new; plaintext/queue already explicit; process-link rejected."},
+    {"source":"coderabbit-cli","round":4,"raw":2,"useful":2,"status":"complete","head":"af2c10fdc","slice":"active","pr":2669},
+    {"source":"coderabbit-hosted","round":2,"raw":6,"useful":6,"status":"complete","head":"af2c10fdc","slice":"active","pr":2669,"completedAt":"2026-08-31T17:52:00+12:00"},
+    {"source":"coderabbit-cli","round":5,"raw":4,"useful":4,"status":"complete","head":"9680eb608","slice":"active","pr":2669},
+    {"source":"luna","round":1,"raw":0,"useful":0,"status":"complete","head":"589c9f8c5","slice":"active","pr":2669,"domain":"cross-domain-terminal"},
+    {"source":"coderabbit-cli","round":6,"raw":3,"useful":1,"status":"complete","head":"589c9f8c5","slice":"active","pr":2669,"note":"Two trivial refactors rejected; one reset-selector correction accepted."},
+    {"source":"coderabbit-cli","round":7,"status":"rate-limited","head":"5bb35ed1e","slice":"active","pr":2669,"note":"Retry rate-limited for three minutes at 18:32 NZ."},
+    {"source":"luna","round":1,"raw":0,"useful":0,"status":"complete","head":"5bb35ed1e","slice":"active","pr":2669,"domain":"exact-fix"},
+    {"source":"coderabbit-cli","round":1,"raw":9,"useful":8,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-hosted","round":1,"raw":18,"useful":14,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":2,"raw":7,"useful":7,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":3,"raw":10,"useful":10,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-hosted","round":2,"raw":10,"useful":8,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":4,"raw":4,"useful":4,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":5,"raw":7,"useful":7,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":6,"raw":2,"useful":2,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-hosted","round":3,"raw":10,"useful":5,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":7,"raw":2,"useful":2,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":8,"raw":6,"useful":2,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":9,"raw":2,"useful":1,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-hosted","round":4,"raw":11,"useful":10,"status":"complete","slice":"active","pr":2673},
+    {"source":"coderabbit-cli","round":10,"raw":2,"useful":0,"status":"complete","head":"f2991ec70","slice":"active","pr":2673,"note":"Both findings repeated invalid nullable-deadline claims; the schema is NOT NULL and entity accessors return primitive long."},
+    {"source":"coderabbit-cli","round":11,"raw":2,"useful":1,"status":"complete","head":"f2991ec70","slice":"active","pr":2673,"note":"Accepted the missing per-scope rollout barrier/readback sequencing; rejected the repeated bounded nested-map refactor as optional."},
+    {"source":"coderabbit-hosted","round":5,"raw":6,"useful":2,"status":"complete","head":"f2991ec70","slice":"active","pr":2673,"requestedAt":"2026-09-03T06:59:07+12:00","completedAt":"2026-09-03T07:17:43+12:00","note":"Accepted one region-normalization correctness fix and one formatter correction already fixed locally; rejected two optional refactors and two invalid duplicate nullable/boolean claims."},
+    {"source":"coderabbit-cli","round":12,"raw":6,"useful":2,"status":"complete","head":"6bf6d76af","slice":"active","pr":2673,"note":"Accepted Account security-lock evidence wording and removal of a redundant replaced-session stop; rejected two bounded performance refactors and two impossible nullable-field claims."},
+    {"source":"coderabbit-hosted","round":6,"raw":2,"useful":1,"status":"complete","head":"6bf6d76af","slice":"active","pr":2673,"requestedAt":"2026-09-03T09:51:00+12:00","completedAt":"2026-09-03T10:05:50+12:00","note":"Accepted active legacy game_manifest writer retirement status; rejected duplicated result-to-target-command predicate extraction as an optional refactor."}
+  ]
+}

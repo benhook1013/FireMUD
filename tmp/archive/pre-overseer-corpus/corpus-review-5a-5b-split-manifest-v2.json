@@ -1,0 +1,1197 @@
+{
+  "base": "origin/develop",
+  "source_worktree": "/home/ben/src/FireMUD-corpus-review-5ab-shared-contracts",
+  "full_diff": {
+    "files": 93,
+    "hunks": 616,
+    "additions": 2560,
+    "deletions": 613,
+    "bytes": 986287,
+    "sha256": "d7b3a8a0068c7a5eecaea49ae9b8bbb832f82180d7daff456e05c62ed29b9b74"
+  },
+  "front_patch": "/home/ben/src/FireMUD-wsl-copy/tmp/corpus-review-5a-front-unified0-v2.patch",
+  "remainder_patch": "/home/ben/src/FireMUD-wsl-copy/tmp/corpus-review-5b-remainder-unified0-v2.patch",
+  "front_patch_stats": {
+    "files": 51,
+    "hunks": 330,
+    "additions": 1874,
+    "deletions": 282,
+    "bytes": 481268,
+    "sha256": "30480941639f302ad5ab333d1eb4dd46d530af10e1701b8283f7e09537f327ab"
+  },
+  "remainder_patch_stats": {
+    "files": 55,
+    "hunks": 286,
+    "additions": 679,
+    "deletions": 314,
+    "bytes": 495411,
+    "sha256": "4d12a4528c61a7b7c093060351795d75fe2170787cf9e66c88a747822f2746bf"
+  },
+  "hunk_partition": {
+    "total": 616,
+    "front": 330,
+    "remainder": 286,
+    "hunk_overlap": 0,
+    "hunk_union": 616
+  },
+  "path_partition": {
+    "full": 93,
+    "front": 51,
+    "remainder": 55,
+    "overlap": 13,
+    "union": 93,
+    "missing": []
+  },
+  "mixed_hunk_details": {
+    "design/architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md": {
+      "total_hunks": 2,
+      "selected_hunks": [
+        1,
+        2
+      ],
+      "front_hunks": [
+        1,
+        2
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md": {
+      "total_hunks": 4,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/decisions/adr-0032-kubernetes-native-secret-delivery-without-mandatory-vault.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/decisions/adr-0047-logging-admin-as-external-operator-write-ingress.md": {
+      "total_hunks": 10,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "design/architecture/infrastructure/deployment-environments.md": {
+      "total_hunks": 2,
+      "selected_hunks": [
+        1,
+        2
+      ],
+      "front_hunks": [
+        1,
+        2
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/infrastructure/environment-and-secrets-catalog.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/infrastructure/environment-and-secrets-overview.md": {
+      "total_hunks": 7,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/infrastructure/environment-and-secrets.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/account-service/api-contracts.md": {
+      "total_hunks": 10,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/account-service/configuration.md": {
+      "total_hunks": 2,
+      "selected_hunks": [
+        1,
+        2
+      ],
+      "front_hunks": [
+        1,
+        2
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/account-service/runtime-and-data.md": {
+      "total_hunks": 10,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "remainder_hunks": [
+        1,
+        2
+      ]
+    },
+    "design/architecture/microservices/automation-scripting-service/runtime-and-data.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "design/architecture/microservices/entity-management-service/api-contracts.md": {
+      "total_hunks": 5,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "design/architecture/microservices/entity-management-service/runtime-and-data.md": {
+      "total_hunks": 17,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    "design/architecture/microservices/game-design-service/version-control.md": {
+      "total_hunks": 9,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    "design/architecture/microservices/game-session-service/protocols.md": {
+      "total_hunks": 4,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/game-session-service/runtime-and-data.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/spring-cloud-gateway/api-contracts.md": {
+      "total_hunks": 5,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/spring-cloud-gateway/configuration.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/tcp-proxy-service/api-contracts.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/tcp-proxy-service/configuration.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/tcp-proxy-service/operations.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/tcp-proxy-service/protocols.md": {
+      "total_hunks": 5,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/microservices/world-management-service/api-contracts.md": {
+      "total_hunks": 4,
+      "selected_hunks": [
+        1,
+        2
+      ],
+      "front_hunks": [
+        1,
+        2
+      ],
+      "remainder_hunks": [
+        1,
+        2
+      ]
+    },
+    "design/architecture/microservices/world-management-service/runtime-and-data.md": {
+      "total_hunks": 11,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    "design/architecture/service-responsibility-matrix.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3
+      ]
+    },
+    "design/architecture/system-architecture-authentication.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-authz-route-matrix.md": {
+      "total_hunks": 8,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-authz-route-matrix.yaml": {
+      "total_hunks": 76,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-deploy-preflight-policy.md": {
+      "total_hunks": 3,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2
+      ]
+    },
+    "design/architecture/system-architecture-diagram.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-frontend.md": {
+      "total_hunks": 13,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-gateway.md": {
+      "total_hunks": 7,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-grpc.md": {
+      "total_hunks": 3,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-multi-tenancy.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-operator-credentials-runbook.md": {
+      "total_hunks": 7,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-overview.md": {
+      "total_hunks": 18,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    "design/architecture/system-architecture-redis-cheatsheet.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-redis-ops-access.md": {
+      "total_hunks": 3,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-redis-reset-and-recovery.md": {
+      "total_hunks": 3,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-redis-usage-and-profiles.md": {
+      "total_hunks": 1,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-redis.md": {
+      "total_hunks": 10,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-security.md": {
+      "total_hunks": 10,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "remainder_hunks": []
+    },
+    "design/architecture/system-architecture-shared-libraries.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3
+      ]
+    },
+    "design/architecture/system-architecture-testing.md": {
+      "total_hunks": 3,
+      "selected_hunks": [
+        1,
+        2,
+        3
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3
+      ],
+      "remainder_hunks": []
+    },
+    "design/developer-workflows/login-session-smoke-tests.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "remainder_hunks": []
+    },
+    "design/project-management/implementation-tracking/player-access-and-session.md": {
+      "total_hunks": 8,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "remainder_hunks": []
+    },
+    "design/project-management/implementation-tracking/realm-routing-and-playable-state.md": {
+      "total_hunks": 7,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "remainder_hunks": []
+    },
+    "design/project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md": {
+      "total_hunks": 6,
+      "selected_hunks": [
+        1
+      ],
+      "front_hunks": [
+        1
+      ],
+      "remainder_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "dev-tools/validation/check-authz-route-matrix.py": {
+      "total_hunks": 30,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "remainder_hunks": []
+    },
+    "dev-tools/validation/test_check_authz_route_matrix.py": {
+      "total_hunks": 24,
+      "selected_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24
+      ],
+      "front_hunks": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24
+      ],
+      "remainder_hunks": []
+    }
+  },
+  "validation_note": "v2 hunk headers are rebased for sequential application front then remainder; unified-zero patches require git apply --unidiff-zero. Path overlap is expected for mixed files; hunk overlap is zero. Byte identity is checked by applying both to an isolated origin/develop baseline and comparing resulting changed-file bytes."
+}

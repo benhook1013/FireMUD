@@ -1,0 +1,169 @@
+FireMUD strategic-review handoff
+1. Overall project understanding
+Confirmed: FireMUD is intended to become a modern, accessible, multi-tenant platform for creating and operating persistent text RPGs, with web and Telnet clients, creator tooling, scripted worlds, and eventually an official paid hosted service. Community self-hosting remains noncommercial; separate commercial licences cover monetized third-party operators. Start with [README](/home/ben/src/FireMUD-wsl-copy/README.md), [product requirements](/home/ben/src/FireMUD-wsl-copy/design/product/requirements.md), [user journeys](/home/ben/src/FireMUD-wsl-copy/design/product/user-journeys/overview.md), and [system overview](/home/ben/src/FireMUD-wsl-copy/design/architecture/system-architecture-overview.md).
+My accumulated understanding of Ben’s priorities:
+- Build a hobby project toward credible SaaS capability, without prematurely operating it like a regulated enterprise.
+- Prefer direct pre-v1 convergence over compatibility scaffolding; migrations will be squashed into clean service baselines.
+- Correctness matters, but time-to-merge, parallelism, and reaching implementation matter too.
+- Architecture owns target state; trackers report implementation/proof; code and tests establish reality.
+- Use Luna heavily for bounded reading, implementation, and verification. The main worker orchestrates, adjudicates, integrates, and validates; it must not become the bulk editor.
+- Hosted CodeRabbit is the scarce merge-readiness signal and should be used near its hourly availability. CLI is an additional continuous review tool.
+- Deduplicate competing normative ownership, but retain useful local consequences and explanation.
+- Do not perfect transient status prose at the expense of stable contracts or implementation.
+- Ben decides genuinely consequential product/design alternatives. Routine IDs, schemas, error mappings, and local implementation choices should proceed autonomously.
+- AI never merges or enables auto-merge.
+Major architectural commitments include domain-owned state and mutation, typed gRPC internal contracts, Gateway plus TCP Proxy edge paths, PostgreSQL authority, Redis as coordination/cache rather than durable truth, Temporal-coordinated workflows, strict tenant/scope identity, digest-bound idempotency, epoch/fence ownership, owner-local replay guards, fail-closed admission, and stable playable-state namespaces distinct from runtime instances. The [service responsibility matrix](/home/ben/src/FireMUD-wsl-copy/design/architecture/service-responsibility-matrix.md) is the best concise ownership map.
+Genuinely unresolved or intentionally deferred:
+- The canonical Weather aggregate selector remains explicitly unresolved: region-scoped versus room-scoped. Current Weather mutation is unsafe drift, not an accepted answer.
+- Hosted creator eligibility is now 18+; a broader player/minors/guardian/privacy policy remains future legal/product work.
+- Creator commerce/marketplace terms, production hosted privacy/ToS/AUP, and company/sole-operator continuity are deferred launch work rather than current implementation authority.
+- Production key rotation, restore/migration evidence, signed releases, and traffic-open gates are mostly implementation/proof gaps, not unresolved design choices.
+- Old temporary files still mention a pending plan-root/ordinal decision. I would not treat that as live without checking current canonical sources; those trackers are stale.
+- There is no pending human decision blocking current #2682 wrap-up.
+2. Progress and direction
+Confirmed implementation is broad but shallow-to-partial rather than a usable hosted product. The authoritative status surface is [implementation tracking](/home/ben/src/FireMUD-wsl-copy/design/project-management/implementation-tracking/README.md).
+Representative working slices:
+- Player: account/authentication substrate; filtered world/realm/character discovery; WebSocket and Telnet login/play/look paths; bounded movement, inventory, container, equipment, chat/friend/presence components with focused tests and controlled smoke tooling.
+- Creator: typed Game Design, World, and Entity authoring APIs; versioned draft/publication substrates; assets; portions of scripting and rollout control.
+- Operator: CI validation, Compose/Kubernetes/Helm deployment machinery, observability foundations, internal control/read APIs, audits, and bounded moderation/recovery primitives.
+Where they stop:
+- There is no proven production-ready end-to-end hosted journey.
+- The browser client remains a starter, not a released usable player application.
+- Creator creation → publication → activation → safe live update is incomplete across several owners.
+- Stable namespace admission, reconnect/session continuity, complete restrictions/moderation, exact runtime fences, restore proof, production credentials, and traffic-open gates remain incomplete.
+- Many impressive service-local tests do not prove cross-service runtime behavior. Docker-backed proof is also unavailable in the current WSL environment, although CI can run more.
+The ADR/import effort established a much stronger target: 182 historical decision keys plus the direct licensing/hosted decisions through ADRs 0179–0181 were reconciled into current authority. It clarified service ownership, identity/fencing, replay, lifecycle, moderation, licensing, hosted terms, and current-versus-target status. Its main practical value is preventing implementation from silently choosing incompatible local answers.
+My expected sequence remains:
+1. Finish and publish current Automation exact-pin PR #2682.
+2. Rebase and finish Game Session owner/epoch PR #2680.
+3. Perform the whole-app pre-v1 migration-baseline squash.
+4. Return to residual #2676 and its dependent 5B-derived Automation slices.
+5. Resume the remaining whole-corpus units, then perform the final corpus-wide owner/secondary/tracker consistency pass.
+That order closes the currently half-implemented exact-pin contract before reshaping migrations, then returns to preserved residual work without carrying obsolete migration history forward.
+3. Design cleanup purpose and scope
+The agreed objective was not “review ADRs again.” It was to review all allocated design authority—owners, consumers, ADR rationale, product consequences, implementation trackers, schemas, code, and proof—for contradiction, missing requirements, false current-state claims, harmful duplication, and broken handoffs.
+The intended map is [whole-corpus review plan](/home/ben/src/FireMUD-wsl-copy/tmp/whole-corpus-authority-review-plan.md): 23 cognitive units across seven families, normally 8–18 substantive sources per unit. That plan remains conceptually useful, but its live status data is stale.
+Practical scope evolved badly in one respect: 5B began as “SQL, migration, schema, and retention,” but review correctly followed those invariants into Automation claim identity, exact pin authority, retries, handoff, deduplication, scheduling, cleanup, and executable proof. It therefore became a sizeable implementation program, repeatedly split to stay under CodeRabbit’s 100-file ceiling.
+Current 5B-derived subdivisions:
+- #2682: Automation-side exact-pin authority, ingress identity, persistence, handoff evidence, retention, and proof.
+- #2680: Game Session pin owner, CAS/epoch lifecycle, owner readback, and downstream admission enforcement.
+- #2681: draft exact-pin proof work; currently dirty and not authoritative.
+- #2676: residual durable Automation authority.
+- #2677: publication/readiness.
+- #2678: handoff/scheduling.
+- #2679: execution replay/cleanup.
+- Prior front slices, including the 5A/shared-contract work, have merged.
+- #2661 contains parked/downstream Redis/replay/timer/workflow material associated with 5C/5D, but should be refreshed before trusting its topology.
+Formal corpus coverage beyond the shared-runtime work is largely untouched. Some documents in other families changed opportunistically, but that is not equivalent to completing their planned whole-section reviews.
+My revised view: finish the already-created 5B implementation stack, but stop allowing “5B corpus review” to absorb every adjacent runtime capability indefinitely. Stable documentation correction belongs in corpus review; substantial persistence/concurrency/runtime capabilities should become explicit implementation slices with their own completion contracts.
+4. What repeated review is revealing
+Recent serious examples:
+- Automation required a positive pin epoch that current Game Session never supplies. This exposed an incomplete cross-PR deployment boundary; #2680 owns the missing authority.
+- Distinct plugin bindings could be coalesced because durable work/audit identity omitted stable binding identity. That can silently drop legitimate plugin commands.
+- Reusing an ingress identity with changed payload could replay the old outcome because no canonical request digest was persisted and compared.
+- Final gameplay handoff checked region ownership but not the exact script pin owner tuple, allowing a same-version repin to evade the fence.
+- Handoff upsert identity could overwrite/reuse a row across mismatched owner evidence.
+- Real PostgreSQL partial-index, reclaim/renewal, and FK-retention behavior lacked executable concurrency proof.
+- Parallel fixes themselves introduced a proto field-number collision and initially incomplete timer/binding propagation; verification caught those before integration.
+Classification:
+- Pre-existing defects: missing binding identity, missing ingress digest, incomplete handoff pin fence, weak database concurrency proof.
+- Defects introduced by fixes: field-number collision, partial propagation, initially timing-dependent integration proof, and earlier over-coupling of independent diagnostic filters.
+- Newly made explicit requirements: durable stable binding identity and exact source/target pin evidence were already latent in canonical contracts but had not been translated into all schemas and services.
+- Boundary-expansion findings: Game Session owner enforcement, scheduler propagation, and downstream admission appeared because reviewers correctly followed Automation evidence into consumers.
+Continued findings are driven by four things:
+- 5B invariants are inherently cross-service and cross-layer.
+- The original code implemented fragments of target contracts without one closed end-to-end slice.
+- Every legitimate fix exposes adjacent identity/persistence consumers.
+- Repeated splitting and long-lived branches create integration drift and cause reviewers to rediscover stale or partially propagated facts.
+Evidence supported continued depth: the latest broad Luna checks found real command-loss and idempotency defects, the last CLI returned 15 raw/11 accepted, and hosted at 16:10 returned 13 threads, many useful. That is not genuine taper.
+However, continuing indefinitely on one expanding PR is no longer efficient. Finishing known corrections, merging the coherent slice, and reviewing the smaller successor is better than forcing zero across a continuously changing 70–90-file surface. A finish boundary is justified when new findings are duplicate, already fixed, transient status-only, cosmetic, or owned by a clearly separate implementation slice—and especially after two stable-head reviews find zero genuinely useful contract defects. Ben has now explicitly stopped further review for this wrap-up.
+5. Exact volatile execution state
+Active published PR:
+- #2682, codex/corpus-review-5b-automation-pin-authority, base develop.
+- Remote reviewed head: dca6d6b67.
+- Local active worktree: /home/ben/src/FireMUD-corpus-review-5b-automation-pin-authority, currently 706c5f7e4, one verified fix commit ahead of remote.
+- Latest hosted review completed at 16:10 on old remote head with 13 threads; no hosted request is pending.
+- Latest CLI on that old head: 15 raw, 11 accepted.
+- No further CLI, hosted, or broad Luna review will be started under the current pause instruction.
+Known unpublished wrap-up work:
+- /home/ben/src/FireMUD-pr2682-cli4-fix-batch: verified CLI/hosted fixes through af440c617.
+- /home/ben/src/FireMUD-pr2682-binding-dedup-fix: stable binding identity commit 19407c1f6; its final scheduler/uniqueness corrections are still being completed and are currently uncommitted.
+- /home/ben/src/FireMUD-pr2682-claim-digest-handoff-fix: digest/handoff commits through a0674881d.
+- /home/ben/src/FireMUD-pr2682-postgres-claim-proof: PostgreSQL proof through deterministic lock-observation correction 391d48bf6.
+Dependent/preserved work:
+- #2680, Game Session exact-pin owner remainder. Its local worktree is /home/ben/src/FireMUD-corpus-review-5b-game-session-pin-authority; it needs careful propagation/rebase after #2682.
+- #2681 is draft proof work. Its worktree has uncommitted changes and must not be cleaned or deleted before containment review.
+- #2676 through #2679 preserve the dormant residual/publication/handoff/execution stack.
+- #2661 is old downstream shared-runtime material and needs topology refresh before use.
+Workspace hygiene is poor: dozens of completed review worktrees remain. Most are probably disposable after containment proof, but several contain unique or uncommitted work, so bulk deletion would be unsafe.
+Do not trust these as live state:
+- [old main handover](/home/ben/src/FireMUD-wsl-copy/tmp/main-slice-worker-handover.md) still describes #2658/#2659.
+- [corpus status JSON](/home/ben/src/FireMUD-wsl-copy/tmp/corpus-review-status.json) and its reporter still identify old PR #2673/revisions and even a “running” review.
+- Historical patch manifests and split manifests under tmp/ are provenance aids, not current authority.
+Safe continuation point: finish the one active binding correction, integrate the four isolated batches while preserving both sides of conflicts, run full Automation/docs/diff validation, push one coherent head, resolve only threads demonstrably addressed, report and pause. There is no pending human design decision in that boundary.
+6. Recommendation
+Finish #2682 next. Completion means:
+- Contract: Automation ingress, scheduled work, audits, work items, and handoff all carry one coherent exact pin and stable binding identity; retries compare canonical request digest; core coalescing and plugin independence are explicit.
+- Implementation: schema/indexes, entities, repositories, services, proto fields, scheduler propagation, claim fencing, and handoff upsert agree.
+- Proof: focused unit/migration tests, real-PostgreSQL concurrency tests in CI, generated-proto/jOOQ compilation, full Automation check, docs validation, and clean diff.
+- Boundary: Game Session ownership and admission enforcement remain explicitly #2680, not falsely claimed complete in #2682.
+After #2680, split work deliberately:
+- Documentation lane: continue owner/consumer/canonical-dedup corpus units.
+- Foundation implementation lane: exact owner contracts, migrations, concurrency, replay, and end-to-end proof.
+- Do not hide a substantial runtime build inside “status alignment,” but do fix bounded code when that is simpler and more honest than walls of drift prose.
+Parallel organization under one hosted-review/hour constraint:
+- One published active PR receives hosted review.
+- One or two agents apply/verify its findings.
+- Another agent prepares the next dependency-safe slice locally.
+- CLI runs continuously after meaningful local batches; hosted is triggered at the first eligible meaningful checkpoint.
+- No push while hosted is active.
+- Cross-domain corrections that stop repeated findings should land in the active PR when coherent; unrelated large capability work gets its own queued slice.
+- Preserve a preemptible fix lane; the main worker never starts editing because reviewers occupied every slot.
+Process changes I recommend:
+- Keep semantic domains smaller than the original 5B, not merely under a file cap.
+- Stop broad new discovery while a large known-finding backlog is unconsumed.
+- Integrate correction branches frequently; do not let parallel branches diverge for hours.
+- Treat CodeRabbit’s 100-file ceiling purely as packaging, never as a reason to omit a fix.
+- Refresh the live tracker at each merge/split; stale status caused real orchestration errors.
+- Collapse and remove verified-contained worktrees immediately after each merge.
+- Separate “stable contract defect” from “current status maintenance” in review counts.
+- Preserve the strongest parts of the process: independent verification, hosted-first scheduling, full-section reviews that may follow seams, canonical-owner dedup, and explicit current-versus-target honesty.
+Candid revision: I previously treated 5B as if sufficient review could make one expanding surface terminal. That was wrong. The review depth found important defects, but the unit became too broad and too implementation-heavy to remain a useful single corpus section. The right response is not to reduce correctness; it is to finish the current coherent chain, then manage future discoveries as smaller semantic implementation slices alongside the remaining corpus review.
+
+7. Deployment-gate applicability update (2026-09-07)
+The current `develop` dev-demo workflow deletes and recreates namespace `dev` before deployment. Its PostgreSQL, Redis coordination/cache, and MinIO state are namespaced PVCs using the cluster-provided `local-path` StorageClass; service configuration names only those in-cluster endpoints, and no external database or Redis owner is configured. The seed hook therefore targets a fresh deployment. Old Game Session `STAGED` rows and Automation owner/epoch/pin state do not enter this deployment through the configured path after successful namespace deletion. A merely retained orphan PV would require an actual reattachment/reuse path before its bytes could become upgrade input. Consequently the inherited live-row drain checklist is not a merge gate for this disposable dev-demo path; post-merge evidence should instead confirm namespace reset, rollout, bootstrap, and smoke. This bounded applicability check did not inventory live data or change deployment tooling.
+
+8. Restart pause handoff (2026-09-07)
+- PR #2680 worktree: `/home/ben/src/FireMUD-corpus-review-5b-game-session-pin-authority`, branch `codex/corpus-review-5b-game-session-pin-authority`, clean and published at `6e0f3cddc3cf0d5e5b96846b8da7d3c18d3cd3ec`.
+- The final published correction isolates `TelnetServerHandlerTest` from a real localhost WebSocket race. The focused test and final `./gradlew :tcp-proxy-service:check -PfullCheck` passed. Required GitHub CI restarted and may continue externally.
+- PR #2680 remains open against `develop`, merge state `BLOCKED`, with Ben's existing merge-method `MERGE` auto-merge request enabled. Do not alter that authorization during restart.
+- No hosted or CLI review is active. The last attempted hosted command was rate-limited and did not start; do not retry under the current no-new-review direction.
+- Migration squash worktree: `/home/ben/src/FireMUD-pre-v1-migration-squash-final`, branch `codex/pre-v1-migration-squash-final`, HEAD `d0de48206e48f4882032a008d6af1a1884d98ba6`.
+- Committed migration work: `7ae2716a3` folds Automation V1-V10 and Logging/Admin V1-V3 into direct V1 baselines after a focused independent review; `d0de48206` carries the final exact-pin correction commit into the isolated lane.
+- Preserved uncommitted Game Session squash: V1 is being expanded to the final V1-V17 schema; V2-V17 SQL/Java migration files and their intermediate migration tests are deleted; a new untracked `V1__baselineTest.java` exists. This work was interrupted before handoff, main diff review, or validation and must be inspected before acceptance.
+- The squash worktree also contains untracked `buildSrc/.kotlin/` generated during Gradle activity. It was preserved at pause and must not be mistaken for source work.
+- Both active Luna tasks were interrupted: the Game Session squash worker and exact-head CI watcher. No active CodeRabbit CLI run exists.
+
+9. Migration-baseline squash checkpoint (2026-09-07)
+- Exact-pin PR #2680 merged into `develop` as `76f0d4c40`; its dev-demo reset/deploy succeeded, while the smoke job failed only because preview-deployer lacked `pods/portforward`. Do not reopen the completed exact-pin boundary here.
+- The active consolidation is PR #2693, `codex/pre-v1-migration-squash-final` into `develop`, published at `7d1047edcdda9134744fc61a510bd7cf63a8928e`. It is the single pre-v1 destructive reset/recreate baseline for Automation V1-V10, Game Session V1-V17, and Logging/Admin V1-V3.
+- CLI review round 1 produced nine accepted fixes. Round 2 produced one production schema defect and one proof gap: Game Session now rejects COMMITTED pin operations without a nonblank positive resulting tuple, and fresh PostgreSQL proof covers all six named operation checks; Automation now directly proves nullable identity deduplication for its new `NULLS NOT DISTINCT` indexes. Five other round-2 suggestions conflicted with current contracts or targeted explicitly deferred retention/report paths and were rejected. A third CLI review attempt on the final head was rate-limited and produced no findings.
+- Exact-head local proof is green: Automation 717 total / 698 executed / 19 Docker-skipped / 0 failed; Game Session 1,733 total / 1,571 executed / 162 Docker or cross-service skipped / 0 failed; repository Spotless, Flyway, links, Markdown, and diff checks passed. The newly added PostgreSQL cases are locally skipped because Docker is unavailable and must not be described as executed runtime proof.
+- Hosted CodeRabbit full review was confirmed triggered at 2026-09-06T14:04:28Z UTC on exact head `7d1047edc`; do not push while it is active. A read-only Luna sentinel is monitoring it. CI is green so far, with Game Session build/test and preview deployment still in progress at this checkpoint.
+- Human merge sequence, after hosted findings and all required checks are clear: merge only PR #2693 to `develop`; let that merge trigger the coupled dev-demo reset/recreate deployment; verify namespace reset, rollout/bootstrap, and smoke. AI workers do not merge.
+
+10. PR #2693 final review-safe checkpoint (2026-09-07)
+- Final published head is `ccf80fe71f584b0eba96f97dffd66e2763e4e151`; the worktree and branch are clean, PR #2693 remains based on `develop`, CodeRabbit CLI reviewed 62 files at that exact head with zero findings, and GitHub reports `MERGEABLE` / merge state `CLEAN`.
+- Hosted review on `7d1047edc` produced three actionable documentation/schema-proof findings, all fixed and resolved. Hosted review on `eee8d3935` then found one major Automation production defect: the onLoad unique identity omitted runtime-scope fields while the defensive repository fallback included them. The fallback now matches the canonical pre-instance identity. CLI review additionally caught PostgreSQL three-valued-logic gaps in ingress/handler pin CHECK constraints; those constraints now require explicit positive epochs and nonblank owner evidence, with direct PostgreSQL assertions for rejected and accepted shapes.
+- The final hosted full review covered exact production checkpoint `49a80ca7656b5b1dbe495607ce84af42e42e2556` and updated CodeRabbit's summary to `Minimal` risk with `No actionable current-head risk remains`. The canonical checker still reports `ok=false` because a zero-finding hosted run updated the long-lived summary/direct command reply rather than creating a new substantive review record, and because the final head is one commit later. There are zero current/outdated threads and zero summary-only/outside-diff findings.
+- `ccf80fe71` is the only post-hosted commit and changes no production behavior: it adds direct proof that a positive ingress pin cannot omit `game_instance_id`. Its exact-head CLI review returned zero findings. Another hosted review is not justified for that proof-only change; it becomes necessary only if a later finding or CI failure forces a production-affecting change.
+- Final-head CI passed every required job: Automation, Game Session, and Logging/Admin service matrices; full-stack smoke and Smoke Gate; CodeQL; security; Flyway; documentation; validation; and dev-tool contracts. Local full checks also passed, but Docker/Testcontainers cases remained skipped locally. CI ran the Docker-enabled integration tasks; do not describe the local seven-case focused run as executed runtime proof.
+- A CLI suggestion to change four Logging/Admin `TIMESTAMP` columns to `TIMESTAMPTZ` was adjudicated as a real wider data-contract hardening topic, not a defect introduced by the squash: the baseline preserves `develop`'s prior schema, current repositories deliberately map UTC through `LocalDateTime`, and a valid change requires coordinated jOOQ/repository/test convergence plus a wider timestamp policy. Do not expand #2693 for it.
+- No consequential design decision blocks the checkpoint. Human sequence: merge only PR #2693 to `develop`; that merge triggers the coupled dev-demo deployment, which must use the pre-v1 namespace/database reset-and-recreate path rather than an in-place migration; then verify namespace reset, rollout/bootstrap, and smoke. AI workers do not merge. After successful deployment verification, resume the selective #2676 residual sequence under the draft domain-review operating model in PR #2697; do not reopen #2680 or carry old staged migrations forward.
+
+11. PR #2693 merge deployment verification (2026-09-07)
+- PR #2693 merged to `develop` as `71b59ca46816a08df12bba8928958a8193e1ea34`.
+- Develop run `34087293804` executed the clean namespace reset and recreation, waited for all runtime images, completed the Helm rollout, and passed the TCP smoke. Runtime-image run `34087293941` completed successfully, including its published-image full-stack smoke.
+- The develop run failed only at `Create dev-demo smoke account`: live identity `system:serviceaccount:kube-system:preview-deployer` was forbidden to create `pods/portforward` in namespace `dev`. Repository authority `k8s/preview/preview-deployer-rbac.yaml` already grants `pods/portforward` with `create`, so the evidence indicates live cluster RBAC drift rather than an application or repository-contract regression.
+- Gameplay owns applying/reconciling the canonical preview RBAC and completing the account-bootstrap proof. Until then, namespace reset, image publication, rollout, and TCP smoke are confirmed; account/session bootstrap proof is pending. Do not repeatedly rerun from this lane.
+- Worker continues selective #2676 residual reconciliation against fresh `develop`; the first candidate is the durable Automation admission request acknowledgement/readback gap, reimplemented against the consolidated V1 baseline rather than carrying staged V11 history.
