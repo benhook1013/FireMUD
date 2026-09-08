@@ -1034,6 +1034,7 @@ def blackbox_websocket_record(config: SmokeConfig, injected: set[str]) -> dict[s
 def blackbox_telnet_record(config: SmokeConfig, injected: set[str]) -> dict[str, Any]:
     if "telnet" in injected:
         return {"path": "telnet", "target": metric_target_for_path("telnet"), "value": 0}
+    validate_telnet_transport_config(config, {"telnet"}, simulate=False)
     try:
         with open_telnet_socket(
             config.telnet_host,
@@ -1194,6 +1195,7 @@ def run_telnet_canary(
         return [], []
     if "login" in injected or "command" in injected:
         return simulated_canary_records(config, injected)
+    validate_telnet_transport_config(config, {"telnet"}, simulate=False)
     try:
         step_results: list[dict[str, Any]] = []
         with open_telnet_socket(

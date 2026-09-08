@@ -170,7 +170,10 @@ test("selects the canonical preview comment by updated time, then id", async () 
   assert.equal(result.calls.updates[0].comment_id, "103");
   assert.match(result.calls.updates[0].body, /Demo login username: demo-user/);
   assert.match(result.calls.updates[0].body, /Demo login email: demo@example\.test/);
-  assert.match(result.calls.updates[0].body, /Demo login password: demo-password/);
+  assert.match(
+    result.calls.updates[0].body,
+    /Demo login password: repository smoke default \(not printed\)/,
+  );
 });
 
 test("ignores null or missing bot comment bodies while publishing the canonical summary", async () => {

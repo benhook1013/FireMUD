@@ -2372,6 +2372,7 @@ run_clean_python - "$RUNNER" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 runner_path = Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("player_experience_smoke_failure_capture", runner_path)
@@ -2473,6 +2474,108 @@ assert_producers_empty("advertised", False)
 assert_producers_empty("omitted", False)
 assert_producers_empty("omitted", True)
 assert_producers_emit("advertised", True)
+
+
+def authorized_telnet_config(transport):
+    config = runner.SmokeConfig.from_env(
+        "contract-test",
+        "telnet",
+        None,
+        telnet_transport=transport,
+        telnet_server_hostname=(
+            "preview.example.test" if transport == "tls" else None
+        ),
+    )
+    config.username = "non-default@example.com"
+    config.password = "non-default-password"
+    config.player_flow_canary_identity = {
+        "authority": "account-service",
+        "classification": "synthetic",
+        "analyticsSloExclusion": True,
+        "credentials": {"nonDefault": True, "productionSafe": True},
+        "transportCharacters": {
+            "telnet": {"restricted": True, "isolated": True}
+        },
+        "evidenceRef": "account://contract-test/synthetic-canary",
+    }
+    config._validated_player_flow_canary_paths = frozenset({"telnet"})
+    return config
+
+
+for invalid_transport, expected_error in (
+    (None, "--telnet-transport tls"),
+    ("plaintext", "rejects plaintext"),
+):
+    invalid_config = authorized_telnet_config(invalid_transport)
+    with patch.object(runner, "open_telnet_socket") as open_telnet_socket:
+        assert runner.blackbox_telnet_record(invalid_config, {"telnet"}) == {
+            "path": "telnet",
+            "target": "tcp_proxy",
+            "value": 0,
+        }
+        open_telnet_socket.assert_not_called()
+    for producer in (
+        lambda: runner.blackbox_telnet_record(invalid_config, set()),
+        lambda: runner.run_playerflow_canary(invalid_config, set()),
+    ):
+        with patch.object(runner, "open_telnet_socket") as open_telnet_socket:
+            try:
+                producer()
+            except ValueError as exc:
+                assert expected_error in str(exc)
+            else:
+                raise AssertionError(
+                    f"direct live Telnet producer accepted {invalid_transport!r} transport"
+                )
+            open_telnet_socket.assert_not_called()
+
+
+tls_direct_config = authorized_telnet_config("tls")
+with (
+    patch.object(runner, "open_telnet_socket") as open_telnet_socket,
+    patch.object(runner, "recv_until_socket", return_value="Welcome\n"),
+    patch.object(runner, "run_telnet_command_plan") as run_telnet_command_plan,
+):
+    opened_socket = object()
+    open_telnet_socket.return_value.__enter__.return_value = opened_socket
+
+    blackbox_record = runner.blackbox_telnet_record(tls_direct_config, set())
+    assert blackbox_record == {
+        "path": "telnet",
+        "target": "tcp_proxy",
+        "value": 1,
+    }
+    open_telnet_socket.assert_called_once_with(
+        tls_direct_config.telnet_host,
+        tls_direct_config.telnet_port,
+        tls_direct_config.timeout_seconds,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file=None,
+    )
+
+    open_telnet_socket.reset_mock()
+
+    def record_successful_steps(_socket, _steps, _timeout, *, step_results):
+        step_results.extend(
+            [
+                {"label": "LOGIN", "latencyMs": 10},
+                {"label": "LOOK", "latencyMs": 20},
+            ]
+        )
+
+    run_telnet_command_plan.side_effect = record_successful_steps
+    success, latency = runner.run_playerflow_canary(tls_direct_config, set())
+    assert [record["value"] for record in success] == [1, 1]
+    assert latency[0]["value"] == 20
+    open_telnet_socket.assert_called_once_with(
+        tls_direct_config.telnet_host,
+        tls_direct_config.telnet_port,
+        tls_direct_config.timeout_seconds,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file=None,
+    )
 
 runner.AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE = True
 for identity in (
@@ -2637,7 +2740,7 @@ def arbitrary_runtime_fault(*args, **kwargs):
 runner.open_telnet_socket = arbitrary_runtime_fault
 try:
     try:
-        runner.blackbox_telnet_record(config, set())
+        runner.blackbox_telnet_record(tls_direct_config, set())
     except RuntimeError as exc:
         assert str(exc) == "unexpected programmer failure"
     else:
@@ -2653,7 +2756,7 @@ def classified_operational_failure(*args, **kwargs):
 runner.open_telnet_socket = classified_operational_failure
 try:
     signals = runner.entrypath_signals(
-        config,
+        tls_direct_config,
         set(),
         {"telnet"},
         lambda current_config, injected, _path: runner.blackbox_telnet_record(
