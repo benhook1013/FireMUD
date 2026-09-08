@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import multiprocessing
+import os
 import socket
 import stat
 import subprocess
@@ -83,6 +84,164 @@ def read_latest_cursor_from_store(path, ready, start, results):
 
 
 class TelnetSessionDriverTest(unittest.TestCase):
+    def _run_connect_with_idle_pipe(self, transcript, receive_error=None):
+        class RemoteSocket:
+            def __init__(self):
+                self.closed = False
+
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self, _size):
+                time.sleep(0.05)
+                if receive_error is not None:
+                    raise OSError(receive_error)
+                return b""
+
+            def shutdown(self, _how):
+                self.closed = True
+
+            def close(self):
+                self.closed = True
+
+        args = argparse.Namespace(
+            host="localhost",
+            port=32000,
+            transcript=transcript,
+            timeout=0.25,
+            connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+            allow_insecure=True,
+            ca_file=None,
+            server_hostname=None,
+        )
+        remote_socket = RemoteSocket()
+        sessions = []
+        result = {}
+        actual_session_type = telnet_session.TelnetSession
+
+        def create_session(*session_args, **session_kwargs):
+            session = actual_session_type(*session_args, **session_kwargs)
+            sessions.append(session)
+            return session
+
+        read_fd, write_fd = os.pipe()
+        input_stream = os.fdopen(read_fd, encoding="utf-8")
+        input_writer = os.fdopen(write_fd, "w", encoding="utf-8")
+        output = io.StringIO()
+        baseline_threads = set(threading.enumerate())
+
+        def invoke():
+            try:
+                with (
+                    patch.object(telnet_session, "TelnetSession", side_effect=create_session),
+                    patch.object(
+                        telnet_session.socket,
+                        "create_connection",
+                        return_value=remote_socket,
+                    ),
+                    patch("sys.stdin", input_stream),
+                    contextlib.redirect_stdout(output),
+                    contextlib.redirect_stderr(output),
+                ):
+                    result["return_code"] = telnet_session.run_connect(args)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the test thread
+                result["error"] = exc
+
+        runner = threading.Thread(target=invoke, name="test-run-connect", daemon=True)
+        runner.start()
+        runner.join(1)
+        exited_while_input_open = not runner.is_alive()
+        input_remained_open = not input_stream.closed and not input_writer.closed
+        if runner.is_alive():
+            input_writer.close()
+            runner.join(2)
+        if not input_writer.closed:
+            input_writer.close()
+        input_stream.close()
+
+        self.assertTrue(exited_while_input_open, "run_connect remained blocked on idle stdin")
+        self.assertTrue(input_remained_open, "run_connect closed caller-owned stdin")
+        self.assertFalse(runner.is_alive(), "run_connect thread did not stop during cleanup")
+        if "error" in result:
+            raise result["error"]
+        self.assertEqual(len(sessions), 1)
+        self.assertIsNotNone(sessions[0].receiver)
+        self.assertFalse(sessions[0].receiver.is_alive())
+        lingering_threads = [
+            thread.name
+            for thread in threading.enumerate()
+            if thread not in baseline_threads
+        ]
+        self.assertEqual(lingering_threads, [])
+        return result["return_code"], sessions[0].store.read()
+
+    def _run_connect_with_queued_input_disconnect(self, transcript, *, failed):
+        class DisconnectingSession:
+            def __init__(self, *_args, **_kwargs):
+                self.store = telnet_session.EvidenceStore(transcript)
+                self.closed = False
+                self.close_reasons = []
+                self.sent = []
+                self.disconnect_event = threading.Event()
+                self.disconnect_reason = None
+                self.disconnect_failed = False
+
+            def connect(self):
+                return None
+
+            def send_command(self, line):
+                self.sent.append(line)
+                self.disconnect_reason = "receive_error" if failed else "remote_eof"
+                self.disconnect_failed = failed
+                self.disconnect_event.set()
+
+            def disconnect_outcome(self):
+                return self.disconnect_reason, self.disconnect_failed
+
+            def close(self, reason):
+                self.closed = True
+                self.close_reasons.append(reason)
+
+        args = argparse.Namespace(
+            host="localhost",
+            port=32000,
+            transcript=transcript,
+            timeout=0.25,
+            connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+            allow_insecure=True,
+            ca_file=None,
+            server_hostname=None,
+        )
+        read_fd, write_fd = os.pipe()
+        input_stream = os.fdopen(read_fd, encoding="utf-8")
+        input_writer = os.fdopen(write_fd, "w", encoding="utf-8")
+        input_writer.write("LOOK\nNORTH\n:quit\n")
+        input_writer.flush()
+        sessions = []
+
+        def create_session(*session_args, **session_kwargs):
+            session = DisconnectingSession(*session_args, **session_kwargs)
+            sessions.append(session)
+            return session
+
+        try:
+            with (
+                patch.object(
+                    telnet_session, "TelnetSession", side_effect=create_session
+                ),
+                patch("sys.stdin", input_stream),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                return_code = telnet_session.run_connect(args)
+            self.assertFalse(input_stream.closed)
+            self.assertFalse(input_writer.closed)
+        finally:
+            input_writer.close()
+            input_stream.close()
+
+        self.assertEqual(len(sessions), 1)
+        return return_code, sessions[0]
+
     def test_repeated_local_appends_reuse_observed_cursor_state(self):
         with tempfile.TemporaryDirectory() as directory:
             transcript = Path(directory) / "session.jsonl"
@@ -204,7 +363,7 @@ class TelnetSessionDriverTest(unittest.TestCase):
                 [{"cursor": 7, "event": "received", "text": "later"}],
             )
 
-    def test_tls_default_wraps_socket_with_ca_and_hostname(self):
+    def test_tls_custom_ca_replaces_default_roots_and_wraps_with_hostname(self):
         class FakeSocket:
             def __init__(self):
                 self.closed = False
@@ -243,15 +402,20 @@ class TelnetSessionDriverTest(unittest.TestCase):
                     "create_connection",
                     return_value=raw_socket,
                 ) as create_connection,
-                patch.object(telnet_session.ssl, "create_default_context", return_value=context),
+                patch.object(
+                    telnet_session.ssl,
+                    "create_default_context",
+                    return_value=context,
+                ) as create_context,
             ):
                 session.connect()
             create_connection.assert_called_once_with(
                 ("preview.example", 32016), timeout=3.5
             )
-            context.load_verify_locations.assert_called_once_with(
+            create_context.assert_called_once_with(
                 cafile=str(Path(directory) / "extra-ca.pem")
             )
+            context.load_verify_locations.assert_not_called()
             context.wrap_socket.assert_called_once_with(
                 raw_socket, server_hostname="public.example"
             )
@@ -279,11 +443,17 @@ class TelnetSessionDriverTest(unittest.TestCase):
             )
             with (
                 patch.object(telnet_session.socket, "create_connection", return_value=raw_socket),
-                patch.object(telnet_session.ssl, "create_default_context", return_value=context),
+                patch.object(
+                    telnet_session.ssl,
+                    "create_default_context",
+                    return_value=context,
+                ) as create_context,
                 self.assertRaises(telnet_session.ssl.SSLError),
             ):
                 session.connect()
             self.assertTrue(raw_socket.closed)
+            create_context.assert_called_once_with()
+            context.load_verify_locations.assert_not_called()
             context.wrap_socket.assert_called_once_with(
                 raw_socket, server_hostname="preview.example"
             )
@@ -362,6 +532,17 @@ class TelnetSessionDriverTest(unittest.TestCase):
         self.assertFalse(args.allow_insecure)
         self.assertEqual(args.ca_file, Path("/tmp/test-ca.pem"))
         self.assertEqual(args.server_hostname, "preview.example")
+
+    def test_tls_parser_describes_custom_ca_as_replacing_system_roots(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            telnet_session.build_parser().parse_args(["connect", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn(
+            "CA bundle that replaces system roots for TLS certificate verification",
+            " ".join(stdout.getvalue().split()),
+        )
 
     def test_connect_port_is_validated_before_connection_dispatch(self):
         base_args = [
@@ -1356,6 +1537,203 @@ class TelnetSessionDriverTest(unittest.TestCase):
                     session = sessions[0]
                     self.assertTrue(session.closed)
                     self.assertEqual(session.close_reasons, ["stdin_eof"])
+
+    def test_remote_eof_ends_connect_while_stdin_remains_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            return_code, records = self._run_connect_with_idle_pipe(
+                Path(directory) / "session.jsonl"
+            )
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(
+            [
+                record["reason"]
+                for record in records
+                if record["event"] == "disconnect"
+            ],
+            ["remote_eof"],
+        )
+
+    def test_receive_error_fails_connect_while_stdin_remains_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            return_code, records = self._run_connect_with_idle_pipe(
+                Path(directory) / "session.jsonl", receive_error="remote reset"
+            )
+
+        self.assertEqual(return_code, 1)
+        self.assertTrue(
+            any(
+                record["event"] == "error"
+                and record.get("reason") == "receive"
+                and record.get("detail") == "remote reset"
+                for record in records
+            )
+        )
+        self.assertEqual(
+            [
+                record["reason"]
+                for record in records
+                if record["event"] == "disconnect"
+            ],
+            ["receive_error"],
+        )
+
+    def test_remote_eof_preempts_queued_commands_and_local_quit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            return_code, session = self._run_connect_with_queued_input_disconnect(
+                Path(directory) / "session.jsonl", failed=False
+            )
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(session.sent, ["LOOK"])
+        self.assertEqual(session.close_reasons, ["remote_eof"])
+
+    def test_remote_eof_outcome_is_published_before_disconnect_output(self):
+        class RemoteSocket:
+            def settimeout(self, _timeout):
+                return None
+
+            def recv(self, _size):
+                return b""
+
+            def sendall(self, _payload):
+                raise AssertionError("command sent after remote EOF was claimed")
+
+            def shutdown(self, _how):
+                return None
+
+            def close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "session.jsonl"
+            args = argparse.Namespace(
+                host="localhost",
+                port=32000,
+                transcript=transcript,
+                timeout=0.25,
+                connect_timeout=telnet_session.DEFAULT_CONNECT_TIMEOUT_SECONDS,
+                allow_insecure=True,
+                ca_file=None,
+                server_hostname=None,
+            )
+            output_blocked = threading.Event()
+            release_output = threading.Event()
+            sessions = []
+            result = {}
+            actual_session_type = telnet_session.TelnetSession
+
+            def create_session(*session_args, **session_kwargs):
+                session = actual_session_type(*session_args, **session_kwargs)
+                def block_disconnect_output(line):
+                    if "DISCONNECT:" in line:
+                        output_blocked.set()
+                        release_output.wait(3)
+
+                session.output = block_disconnect_output
+                sessions.append(session)
+                return session
+
+            read_fd, write_fd = os.pipe()
+            input_stream = os.fdopen(read_fd, encoding="utf-8")
+            input_writer = os.fdopen(write_fd, "w", encoding="utf-8")
+
+            def invoke():
+                try:
+                    with (
+                        patch.object(
+                            telnet_session,
+                            "TelnetSession",
+                            side_effect=create_session,
+                        ),
+                        patch.object(
+                            telnet_session.socket,
+                            "create_connection",
+                            return_value=RemoteSocket(),
+                        ),
+                        patch("sys.stdin", input_stream),
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        result["return_code"] = telnet_session.run_connect(args)
+                except BaseException as exc:  # noqa: BLE001 - asserted below
+                    result["error"] = exc
+
+            runner = threading.Thread(target=invoke, name="test-run-connect")
+            runner.start()
+            try:
+                self.assertTrue(
+                    output_blocked.wait(1),
+                    "receiver did not enter the claimed-disconnect output window",
+                )
+                input_writer.write("LOOK\n")
+                input_writer.flush()
+                runner.join(2)
+                self.assertFalse(
+                    runner.is_alive(),
+                    "published remote EOF did not wake run_connect",
+                )
+                if "error" in result:
+                    raise result["error"]
+                self.assertEqual(result["return_code"], 0)
+                self.assertFalse(input_stream.closed)
+                self.assertFalse(input_writer.closed)
+                self.assertFalse(
+                    any(
+                        record["event"] == "command"
+                        for record in sessions[0].store.read()
+                    )
+                )
+            finally:
+                release_output.set()
+                runner.join(2)
+                if sessions and sessions[0].receiver is not None:
+                    sessions[0].receiver.join(2)
+                input_writer.close()
+                input_stream.close()
+
+            self.assertFalse(sessions[0].receiver.is_alive())
+            self.assertEqual(
+                [
+                    record["reason"]
+                    for record in sessions[0].store.read()
+                    if record["event"] == "disconnect"
+                ],
+                ["remote_eof"],
+            )
+
+    def test_receive_error_preempts_queued_commands_and_local_quit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            return_code, session = self._run_connect_with_queued_input_disconnect(
+                Path(directory) / "session.jsonl", failed=True
+            )
+
+        self.assertEqual(return_code, 1)
+        self.assertEqual(session.sent, ["LOOK"])
+        self.assertEqual(session.close_reasons, ["receive_error"])
+
+    def test_send_rejects_a_disconnect_that_wins_the_state_race(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = telnet_session.TelnetSession(
+                "localhost",
+                32000,
+                Path(directory) / "session.jsonl",
+                output=lambda _line: None,
+                tls_enabled=False,
+            )
+            session.socket = unittest.mock.Mock()
+            session.disconnect_recorded = True
+            session.disconnect_reason = "remote_eof"
+            session.disconnect_event.set()
+
+            with self.assertRaisesRegex(
+                RuntimeError, "^Telnet session is not connected$"
+            ):
+                session.send_command("NORTH")
+
+            session.socket.sendall.assert_not_called()
+            self.assertFalse(
+                any(record["event"] == "command" for record in session.store.read())
+            )
 
     def test_interactive_normal_endings_return_success_after_cleanup(self):
         for stdin, expected_reason in (

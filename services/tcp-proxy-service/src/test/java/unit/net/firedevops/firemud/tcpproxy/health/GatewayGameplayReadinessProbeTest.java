@@ -14,6 +14,8 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
 import org.junit.jupiter.api.Test;
@@ -145,6 +147,41 @@ class GatewayGameplayReadinessProbeTest {
       verify(client, org.mockito.Mockito.timeout(1000).times(2)).isReadyAsync();
       retry.complete(true);
       awaitReadiness(probe, true);
+    }
+  }
+
+  @Test
+  void refreshFailureCancelsDetachedRequestAndLateCallbackCannotRestoreReadiness()
+      throws Exception {
+    GatewayWebSocketClient client = mock(GatewayWebSocketClient.class);
+    AtomicInteger cancellationAttempts = new AtomicInteger();
+    AtomicReference<BiConsumer<? super Boolean, ? super Throwable>> callback =
+        new AtomicReference<>();
+    CompletableFuture<Boolean> throwingFuture =
+        new CompletableFuture<>() {
+          @Override
+          public CompletableFuture<Boolean> whenComplete(
+              BiConsumer<? super Boolean, ? super Throwable> action) {
+            callback.set(action);
+            throw new IllegalStateException("callback registration failure");
+          }
+
+          @Override
+          public boolean cancel(boolean mayInterruptIfRunning) {
+            cancellationAttempts.incrementAndGet();
+            return false;
+          }
+        };
+    when(client.isReadyAsync()).thenReturn(throwingFuture);
+    try (GatewayGameplayReadinessProbe probe =
+        new GatewayGameplayReadinessProbe(client, Duration.ofHours(1))) {
+      verify(client, org.mockito.Mockito.timeout(1000)).isReadyAsync();
+      assertEquals(1, cancellationAttempts.get());
+      assertFalse(probe.isReady());
+
+      callback.get().accept(true, null);
+
+      assertFalse(probe.isReady());
     }
   }
 

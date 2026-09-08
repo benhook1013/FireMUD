@@ -27,6 +27,7 @@ for expected in \
 done
 
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" <<'PY'
+import copy
 from pathlib import Path
 import sys
 
@@ -91,6 +92,46 @@ def find_step(workflow, job_id, name_suffix, label):
             f"{label}: expected one {name_suffix!r} step in jobs/{job_id}, found {len(matches)}"
         )
     return matches[0]
+
+
+CI_GATING_STEPS = (
+    (
+        "dev-tool-contract-checks",
+        "Validate Telnet session driver",
+        "python3 dev-tools/tests/test_telnet_session_driver.py",
+    ),
+    (
+        "helm-render-validation",
+        "Validate hosted Gateway bridge contract",
+        "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
+    ),
+)
+
+
+def require_gating_run_step(workflow, job_id, name_suffix, command):
+    label = f"ci {name_suffix} contract"
+    step = find_step(workflow, job_id, name_suffix, "ci workflow")
+    if "if" in step:
+        raise SystemExit(f"{label}: step must run whenever its job runs")
+    if str(step.get("continue-on-error", "false")).strip().lower() != "false":
+        raise SystemExit(f"{label}: step failure must fail its job")
+    run = value_at(step, ("run",), label)
+    if not isinstance(run, str) or run.strip() != command:
+        raise SystemExit(
+            f"{label}: run must be exactly the executable command {command!r}, got {run!r}"
+        )
+
+
+def validate_ci_script_execution(workflow):
+    for job_id, name_suffix, command in CI_GATING_STEPS:
+        require_gating_run_step(workflow, job_id, name_suffix, command)
+
+
+def mutate_gating_step(workflow, job_id, name_suffix, changes):
+    mutated = copy.deepcopy(workflow)
+    step = find_step(mutated, job_id, name_suffix, "mutated ci workflow")
+    step.update(changes)
+    return mutated
 
 
 ci = load_workflow(sys.argv[1])
@@ -258,6 +299,23 @@ for expected in (
 complete_contract_step = find_step(
     ci, "dev-tool-contract-checks", "Validate dev tool contracts", "ci workflow"
 )
+validate_ci_script_execution(ci)
+for job_id, name_suffix, command in CI_GATING_STEPS:
+    for description, changes in (
+        ("missing command", {"run": "true"}),
+        ("disabled step", {"if": "${{ false }}"}),
+        ("ignored failure", {"continue-on-error": "true"}),
+        ("heredoc decoy", {"run": f"cat <<'EOF'\n{command}\nEOF"}),
+        ("comment decoy", {"run": f"# {command}"}),
+    ):
+        mutation = mutate_gating_step(ci, job_id, name_suffix, changes)
+        try:
+            validate_ci_script_execution(mutation)
+        except SystemExit:
+            continue
+        raise SystemExit(
+            f"ci script execution contract accepted {name_suffix} {description}"
+        )
 require_contains(
     complete_contract_step,
     ("run",),

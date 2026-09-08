@@ -5,6 +5,8 @@ metadata:
   namespace: firemud
   name: tcp-proxy-service
 spec:
+  strategy:
+    type: Recreate
   replicas: 2
   selector:
     matchLabels:

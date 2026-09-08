@@ -9,7 +9,9 @@ import net.firedevops.firemud.GenerateTcpProxyDevCertsTask
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Classpath
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
@@ -49,23 +51,25 @@ configurations.named("runtimeClasspath") {
     exclude(group = "org.springframework.boot", module = "spring-boot-starter-data-redis")
 }
 
+val forbiddenRedisRuntimeModules =
+    setOf(
+        "spring-boot-starter-data-redis",
+        "spring-boot-data-redis",
+        "spring-data-redis",
+        "lettuce-core",
+    )
+
 @DisableCachingByDefault(because = "Verification task produces no outputs")
 abstract class VerifyNoRedisRuntime : DefaultTask() {
     @get:Classpath abstract val runtimeClasspath: ConfigurableFileCollection
+    @get:Input abstract val forbiddenModules: SetProperty<String>
 
     @TaskAction
     fun verify() {
-        val forbiddenModules =
-            setOf(
-                "spring-boot-starter-data-redis",
-                "spring-boot-data-redis",
-                "spring-data-redis",
-                "lettuce-core",
-            )
         val forbiddenRuntimeFiles =
             runtimeClasspath.files
                 .map { it.name }
-                .filter { entry -> forbiddenModules.any { entry.startsWith("$it-") } }
+                .filter { entry -> forbiddenModules.get().any { entry.startsWith("$it-") } }
         check(forbiddenRuntimeFiles.isEmpty()) {
             "TCP Proxy runtimeClasspath contains Redis client modules: ${forbiddenRuntimeFiles.sorted()}"
         }
@@ -75,24 +79,17 @@ abstract class VerifyNoRedisRuntime : DefaultTask() {
 @DisableCachingByDefault(because = "Verification task produces no outputs")
 abstract class VerifyNoRedisBootJar : DefaultTask() {
     @get:InputFile abstract val bootJar: RegularFileProperty
+    @get:Input abstract val forbiddenModules: SetProperty<String>
 
     @TaskAction
     fun verify() {
-        val forbiddenModules =
-            setOf(
-                "spring-boot-starter-data-redis",
-                "spring-boot-data-redis",
-                "spring-data-redis",
-                "lettuce-core",
-            )
-
         val forbiddenEntries =
             ZipFile(bootJar.get().asFile).use { archive ->
                 archive.entries().asSequence()
                     .map { it.name.substringAfterLast('/') }
                     .filter { entry ->
                         entry == "TelnetRedisConfiguration.class" ||
-                            forbiddenModules.any { entry.startsWith("$it-") }
+                            forbiddenModules.get().any { entry.startsWith("$it-") }
                     }.toList()
             }
         check(forbiddenEntries.isEmpty()) {
@@ -106,6 +103,7 @@ val verifyNoRedisRuntime =
         group = "verification"
         description = "Verifies that the stateless TCP Proxy runtime contains no Redis client."
         runtimeClasspath.from(configurations.named("runtimeClasspath"))
+        forbiddenModules.set(forbiddenRedisRuntimeModules)
     }
 
 val verifyNoRedisBootJar =
@@ -113,10 +111,11 @@ val verifyNoRedisBootJar =
         group = "verification"
         description = "Verifies that the TCP Proxy bootJar contains no Redis runtime entries."
         bootJar.set(tasks.named<BootJar>("bootJar").flatMap { it.archiveFile })
+        forbiddenModules.set(forbiddenRedisRuntimeModules)
     }
 
 tasks.named("check") {
-    dependsOn(verifyNoRedisRuntime)
+    dependsOn(verifyNoRedisRuntime, verifyNoRedisBootJar)
 }
 
 tasks.named("assemble") {

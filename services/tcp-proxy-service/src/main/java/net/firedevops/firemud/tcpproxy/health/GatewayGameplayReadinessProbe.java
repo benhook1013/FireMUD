@@ -92,7 +92,10 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
 
     private synchronized void markUnreadyAfterRefreshFailure() {
       ready.set(false);
-      inFlight.set(null);
+      CompletableFuture<Boolean> request = inFlight.getAndSet(null);
+      if (request != null) {
+        request.cancel(true);
+      }
     }
 
     private synchronized void refresh() {
@@ -113,10 +116,9 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
       request.whenComplete(
           (result, error) -> {
             synchronized (this) {
-              if (!closed.get()) {
+              if (inFlight.compareAndSet(request, null) && !closed.get()) {
                 ready.set(error == null && Boolean.TRUE.equals(result));
               }
-              inFlight.compareAndSet(request, null);
             }
           });
     }

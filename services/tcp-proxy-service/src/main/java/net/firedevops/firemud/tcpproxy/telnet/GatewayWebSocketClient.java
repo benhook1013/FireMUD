@@ -54,6 +54,7 @@ import org.springframework.stereotype.Component;
 public final class GatewayWebSocketClient implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(GatewayWebSocketClient.class);
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
+  private static final Duration WEBSOCKET_HANDSHAKE_TIMEOUT = Duration.ofSeconds(5);
   private static final Duration READINESS_TIMEOUT = Duration.ofSeconds(2);
   private static final Duration RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT = Duration.ofSeconds(1);
   // Publication precedes retirement, so one fresh-state retry covers a raced rotation.
@@ -180,7 +181,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     try {
       releasingListener = new ReleasingWebSocketListener(listener, generation::release);
       WebSocket.Builder builder = generation.client().newWebSocketBuilder();
-      builder.connectTimeout(CONNECT_TIMEOUT);
+      builder.connectTimeout(WEBSOCKET_HANDSHAKE_TIMEOUT);
       if (clientIp != null) {
         builder.header("X-Client-IP", clientIp);
         builder.header("X-Proxy-Client-IP", clientIp);
@@ -377,8 +378,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   }
 
   private boolean hasUsableCertificateWatcher() {
-    return !closed.get()
-        && ("ws".equals(gatewayUri.getScheme()) || isCertificateWatcherHealthy());
+    return !closed.get() && ("ws".equals(gatewayUri.getScheme()) || isCertificateWatcherHealthy());
   }
 
   private HttpClient newHttpClient(javax.net.ssl.SSLContext sslContext) {

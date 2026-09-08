@@ -11,6 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
@@ -140,9 +143,19 @@ class TelnetServerTest {
     trustStore.load(null, null);
     try (InputStream certificate = getClass().getResourceAsStream("/certs/dev-cert.pem")) {
       assertTrue(certificate != null);
-      trustStore.setCertificateEntry(
-          "telnet-server",
-          CertificateFactory.getInstance("X.509").generateCertificate(certificate));
+      X509Certificate devCertificate =
+          (X509Certificate)
+              CertificateFactory.getInstance("X.509").generateCertificate(certificate);
+      Instant minimumNotAfter = Instant.now().plus(30, ChronoUnit.DAYS);
+      assertTrue(
+          devCertificate.getNotAfter().toInstant().isAfter(minimumNotAfter),
+          () ->
+              "Generated development certificate expires at "
+                  + devCertificate.getNotAfter()
+                  + "; regenerate the Gradle-owned fixture with "
+                  + "./gradlew :tcp-proxy-service:clean "
+                  + ":tcp-proxy-service:generateTcpProxyDevCerts");
+      trustStore.setCertificateEntry("telnet-server", devCertificate);
     }
     TrustManagerFactory trustManagers =
         TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());

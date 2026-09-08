@@ -548,6 +548,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             gatewayListener());
     inFlightGatewayConnection.set(connection);
     if (closing && inFlightGatewayConnection.compareAndSet(connection, null)) {
+      reconnecting = false;
       connection.cancel(true);
       return;
     }

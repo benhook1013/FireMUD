@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import select
 import socket
 import ssl
 import sys
@@ -32,6 +33,7 @@ SE = 240
 
 COMMAND_NAMES = {WILL: "WILL", WONT: "WONT", DO: "DO", DONT: "DONT"}
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
+INPUT_POLL_INTERVAL_SECONDS = 0.1
 
 
 def _iso88591_bytes(text: str) -> bytes:
@@ -325,6 +327,9 @@ class TelnetSession:
         self.state_lock = threading.Lock()
         self.closed = False
         self.disconnect_recorded = False
+        self.disconnect_event = threading.Event()
+        self.disconnect_reason: str | None = None
+        self.disconnect_failed = False
         self.idle_timeout_recorded = False
         self.parser = TelnetParser()
         self.redaction_patterns: list[tuple[bytes, bytes]] = []
@@ -368,9 +373,11 @@ class TelnetSession:
             )
             if self.tls_enabled:
                 try:
-                    context = ssl.create_default_context()
-                    if self.ca_file is not None:
-                        context.load_verify_locations(cafile=str(self.ca_file))
+                    context = (
+                        ssl.create_default_context(cafile=str(self.ca_file))
+                        if self.ca_file is not None
+                        else ssl.create_default_context()
+                    )
                     self.socket = context.wrap_socket(
                         raw_socket,
                         server_hostname=self.server_hostname or self.host,
@@ -492,11 +499,12 @@ class TelnetSession:
             except OSError as exc:
                 self._record_disconnect(
                     "receive_error",
+                    failed=True,
                     error=("inbound", "error", {"reason": "receive", "detail": str(exc)}),
                 )
                 return
             if not chunk:
-                if not self._claim_disconnect():
+                if not self._claim_disconnect("remote_eof"):
                     return
                 trailing = self._redact_inbound(b"", final=True)
                 if trailing:
@@ -519,6 +527,7 @@ class TelnetSession:
                         except OSError as exc:
                             self._record_disconnect(
                                 "send_error",
+                                failed=True,
                                 error=(
                                     "outbound",
                                     "error",
@@ -542,34 +551,49 @@ class TelnetSession:
                 )
 
     def send_command(self, command: str) -> None:
-        if self.socket is None or self.closed:
-            raise RuntimeError("Telnet session is not connected")
         command = command.rstrip("\r\n")
         redaction = _login_redaction(command)
         if redaction:
             safe, raw, replacement = redaction
-            self.redaction_patterns.append((raw, replacement))
             display = safe
         else:
             display = command
         # Record before send so an immediate asynchronous server response cannot
-        # acquire a lower cursor than the command that caused it.
-        with self.state_lock:
-            self.idle_timeout_recorded = False
-            self._append("outbound", "command", text=display)
+        # acquire a lower cursor than the command that caused it. Holding the
+        # state lock through the send also gives the command and a concurrent
+        # disconnect one well-defined order.
         try:
-            with self.send_lock:
+            with self.send_lock, self.state_lock:
+                if (
+                    self.socket is None
+                    or self.closed
+                    or self.disconnect_recorded
+                ):
+                    raise RuntimeError("Telnet session is not connected")
+                if redaction:
+                    self.redaction_patterns.append((raw, replacement))
+                self.idle_timeout_recorded = False
+                self._append("outbound", "command", text=display)
                 self.socket.sendall(_iso88591_bytes(command) + b"\r\n")
         except OSError as exc:
             self._append("outbound", "error", reason="send", detail=str(exc))
-            self._record_disconnect("send_error")
+            self._record_disconnect("send_error", failed=True)
             raise
 
-    def _claim_disconnect(self, *, local: bool = False) -> bool:
+    def _claim_disconnect(
+        self,
+        reason: str,
+        *,
+        local: bool = False,
+        failed: bool = False,
+    ) -> bool:
         with self.state_lock:
             if self.disconnect_recorded or (self.closed and not local):
                 return False
             self.disconnect_recorded = True
+            self.disconnect_reason = reason
+            self.disconnect_failed = failed
+            self.disconnect_event.set()
             return True
 
     def _record_disconnect(
@@ -577,15 +601,20 @@ class TelnetSession:
         reason: str,
         *,
         local: bool = False,
+        failed: bool = False,
         error: tuple[str, str, dict] | None = None,
     ) -> bool:
-        if not self._claim_disconnect(local=local):
+        if not self._claim_disconnect(reason, local=local, failed=failed):
             return False
         if error:
             direction, event, fields = error
             self._append(direction, event, **fields)
         self._append("system", "disconnect", reason=reason)
         return True
+
+    def disconnect_outcome(self) -> tuple[str | None, bool]:
+        with self.state_lock:
+            return self.disconnect_reason, self.disconnect_failed
 
     def close(self, reason: str = "local_close") -> None:
         with self.state_lock:
@@ -621,6 +650,56 @@ def run_read(args: argparse.Namespace) -> int:
     return 0
 
 
+class _InterruptibleInput:
+    """Read complete stdin lines without owning or blocking closure of the stream."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.buffer = bytearray()
+        self.eof = False
+        self.encoding = getattr(stream, "encoding", None) or "utf-8"
+        self.errors = getattr(stream, "errors", None) or "strict"
+        try:
+            self.descriptor = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            self.descriptor = None
+
+    def readline_until(
+        self, disconnect_event: threading.Event | None
+    ) -> tuple[bool, str]:
+        if self.descriptor is None or disconnect_event is None:
+            return False, self.stream.readline()
+
+        while True:
+            if disconnect_event.is_set():
+                return True, ""
+            newline = self.buffer.find(b"\n")
+            if newline >= 0:
+                line = bytes(self.buffer[: newline + 1])
+                del self.buffer[: newline + 1]
+                return False, line.decode(self.encoding, errors=self.errors)
+            if self.eof:
+                line = bytes(self.buffer)
+                self.buffer.clear()
+                return False, line.decode(self.encoding, errors=self.errors)
+            try:
+                readable, _, _ = select.select(
+                    [self.descriptor], [], [], INPUT_POLL_INTERVAL_SECONDS
+                )
+            except (OSError, ValueError):
+                self.descriptor = None
+                return False, self.stream.readline()
+            if disconnect_event.is_set():
+                return True, ""
+            if not readable:
+                continue
+            chunk = os.read(self.descriptor, 4096)
+            if chunk:
+                self.buffer.extend(chunk)
+            else:
+                self.eof = True
+
+
 def run_connect(args: argparse.Namespace) -> int:
     allow_insecure = getattr(args, "allow_insecure", False)
     if allow_insecure:
@@ -638,6 +717,7 @@ def run_connect(args: argparse.Namespace) -> int:
         ),
     )
     connected = False
+    close_reason = "connect"
     try:
         try:
             session.connect()
@@ -645,11 +725,30 @@ def run_connect(args: argparse.Namespace) -> int:
             print(f"Unable to connect: {exc}", file=sys.stderr)
             return 1
         connected = True
+        close_reason = "stdin_eof"
         print(
             "Commands are sent as entered. Meta-commands: "
             ":read [cursor], :cursor, :close [reason], :quit."
         )
-        for line in sys.stdin:
+        input_reader = _InterruptibleInput(sys.stdin)
+        while True:
+            disconnect_event = getattr(session, "disconnect_event", None)
+            disconnected, line = input_reader.readline_until(
+                disconnect_event
+            )
+            if (
+                not disconnected
+                and disconnect_event is not None
+                and disconnect_event.is_set()
+            ):
+                disconnected = True
+            if disconnected:
+                reason, failed = session.disconnect_outcome()
+                close_reason = reason or "remote_disconnect"
+                return 1 if failed else 0
+            if not line:
+                close_reason = "stdin_eof"
+                break
             line = line.rstrip("\r\n")
             if line == ":cursor":
                 print(f"next_cursor={session.store.latest_cursor()}")
@@ -675,7 +774,11 @@ def run_connect(args: argparse.Namespace) -> int:
                     return 1
     finally:
         if not session.closed:
-            session.close("stdin_eof" if connected else "connect")
+            session.close(close_reason if connected else "connect")
+    disconnect_event = getattr(session, "disconnect_event", None)
+    if disconnect_event is not None and disconnect_event.is_set():
+        _reason, failed = session.disconnect_outcome()
+        return 1 if failed else 0
     return 0
 
 
@@ -706,7 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument(
         "--ca-file",
         type=Path,
-        help="optional additional CA bundle for TLS certificate verification",
+        help="CA bundle that replaces system roots for TLS certificate verification",
     )
     connect.add_argument(
         "--server-hostname",

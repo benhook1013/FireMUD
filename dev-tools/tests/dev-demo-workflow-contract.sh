@@ -93,9 +93,9 @@ PY
   (
     # shellcheck disable=SC1090 # Generated from the checked workflow function above.
     source "$extracted_guard"
-    BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS=1
-    BOOTSTRAP_PORT_FORWARD_LOG="$port_forward_log"
-    BOOTSTRAP_PORT_FORWARD_PID="$BASHPID"
+    export BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS=1
+    export BOOTSTRAP_PORT_FORWARD_LOG="$port_forward_log"
+    export BOOTSTRAP_PORT_FORWARD_PID="$BASHPID"
     BOOTSTRAP_GATEWAY_PORT=
     if ! wait_for_bootstrap_port_forward; then
       echo "dev-demo workflow guard rejected a representative kubectl forwarding line" >&2
@@ -168,6 +168,7 @@ if check_port_forward_guard "$FIXED_PORT_FIXTURE" >/dev/null 2>&1; then
 fi
 
 FIXED_BASE_URL_FIXTURE="$FIXTURE_DIR/fixed-base-url-port.yml"
+# shellcheck disable=SC2016 # The fixture mutation must match the literal workflow placeholder.
 sed 's/127\.0\.0\.1:${BOOTSTRAP_GATEWAY_PORT}/127.0.0.1:18080/' \
   "$WORKFLOW" > "$FIXED_BASE_URL_FIXTURE"
 if check_port_forward_guard "$FIXED_BASE_URL_FIXTURE" >/dev/null 2>&1; then

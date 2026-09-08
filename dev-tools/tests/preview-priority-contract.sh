@@ -1199,7 +1199,7 @@ if not isinstance(actual, str) or not actual.strip().startswith("${{"):
 expression = actual.strip()[3:-2].strip()
 
 
-def evaluate_workflow_condition(event_name, action, label, same_repository=True):
+def evaluate_workflow_condition(candidate_expression, event_name, action, label, same_repository=True):
     context = {
         "github.event_name": event_name,
         "github.event.action": action,
@@ -1209,9 +1209,14 @@ def evaluate_workflow_condition(event_name, action, label, same_repository=True)
         ),
         "github.repository": "example/FireMUD",
     }
-    translated = expression
+    translated = candidate_expression
     references = sorted(
-        set(re.findall(r"\b(?:github|inputs)(?:\.[A-Za-z_][A-Za-z0-9_-]*)+", expression)),
+        set(
+            re.findall(
+                r"\b(?:github|inputs)(?:\.[A-Za-z_][A-Za-z0-9_-]*)+",
+                candidate_expression,
+            )
+        ),
         key=len,
         reverse=True,
     )
@@ -1240,16 +1245,36 @@ cases = (
     ("pull_request", "labeled", "unrelated", True, False),
     ("pull_request", "labeled", "", True, False),
     ("pull_request", "synchronize", "", True, True),
+    ("pull_request", "synchronize", "", False, False),
     ("pull_request", "opened", "", False, False),
     ("workflow_dispatch", "", "", False, True),
 )
-for event_name, action, label, same_repository, expected_result in cases:
-    actual_result = evaluate_workflow_condition(event_name, action, label, same_repository)
-    if actual_result != expected_result:
-        raise SystemExit(
-            "preview-plan event condition mismatch for "
-            f"{event_name}/{action}/{label or '-'}: {actual_result}"
+
+
+def assert_workflow_cases(candidate_expression):
+    for event_name, action, label, same_repository, expected_result in cases:
+        actual_result = evaluate_workflow_condition(
+            candidate_expression, event_name, action, label, same_repository
         )
+        if actual_result != expected_result:
+            repository_kind = "same-repository" if same_repository else "fork"
+            raise AssertionError(
+                "preview-plan event condition mismatch for "
+                f"{event_name}/{action}/{label or '-'}/{repository_kind}: {actual_result}"
+            )
+
+
+assert_workflow_cases(expression)
+repository_guard = "github.event.pull_request.head.repo.full_name == github.repository && "
+if expression.count(repository_guard) != 1:
+    raise SystemExit("preview-plan condition must contain exactly one head-repository guard")
+try:
+    assert_workflow_cases(expression.replace(repository_guard, ""))
+except AssertionError as error:
+    if "pull_request/synchronize/-/fork" not in str(error):
+        raise
+else:
+    raise SystemExit("preview-plan contract survived removal of the head-repository guard")
 PY
 grep -q 'github.event.label.name == '\''preview:priority'\''' "$preview_workflow"
 grep -q 'github.event.label.name == '\''preview:paused'\''' "$preview_workflow"

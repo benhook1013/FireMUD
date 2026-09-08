@@ -279,6 +279,9 @@ jobs:
           bash ./dev-tools/tests/lint-yaml-contract.sh
           python3 -m unittest discover -s dev-tools/validation -p 'test_*.py'
 
+      - name: 🧪 Validate Telnet session driver
+        run: python3 dev-tools/tests/test_telnet_session_driver.py
+
       - name: 🧪 Validate architecture document contracts
         if: ${{ needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' }}
         run: bash ./dev-tools/tests/architecture-doc-contracts.sh
@@ -503,6 +506,9 @@ jobs:
 
       - name: 🧪 Validate hosted Telnet TLS contract
         run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
+
+      - name: 🧪 Validate hosted Gateway bridge contract
+        run: bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
 
   # Docs and frontend validation
   docs-check:

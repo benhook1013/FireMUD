@@ -25,7 +25,7 @@ This decision is partially implemented. Gateway runtime now provides the dedicat
 
 ## Context
 
-ADR 0010 selected URI SAN as the preferred production identity but defined DNS SAN and fingerprint as ordered fallbacks. That permits several trust authorities to be active at once and makes a weak or stale fallback silently widen acceptance. The hosted deployment currently uses plaintext `ws://` plus an insecure CIDR covering the pod network, while the nominal mTLS Service forwards to the same application port without establishing a demonstrated client-certificate listener. The application matcher also accepts fingerprint before SAN when several lists are populated. Documentation that calls the full player-facing boundary implemented is therefore inaccurate.
+ADR 0010 selected URI SAN as the preferred production identity but defined DNS SAN and fingerprint as ordered fallbacks. That permits several trust authorities to be active at once and makes a weak or stale fallback silently widen acceptance. At this decision's adoption, the hosted deployment used plaintext `ws://` plus an insecure CIDR covering the pod network, while the nominal mTLS Service forwarded to the same application port without establishing a demonstrated client-certificate listener. The application matcher also accepted fingerprint before SAN when several lists were populated. That decision-time baseline made documentation calling the full player-facing boundary implemented inaccurate; the current partial implementation is recorded above.
 
 ## Decision
 
@@ -52,7 +52,7 @@ Every public listener strips inbound `X-Proxy-*`, gateway-owned canonical identi
 - Certificate migration and break-glass operation require explicit expiring configuration and operational evidence.
 - The application and deployment must expose real peer-certificate identity to the trust filter and prove listener separation; naming a plaintext Service `-mtls` is insufficient.
 - Existing local CIDR-based test paths may remain, but environment validation must prevent their promotion into any player-facing profile.
-- The current hosted values, Gateway listener wiring, trust-mode matcher, status documentation, and end-to-end proof require implementation convergence.
+- Hosted values, Gateway listener wiring, and the trust-mode matcher must remain aligned with this decision. Current gaps are controller-owned certificate issuance, projection, rotation readiness, and withdrawal, plus real hosted peer-handshake, rotation, and withdrawal proof.
 
 ## Alternatives Considered
 

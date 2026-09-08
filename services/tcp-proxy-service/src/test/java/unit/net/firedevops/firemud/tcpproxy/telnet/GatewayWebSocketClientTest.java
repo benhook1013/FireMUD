@@ -349,8 +349,7 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
-  void losingGatewayWatchKeyFailsReadinessWhileOtherSharedProfileKeysRemainLive()
-      throws Exception {
+  void losingGatewayWatchKeyFailsReadinessWhileOtherSharedProfileKeysRemainLive() throws Exception {
     CountDownLatch releaseResponse = new CountDownLatch(1);
     MockWebServer server = startMutualTlsServer(InetAddress.getByName("127.0.0.1"));
     server.setDispatcher(
@@ -648,14 +647,7 @@ class GatewayWebSocketClientTest {
             IllegalStateException.class,
             () ->
                 client.connect(
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    new WebSocket.Listener() {})));
+                    null, null, null, null, null, null, null, new WebSocket.Listener() {})));
 
     assertTrue(client.reloadNow());
     verify(replacementClient, timeout(5000)).close();
@@ -903,12 +895,13 @@ class GatewayWebSocketClientTest {
         client.connect(null, null, null, null, null, null, null, new WebSocket.Listener() {});
 
     assertNotNull(server.takeRequest(5, TimeUnit.SECONDS));
+    assertThrows(
+        java.util.concurrent.TimeoutException.class, () -> connection.get(2, TimeUnit.SECONDS));
     ExecutionException failure =
-        assertThrows(ExecutionException.class, () -> connection.get(5, TimeUnit.SECONDS));
+        assertThrows(ExecutionException.class, () -> connection.get(10, TimeUnit.SECONDS));
     assertEquals("timeout", GatewayWebSocketClient.classifyFailure(failure));
     assertEquals(
-        1.0,
-        registry.counter("tcpproxy.gateway.handshake.failures", "reason", "timeout").count());
+        1.0, registry.counter("tcpproxy.gateway.handshake.failures", "reason", "timeout").count());
 
     server.enqueue(new MockResponse().setResponseCode(200));
     assertTrue(client.isReadyAsync().get(5, TimeUnit.SECONDS));
@@ -1240,8 +1233,7 @@ class GatewayWebSocketClientTest {
     newGeneration.setAccessible(true);
     Object generation = newGeneration.invoke(client, replacementClient);
 
-    Class<?> stateType =
-        Class.forName(GatewayWebSocketClient.class.getName() + "$ClientState");
+    Class<?> stateType = Class.forName(GatewayWebSocketClient.class.getName() + "$ClientState");
     java.lang.reflect.Method available =
         stateType.getDeclaredMethod("available", newGeneration.getReturnType());
     available.setAccessible(true);
