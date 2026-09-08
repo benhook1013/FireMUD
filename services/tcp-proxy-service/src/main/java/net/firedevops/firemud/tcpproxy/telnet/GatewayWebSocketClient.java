@@ -36,6 +36,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLException;
@@ -54,6 +55,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
   private static final Logger logger = LoggerFactory.getLogger(GatewayWebSocketClient.class);
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final Duration READINESS_TIMEOUT = Duration.ofSeconds(2);
+  private static final Duration RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT = Duration.ofSeconds(1);
   // Publication precedes retirement, so one fresh-state retry covers a raced rotation.
   private static final int GENERATION_ACQUIRE_ATTEMPTS = 2;
   private static final String CLIENT_AUTH_EKU = "1.3.6.1.5.5.7.3.2";
@@ -147,7 +149,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
         for (ClientGeneration generation : List.copyOf(generations)) {
           generation.shutdownNow();
         }
-        retirementExecutor.close();
+        shutdownExecutor(retirementExecutor, RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT);
         throw e;
       }
     }
@@ -323,7 +325,22 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     for (ClientGeneration generation : List.copyOf(generations)) {
       generation.shutdownNow();
     }
-    retirementExecutor.close();
+    shutdownExecutor(retirementExecutor, RETIREMENT_EXECUTOR_SHUTDOWN_TIMEOUT);
+  }
+
+  static void shutdownExecutor(ExecutorService executor, Duration timeout) {
+    Objects.requireNonNull(executor, "executor").shutdownNow();
+    try {
+      if (!executor.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS)) {
+        logger.warn(
+            "Gateway WebSocket client retirement executor did not terminate within {}", timeout);
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      logger.warn(
+          "Interrupted while waiting for Gateway WebSocket client retirement executor to terminate",
+          e);
+    }
   }
 
   private ClientState loadTlsClient() {

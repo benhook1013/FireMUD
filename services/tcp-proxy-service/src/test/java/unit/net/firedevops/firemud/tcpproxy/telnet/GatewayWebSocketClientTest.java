@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
@@ -39,6 +41,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -583,24 +586,30 @@ class GatewayWebSocketClientTest {
   @Test
   void synchronousHeaderFailureReleasesGeneration() throws Exception {
     GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate);
-    HttpClient initialClient = (HttpClient) client.clientIdentity();
+    HttpClient replacementClient = mock(HttpClient.class);
+    WebSocket.Builder builder = mock(WebSocket.Builder.class);
+    IllegalArgumentException failure = new IllegalArgumentException("synchronous header failure");
+    when(replacementClient.newWebSocketBuilder()).thenReturn(builder);
+    when(builder.header("X-Client-IP", "invalid-client-ip")).thenThrow(failure);
+    replaceCurrentGeneration(client, replacementClient);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            client.connect(
-                "invalid\nheader",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new WebSocket.Listener() {}));
+    assertSame(
+        failure,
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                client.connect(
+                    "invalid-client-ip",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new WebSocket.Listener() {})));
 
     assertTrue(client.reloadNow());
-    awaitTermination(initialClient);
-    awaitGenerationCount(client, 1);
+    verify(replacementClient, timeout(5000)).close();
   }
 
   @Test
@@ -885,6 +894,62 @@ class GatewayWebSocketClientTest {
     awaitTermination(initialGeneration);
     awaitTermination(currentGeneration);
     assertEquals(0, client.generationCount());
+  }
+
+  @Test
+  void beanCloseDoesNotWaitForUncooperativeRetirementTask() throws Exception {
+    GatewayWebSocketClient client = newClient("localhost", 8443, caCertificate);
+    CountDownLatch retirementTaskStarted = new CountDownLatch(1);
+    CountDownLatch releaseRetirementTask = new CountDownLatch(1);
+    HttpClient blockingClient = mock(HttpClient.class);
+    doAnswer(
+            ignored -> {
+              retirementTaskStarted.countDown();
+              while (true) {
+                try {
+                  if (releaseRetirementTask.await(10, TimeUnit.MILLISECONDS)) {
+                    return null;
+                  }
+                } catch (InterruptedException ignoredInterrupt) {
+                  // Model a close operation that does not promptly honor interruption.
+                }
+              }
+            })
+        .when(blockingClient)
+        .close();
+    replaceCurrentGeneration(client, blockingClient);
+
+    assertTrue(client.reloadNow());
+    assertTrue(retirementTaskStarted.await(5, TimeUnit.SECONDS));
+
+    long startedAt = System.nanoTime();
+    try {
+      client.close();
+    } finally {
+      releaseRetirementTask.countDown();
+    }
+
+    assertTrue(
+        System.nanoTime() - startedAt < TimeUnit.SECONDS.toNanos(3),
+        "client close waited beyond the bounded retirement-executor shutdown");
+    verify(blockingClient).shutdownNow();
+  }
+
+  @Test
+  void boundedExecutorShutdownRestoresInterruptStatus() throws Exception {
+    ExecutorService executor = mock(ExecutorService.class);
+    when(executor.awaitTermination(anyLong(), any(TimeUnit.class)))
+        .thenThrow(new InterruptedException("test interruption"));
+
+    Thread.currentThread().interrupt();
+    try {
+      GatewayWebSocketClient.shutdownExecutor(executor, java.time.Duration.ofMillis(1));
+      assertTrue(Thread.currentThread().isInterrupted());
+    } finally {
+      Thread.interrupted();
+    }
+
+    verify(executor).shutdownNow();
   }
 
   @Test
