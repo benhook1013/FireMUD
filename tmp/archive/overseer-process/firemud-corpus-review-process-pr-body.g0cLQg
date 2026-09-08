@@ -1,8 +1,0 @@
-Records the 5B mini-domain review model in canonical design-alignment guidance. Fresh disjoint-scope corpus discovery can run alongside front-PR CodeRabbit review; each broad search is consumed and adjudicated before a repeat against the updated corpus. Hosted PR closure remains distinct from fresh whole-domain closure, with hosted-review safety and downstream-aware stacks preserved.
-
-Checks:
-
-- `git diff --check`
-- `./gradlew linkCheck lintMarkdown`
-
-<!-- coderabbitai ignore -->
