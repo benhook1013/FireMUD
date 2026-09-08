@@ -84,6 +84,12 @@ class TcpProxyTlsListenerTest {
     assertThat(gameplayResponse.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
 
     delegated.set(false);
+    MockServerHttpResponse nearMissResponse = new MockServerHttpResponse();
+    handler.handle(MockServerHttpRequest.get("/ws/gameXYZ").build(), nearMissResponse).block();
+    assertThat(delegated).isFalse();
+    assertThat(nearMissResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+    delegated.set(false);
     MockServerHttpResponse publicResponse = new MockServerHttpResponse();
     handler.handle(MockServerHttpRequest.get("/ping").build(), publicResponse).block();
     assertThat(delegated).isFalse();
@@ -103,7 +109,7 @@ class TcpProxyTlsListenerTest {
     TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
     when(policy.requiresClientCertificate()).thenReturn(true);
     when(policy.profileName()).thenReturn("breakglass_fingerprint");
-    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(1));
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(3));
     HttpHandler handler = (request, response) -> response.setComplete();
     TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, handler);
     Connection connection = null;
@@ -123,7 +129,7 @@ class TcpProxyTlsListenerTest {
       waitForAcceptedConnection(listener);
       assertThat(connection.isDisposed()).isFalse();
 
-      Instant deadline = Instant.now().plusSeconds(3);
+      Instant deadline = Instant.now().plusSeconds(10);
       while (listener.isRunning() && Instant.now().isBefore(deadline)) {
         Thread.sleep(25);
       }

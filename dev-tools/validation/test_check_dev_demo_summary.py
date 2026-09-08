@@ -1435,6 +1435,45 @@ env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
             ):
                 self.validator.validate_workflow(root)
 
+    def test_validate_workflow_rejects_bootstrap_script_reassignment_before_pid(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            "BOOTSTRAP_SCRIPT=/dev/null\n" + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must assign the canonical bootstrap script path exactly once",
+            ):
+                self.validator.validate_workflow(root)
+
+    def test_validate_workflow_rejects_literal_path_duplicate_account_script(self):
+        bootstrap_manifest = self._bootstrap_manifest_fixture()
+        pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"
+        duplicate_account_command = r'''ACCOUNT_BOOTSTRAP_MODE=account
+env BOOTSTRAP_MODE="${ACCOUNT_BOOTSTRAP_MODE}" \
+  /usr/bin/python3 /tmp/dev-demo-bootstrap.py || true'''
+        self.assertIn(pid_assignment, bootstrap_manifest)
+        invalid_manifest = bootstrap_manifest.replace(
+            pid_assignment,
+            duplicate_account_command + "\n" + pid_assignment,
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, invalid_manifest)
+            with self.assertRaisesRegex(
+                AssertionError,
+                "must execute exactly one canonical account bootstrap command",
+            ):
+                self.validator.validate_workflow(root)
+
     def test_validate_workflow_rejects_bootstrap_script_truncation_before_pid(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         pid_assignment = "BOOTSTRAP_PORT_FORWARD_PID=$!"

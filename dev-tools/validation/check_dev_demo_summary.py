@@ -85,12 +85,17 @@ BOOTSTRAP_ACCOUNT_COMMAND_TOKENS = (
     ";",
     "then",
 )
+BOOTSTRAP_SCRIPT_PATH = "/tmp/dev-demo-bootstrap.py"
+BOOTSTRAP_SCRIPT_ASSIGNMENT_TOKENS = (f"BOOTSTRAP_SCRIPT={BOOTSTRAP_SCRIPT_PATH}",)
 BOOTSTRAP_SCRIPT_DEFINITION_TOKENS = (
     "cat",
     ">",
     "${BOOTSTRAP_SCRIPT}",
     "<<",
     "PY",
+)
+BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE = (
+    "--from-file=bootstrap.py=${BOOTSTRAP_SCRIPT}"
 )
 BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
     "cleanup_bootstrap_port_forward() {",
@@ -1508,6 +1513,20 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
         if nesting < 0:
             raise AssertionError("unsupported shell compound nesting")
 
+    assignment_indexes = [
+        index
+        for index, (tokens, _, _) in enumerate(records)
+        if any(token.startswith("BOOTSTRAP_SCRIPT=") for token in tokens)
+    ]
+    if len(assignment_indexes) != 1 or records[assignment_indexes[0]][0] != list(
+        BOOTSTRAP_SCRIPT_ASSIGNMENT_TOKENS
+    ):
+        raise AssertionError(
+            "dev-demo player bootstrap must assign the canonical bootstrap script "
+            "path exactly once"
+        )
+    assignment_index = assignment_indexes[0]
+
     definition_indexes = [
         index
         for index, (tokens, _, bodies) in enumerate(records)
@@ -1520,6 +1539,17 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
             "dev-demo player bootstrap must define the bootstrap script exactly once"
         )
     definition_index = definition_indexes[0]
+    configmap_reference_indexes = [
+        index
+        for index, (tokens, _, _) in enumerate(records)
+        if BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE in tokens
+    ]
+    if len(configmap_reference_indexes) != 1:
+        raise AssertionError(
+            "dev-demo player bootstrap must reference the canonical bootstrap "
+            "script ConfigMap source exactly once"
+        )
+    configmap_reference_index = configmap_reference_indexes[0]
 
     def references_account_bootstrap(
         record_index: int, tokens: list[str]
@@ -1527,13 +1557,18 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
         if "BOOTSTRAP_MODE=account" in tokens:
             return True
         for index, token in enumerate(tokens):
+            if token == BOOTSTRAP_SCRIPT_PATH and record_index != assignment_index:
+                return True
             if not re.search(
                 r"\$(?:BOOTSTRAP_SCRIPT\b|\{BOOTSTRAP_SCRIPT(?:[^}]*)\})", token
             ):
                 continue
             if record_index == definition_index:
                 continue
-            if token == "--from-file=bootstrap.py=${BOOTSTRAP_SCRIPT}":
+            if (
+                record_index == configmap_reference_index
+                and token == BOOTSTRAP_SCRIPT_CONFIGMAP_REFERENCE
+            ):
                 continue
             return True
         return False
@@ -1563,7 +1598,11 @@ def _validate_bootstrap_readiness_gate(bootstrap_manifest: str) -> None:
             for (tokens, depth, _), (expected, expected_depth) in zip(
                 window, expected_sequence, strict=True
             )
-        ) and definition_index < start:
+        ) and (
+            assignment_index + 1 == definition_index
+            and definition_index < start
+            and start + len(expected_sequence) <= configmap_reference_index
+        ):
             return
     raise AssertionError(
         "dev-demo player bootstrap must execute the exact fail-closed "
