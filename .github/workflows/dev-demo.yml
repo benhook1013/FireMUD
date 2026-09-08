@@ -83,6 +83,10 @@ jobs:
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
+          if [ "$ACTION" = "deploy" ] && [ "$IMAGE_TAG" != "$HEAD_SHA" ]; then
+            echo "::error::Dev-demo deploy image tag must match its reconciled head SHA."
+            exit 1
+          fi
           {
             echo "action=${ACTION}"
             echo "namespace=dev"
@@ -176,6 +180,41 @@ jobs:
           bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}"
 
+      - name: Record dev-demo identity candidate
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        run: |
+          kubectl annotate namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "firemud.dev/last-dev-demo-head-sha=${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "firemud.dev/last-dev-demo-telnet-port=${{ needs.dev-demo-plan.outputs.telnet_port }}" \
+            --overwrite >/dev/null
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-hosted-identity-requester.kubeconfig
+
+      - name: Apply canonical dev-demo Active request
+        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        run: |
+          cat <<'EOF' | kubectl -n firemud-system apply -f -
+          apiVersion: platform.firemud.dev/v1alpha1
+          kind: HostedEnvironmentIdentity
+          metadata:
+            name: dev-demo
+            namespace: firemud-system
+          spec:
+            desiredState: Active
+          EOF
+
+      - name: Restore dev-demo runtime kubeconfig
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
+          path: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+
       - name: Ensure GHCR pull secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
         env:
@@ -191,11 +230,6 @@ jobs:
         run: |
           echo "DEV_DEMO_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.dev-demo-plan.outputs.image_tag }}"
-
-      - name: Ensure dev-demo gRPC TLS secret exists
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        run: |
-          bash ./dev-tools/hosted/shared/ensure-grpc-tls-secret.sh "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Render dev-demo values
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -216,6 +250,13 @@ jobs:
             -f /tmp/dev-demo-values.yaml \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             >/tmp/dev-demo-rendered.yaml
+          FIREMUD_PREFLIGHT_CONTEXT=operator \
+            python3 ./dev-tools/deploy/preflight.py hosted-bridge \
+            /tmp/dev-demo-rendered.yaml \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.release_name }}" \
+            --expected-hosted-telnet-node-port \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
           kubectl apply --dry-run=server -n "${{ needs.dev-demo-plan.outputs.namespace }}" -f /tmp/dev-demo-rendered.yaml
           wc -l /tmp/dev-demo-rendered.yaml
 
@@ -227,15 +268,6 @@ jobs:
           path: |
             /tmp/dev-demo-values.yaml
             /tmp/dev-demo-rendered.yaml
-
-      - name: Record reconciled dev-demo target
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
-        run: |
-          bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
-            "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
-            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
-            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
 
       - name: Summarize dev-demo target
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -278,6 +310,16 @@ jobs:
           echo "Dev-demo rollout failed during helm upgrade/install."
           exit 1
 
+      - name: Wait for exact dev-demo controller identity
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
+        run: |
+          echo "DEV_DEMO_STAGE=identity-readiness" >> "$GITHUB_ENV"
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            dev-demo \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            900
+
       - name: Export demo smoke defaults
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         run: |
@@ -296,7 +338,7 @@ jobs:
           PREVIEW_TENANT_ID: "1"
         run: |
           echo "DEV_DEMO_STAGE=bootstrap" >> "$GITHUB_ENV"
-          BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
+          readonly BOOTSTRAP_SCRIPT=/tmp/dev-demo-bootstrap.py
           cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
           import json
           import os
@@ -307,25 +349,33 @@ jobs:
           tenant_id = 1
           game_template_id = 1
           bootstrap_mode = os.environ["BOOTSTRAP_MODE"]
-          email = os.environ["DEMO_SMOKE_EMAIL"]
-          password = os.environ["DEMO_SMOKE_PASSWORD"]
-          username = os.environ["DEMO_SMOKE_USERNAME"]
+          if bootstrap_mode == "account":
+            email = os.environ["DEMO_SMOKE_EMAIL"]
+            password = os.environ["DEMO_SMOKE_PASSWORD"]
+            username = os.environ["DEMO_SMOKE_USERNAME"]
           control_plane_request_id = f"dev-demo-smoke-bootstrap-{int(time.time())}"
 
-          def readiness_ok(url):
+          def readiness_ok(url, request_timeout):
             try:
-              with urllib.request.urlopen(url, timeout=10) as response:
-                body = response.read().decode("utf-8", errors="ignore")
-                return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
-            except OSError:
+              with urllib.request.urlopen(url, timeout=request_timeout) as response:
+                if not 200 <= response.status < 300:
+                  return False
+                payload = json.loads(response.read().decode("utf-8"))
+                return isinstance(payload, dict) and payload.get("status") == "UP"
+            except (OSError, UnicodeError, json.JSONDecodeError):
               return False
 
           def wait_for_ready(name, url, timeout_seconds=60):
-            deadline = time.time() + timeout_seconds
-            while time.time() < deadline:
-              if readiness_ok(url):
+            deadline = time.monotonic() + timeout_seconds
+            while True:
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                break
+              if readiness_ok(url, min(10, remaining)):
                 return
-              time.sleep(2)
+              remaining = deadline - time.monotonic()
+              if remaining > 0:
+                time.sleep(min(2, remaining))
             raise SystemExit(f"{name} readiness did not report UP at {url}")
 
           def post_json(url, payload):
@@ -496,10 +546,10 @@ jobs:
           status, session_body = bootstrap_session(account_id)
           PY
           BOOTSTRAP_POD_LOG=/tmp/dev-demo-bootstrap-pod.log
-          BOOTSTRAP_SECRET_DIR=
           BOOTSTRAP_ACCOUNT_ID_FILE=/tmp/dev-demo-account-id
           BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log
           BOOTSTRAP_PORT_FORWARD_PID=
+          BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS=15
           cleanup_bootstrap_port_forward() {
             if [[ -z "${BOOTSTRAP_PORT_FORWARD_PID:-}" ]]; then
               return 0
@@ -507,6 +557,32 @@ jobs:
             kill "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
             wait "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1 || true
             BOOTSTRAP_PORT_FORWARD_PID=
+          }
+          wait_for_bootstrap_port_forward() {
+            local attempt forwarding_line
+            for (( attempt = 1; attempt <= BOOTSTRAP_PORT_FORWARD_READY_ATTEMPTS; attempt++ )); do
+              if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+                echo "::error::Dev-demo Gateway port-forward exited before confirming its loopback listener" >&2
+                return 1
+              fi
+              while IFS= read -r forwarding_line; do
+                if [[ "${forwarding_line}" =~ ^Forwarding\ from\ (127\.0\.0\.1|localhost):([0-9]+)\ -\>\ 8080$ ]]; then
+                  BOOTSTRAP_GATEWAY_PORT="${BASH_REMATCH[2]}"
+                  if [[ -z "${BOOTSTRAP_GATEWAY_PORT}" || ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]; then
+                    echo "::error::Dev-demo Gateway port-forward reported an invalid loopback listener port" >&2
+                    return 1
+                  fi
+                  if kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
+                    return 0
+                  fi
+                  echo "::error::Dev-demo Gateway port-forward exited after confirming its loopback listener" >&2
+                  return 1
+                fi
+              done < "${BOOTSTRAP_PORT_FORWARD_LOG}"
+              sleep 1
+            done
+            echo "::error::Dev-demo Gateway port-forward did not confirm the expected loopback listener within the bounded wait" >&2
+            return 1
           }
           cleanup_bootstrap_account_id_file() {
             if [[ -z "${BOOTSTRAP_ACCOUNT_ID_FILE:-}" ]]; then
@@ -517,17 +593,6 @@ jobs:
               return 0
             fi
             echo "::error::Failed to remove dev-demo bootstrap account id file" >&2
-            return 1
-          }
-          cleanup_bootstrap_temp_dir() {
-            if [[ -z "${BOOTSTRAP_SECRET_DIR}" ]]; then
-              return 0
-            fi
-            if rm -rf "${BOOTSTRAP_SECRET_DIR}"; then
-              BOOTSTRAP_SECRET_DIR=
-              return 0
-            fi
-            echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
             return 1
           }
           cleanup_bootstrap_secret() {
@@ -551,9 +616,6 @@ jobs:
             if ! cleanup_bootstrap_account_id_file; then
               status=1
             fi
-            if ! cleanup_bootstrap_temp_dir; then
-              status=1
-            fi
             if ! cleanup_bootstrap_secret; then
               status=1
             fi
@@ -563,53 +625,34 @@ jobs:
           trap cleanup_bootstrap_resources EXIT
           trap 'exit 130' INT
           trap 'exit 143' TERM
+          if ! kubectl auth can-i create pods --subresource=portforward -n "${PREVIEW_NAMESPACE}" >/dev/null; then
+            echo "::error::Preview deployer lacks pods port-forward subresource permission; refusing credential bootstrap" >&2
+            exit 1
+          fi
           for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
             if [[ -z "${!credential:-}" ]]; then
-              echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
+              echo "::error::${credential} is empty; refusing account bootstrap" >&2
               exit 1
             fi
           done
-          BOOTSTRAP_SECRET_DIR="$(mktemp -d)"
+          if ! cleanup_bootstrap_secret; then
+            exit 1
+          fi
           BOOTSTRAP_GATEWAY_PORT=
           kubectl -n "${PREVIEW_NAMESPACE}" port-forward \
             --address 127.0.0.1 \
             service/spring-cloud-gateway \
-            :80 \
+            ":80" \
             >"${BOOTSTRAP_PORT_FORWARD_LOG}" 2>&1 &
           BOOTSTRAP_PORT_FORWARD_PID=$!
-          for attempt in {1..30}; do
-            if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-              echo "::error::Dev-demo Gateway port-forward exited before binding" >&2
-              cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-              exit 1
-            fi
-            BOOTSTRAP_GATEWAY_PORT="$({
-              sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80$/\1/p' \
-                "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            } | head -n1)"
-            if [[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-              && (( BOOTSTRAP_GATEWAY_PORT > 0 && BOOTSTRAP_GATEWAY_PORT <= 65535 )); then
-              break
-            fi
-            sleep 1
-          done
-          if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then
-            echo "::error::Dev-demo Gateway port-forward exited before account bootstrap" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            exit 1
-          fi
-          if [[ ! "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
-            || (( BOOTSTRAP_GATEWAY_PORT < 1 || BOOTSTRAP_GATEWAY_PORT > 65535 )); then
-            echo "::error::Dev-demo Gateway port-forward did not report a valid local port" >&2
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+          if ! wait_for_bootstrap_port_forward; then
             exit 1
           fi
           if ! BOOTSTRAP_MODE=account \
             BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
             BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
             python3 "${BOOTSTRAP_SCRIPT}"; then
-            echo "Dev-demo Gateway port-forward account bootstrap failed."
-            cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
+            echo "::error::Dev-demo Gateway port-forward account bootstrap failed" >&2
             exit 1
           fi
           cleanup_bootstrap_port_forward
@@ -621,22 +664,6 @@ jobs:
             --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
             --from-file=account-id="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
             --dry-run=client -o yaml | kubectl apply -f -
-          (
-            umask 077
-            printf '%s' "${DEMO_SMOKE_EMAIL}" >"${BOOTSTRAP_SECRET_DIR}/email"
-            printf '%s' "${DEMO_SMOKE_PASSWORD}" >"${BOOTSTRAP_SECRET_DIR}/password"
-            printf '%s' "${DEMO_SMOKE_USERNAME}" >"${BOOTSTRAP_SECRET_DIR}/username"
-          )
-          if ! cleanup_bootstrap_secret; then
-            exit 1
-          fi
-          kubectl -n "${PREVIEW_NAMESPACE}" create secret generic dev-demo-bootstrap-env \
-            --from-file=DEMO_SMOKE_EMAIL="${BOOTSTRAP_SECRET_DIR}/email" \
-            --from-file=DEMO_SMOKE_PASSWORD="${BOOTSTRAP_SECRET_DIR}/password" \
-            --from-file=DEMO_SMOKE_USERNAME="${BOOTSTRAP_SECRET_DIR}/username"
-          if ! cleanup_bootstrap_temp_dir; then
-            exit 1
-          fi
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
           apiVersion: v1
@@ -646,6 +673,7 @@ jobs:
           spec:
             restartPolicy: Never
             terminationGracePeriodSeconds: 0
+            automountServiceAccountToken: false
             containers:
               - name: dev-demo-bootstrap
                 image: python:3.12-alpine
@@ -653,9 +681,6 @@ jobs:
                 env:
                   - name: BOOTSTRAP_MODE
                     value: session
-                envFrom:
-                  - secretRef:
-                      name: dev-demo-bootstrap-env
                 volumeMounts:
                   - name: bootstrap-script
                     mountPath: /tmp
@@ -679,6 +704,7 @@ jobs:
           cleanup_bootstrap_secret
 
       - name: Smoke dev-demo over TCP
+        id: gameplay-smoke
         if: ${{ !cancelled() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.dev-demo-plan.outputs.hostname }}
@@ -693,6 +719,27 @@ jobs:
             echo "=== Dev-demo TCP smoke transcript ==="
             cat "${SMOKE_TRANSCRIPT}"
             exit 1
+          fi
+
+      - name: Record reconciled dev-demo target
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.gameplay-smoke.outcome == 'success' }}
+        run: |
+          bash ./dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" \
+            "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.image_tag }}" \
+            "${{ needs.dev-demo-plan.outputs.telnet_port }}"
+
+      - name: Clear unproven dev-demo identity candidate
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.gameplay-smoke.outcome != 'success' }}
+        run: |
+          if kubectl get namespace "${{ needs.dev-demo-plan.outputs.namespace }}" >/dev/null 2>&1; then
+            kubectl annotate namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
+              firemud.dev/last-dev-demo-head-sha- \
+              firemud.dev/last-dev-demo-image-tag- \
+              firemud.dev/last-dev-demo-telnet-port- \
+              firemud.dev/last-dev-demo-sync-at- \
+              >/dev/null
           fi
 
       - name: Summarize dev-demo access

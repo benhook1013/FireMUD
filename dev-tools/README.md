@@ -33,6 +33,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `smoke/` – shared smoke defaults and the run-owned Compose claim/capability helper.
 - `seed/` – local and test data seeding helpers.
 - `tests/` – contract tests for repo-owned tooling.
+- `gameplay/` – maintained player-session helpers; see `gameplay/README.md` for the script map.
 - `validation/` – repo policy and static validation scripts used by Gradle and CI.
 
 ## Placement guidance

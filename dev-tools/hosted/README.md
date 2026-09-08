@@ -10,7 +10,7 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 
 - `preview/`
   - PR-preview-only helpers
-  - capacity allocation and bounded priority reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
+  - capacity allocation with ordinary FIFO admission and bounded `preview:priority` reclaim, PR-head freshness checks, preview namespace pruning, preview NodePort allocation, and preview-specific value rendering/summary output
   - preview eligibility requires valid GitHub label metadata; `preview:priority` changes allocation ordering only when it is present on an otherwise eligible preview
 
 - `dev-demo/`

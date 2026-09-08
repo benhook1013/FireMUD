@@ -5,6 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
 python3 - <<'PY' "$ROOT_DIR"
+import contextlib
+import io
+import json
+import ssl
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +17,39 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
-from smoke_common import run_telnet_smoke_session, run_transport_session, run_websocket_smoke_session
+from smoke_common import (
+    is_localhost_equivalent,
+    open_telnet_socket,
+    run_telnet_smoke_session,
+    run_transport_session,
+    run_websocket_smoke_session,
+)
+
+
+for local_host in (
+    "localhost",
+    "LOCALHOST",
+    "localhost.",
+    "127.0.0.1",
+    "127.255.255.254",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+):
+    assert is_localhost_equivalent(local_host), local_host
+
+for remote_host in (
+    "",
+    "remotehost",
+    "example.test",
+    "localhost.example.test",
+    "0.0.0.0",
+    "192.168.1.10",
+    "203.0.113.10",
+    "::",
+    "::ffff:192.168.1.10",
+):
+    assert not is_localhost_equivalent(remote_host), remote_host
 
 
 class FakeSession:
@@ -59,6 +95,284 @@ class CommandResponseSession(FakeSession):
 opened = []
 
 
+class FakeTlsContext:
+    def __init__(self, wrapped=None, failure=None):
+        self.wrapped = wrapped or FakeSession()
+        self.failure = failure
+        self.check_hostname = False
+        self.verify_mode = ssl.CERT_NONE
+        self.loaded_ca_files = []
+        self.wrap_calls = []
+
+    def load_verify_locations(self, *, cafile):
+        self.loaded_ca_files.append(cafile)
+
+    def wrap_socket(self, raw_socket, *, server_hostname):
+        self.wrap_calls.append((raw_socket, server_hostname))
+        if self.failure is not None:
+            raise self.failure
+        return self.wrapped
+
+
+raw_tls_socket = FakeSession()
+wrapped_tls_socket = FakeSession()
+tls_context = FakeTlsContext(wrapped=wrapped_tls_socket)
+with patch("smoke_common.socket.create_connection", return_value=raw_tls_socket) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=tls_context
+) as create_context:
+    result = open_telnet_socket(
+        "203.0.113.10",
+        2323,
+        1,
+        tls_enabled=True,
+        tls_server_hostname="preview.example.test",
+        tls_ca_file="ca.pem",
+    )
+assert result is wrapped_tls_socket
+assert connect.call_count == 1
+create_context.assert_called_once_with(cafile="ca.pem")
+assert tls_context.loaded_ca_files == []
+assert tls_context.wrap_calls == [(raw_tls_socket, "preview.example.test")]
+assert tls_context.check_hostname is True
+assert tls_context.verify_mode == ssl.CERT_REQUIRED
+assert raw_tls_socket.closed is False
+
+
+failed_raw_tls_socket = FakeSession()
+failed_tls_context = FakeTlsContext(failure=ssl.SSLError("certificate mismatch"))
+with patch(
+    "smoke_common.socket.create_connection", return_value=failed_raw_tls_socket
+) as connect, patch(
+    "smoke_common.ssl.create_default_context", return_value=failed_tls_context
+) as create_context:
+    try:
+        open_telnet_socket(
+            "203.0.113.10",
+            2323,
+            1,
+            tls_enabled=True,
+            tls_server_hostname="preview.example.test",
+        )
+    except ssl.SSLError:
+        pass
+    else:
+        raise AssertionError("TLS failure unexpectedly succeeded")
+assert failed_raw_tls_socket.closed is True
+assert connect.call_count == 1
+create_context.assert_called_once_with()
+
+
+try:
+    open_telnet_socket("example.test", 2323, 1)
+except TypeError as exc:
+    assert "tls_enabled" in str(exc)
+else:
+    raise AssertionError("Telnet socket helper accepted an omitted TLS mode")
+
+for invalid_tls_enabled in (None, "true", 0, 1, [], {}):
+    try:
+        open_telnet_socket(
+            "example.test", 2323, 1, tls_enabled=invalid_tls_enabled
+        )
+    except TypeError as exc:
+        assert "tls_enabled" in str(exc)
+    else:
+        raise AssertionError(
+            f"Telnet socket helper accepted non-boolean TLS mode: {invalid_tls_enabled!r}"
+        )
+
+for invalid_options in (
+    {"tls_enabled": True},
+    {"tls_enabled": False, "tls_server_hostname": "example.test"},
+    {"tls_enabled": False, "tls_ca_file": "ca.pem"},
+):
+    try:
+        open_telnet_socket("example.test", 2323, 1, **invalid_options)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"invalid Telnet TLS options were accepted: {invalid_options}")
+
+
+mixed_response_chunks = iter(
+    ["OK LOGIN account=demo\nERROR INVALID_CREDENTIALS Login failed.\n"]
+)
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(mixed_response_chunks, ""),
+        [],
+        0,
+        ["OK LOGIN"],
+        1,
+        "".join,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ERROR INVALID_CREDENTIALS" in str(exc)
+else:
+    raise AssertionError("mixed success and explicit failure response passed smoke")
+
+
+trailing_response_chunks = iter(["OK LOOK room=R-1021\n"])
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(trailing_response_chunks, ""),
+        [],
+        0,
+        ["OK LOOK"],
+        1,
+        "".join,
+        lambda: "DISCONNECT backend_unavailable Gateway bridge closed.\n",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "DISCONNECT backend_unavailable" in str(exc)
+else:
+    raise AssertionError("explicit failure in trailing drain passed smoke")
+
+
+in_place_trailing_responses = []
+in_place_trailing_chunks = iter(["OK LOOK room=R-1021\n"])
+
+
+def append_trailing_failure():
+    in_place_trailing_responses.append(
+        "ERROR UPSTREAM_FAILURE Gameplay unavailable.\n"
+    )
+
+
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(in_place_trailing_chunks, ""),
+        in_place_trailing_responses,
+        0,
+        ["OK LOOK"],
+        1,
+        "\n".join,
+        append_trailing_failure,
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ERROR UPSTREAM_FAILURE" in str(exc)
+else:
+    raise AssertionError("in-place explicit failure in trailing drain passed smoke")
+
+
+expected_error_response = (
+    "ERROR SLOT_INCOMPATIBLE Iron Boots cannot be worn by this body layout\n"
+)
+expected_error_substrings = [
+    "ERROR SLOT_INCOMPATIBLE",
+    "Iron Boots cannot be worn by this body layout",
+]
+expected_error_chunks = iter([expected_error_response])
+assert smoke_common.wait_for_incremental_response(
+    lambda: next(expected_error_chunks, ""),
+    [],
+    0,
+    expected_error_substrings,
+    1,
+    "".join,
+) == expected_error_response
+
+for additional_failure in (
+    "ERROR UPSTREAM_FAILURE Gameplay unavailable.\n",
+    "DISCONNECT backend_unavailable Gateway bridge closed.\n",
+):
+    expected_error_with_additional_failure = iter(
+        [expected_error_response + additional_failure]
+    )
+    try:
+        smoke_common.wait_for_incremental_response(
+            lambda: next(expected_error_with_additional_failure, ""),
+            [],
+            0,
+            expected_error_substrings,
+            1,
+            "".join,
+        )
+    except smoke_common.ProbeOperationalFailure as exc:
+        assert additional_failure.strip() in str(exc)
+    else:
+        raise AssertionError(
+            f"{additional_failure.strip()} following an expected explicit error "
+            "passed smoke"
+        )
+
+
+secret = "contract-password"
+login_command = f"LOGIN demo@example.test {secret}"
+login_response = (
+    f"login   demo@example.test   {secret}\n"
+    "OK LOGIN account=demo\n"
+    f"Diagnostic credential={secret}; proof remains visible.\n"
+)
+login_session = FakeSession([login_response])
+login_step_results = []
+login_output = io.StringIO()
+with contextlib.redirect_stdout(login_output):
+    raw_login_response = smoke_common.send_telnet_command_and_expect(
+        login_session,
+        [],
+        login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        drain_timeout=0,
+        step_results=login_step_results,
+    )
+assert secret in raw_login_response, "protocol response must remain unchanged"
+assert login_session.sent == [f"{login_command}\r\n"]
+assert secret not in login_output.getvalue()
+assert secret not in json.dumps(login_step_results)
+assert login_step_results[0]["command"] == "LOGIN demo@example.test [REDACTED]"
+assert "OK LOGIN account=demo" in login_output.getvalue()
+assert "Diagnostic credential=[REDACTED]; proof remains visible." in login_output.getvalue()
+
+
+websocket_login_session = FakeSession([login_response])
+websocket_login_step_results = []
+websocket_login_output = io.StringIO()
+with contextlib.redirect_stdout(websocket_login_output):
+    raw_websocket_login_response = smoke_common.send_websocket_command_and_expect(
+        websocket_login_session,
+        [],
+        login_command,
+        ["OK LOGIN"],
+        "LOGIN",
+        1,
+        step_results=websocket_login_step_results,
+    )
+assert secret in raw_websocket_login_response, "protocol response must remain unchanged"
+assert websocket_login_session.sent == [login_command]
+assert secret not in websocket_login_output.getvalue()
+assert secret not in json.dumps(websocket_login_step_results)
+assert (
+    websocket_login_step_results[0]["command"]
+    == "LOGIN demo@example.test [REDACTED]"
+)
+assert "OK LOGIN account=demo" in websocket_login_output.getvalue()
+
+
+failing_login_chunks = iter(
+    [f"OK LOGIN account=demo\nERROR AUTH_FAILURE credential={secret}\n"]
+)
+try:
+    smoke_common.wait_for_incremental_response(
+        lambda: next(failing_login_chunks, ""),
+        [],
+        0,
+        ["OK LOGIN"],
+        1,
+        "".join,
+        sanitize_response=lambda response: smoke_common.redact_login_credential(
+            response, login_command
+        ),
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert secret not in str(exc)
+    assert "ERROR AUTH_FAILURE credential=[REDACTED]" in str(exc)
+else:
+    raise AssertionError("credential-bearing mixed failure unexpectedly passed")
+
+
 def open_telnet():
     session = FakeSession(["OK WORLDS\n"])
     opened.append(session)
@@ -71,6 +385,7 @@ telnet_responses = run_telnet_smoke_session(
     [("WORLDS", ["OK WORLDS"], "WORLDS")],
     1,
     open_session=open_telnet,
+    tls_enabled=False,
 )
 assert telnet_responses == ["OK WORLDS\n"]
 assert opened[0].sent == ["WORLDS\r\n"]
@@ -170,6 +485,7 @@ upstream_responses = run_telnet_smoke_session(
     open_session=open_after_transient_upstream_failure,
     retry_window_seconds=1,
     retry_interval_seconds=0,
+    tls_enabled=False,
 )
 assert upstream_responses == ["OK LOGIN"]
 assert len(upstream_attempts) == 2
@@ -200,6 +516,7 @@ for transport in ("telnet", "websocket"):
                 open_session=open_later_failure,
                 retry_window_seconds=1,
                 retry_interval_seconds=0,
+                tls_enabled=False,
             )
         else:
             run_websocket_smoke_session(
@@ -713,6 +1030,10 @@ assert_command_rejects \
   env SMOKE_MUTATION_EXTENSION=true \
   SMOKE_MUTATION_BOUNDARY=run-owned-compose \
   SMOKE_TELNET_HOST=remotehost \
+  bash "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
+assert_command_rejects \
+  "Plaintext Telnet smoke requires a localhost-equivalent target" \
+  env SMOKE_TELNET_HOST=remotehost \
   bash "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 assert_command_rejects \
   "canonical Telnet endpoint" \

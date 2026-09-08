@@ -107,6 +107,25 @@ for arg in "$@"; do
     has_jq=true
   fi
 done
+if [[ "${1:-}" == run && "${2:-}" == list ]]; then
+  workflow=""
+  status=""
+  previous=""
+  for arg in "$@"; do
+    case "$previous" in
+      --workflow) workflow="$arg" ;;
+      --status) status="$arg" ;;
+    esac
+    previous="$arg"
+  done
+  if [[ "$workflow" == hosted-identity-request.yml ]]; then
+    printf 'trusted-run-list %s\n' "$status" >> "$FAKE_RECONCILER_ACTION_LOG"
+    if [[ "${FAKE_TRUSTED_RUN_STATUS:-}" == "$status" ]]; then
+      printf '%s\n' "${FAKE_TRUSTED_RUN_ID:-700}"
+    fi
+  fi
+  exit 0
+fi
 encode_fake_labels() {
   local priority="$1"
   local labels_valid="$2"
@@ -241,6 +260,9 @@ case "$resource" in
       printf '%s\n' "$FAKE_EXISTING_COMMENT_ID"
     fi
     ;;
+  */actions/workflows/hosted-identity-request.yml/dispatches)
+    printf 'trusted-dispatch %s\n' "$*" >> "$FAKE_RECONCILER_ACTION_LOG"
+    ;;
   *) exit 1 ;;
 esac
 EOF
@@ -304,6 +326,7 @@ export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
+export FAKE_RECONCILER_ACTION_LOG="$TEMP_DIR/reconciler-action.log"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -312,7 +335,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_ACTION_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -346,6 +369,8 @@ reset_case() {
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_ELIGIBILITY_OUTPUT=''
+  export FAKE_TRUSTED_RUN_STATUS=''
+  export FAKE_TRUSTED_RUN_ID=700
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
@@ -893,10 +918,45 @@ trusted_workflow="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
 reconciler_workflow="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
 eligibility_script="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
 TRUSTED_TARGET_RUN="$TEMP_DIR/hosted-identity-target.sh"
+RECONCILER_RUN="$TEMP_DIR/preview-reconciler.sh"
 extract_workflow_step_run \
   "$trusted_workflow" \
   "Verify workflow source and immutable PR metadata" \
   "$TRUSTED_TARGET_RUN"
+extract_workflow_step_run \
+  "$reconciler_workflow" \
+  "Dispatch preview deploys for drifted PRs" \
+  "$RECONCILER_RUN"
+
+reconciler_repository_base64="$(printf '%s' '"example/FireMUD"' | base64 | tr -d '\n')"
+run_reconciler_fixture() {
+  reset_case
+  export FAKE_NAMESPACE_ROWS=''
+  export FAKE_PR_901_HEAD=stale-head
+  export FAKE_OPEN_PRIORITY_ROWS="901\t${reconciler_repository_base64}\tfeature-901\thead-901\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+  export FAKE_TRUSTED_RUN_STATUS="$1"
+  (
+    cd "$ROOT_DIR"
+    DEFAULT_BRANCH=develop PREVIEW_MAX_ACTIVE=1 bash "$RECONCILER_RUN"
+  )
+}
+
+for active_trusted_status in queued in_progress; do
+  run_reconciler_fixture "$active_trusted_status"
+  grep -qx 'trusted-run-list queued' "$FAKE_RECONCILER_ACTION_LOG"
+  grep -qx 'trusted-run-list in_progress' "$FAKE_RECONCILER_ACTION_LOG"
+  if grep -q '^trusted-dispatch ' "$FAKE_RECONCILER_ACTION_LOG"; then
+    echo "reconciler dispatched while a trusted lifecycle was ${active_trusted_status}" >&2
+    exit 1
+  fi
+done
+
+run_reconciler_fixture ''
+mapfile -t reconciler_actions < "$FAKE_RECONCILER_ACTION_LOG"
+test "${reconciler_actions[0]}" = 'trusted-run-list queued'
+test "${reconciler_actions[1]}" = 'trusted-run-list in_progress'
+[[ "${reconciler_actions[2]}" == trusted-dispatch*hosted-identity-request.yml/dispatches* ]]
+[[ "${reconciler_actions[2]}" == *'-f ref=develop'* ]]
 
 run_trusted_target_fixture() {
   local source_event_action="$1"
@@ -1014,5 +1074,163 @@ test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
+
+python3 - "$reconciler_workflow" "$trusted_workflow" "$preview_workflow" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def load(path):
+    workflow = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(workflow, dict):
+        raise ValueError(f"workflow is not a mapping: {path}")
+    return workflow
+
+
+def unique_step(steps, name):
+    matches = [step for step in steps if step.get("name") == name]
+    if len(matches) != 1:
+        raise ValueError(f"expected exactly one {name!r} step, found {len(matches)}")
+    return matches[0]
+
+
+def run_body(step):
+    body = step.get("run")
+    if not isinstance(body, str):
+        raise ValueError(f"step {step.get('name')!r} has no shell body")
+    return body
+
+
+def validate_reconciler(workflow):
+    step = unique_step(
+        workflow["jobs"]["reconcile-previews"]["steps"],
+        "Dispatch preview deploys for drifted PRs",
+    )
+    body = run_body(step)
+    if step.get("env", {}).get("DEFAULT_BRANCH") != "${{ github.event.repository.default_branch }}":
+        raise ValueError("reconciler must resolve the repository default branch")
+    if "hosted-identity-request.yml/dispatches" not in body:
+        raise ValueError("reconciler must dispatch the trusted hosted lifecycle")
+    if ' -f ref="${DEFAULT_BRANCH}"' not in body:
+        raise ValueError("reconciler must dispatch the trusted lifecycle on the default branch")
+    for required in (
+        "-f 'inputs[action]=deploy'",
+        '-f "inputs[pr_number]=${pr_number}"',
+        '-f "inputs[head_sha]=${head_sha}"',
+    ):
+        if required not in body:
+            raise ValueError(f"reconciler dispatch is missing {required}")
+    if "preview.yml/dispatches" in body:
+        raise ValueError("reconciler must not dispatch the render-only preview workflow")
+    if body.count("--workflow hosted-identity-request.yml") != 1:
+        raise ValueError("reconciler must query the trusted lifecycle workflow exactly once")
+    if "for active_status in queued in_progress; do" not in body:
+        raise ValueError("reconciler must query queued and in-progress trusted lifecycles")
+    query_index = body.index("--workflow hosted-identity-request.yml")
+    dispatch_index = body.index("hosted-identity-request.yml/dispatches")
+    if query_index >= dispatch_index:
+        raise ValueError("trusted lifecycle duplicate suppression must precede dispatch")
+
+
+def validate_preflight_order(workflow):
+    steps = workflow["jobs"]["deploy-runtime"]["steps"]
+    names = [step.get("name") for step in steps]
+    static = unique_step(steps, "Validate trusted hosted bridge render")
+    operator = unique_step(steps, "Validate controller-projected preview identity")
+    static_run = run_body(static)
+    operator_run = run_body(operator)
+
+    if static_run.count("FIREMUD_PREFLIGHT_CONTEXT=ci-static") != 1:
+        raise ValueError("trusted render validation must use ci-static context exactly once")
+    if "FIREMUD_PREFLIGHT_CONTEXT=operator" in static_run:
+        raise ValueError("trusted render validation must not read projected identity Secrets")
+    if operator_run.count("FIREMUD_PREFLIGHT_CONTEXT=operator") != 1:
+        raise ValueError("projected identity validation must use operator context exactly once")
+    if "FIREMUD_PREFLIGHT_CONTEXT=ci-static" in operator_run:
+        raise ValueError("projected identity validation must not weaken to ci-static")
+    if "--expected-hosted-telnet-node-port \"$TELNET_PORT\"" not in static_run:
+        raise ValueError("static validation must bind the allocator-selected Telnet port")
+    if "--expected-hosted-telnet-node-port \"$TELNET_PORT\"" not in operator_run:
+        raise ValueError("operator validation must retain the allocator-selected Telnet port")
+
+    static_index = names.index("Validate trusted hosted bridge render")
+    operator_index = names.index("Validate controller-projected preview identity")
+    apply_index = names.index("Apply validated PR runtime artifact")
+    for predecessor in (
+        "Inject trusted allocated Telnet port",
+        "Create canonical non-identity runtime credentials",
+    ):
+        if names.index(predecessor) >= static_index:
+            raise ValueError(f"static validation must follow {predecessor}")
+    if static_index >= apply_index:
+        raise ValueError("static validation must precede server dry-run/apply")
+    for predecessor in (
+        "Wait for exact controller identity readiness",
+        "Wait for runtime rollouts before operator validation",
+    ):
+        if names.index(predecessor) >= operator_index:
+            raise ValueError(f"operator validation must follow {predecessor}")
+    for successor in ("Apply validated PR runtime artifact",):
+        if operator_index <= names.index(successor):
+            raise ValueError(f"operator validation must follow {successor}")
+    if sum(
+        step.get("run", "").count("preflight.py hosted-bridge")
+        for step in steps
+        if isinstance(step.get("run"), str)
+    ) != 2:
+        raise ValueError("trusted runtime must have exactly one static and one operator preflight")
+
+
+reconciler = load(sys.argv[1])
+trusted = load(sys.argv[2])
+render = load(sys.argv[3])
+validate_reconciler(reconciler)
+validate_preflight_order(trusted)
+render_text = Path(sys.argv[3]).read_text(encoding="utf-8")
+if "FIREMUD_PREFLIGHT_CONTEXT=" in render_text:
+    raise ValueError("PR-controlled render workflow must not run hosted preflight")
+
+
+def expect_rejected(candidate, description):
+    try:
+        validate_preflight_order(candidate)
+    except ValueError:
+        return
+    raise SystemExit(f"preflight-order contract survived mutation: {description}")
+
+
+candidate = copy.deepcopy(trusted)
+static = unique_step(
+    candidate["jobs"]["deploy-runtime"]["steps"],
+    "Validate trusted hosted bridge render",
+)
+static["run"] = static["run"].replace(
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static", "FIREMUD_PREFLIGHT_CONTEXT=operator"
+)
+expect_rejected(candidate, "operator Secret lookup before apply")
+
+candidate = copy.deepcopy(trusted)
+steps = candidate["jobs"]["deploy-runtime"]["steps"]
+operator = unique_step(steps, "Validate controller-projected preview identity")
+steps.remove(operator)
+steps.insert(
+    [step.get("name") for step in steps].index("Apply validated PR runtime artifact"),
+    operator,
+)
+expect_rejected(candidate, "operator validation moved before apply and rollout")
+
+candidate = copy.deepcopy(trusted)
+operator = unique_step(
+    candidate["jobs"]["deploy-runtime"]["steps"],
+    "Validate controller-projected preview identity",
+)
+operator["run"] = operator["run"].replace(
+    "FIREMUD_PREFLIGHT_CONTEXT=operator", "FIREMUD_PREFLIGHT_CONTEXT=ci-static"
+)
+expect_rejected(candidate, "projected identity validation weakened to static")
+PY
 
 echo "preview priority contract checks passed"
