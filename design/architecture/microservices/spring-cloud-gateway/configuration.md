@@ -37,7 +37,7 @@ For the TCP Proxy -> Gateway WebSocket mTLS hop, the TCP Proxy client identity a
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH` | Filesystem path to the Gateway listener certificate chain. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH` | Filesystem path to the matching Gateway listener private key. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH` | Environment-owned client trust bundle required by every certificate-bound profile and forbidden by `development_cidr`. |
-| `FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT` | Exact environment class: `local-dev`, `isolated-test`, `pr-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, or `production`. |
+| `FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT` | Canonical deployable environment class: `local-dev`, `pr-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, or `production`. Runtime tests additionally accept `isolated-test` as a test-only trust-policy sentinel, not a canonical deployable class; the exact canonical set is owned by [Deployment Environments](../../infrastructure/deployment-environments.md#canonical-environment-classes). |
 | `FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE` | Exactly one of `production_uri`, `migration_dns`, `breakglass_fingerprint`, or `development_cidr`. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN` | Exact canonical `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service` identity for `production_uri`. |
 | `FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN` | Exact lowercase ASCII DNS SAN for `migration_dns`. |

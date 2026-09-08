@@ -37,7 +37,7 @@ class TelnetPipelineIntegrationTest {
     Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     TelnetServerHandler handler =
         new TelnetServerHandler(
-            "ws://localhost/ws",
+            "ws://localhost/ws/game",
             () -> {},
             () -> {},
             registry.counter("connections"),
@@ -90,7 +90,7 @@ class TelnetPipelineIntegrationTest {
     Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     TelnetServerHandler handler =
         new TelnetServerHandler(
-            "ws://localhost/ws",
+            "ws://localhost/ws/game",
             () -> {},
             () -> {},
             registry.counter("connections"),

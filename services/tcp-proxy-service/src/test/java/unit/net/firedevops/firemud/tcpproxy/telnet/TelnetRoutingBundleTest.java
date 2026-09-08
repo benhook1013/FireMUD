@@ -43,6 +43,20 @@ class TelnetRoutingBundleTest {
   }
 
   @Test
+  void configuredDefaultsRejectControlOnlyHeaderValues() {
+    for (String controlOnly : new String[] {"\t", "\r", "\n"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              TelnetRoutingBundle.validateConfiguredDefaults(controlOnly, null, null, null, null));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              TelnetRoutingBundle.validateConfiguredDefaults(null, null, controlOnly, null, null));
+    }
+  }
+
+  @Test
   void configuredDefaultsRejectPartialRoutingBundle() {
     assertThrows(
         IllegalArgumentException.class,
@@ -55,5 +69,14 @@ class TelnetRoutingBundleTest {
         IllegalArgumentException.class,
         () ->
             TelnetRoutingBundle.validateConfiguredDefaults(null, null, "demo", "production", "0"));
+  }
+
+  @Test
+  void configuredDefaultsRejectMalformedPointerVersion() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            TelnetRoutingBundle.validateConfiguredDefaults(
+                null, null, "demo", "production", "not-a-number"));
   }
 }
