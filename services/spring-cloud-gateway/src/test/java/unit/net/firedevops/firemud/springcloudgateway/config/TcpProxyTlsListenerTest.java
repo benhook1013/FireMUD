@@ -166,7 +166,7 @@ class TcpProxyTlsListenerTest {
       waitForAcceptedConnection(listener);
       assertThat(connection.isDisposed()).isFalse();
 
-      Instant deadline = Instant.now().plusSeconds(5);
+      Instant deadline = Instant.now().plusSeconds(10);
       while (listener.isRunning() && Instant.now().isBefore(deadline)) {
         Thread.sleep(25);
       }

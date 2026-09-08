@@ -727,7 +727,7 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
-  void controlCharactersInEveryDynamicHeaderValueUseStableConfigurationFailure() throws Exception {
+  void controlCharactersInEveryDynamicHeaderValueUseStableHandshakeFailure() throws Exception {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     GatewayWebSocketClient client =
         new GatewayWebSocketClient(
@@ -779,7 +779,7 @@ class GatewayWebSocketClientTest {
         registry.counter("tcpproxy.gateway.handshake.failures", "reason", "bad_header").count());
     assertEquals(
         0.0, registry.counter("tcpproxy.gateway.handshake.failures", "reason", "unknown").count());
-    assertEquals(7.0, registry.counter("tcpproxy.tls.misconfig").count());
+    assertEquals(0.0, registry.counter("tcpproxy.tls.misconfig").count());
   }
 
   @Test

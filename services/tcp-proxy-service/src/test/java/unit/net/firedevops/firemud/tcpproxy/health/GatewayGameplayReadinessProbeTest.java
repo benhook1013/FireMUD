@@ -335,7 +335,10 @@ class GatewayGameplayReadinessProbeTest {
     }
 
     private long count(Level level, String message) {
-      List<ILoggingEvent> events = List.copyOf(appender.list);
+      List<ILoggingEvent> events;
+      synchronized (appender) {
+        events = List.copyOf(appender.list);
+      }
       return events.stream()
           .filter(event -> event.getLevel().equals(level))
           .filter(event -> event.getFormattedMessage().equals(message))

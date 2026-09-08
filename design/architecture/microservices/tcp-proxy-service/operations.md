@@ -45,6 +45,7 @@ Bounded labels and naming rules remain canonical. Detailed identifiers such as c
 
 For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `reason` enum is:
 
+- `bad_header`
 - `bad_url`
 - `dns`
 - `connect_refused`
@@ -58,6 +59,7 @@ For `tcpproxy.gateway.handshake.failures{reason="..."}`, the canonical bounded `
 
 Per-value meanings:
 
+- `bad_header` – invalid per-connection bridge metadata was rejected before the Gateway handshake; this does not increment the TLS-startup `tcpproxy.tls.misconfig` counter
 - `bad_url` – invalid `GATEWAY_WS_URL` configuration
 - `dns` – host resolution failure
 - `connect_refused` – target actively refused the TCP connection

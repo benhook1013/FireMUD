@@ -537,7 +537,10 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     try {
       TelnetRoutingBundle.validateHeaderValue(headerName, value);
     } catch (IllegalArgumentException e) {
-      throw configurationFailure(BAD_HEADER_REASON, e.getMessage(), e);
+      recordFailure(BAD_HEADER_REASON);
+      String diagnostic = e.getMessage() + "; reason=" + BAD_HEADER_REASON;
+      logger.warn(diagnostic, e);
+      throw new TlsConfigurationException(BAD_HEADER_REASON, diagnostic, e);
     }
   }
 
