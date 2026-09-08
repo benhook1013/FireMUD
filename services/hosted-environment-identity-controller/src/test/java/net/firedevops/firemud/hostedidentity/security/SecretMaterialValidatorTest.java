@@ -1,5 +1,6 @@
 package net.firedevops.firemud.hostedidentity.security;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -15,12 +16,17 @@ import io.fabric8.kubernetes.api.model.SecretBuilder;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.Security;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -28,6 +34,17 @@ import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
+import org.bouncycastle.asn1.DERPrintableString;
+import org.bouncycastle.asn1.x500.RDN;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.Test;
 
 class SecretMaterialValidatorTest {
@@ -224,6 +241,83 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void productionGenerationUsesTheConfiguredCaAndExactIssuanceGeneration() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    X500Name derSensitiveSubject =
+        new X500Name(
+            new RDN[] {
+              new RDN(BCStyle.CN, new DERPrintableString("FireMUD test transport root")),
+              new RDN(BCStyle.O, new DERPrintableString("FireMUD"))
+            });
+    Secret caSource = generatedCa(now, Duration.ofDays(60), derSensitiveSubject);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
+    GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
+
+    Secret generated =
+        new GrpcTransportBundleGenerator().generate(plan, caSource, 17, Duration.ofDays(7), now);
+    X509Certificate ca = certificate(caSource.getData().get("ca.crt"));
+    X509Certificate leaf = certificate(generated.getData().get("tls.crt"));
+
+    assertEquals(caSource.getData().get("ca.crt"), generated.getData().get("ca.crt"));
+    assertEquals(17, GrpcTransportBundleGenerator.issuanceGeneration(generated));
+    assertFalse(
+        java.util.Arrays.equals(
+            ca.getSubjectX500Principal().getEncoded(),
+            new X500Name(ca.getSubjectX500Principal().getName()).getEncoded()),
+        "fixture must detect a normalized issuer string round-trip");
+    assertArrayEquals(
+        ca.getSubjectX500Principal().getEncoded(), leaf.getIssuerX500Principal().getEncoded());
+    assertEquals(Date.from(now.plus(Duration.ofDays(30))), leaf.getNotAfter());
+    leaf.verify(ca.getPublicKey());
+    assertEquals(
+        trustAnchor,
+        new SecretMaterialValidator()
+            .validateIdentity(
+                generated,
+                GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                java.util.List.of(),
+                "Opaque",
+                true,
+                true,
+                trustAnchor)
+            .trustAnchorFingerprint());
+  }
+
+  @Test
+  void productionGenerationCapsLeafExpiryAtTheSigningCaExpiry() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, Duration.ofDays(10));
+
+    Secret generated =
+        new GrpcTransportBundleGenerator().generate(plan, caSource, 2, Duration.ofDays(7), now);
+
+    assertEquals(
+        certificate(caSource.getData().get("ca.crt")).getNotAfter(),
+        certificate(generated.getData().get("tls.crt")).getNotAfter());
+  }
+
+  @Test
+  void productionGenerationRejectsCaWithinTheRenewalWindowBeforeSigning() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, Duration.ofDays(7));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GrpcTransportBundleGenerator()
+                    .generate(plan, caSource, 2, Duration.ofDays(7), now));
+
+    assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
+  }
+
+  @Test
   void servedProbeClosesSocketWhenSetupFailsBeforeOwnershipTransfer() throws Exception {
     SSLSocket socket = mock(SSLSocket.class);
     doThrow(new IOException("connect failed"))
@@ -368,5 +462,45 @@ class SecretMaterialValidatorTest {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")
             .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(encoded)));
+  }
+
+  private static Secret generatedCa(Instant now, Duration lifetime) throws Exception {
+    return generatedCa(now, lifetime, new X500Name("CN=FireMUD test transport root, O=FireMUD"));
+  }
+
+  private static Secret generatedCa(Instant now, Duration lifetime, X500Name name)
+      throws Exception {
+    if (Security.getProvider("BC") == null) {
+      Security.addProvider(new BouncyCastleProvider());
+    }
+    KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+    keyPairGenerator.initialize(2048);
+    KeyPair keyPair = keyPairGenerator.generateKeyPair();
+    var builder =
+        new JcaX509v3CertificateBuilder(
+            name,
+            BigInteger.valueOf(42),
+            Date.from(now.minus(Duration.ofMinutes(1))),
+            Date.from(now.plus(lifetime)),
+            name,
+            keyPair.getPublic());
+    builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
+    builder.addExtension(
+        Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+    var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
+    X509Certificate ca =
+        new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));
+    return new SecretBuilder()
+        .withType("Opaque")
+        .withData(
+            Map.of(
+                "ca.crt", pem("CERTIFICATE", ca.getEncoded()),
+                "ca.key", pem("PRIVATE KEY", keyPair.getPrivate().getEncoded())))
+        .build();
+  }
+
+  private static String pem(String label, byte[] der) {
+    String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(der);
+    return encode("-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n");
   }
 }

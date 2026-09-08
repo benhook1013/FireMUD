@@ -252,7 +252,7 @@ spec:
              (!has(object.spec.uris) || object.spec.uris.size() == 0) &&
              object.spec.usages == ['digital signature', 'key encipherment', 'server auth'])) &&
            (object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||
-            (object.spec.dnsNames.size() == 0 &&
+            ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&
              object.spec.uris == ['spiffe://firemud/ns/' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '/sa/tcp-proxy-service'] &&
              object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&

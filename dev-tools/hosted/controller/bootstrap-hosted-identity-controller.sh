@@ -129,8 +129,10 @@ kubectl -n "$CONTROL_NAMESPACE" rollout status \
   --timeout="${WAIT_SECONDS}s"
 kubectl -n "$CONTROL_NAMESPACE" get deployment "$DEPLOYMENT_NAME" \
   -o jsonpath='{.status.availableReplicas}/{.spec.replicas}{"\n"}'
-kubectl get crd hostedenvironmentidentities.platform.firemud.dev \
-  -o jsonpath='{.status.conditions[?(@.type=="Established")].status}{"\n"}'
+crd_established="$(kubectl get crd hostedenvironmentidentities.platform.firemud.dev \
+  -o jsonpath='{.status.conditions[?(@.type=="Established")].status}')"
+[[ "$crd_established" == "True" ]] || \
+  fail "HostedEnvironmentIdentity CRD is not Established=True"
 
 # Active mode is fail-closed until every policy and binding in the install
 # boundary exists. Checking one representative policy is insufficient: a
@@ -161,6 +163,7 @@ verify_grpc_ca_prerequisite() {
   command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
   command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
   local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
+  local certificate_public_key_sha256 private_key_public_key_sha256
   secret_type="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
     -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
   [[ "$secret_type" == "Opaque" ]] || fail "firemud-grpc-ca must be an Opaque Secret"
@@ -184,6 +187,23 @@ verify_grpc_ca_prerequisite() {
   )" || fail "firemud-grpc-ca ca.crt is not a valid certificate"
   [[ "$actual_fingerprint" == "${GRPC_TRUST_ANCHOR_SHA256,,}" ]] || \
     fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
+  certificate_public_key_sha256="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      openssl x509 -pubkey -noout 2>/dev/null |
+      openssl pkey -pubin -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.crt public key could not be parsed"
+  private_key_public_key_sha256="$(
+    printf '%s' "$encoded_key" |
+      base64 --decode |
+      openssl pkey -pubout -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.key is not a valid private key"
+  [[ "$certificate_public_key_sha256" == "$private_key_public_key_sha256" ]] || \
+    fail "firemud-grpc-ca ca.crt and ca.key do not match"
 }
 
 controller_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-controller"

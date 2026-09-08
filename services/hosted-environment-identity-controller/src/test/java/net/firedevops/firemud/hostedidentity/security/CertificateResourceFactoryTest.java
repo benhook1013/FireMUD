@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
@@ -36,7 +37,7 @@ class CertificateResourceFactoryTest {
         gatewaySpec.get("usages"));
     assertEquals("pr-42-tcp-proxy-bridge", bridgeSpec.get("secretName"));
     assertEquals("firemud-ca-issuer", ((Map<?, ?>) bridgeSpec.get("issuerRef")).get("name"));
-    assertEquals(java.util.List.of(), bridgeSpec.get("dnsNames"));
+    assertFalse(bridgeSpec.containsKey("dnsNames"));
     assertEquals(
         java.util.List.of("spiffe://firemud/ns/pr-42/sa/tcp-proxy-service"),
         bridgeSpec.get("uris"));

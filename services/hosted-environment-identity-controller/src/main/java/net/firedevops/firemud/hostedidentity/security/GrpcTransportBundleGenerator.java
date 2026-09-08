@@ -65,6 +65,8 @@ public class GrpcTransportBundleGenerator {
       Long acceptedGeneration,
       Duration renewBefore,
       String expectedTrustAnchorSha256) {
+    requirePositiveRenewalWindow(renewBefore);
+    Instant now = Instant.now();
     Secret existing =
         client
             .secrets()
@@ -80,7 +82,7 @@ public class GrpcTransportBundleGenerator {
     long accepted = acceptedGeneration == null ? 0 : acceptedGeneration;
     if (existing == null) {
       long attemptedGeneration = nextGeneration(accepted);
-      Secret generated = generate(plan, caSource, attemptedGeneration);
+      Secret generated = generate(plan, caSource, attemptedGeneration, renewBefore, now);
       try {
         return client.secrets().inNamespace(plan.identityNamespace()).resource(generated).create();
       } catch (KubernetesClientException exception) {
@@ -98,14 +100,11 @@ public class GrpcTransportBundleGenerator {
     }
     long currentGeneration = issuanceGeneration(existing);
     validateAcceptedGeneration(currentGeneration, accepted);
-    if (renewBefore == null || renewBefore.isNegative() || renewBefore.isZero()) {
-      throw new IllegalStateException("gRPC renewal window must be positive");
-    }
-    if (!renewalRequired(existing, renewBefore, Instant.now())) {
+    if (!renewalRequired(existing, renewBefore, now)) {
       return existing;
     }
     long attemptedGeneration = nextGeneration(currentGeneration);
-    Secret replacement = generate(plan, caSource, attemptedGeneration);
+    Secret replacement = generate(plan, caSource, attemptedGeneration, renewBefore, now);
     replacement.getMetadata().setResourceVersion(existing.getMetadata().getResourceVersion());
     try {
       return client.secrets().inNamespace(plan.identityNamespace()).resource(replacement).replace();
@@ -132,22 +131,27 @@ public class GrpcTransportBundleGenerator {
       keyPairGenerator.initialize(2048);
       KeyPair root = keyPairGenerator.generateKeyPair();
       KeyPair leaf = keyPairGenerator.generateKeyPair();
+      Instant now = Instant.now();
       X509Certificate rootCertificate =
           certificate(
-              "CN=FireMUD hosted transport root, O=FireMUD",
-              "CN=FireMUD hosted transport root, O=FireMUD",
+              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
+              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
               root,
               root,
               grpcDnsNames(plan),
-              true);
+              true,
+              now,
+              null);
       X509Certificate leafCertificate =
           certificate(
-              "CN=FireMUD hosted transport, O=FireMUD",
-              "CN=FireMUD hosted transport root, O=FireMUD",
+              new X500Name("CN=FireMUD hosted transport, O=FireMUD"),
+              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
               leaf,
               root,
               grpcDnsNames(plan),
-              false);
+              false,
+              now,
+              rootCertificate.getNotAfter().toInstant());
       Map<String, String> data = new LinkedHashMap<>();
       data.put("tls.crt", pem(leafCertificate));
       data.put("tls.key", pem(leaf.getPrivate()));
@@ -159,12 +163,23 @@ public class GrpcTransportBundleGenerator {
     }
   }
 
-  private Secret generate(EnvironmentIdentityPlan plan, Secret caSource, long generation) {
+  Secret generate(
+      EnvironmentIdentityPlan plan,
+      Secret caSource,
+      long generation,
+      Duration renewBefore,
+      Instant now) {
     try {
+      requirePositiveRenewalWindow(renewBefore);
       if (Security.getProvider("BC") == null) {
         Security.addProvider(new BouncyCastleProvider());
       }
       X509Certificate caCertificate = parseCertificate(requiredData(caSource, "ca.crt"));
+      Instant caNotAfter = caCertificate.getNotAfter().toInstant();
+      if (!caNotAfter.isAfter(now.plus(renewBefore))) {
+        throw new IllegalStateException(
+            "configured gRPC CA expires within the gRPC renewal window");
+      }
       KeyPair caKey =
           new KeyPair(
               caCertificate.getPublicKey(), parsePrivateKey(requiredData(caSource, "ca.key")));
@@ -173,17 +188,21 @@ public class GrpcTransportBundleGenerator {
       KeyPair leaf = keyPairGenerator.generateKeyPair();
       X509Certificate leafCertificate =
           certificate(
-              "CN=FireMUD hosted transport, O=FireMUD",
-              caCertificate.getSubjectX500Principal().getName(),
+              new X500Name("CN=FireMUD hosted transport, O=FireMUD"),
+              X500Name.getInstance(caCertificate.getSubjectX500Principal().getEncoded()),
               leaf,
               caKey,
               grpcDnsNames(plan),
-              false);
+              false,
+              now,
+              caNotAfter);
       Map<String, String> data = new LinkedHashMap<>();
       data.put("tls.crt", pem(leafCertificate));
       data.put("tls.key", pem(leaf.getPrivate()));
       data.put("ca.crt", requiredData(caSource, "ca.crt"));
       return secret(plan, data, generation);
+    } catch (IllegalStateException exception) {
+      throw exception;
     } catch (Exception exception) {
       throw new IllegalStateException(
           "unable to generate hosted gRPC transport material", exception);
@@ -316,21 +335,29 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static X509Certificate certificate(
-      String subject,
-      String issuer,
+      X500Name subject,
+      X500Name issuer,
       KeyPair subjectKey,
       KeyPair issuerKey,
       List<String> dnsNames,
-      boolean ca)
+      boolean ca,
+      Instant now,
+      Instant maximumNotAfter)
       throws Exception {
-    Instant now = Instant.now();
+    Instant notAfter = now.plus(Duration.ofDays(30));
+    if (maximumNotAfter != null && maximumNotAfter.isBefore(notAfter)) {
+      notAfter = maximumNotAfter;
+    }
+    if (!notAfter.isAfter(now)) {
+      throw new IllegalStateException("certificate validity window is exhausted");
+    }
     JcaX509v3CertificateBuilder builder =
         new JcaX509v3CertificateBuilder(
-            new X500Name(issuer),
+            issuer,
             newCertificateSerial(),
             Date.from(now.minus(Duration.ofMinutes(1))),
-            Date.from(now.plus(Duration.ofDays(30))),
-            new X500Name(subject),
+            Date.from(notAfter),
+            subject,
             subjectKey.getPublic());
     builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(ca));
     builder.addExtension(
@@ -366,6 +393,12 @@ public class GrpcTransportBundleGenerator {
       serial = new BigInteger(159, SERIAL_RANDOM);
     } while (serial.signum() <= 0);
     return serial;
+  }
+
+  private static void requirePositiveRenewalWindow(Duration renewBefore) {
+    if (renewBefore == null || renewBefore.isNegative() || renewBefore.isZero()) {
+      throw new IllegalStateException("gRPC renewal window must be positive");
+    }
   }
 
   static long nextGeneration(long current) {

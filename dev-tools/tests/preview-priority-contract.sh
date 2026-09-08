@@ -1095,7 +1095,7 @@ grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prun
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   "$trusted_workflow" \
-  "$trusted_workflow" \
+  "$reconciler_workflow" \
   "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
   echo "A live preview callsite duplicates the centralized label predicate" >&2

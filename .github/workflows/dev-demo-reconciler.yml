@@ -83,7 +83,7 @@ jobs:
           )"
           IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
 
-          if [[ "${candidate_status}" == queued || "${candidate_status}" == in_progress ]]; then
+          if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
             echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
             exit 0
           fi

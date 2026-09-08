@@ -20,6 +20,19 @@ runs:
         umask 077
         test -n "$KUBECONFIG_CONTENT"
         test -n "$KUBECONFIG_PATH"
-        printf '%s\n' "$KUBECONFIG_CONTENT" > "$KUBECONFIG_PATH"
-        chmod 600 "$KUBECONFIG_PATH"
-        echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+        destination_directory="$(dirname -- "$KUBECONFIG_PATH")"
+        destination_name="$(basename -- "$KUBECONFIG_PATH")"
+        mkdir -p -- "$destination_directory"
+        temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"
+        cleanup() {
+          if [[ -n "$temporary_path" ]]; then
+            rm -f -- "$temporary_path"
+          fi
+        }
+        trap cleanup EXIT
+        printf '%s\n' "$KUBECONFIG_CONTENT" > "$temporary_path"
+        chmod 600 "$temporary_path"
+        kubectl --kubeconfig "$temporary_path" config view --minify >/dev/null
+        mv -fT -- "$temporary_path" "$KUBECONFIG_PATH"
+        temporary_path=''
+        printf 'KUBECONFIG=%s\n' "$KUBECONFIG_PATH" >> "$GITHUB_ENV"

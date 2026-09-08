@@ -280,6 +280,10 @@ assert "spring-cloud-gateway-mtls." in profile_expression
 assert ".svc.cluster.local" in profile_expression
 assert "spiffe://firemud/ns/" in profile_expression
 assert "/sa/tcp-proxy-service" in profile_expression
+assert (
+    "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||\n"
+    "    ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
+) in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']" in profile_expression
 PY
@@ -315,11 +319,10 @@ for forbidden_requester_permission in secrets certificates; do
     fail "requester role has forbidden $forbidden_requester_permission access"
   fi
 done
-cluster_role_rbac="$(awk '
-  /^---$/ { in_document = 0 }
-  /^kind: ClusterRole$/ { in_document = 1 }
-  in_document { print }
-' "$RBAC")"
+cluster_role_rbac="$(
+  select_named_yaml_document "$RBAC" ClusterRole \
+    firemud-hosted-identity-controller-namespace-lifecycle
+)"
 for forbidden_cluster_permission in secrets certificates hostedenvironmentidentities; do
   if grep -Fqi -- "$forbidden_cluster_permission" <<<"$cluster_role_rbac"; then
     fail "controller ClusterRole has broad $forbidden_cluster_permission access"
@@ -460,9 +463,15 @@ for ca_proof in \
   'get secret firemud-grpc-ca' \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
-  'does not match the configured fingerprint'; do
+  "openssl x509 -pubkey -noout" \
+  "openssl pkey -pubout -outform DER" \
+  'does not match the configured fingerprint' \
+  'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
+# shellcheck disable=SC2016 # Match the literal bootstrap variable expression.
+require_literal "$BOOTSTRAP" '[[ "$crd_established" == "True" ]]'
+require_literal "$BOOTSTRAP" "HostedEnvironmentIdentity CRD is not Established=True"
 BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -542,7 +551,7 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "crd" ]]; then
-  printf 'True\n'
+  printf '%s\n' "${FAKE_CRD_ESTABLISHED:-True}"
   exit 0
 fi
 if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "firemud-grpc-ca" ]]; then
@@ -587,12 +596,15 @@ SH
 chmod +x "$bootstrap_test_dir/kubectl"
 bootstrap_ca_cert="$bootstrap_test_dir/ca.crt"
 bootstrap_ca_key="$bootstrap_test_dir/ca.key"
+bootstrap_mismatched_ca_key="$bootstrap_test_dir/mismatched-ca.key"
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_ca_key" \
   -out "$bootstrap_ca_cert" \
   -days 1 \
   -subj '/CN=firemud-grpc-ca' \
   >/dev/null 2>&1
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out "$bootstrap_mismatched_ca_key" >/dev/null 2>&1
 bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 bootstrap_fingerprint="$(
   openssl x509 -in "$bootstrap_ca_cert" -outform DER |
@@ -608,6 +620,13 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+if FAKE_CRD_ESTABLISHED=False FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a CRD that was not Established=True"
+fi
+require_literal "$bootstrap_error" "HostedEnvironmentIdentity CRD is not Established=True"
 active_event_log="$bootstrap_test_dir/active-events"
 if ! FAKE_EVENT_LOG="$active_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
@@ -661,6 +680,19 @@ fi
 require_literal "$bootstrap_error" "does not match the configured fingerprint"
 if grep -Fxq -- "apply:active" "$mismatch_event_log"; then
   fail "bootstrap applied active mode after a mismatched gRPC CA fingerprint"
+fi
+key_mismatch_event_log="$bootstrap_test_dir/key-mismatch-events"
+if FAKE_EVENT_LOG="$key_mismatch_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_mismatched_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a gRPC CA certificate and private-key mismatch"
+fi
+require_literal "$bootstrap_error" "ca.crt and ca.key do not match"
+if grep -Fxq -- "apply:active" "$key_mismatch_event_log"; then
+  fail "bootstrap applied active mode after a gRPC CA certificate/key mismatch"
 fi
 if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \

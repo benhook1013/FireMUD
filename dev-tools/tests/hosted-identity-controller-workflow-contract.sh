@@ -8,6 +8,8 @@ runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 kubeconfig_action="$ROOT_DIR/.github/actions/write-kubeconfig/action.yml"
 build_gradle="$ROOT_DIR/build.gradle.kts"
+controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
+controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller/Dockerfile"
 bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
@@ -24,6 +26,12 @@ contains "$runtime" 'hosted-environment-identity-controller'
 contains "$runtime" 'services/hosted-environment-identity-controller/**'
 contains "$publisher" 'hosted-environment-identity-controller'
 contains "$build_gradle" '":hosted-environment-identity-controller:bootBuildImage"'
+contains "$controller_build_gradle" 'archiveFileName.set("hosted-environment-identity-controller.jar")'
+contains "$controller_dockerfile" 'COPY --chown=firemud:firemud --chmod=644 hosted-environment-identity-controller.jar app.jar'
+if grep -Fq -- '*.jar' "$controller_dockerfile"; then
+  echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
+  exit 1
+fi
 
 # The shared kubeconfig action is the only workflow credential-file writer.
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
@@ -31,7 +39,11 @@ for required in \
   'using: composite' \
   'umask 077' \
   'test -n "$KUBECONFIG_CONTENT"' \
-  'chmod 600 "$KUBECONFIG_PATH"'; do
+  'mkdir -p -- "$destination_directory"' \
+  'temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"' \
+  'trap cleanup EXIT' \
+  'kubectl --kubeconfig "$temporary_path" config view --minify >/dev/null' \
+  'mv -fT -- "$temporary_path" "$KUBECONFIG_PATH"'; do
   contains "$kubeconfig_action" "$required"
 done
 contains "$trusted" 'uses: ./.github/actions/write-kubeconfig'
@@ -133,12 +145,120 @@ for fragment in (
     assert fragment in target_script, fragment
 source_step = next(step for step in validate_job["steps"] if step.get("id") == "source")
 assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
+
+deploy_steps = jobs["deploy-runtime"]["steps"]
+projection_wait = next(
+    step["run"]
+    for step in deploy_steps
+    if step.get("name") == "Wait for exact WebSocket identity projections"
+)
+loop = (
+    'for secret_name in "${IDENTITY_NAME}-gateway-internal-ws" '
+    '"${IDENTITY_NAME}-tcp-proxy-bridge"; do'
+)
+assert projection_wait.count("deadline=$((SECONDS + 900))") == 1
+assert projection_wait.index(loop) < projection_wait.index("deadline=$((SECONDS + 900))")
+assert projection_wait.index("deadline=$((SECONDS + 900))") < projection_wait.index(
+    "while (( SECONDS < deadline )); do"
+)
 PY
 
 # Execute the trusted selector with the old producer's actual boundary: a
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+action = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+Path(sys.argv[2]).write_text(action["runs"]["steps"][0]["run"], encoding="utf-8")
+PY
+mkdir -p "$TEMP_DIR/bin"
+cat >"$TEMP_DIR/bin/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 5 ]]
+[[ "$1" == --kubeconfig ]]
+[[ "$3" == config && "$4" == view && "$5" == --minify ]]
+python3 - "$2" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+config = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert isinstance(config, dict)
+assert config.get("apiVersion") == "v1"
+assert config.get("kind") == "Config"
+current_context = config.get("current-context")
+assert isinstance(current_context, str) and current_context
+contexts = config.get("contexts")
+assert isinstance(contexts, list)
+assert any(
+    isinstance(context, dict)
+    and context.get("name") == current_context
+    and isinstance(context.get("context"), dict)
+    for context in contexts
+)
+PY
+SH
+chmod +x "$TEMP_DIR/bin/kubectl"
+valid_kubeconfig=$'apiVersion: v1\nkind: Config\ncurrent-context: preview\ncontexts:\n  - name: preview\n    context:\n      cluster: preview\n      user: preview\nclusters:\n  - name: preview\n    cluster:\n      server: https://127.0.0.1\nusers:\n  - name: preview\n    user:\n      token: test-token'
+valid_kubeconfig_parent="$TEMP_DIR/missing parent"
+valid_kubeconfig_path="$valid_kubeconfig_parent/valid config.kubeconfig"
+valid_github_env="$TEMP_DIR/valid-github-env"
+test ! -e "$valid_kubeconfig_parent"
+: >"$valid_github_env"
+PATH="$TEMP_DIR/bin:$PATH" \
+  KUBECONFIG_CONTENT="$valid_kubeconfig" \
+  KUBECONFIG_PATH="$valid_kubeconfig_path" \
+  GITHUB_ENV="$valid_github_env" \
+  bash "$TEMP_DIR/write-kubeconfig.sh"
+test -f "$valid_kubeconfig_path"
+test ! -L "$valid_kubeconfig_path"
+test "$(stat -c '%a' "$valid_kubeconfig_path")" = 600
+test "$(cat "$valid_kubeconfig_path")" = "$valid_kubeconfig"
+grep -Fxq "KUBECONFIG=$valid_kubeconfig_path" "$valid_github_env"
+
+symlink_target="$TEMP_DIR/symlink-target.kubeconfig"
+symlink_path="$TEMP_DIR/symlink.kubeconfig"
+symlink_github_env="$TEMP_DIR/symlink-github-env"
+printf 'protected symlink target\n' >"$symlink_target"
+ln -s "$symlink_target" "$symlink_path"
+: >"$symlink_github_env"
+PATH="$TEMP_DIR/bin:$PATH" \
+  KUBECONFIG_CONTENT="$valid_kubeconfig" \
+  KUBECONFIG_PATH="$symlink_path" \
+  GITHUB_ENV="$symlink_github_env" \
+  bash "$TEMP_DIR/write-kubeconfig.sh"
+test ! -L "$symlink_path"
+test -f "$symlink_path"
+test "$(stat -c '%a' "$symlink_path")" = 600
+test "$(cat "$symlink_path")" = "$valid_kubeconfig"
+test "$(cat "$symlink_target")" = 'protected symlink target'
+grep -Fxq "KUBECONFIG=$symlink_path" "$symlink_github_env"
+
+malformed_kubeconfig_path="$TEMP_DIR/malformed.kubeconfig"
+malformed_github_env="$TEMP_DIR/malformed-github-env"
+printf 'prior malformed destination\n' >"$malformed_kubeconfig_path"
+chmod 644 "$malformed_kubeconfig_path"
+: >"$malformed_github_env"
+if PATH="$TEMP_DIR/bin:$PATH" \
+  KUBECONFIG_CONTENT=$'apiVersion: v1\nkind: Config\ncontexts: [' \
+  KUBECONFIG_PATH="$malformed_kubeconfig_path" \
+  GITHUB_ENV="$malformed_github_env" \
+  bash "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
+  echo "shared kubeconfig action accepted malformed content" >&2
+  exit 1
+fi
+test "$(cat "$malformed_kubeconfig_path")" = 'prior malformed destination'
+test "$(stat -c '%a' "$malformed_kubeconfig_path")" = 644
+test ! -s "$malformed_github_env"
+test -z "$(find "$TEMP_DIR" -maxdepth 1 -name '.*.kubeconfig.*' -print -quit)"
+
 python3 - "$trusted" "$TEMP_DIR/target.sh" <<'PY'
 import sys
 from pathlib import Path
@@ -153,7 +273,6 @@ target = next(
 )
 Path(sys.argv[2]).write_text(target["run"], encoding="utf-8")
 PY
-mkdir -p "$TEMP_DIR/bin"
 cat >"$TEMP_DIR/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

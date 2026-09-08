@@ -103,7 +103,9 @@ public class CertificateResourceFactory {
             "source-materialized"));
     spec.put("secretTemplate", Map.of("metadata", secretTemplateMetadata));
     spec.put("privateKey", privateKey);
-    spec.put("dnsNames", new ArrayList<>(dnsNames));
+    if (!dnsNames.isEmpty()) {
+      spec.put("dnsNames", new ArrayList<>(dnsNames));
+    }
     if (!uriSans.isEmpty()) {
       spec.put("uris", new ArrayList<>(uriSans));
     }

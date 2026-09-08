@@ -188,13 +188,36 @@ for required in (
     "set -euo pipefail",
     "--ignore-not-found",
     '.headSha == $head',
-    '"${candidate_status}" == queued || "${candidate_status}" == in_progress',
+    '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]',
     '"${candidate_conclusion}" == success',
     '"${candidate_conclusion}" != success',
     "Redispatching failed dev-demo candidate",
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
+
+nonterminal_guard = '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]'
+for candidate_status in ("requested", "waiting", "pending"):
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'candidate_status="$1"; if {nonterminal_guard}; then exit 0; fi; exit 1',
+            "dev-demo-status-contract",
+            candidate_status,
+        ],
+        check=True,
+    )
+subprocess.run(
+    [
+        "bash",
+        "-c",
+        f'candidate_status="$1"; if {nonterminal_guard}; then exit 1; fi; exit 0',
+        "dev-demo-status-contract",
+        "completed",
+    ],
+    check=True,
+)
 
 jq_marker = '| jq -r --arg head "${desired_head_sha}" \\\n'
 try:

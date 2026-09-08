@@ -7,6 +7,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -238,6 +239,9 @@ public class SecretProjectionService {
   }
 
   public static String revisionForData(Map<String, String> data) {
+    if (data == null) {
+      throw new IllegalArgumentException("material data is required");
+    }
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       data.entrySet().stream()
@@ -252,7 +256,7 @@ public class SecretProjectionService {
       StringBuilder result = new StringBuilder("sha256:");
       for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value));
       return result.toString();
-    } catch (Exception exception) {
+    } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("unable to calculate material revision", exception);
     }
   }

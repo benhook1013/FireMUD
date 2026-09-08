@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResourceList;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
@@ -51,6 +53,111 @@ class SecretProjectionServiceTest {
     assertEquals(71, first.length());
     assertTrue(first.matches("sha256:[0-9a-f]{64}"));
     assertNotEquals(first, service.revisionFor(Map.of("tls.key", encoded("other"))));
+  }
+
+  @Test
+  void revisionRejectsMissingAndMalformedMaterialWithoutMaskingTheCause() {
+    IllegalArgumentException missing =
+        assertThrows(
+            IllegalArgumentException.class, () -> SecretProjectionService.revisionForData(null));
+    assertEquals("material data is required", missing.getMessage());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void materializationBatchReusesOneRotationSelectionSnapshot() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    stubCertificate(client, plan, plan.ingressCertificateName(), true);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> runtimeSecret = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(runtimeSecrets.withName(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(runtimeSecret);
+    when(runtimeSecret.get()).thenReturn(null);
+
+    GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
+    Secret grpcSource =
+        new SecretBuilder()
+            .withNewMetadata()
+            .addToAnnotations(HostedIdentityContract.ISSUANCE_GENERATION_ANNOTATION, "1")
+            .endMetadata()
+            .withType("Opaque")
+            .build();
+    Secret ingressSource = new SecretBuilder().withType("kubernetes.io/tls").build();
+    Resource<Secret> ingressSourceResource = mock(Resource.class);
+    when(identitySecrets.withName(plan.ingressSecretName())).thenReturn(ingressSourceResource);
+    when(ingressSourceResource.get()).thenReturn(ingressSource);
+    when(generator.ensure(
+            client,
+            plan,
+            null,
+            properties.getGrpcRenewBefore(),
+            properties.getGrpcTrustAnchorSha256()))
+        .thenReturn(grpcSource);
+    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
+    SecretMaterialValidator.MaterialSummary summary =
+        new SecretMaterialValidator.MaterialSummary(
+            "1".repeat(64),
+            "2".repeat(64),
+            java.time.Instant.EPOCH,
+            java.time.Instant.MAX,
+            "3".repeat(64));
+    when(validator.validateIdentity(
+            org.mockito.ArgumentMatchers.any(Secret.class),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(summary);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(), validator, generator, properties);
+
+    CertificateMaterialService.MaterializationBatch batch =
+        service.beginMaterialization(client, plan);
+    CertificateMaterialService.RoleMaterial ingress = batch.ingress();
+    CertificateMaterialService.RoleMaterial grpc = batch.grpc(null);
+
+    assertEquals(HostedIdentityContract.INGRESS_ROLE, ingress.role());
+    assertEquals(HostedIdentityContract.GRPC_ROLE, grpc.role());
+    assertEquals(summary, ingress.summary());
+    assertEquals(summary, grpc.summary());
+    verify(runtimeSecrets, org.mockito.Mockito.times(5))
+        .withName(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void pendingIngressDoesNotReadAnyRotationProjectionOrSource() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    stubCertificate(client, plan, plan.ingressCertificateName(), false);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(),
+            mock(SecretMaterialValidator.class),
+            mock(GrpcTransportBundleGenerator.class),
+            properties);
+
+    CertificateMaterialService.RoleMaterial ingress =
+        service.beginMaterialization(client, plan).ingress();
+
+    assertEquals(false, ingress.ready());
+    assertEquals("certificate-pending", ingress.state());
+    verify(client, never()).secrets();
   }
 
   @Test
@@ -286,14 +393,73 @@ class SecretProjectionServiceTest {
         acceptedSpki, annotations.get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
     assertEquals("pending", annotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
     assertEquals("projected", result.state());
-    assertEquals(
-        HostedIdentityContract.INGRESS_ROLE,
-        CertificateMaterialService.selectSerializedRole(
-            List.of(
-                new CertificateMaterialService.RotationState(
-                    HostedIdentityContract.INGRESS_ROLE, true, false, false),
-                new CertificateMaterialService.RotationState(
-                    HostedIdentityContract.TELNET_ROLE, false, false, false))));
+
+    Secret capturedReplacement = candidate.getValue();
+    when(existingResource.get()).thenReturn(capturedReplacement);
+    Map<String, String> newerIngressData =
+        Map.of("tls.crt", encoded("newer-ingress"), "tls.key", encoded("key-3"));
+    Resource<Secret> ingressSource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(plan.ingressSecretName()))
+        .thenReturn(ingressSource);
+    when(ingressSource.get())
+        .thenReturn(
+            ownedSecret(
+                plan,
+                HostedIdentityContract.INGRESS_ROLE,
+                plan.ingressSecretName(),
+                newerIngressData,
+                Map.of()));
+    for (String role :
+        List.of(
+            HostedIdentityContract.TELNET_ROLE,
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+            HostedIdentityContract.GRPC_ROLE)) {
+      String name = secretName(plan, role);
+      String revision = SecretProjectionService.revisionForRole(role, acceptedData);
+      Resource<Secret> projection = mock(Resource.class);
+      when(secretClient.runtimeSecrets().withName(name)).thenReturn(projection);
+      when(projection.get())
+          .thenReturn(
+              ownedSecret(
+                  plan, role, name, acceptedData, acceptedAnnotations(revision, acceptedSpki)));
+      Map<String, String> sourceData =
+          HostedIdentityContract.TELNET_ROLE.equals(role) ? replacementData : acceptedData;
+      Resource<Secret> source = mock(Resource.class);
+      when(secretClient.identitySecrets().withName(name)).thenReturn(source);
+      when(source.get()).thenReturn(ownedSecret(plan, role, name, sourceData, Map.of()));
+    }
+    stubCertificate(client, plan, plan.ingressCertificateName(), true);
+    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
+    SecretMaterialValidator.MaterialSummary summary =
+        new SecretMaterialValidator.MaterialSummary(
+            "3".repeat(64),
+            "4".repeat(64),
+            java.time.Instant.EPOCH,
+            java.time.Instant.MAX,
+            "5".repeat(64));
+    when(validator.validateIdentity(
+            org.mockito.ArgumentMatchers.any(Secret.class),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyCollection(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyBoolean(),
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(summary);
+    CertificateMaterialService materialService =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(),
+            validator,
+            mock(GrpcTransportBundleGenerator.class),
+            new HostedIdentityProperties());
+
+    CertificateMaterialService.RoleMaterial continued =
+        materialService.beginMaterialization(client, plan).ingress();
+
+    assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
+    assertEquals("serialized-in-flight", continued.state());
+    assertEquals(capturedReplacement, continued.source());
   }
 
   @Test
@@ -336,8 +502,10 @@ class SecretProjectionServiceTest {
             mock(GrpcTransportBundleGenerator.class),
             new HostedIdentityProperties());
 
+    CertificateMaterialService.MaterializationBatch materialization =
+        service.beginMaterialization(client, plan);
     IllegalStateException exception =
-        assertThrows(IllegalStateException.class, () -> service.grpc(client, plan, 1L));
+        assertThrows(IllegalStateException.class, () -> materialization.grpc(1L));
 
     assertEquals("identity source Secret is not controller-owned", exception.getMessage());
   }
@@ -440,6 +608,57 @@ class SecretProjectionServiceTest {
 
   private static String encoded(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void stubCertificate(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String certificateName,
+      boolean readyAfterCreate) {
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> certificate = mock(Resource.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(certificateName)).thenReturn(certificate);
+    when(identityCertificates.resource(
+            org.mockito.ArgumentMatchers.any(GenericKubernetesResource.class)))
+        .thenReturn(mock(Resource.class));
+    if (readyAfterCreate) {
+      GenericKubernetesResource ready = new GenericKubernetesResource();
+      ready.setApiVersion("cert-manager.io/v1");
+      ready.setKind("Certificate");
+      ready.setMetadata(
+          new ObjectMetaBuilder()
+              .withName(certificateName)
+              .withNamespace(plan.identityNamespace())
+              .withGeneration(1L)
+              .build());
+      ready.setAdditionalProperties(
+          Map.of(
+              "status",
+              Map.of(
+                  "revision",
+                  1,
+                  "conditions",
+                  List.of(
+                      Map.of(
+                          "type", "Ready",
+                          "status", "True",
+                          "observedGeneration", 1)))));
+      when(certificate.get()).thenReturn(null, ready);
+    } else {
+      when(certificate.get()).thenReturn(null);
+    }
   }
 
   @SuppressWarnings("unchecked")

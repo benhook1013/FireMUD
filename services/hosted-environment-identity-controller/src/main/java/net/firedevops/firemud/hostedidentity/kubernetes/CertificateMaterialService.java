@@ -38,7 +38,25 @@ public class CertificateMaterialService {
     this.properties = properties;
   }
 
-  public RoleMaterial ingress(KubernetesClient client, EnvironmentIdentityPlan plan) {
+  /**
+   * Creates one ordered reconciliation batch whose first ready role lazily captures the shared
+   * rotation-selection snapshot.
+   */
+  public MaterializationBatch beginMaterialization(
+      KubernetesClient client, EnvironmentIdentityPlan plan) {
+    return new MaterializationBatch(client, plan);
+  }
+
+  private RoleMaterial ingress(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    RoleExpectation expectation =
+        new RoleExpectation(
+            List.of(plan.hostname()),
+            List.of(),
+            true,
+            false,
+            "kubernetes.io/tls",
+            properties.getIngressTrustAnchorSha256());
     return serialize(
         client,
         plan,
@@ -48,21 +66,21 @@ public class CertificateMaterialService {
             HostedIdentityContract.INGRESS_ROLE,
             certificateFactory.ingress(plan),
             plan.ingressSecretName(),
+            expectation),
+        expectation,
+        batch);
+  }
+
+  private RoleMaterial telnet(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    RoleExpectation expectation =
+        new RoleExpectation(
             List.of(plan.hostname()),
             List.of(),
             true,
             false,
             "kubernetes.io/tls",
-            properties.getIngressTrustAnchorSha256()),
-        List.of(plan.hostname()),
-        List.of(),
-        true,
-        false,
-        "kubernetes.io/tls",
-        properties.getIngressTrustAnchorSha256());
-  }
-
-  public RoleMaterial telnet(KubernetesClient client, EnvironmentIdentityPlan plan) {
+            properties.getTelnetTrustAnchorSha256());
     return serialize(
         client,
         plan,
@@ -72,21 +90,21 @@ public class CertificateMaterialService {
             HostedIdentityContract.TELNET_ROLE,
             certificateFactory.telnet(plan),
             plan.telnetSecretName(),
-            List.of(plan.hostname()),
+            expectation),
+        expectation,
+        batch);
+  }
+
+  private RoleMaterial gatewayInternalWs(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    RoleExpectation expectation =
+        new RoleExpectation(
+            List.of(plan.gatewayInternalWsDnsName()),
             List.of(),
             true,
             false,
             "kubernetes.io/tls",
-            properties.getTelnetTrustAnchorSha256()),
-        List.of(plan.hostname()),
-        List.of(),
-        true,
-        false,
-        "kubernetes.io/tls",
-        properties.getTelnetTrustAnchorSha256());
-  }
-
-  public RoleMaterial gatewayInternalWs(KubernetesClient client, EnvironmentIdentityPlan plan) {
+            properties.getGrpcTrustAnchorSha256());
     return serialize(
         client,
         plan,
@@ -96,21 +114,21 @@ public class CertificateMaterialService {
             HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
             certificateFactory.gatewayInternalWs(plan),
             plan.gatewayInternalWsSecretName(),
-            List.of(plan.gatewayInternalWsDnsName()),
-            List.of(),
-            true,
-            false,
-            "kubernetes.io/tls",
-            properties.getGrpcTrustAnchorSha256()),
-        List.of(plan.gatewayInternalWsDnsName()),
-        List.of(),
-        true,
-        false,
-        "kubernetes.io/tls",
-        properties.getGrpcTrustAnchorSha256());
+            expectation),
+        expectation,
+        batch);
   }
 
-  public RoleMaterial tcpProxyBridge(KubernetesClient client, EnvironmentIdentityPlan plan) {
+  private RoleMaterial tcpProxyBridge(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    RoleExpectation expectation =
+        new RoleExpectation(
+            List.of(),
+            List.of(plan.tcpProxyBridgeUriSan()),
+            false,
+            true,
+            "kubernetes.io/tls",
+            properties.getGrpcTrustAnchorSha256());
     return serialize(
         client,
         plan,
@@ -120,25 +138,28 @@ public class CertificateMaterialService {
             HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
             certificateFactory.tcpProxyBridge(plan),
             plan.tcpProxyBridgeSecretName(),
-            List.of(),
-            List.of(plan.tcpProxyBridgeUriSan()),
-            false,
-            true,
-            "kubernetes.io/tls",
-            properties.getGrpcTrustAnchorSha256()),
-        List.of(),
-        List.of(plan.tcpProxyBridgeUriSan()),
-        false,
-        true,
-        "kubernetes.io/tls",
-        properties.getGrpcTrustAnchorSha256());
+            expectation),
+        expectation,
+        batch);
   }
 
-  public RoleMaterial grpc(
-      KubernetesClient client, EnvironmentIdentityPlan plan, Long acceptedGeneration) {
-    String activeRotation = selectedRotationRole(client, plan);
+  private RoleMaterial grpc(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      Long acceptedGeneration,
+      MaterializationBatch batch) {
+    RoleExpectation expectation =
+        new RoleExpectation(
+            GrpcTransportBundleGenerator.grpcDnsNames(plan),
+            List.of(),
+            true,
+            true,
+            "Opaque",
+            properties.getGrpcTrustAnchorSha256());
+    String selectedRotationRole = batch.selectedRotationRole();
     Secret source;
-    if (activeRotation != null && !HostedIdentityContract.GRPC_ROLE.equals(activeRotation)) {
+    if (selectedRotationRole != null
+        && !HostedIdentityContract.GRPC_ROLE.equals(selectedRotationRole)) {
       source =
           client
               .secrets()
@@ -161,12 +182,12 @@ public class CertificateMaterialService {
     SecretMaterialValidator.MaterialSummary summary =
         materialValidator.validateIdentity(
             source,
-            GrpcTransportBundleGenerator.grpcDnsNames(plan),
-            List.of(),
-            "Opaque",
-            true,
-            true,
-            properties.getGrpcTrustAnchorSha256());
+            expectation.expectedDnsNames(),
+            expectation.expectedUriSans(),
+            expectation.expectedType(),
+            expectation.requireServerAuth(),
+            expectation.requireClientAuth(),
+            expectation.trustAnchor());
     long issuanceGeneration = GrpcTransportBundleGenerator.issuanceGeneration(source);
     return serialize(
         client,
@@ -179,12 +200,8 @@ public class CertificateMaterialService {
             issuanceGeneration,
             HostedIdentityContract.TRANSPORT_PROVENANCE,
             "source-ready"),
-        GrpcTransportBundleGenerator.grpcDnsNames(plan),
-        List.of(),
-        true,
-        true,
-        "Opaque",
-        properties.getGrpcTrustAnchorSha256());
+        expectation,
+        batch);
   }
 
   /**
@@ -197,56 +214,29 @@ public class CertificateMaterialService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       RoleMaterial candidate,
-      Collection<String> expectedDnsNames,
-      Collection<String> expectedUriSans,
-      boolean requireServerAuth,
-      boolean requireClientAuth,
-      String expectedType,
-      String trustAnchor) {
+      RoleExpectation expectation,
+      MaterializationBatch batch) {
     if (!candidate.ready()) {
       return candidate;
     }
-    String selected = selectedRotationRole(client, plan);
-    if (selected == null) {
+    String selectedRotationRole = batch.selectedRotationRole();
+    if (selectedRotationRole == null) {
       return candidate;
     }
-    if (candidate.role().equals(selected)) {
-      return pendingMaterial(
-          client,
-          plan,
-          candidate,
-          expectedDnsNames,
-          expectedUriSans,
-          requireServerAuth,
-          requireClientAuth,
-          expectedType,
-          trustAnchor);
+    if (candidate.role().equals(selectedRotationRole)) {
+      return pendingMaterial(client, plan, candidate, expectation);
     }
     if (!sourceDiffersFromAccepted(client, plan, candidate.role())) {
       return candidate;
     }
-    return acceptedMaterial(
-        client,
-        plan,
-        candidate.role(),
-        expectedDnsNames,
-        expectedUriSans,
-        requireServerAuth,
-        requireClientAuth,
-        expectedType,
-        trustAnchor);
+    return acceptedMaterial(client, plan, candidate.role(), expectation);
   }
 
   private RoleMaterial pendingMaterial(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       RoleMaterial candidate,
-      Collection<String> expectedDnsNames,
-      Collection<String> expectedUriSans,
-      boolean requireServerAuth,
-      boolean requireClientAuth,
-      String expectedType,
-      String trustAnchor) {
+      RoleExpectation expectation) {
     Secret projection =
         client
             .secrets()
@@ -269,16 +259,7 @@ public class CertificateMaterialService {
     if (!pendingProjectionOwnsRotation(pending, projectionRevision, candidateRevision)) {
       return candidate;
     }
-    return projectionMaterial(
-        projection,
-        candidate.role(),
-        expectedDnsNames,
-        expectedUriSans,
-        requireServerAuth,
-        requireClientAuth,
-        expectedType,
-        trustAnchor,
-        "serialized-in-flight");
+    return projectionMaterial(projection, candidate.role(), expectation, "serialized-in-flight");
   }
 
   static boolean pendingProjectionOwnsRotation(
@@ -379,12 +360,7 @@ public class CertificateMaterialService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String role,
-      Collection<String> expectedDnsNames,
-      Collection<String> expectedUriSans,
-      boolean requireServerAuth,
-      boolean requireClientAuth,
-      String expectedType,
-      String trustAnchor) {
+      RoleExpectation expectation) {
     String name = secretName(plan, role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     requireOwned(current, plan, role, "runtime projection Secret");
@@ -403,28 +379,11 @@ public class CertificateMaterialService {
         .equals(acceptedRevision)) {
       throw new IllegalStateException("accepted predecessor material is unavailable");
     }
-    return projectionMaterial(
-        accepted,
-        role,
-        expectedDnsNames,
-        expectedUriSans,
-        requireServerAuth,
-        requireClientAuth,
-        expectedType,
-        trustAnchor,
-        "serialized-deferred");
+    return projectionMaterial(accepted, role, expectation, "serialized-deferred");
   }
 
   private RoleMaterial projectionMaterial(
-      Secret projection,
-      String role,
-      Collection<String> expectedDnsNames,
-      Collection<String> expectedUriSans,
-      boolean requireServerAuth,
-      boolean requireClientAuth,
-      String expectedType,
-      String trustAnchor,
-      String state) {
+      Secret projection, String role, RoleExpectation expectation, String state) {
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
     long sourceGeneration =
         positiveAnnotation(annotations, HostedIdentityContract.SOURCE_GENERATION_ANNOTATION);
@@ -437,12 +396,12 @@ public class CertificateMaterialService {
     var summary =
         materialValidator.validateIdentity(
             projection,
-            expectedDnsNames,
-            expectedUriSans,
-            expectedType,
-            requireServerAuth,
-            requireClientAuth,
-            trustAnchor);
+            expectation.expectedDnsNames(),
+            expectation.expectedUriSans(),
+            expectation.expectedType(),
+            expectation.requireServerAuth(),
+            expectation.requireClientAuth(),
+            expectation.trustAnchor());
     return new RoleMaterial(
         role, projection, summary, sourceGeneration, sourceObjectGeneration, provenance, state);
   }
@@ -487,12 +446,7 @@ public class CertificateMaterialService {
       String role,
       GenericKubernetesResource certificate,
       String secretName,
-      Collection<String> expectedDnsNames,
-      Collection<String> expectedUriSans,
-      boolean requireServerAuth,
-      boolean requireClientAuth,
-      String expectedType,
-      String trustAnchor) {
+      RoleExpectation expectation) {
     applyCertificate(client, plan.identityNamespace(), certificate);
     GenericKubernetesResource currentCertificate =
         client
@@ -512,12 +466,12 @@ public class CertificateMaterialService {
     SecretMaterialValidator.MaterialSummary summary =
         materialValidator.validateIdentity(
             source,
-            expectedDnsNames,
-            expectedUriSans,
-            expectedType,
-            requireServerAuth,
-            requireClientAuth,
-            trustAnchor);
+            expectation.expectedDnsNames(),
+            expectation.expectedUriSans(),
+            expectation.expectedType(),
+            expectation.requireServerAuth(),
+            expectation.requireClientAuth(),
+            expectation.trustAnchor());
     return new RoleMaterial(
         role,
         source,
@@ -644,6 +598,60 @@ public class CertificateMaterialService {
       return result > 0 ? result : null;
     } catch (RuntimeException exception) {
       return null;
+    }
+  }
+
+  /** Lazily materializes roles against one memoized rotation-selection snapshot. */
+  public final class MaterializationBatch {
+    private final KubernetesClient client;
+    private final EnvironmentIdentityPlan plan;
+    private boolean rotationSelectionResolved;
+    private String selectedRotationRole;
+
+    private MaterializationBatch(KubernetesClient client, EnvironmentIdentityPlan plan) {
+      this.client = client;
+      this.plan = plan;
+    }
+
+    public RoleMaterial ingress() {
+      return CertificateMaterialService.this.ingress(client, plan, this);
+    }
+
+    public RoleMaterial telnet() {
+      return CertificateMaterialService.this.telnet(client, plan, this);
+    }
+
+    public RoleMaterial gatewayInternalWs() {
+      return CertificateMaterialService.this.gatewayInternalWs(client, plan, this);
+    }
+
+    public RoleMaterial tcpProxyBridge() {
+      return CertificateMaterialService.this.tcpProxyBridge(client, plan, this);
+    }
+
+    public RoleMaterial grpc(Long acceptedGeneration) {
+      return CertificateMaterialService.this.grpc(client, plan, acceptedGeneration, this);
+    }
+
+    private String selectedRotationRole() {
+      if (!rotationSelectionResolved) {
+        selectedRotationRole = CertificateMaterialService.this.selectedRotationRole(client, plan);
+        rotationSelectionResolved = true;
+      }
+      return selectedRotationRole;
+    }
+  }
+
+  private record RoleExpectation(
+      List<String> expectedDnsNames,
+      List<String> expectedUriSans,
+      boolean requireServerAuth,
+      boolean requireClientAuth,
+      String expectedType,
+      String trustAnchor) {
+    private RoleExpectation {
+      expectedDnsNames = List.copyOf(expectedDnsNames);
+      expectedUriSans = List.copyOf(expectedUriSans);
     }
   }
 

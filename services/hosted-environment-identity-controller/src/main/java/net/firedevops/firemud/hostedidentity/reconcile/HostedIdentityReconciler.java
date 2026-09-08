@@ -119,9 +119,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       }
       ensureFinalizer(resource, context);
       scopeService.ensure(client, plan);
+      CertificateMaterialService.MaterializationBatch materialization =
+          certificateMaterialService.beginMaterialization(client, plan);
 
-      CertificateMaterialService.RoleMaterial ingress =
-          certificateMaterialService.ingress(client, plan);
+      CertificateMaterialService.RoleMaterial ingress = materialization.ingress();
       if (!ingress.ready()) {
         return status(
             resource,
@@ -135,8 +136,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             null);
       }
       validateSourceProgress(ingress, previousRole(resource, HostedIdentityContract.INGRESS_ROLE));
-      CertificateMaterialService.RoleMaterial telnet =
-          certificateMaterialService.telnet(client, plan);
+      CertificateMaterialService.RoleMaterial telnet = materialization.telnet();
       if (!telnet.ready()) {
         return status(
             resource,
@@ -151,7 +151,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       }
       validateSourceProgress(telnet, previousRole(resource, HostedIdentityContract.TELNET_ROLE));
       CertificateMaterialService.RoleMaterial gatewayInternalWs =
-          certificateMaterialService.gatewayInternalWs(client, plan);
+          materialization.gatewayInternalWs();
       if (!gatewayInternalWs.ready()) {
         return status(
             resource,
@@ -169,8 +169,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       validateSourceProgress(
           gatewayInternalWs,
           previousRole(resource, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
-      CertificateMaterialService.RoleMaterial tcpProxyBridge =
-          certificateMaterialService.tcpProxyBridge(client, plan);
+      CertificateMaterialService.RoleMaterial tcpProxyBridge = materialization.tcpProxyBridge();
       if (!tcpProxyBridge.ready()) {
         return status(
             resource,
@@ -191,8 +190,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           resource.getStatus() == null || resource.getStatus().getGrpc() == null
               ? null
               : resource.getStatus().getGrpc().getSourceGeneration();
-      CertificateMaterialService.RoleMaterial grpc =
-          certificateMaterialService.grpc(client, plan, acceptedGrpcGeneration);
+      CertificateMaterialService.RoleMaterial grpc = materialization.grpc(acceptedGrpcGeneration);
       if (!grpc.ready()) {
         return status(
             resource,

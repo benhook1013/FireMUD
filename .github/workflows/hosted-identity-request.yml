@@ -340,8 +340,8 @@ jobs:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
         run: |
           set -euo pipefail
-          deadline=$((SECONDS + 900))
           for secret_name in "${IDENTITY_NAME}-gateway-internal-ws" "${IDENTITY_NAME}-tcp-proxy-bridge"; do
+            deadline=$((SECONDS + 900))
             while (( SECONDS < deadline )); do
               if secret_json="$(kubectl -n "$RUNTIME_NAMESPACE" get secret "$secret_name" -o json 2>/dev/null)" &&
                  jq -e --arg identity "$IDENTITY_NAME" --arg secret "$secret_name" '
