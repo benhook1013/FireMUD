@@ -114,7 +114,6 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- $configuredTrustEnvironment := $gatewayWsTls.trustEnvironment | toString -}}
 {{- if not (or
   (eq $configuredTrustEnvironment "local-dev")
-  (eq $configuredTrustEnvironment "isolated-test")
   (eq $configuredTrustEnvironment "pr-preview")
   (eq $configuredTrustEnvironment "dev-demo-cluster")
   (eq $configuredTrustEnvironment "hobby-self-hosted")

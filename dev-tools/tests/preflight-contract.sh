@@ -2981,6 +2981,28 @@ if not any("must not use a named port" in issue for issue in mixed_port_issues):
         f"{mixed_port_issues}"
     )
 
+invalid_policy_type_documents = copy.deepcopy(rendered_documents)
+invalid_policy_type_documents.append(
+    {
+        "kind": "NetworkPolicy",
+        "metadata": {"name": "invalid-policy-types", "namespace": "firemud"},
+        "spec": {
+            "podSelector": {},
+            "policyTypes": ["Ingress", "Ingress"],
+        },
+    }
+)
+_, invalid_policy_type_issues = module.validate_gateway_ws_values(
+    invalid_policy_type_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+invalid_policy_type_message = "invalid-policy-types has invalid policyTypes"
+if invalid_policy_type_issues.count(invalid_policy_type_message) != 1:
+    raise SystemExit(
+        "one invalid NetworkPolicy identity did not produce exactly one diagnostic: "
+        f"{invalid_policy_type_issues}"
+    )
+
 for workload_kind in ("StatefulSet", "DaemonSet"):
     non_deployment_documents = copy.deepcopy(rendered_documents)
     bridge_workload = next(
@@ -3407,7 +3429,17 @@ telnet_documents = [
     {
         "kind": "Service",
         "metadata": {"name": "tcp-proxy-service", "namespace": "firemud"},
-        "spec": {"type": "NodePort"},
+        "spec": {
+            "type": "NodePort",
+            "ports": [
+                {
+                    "port": 2323,
+                    "targetPort": 2323,
+                    "protocol": "TCP",
+                    "nodePort": 32023,
+                }
+            ],
+        },
     },
     {
         "kind": "Certificate",
@@ -3450,6 +3482,45 @@ telnet_documents = [
 telnet_issues = module.validate_hosted_telnet_tls_values(telnet_documents)
 if telnet_issues:
     raise SystemExit(f"canonical hosted Telnet TLS fixture did not pass: {telnet_issues}")
+telnet_missing_listener = copy.deepcopy(telnet_documents)
+next(
+    document
+    for document in telnet_missing_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"] = []
+telnet_missing_listener_issues = module.validate_hosted_telnet_tls_values(
+    telnet_missing_listener
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in telnet_missing_listener_issues
+):
+    raise SystemExit(
+        "standalone hosted Telnet TLS accepted a missing direct TLS listener: "
+        f"{telnet_missing_listener_issues}"
+    )
+telnet_mismatched_listener = copy.deepcopy(telnet_documents)
+next(
+    port
+    for document in telnet_mismatched_listener
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for port in document.get("spec", {}).get("ports", [])
+)["targetPort"] = 2324
+telnet_mismatched_listener_issues = module.validate_hosted_telnet_tls_values(
+    telnet_mismatched_listener
+)
+if not any(
+    "requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+    in issue
+    for issue in telnet_mismatched_listener_issues
+):
+    raise SystemExit(
+        "standalone hosted Telnet TLS accepted a mismatched direct TLS listener: "
+        f"{telnet_mismatched_listener_issues}"
+    )
 telnet_cross_namespace_decoys = copy.deepcopy(telnet_documents)
 telnet_cross_namespace_decoys.extend(
     [

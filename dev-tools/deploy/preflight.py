@@ -4354,6 +4354,7 @@ def validate_gateway_ws_network_policy(
         if document.get("kind") == "NetworkPolicy"
         and rendered_namespace_matches(document, namespace, default_namespace=namespace)
     ]
+    reported_invalid_policy_types: set[tuple[str, str]] = set()
 
     def rules_for(workload: str, direction: str) -> list[dict[str, Any]]:
         rules: list[dict[str, Any]] = []
@@ -4378,9 +4379,15 @@ def validate_gateway_ws_network_policy(
                 )
                 or len(set(configured_policy_types)) != len(configured_policy_types)
             ):
-                issues.append(
-                    f"{metadata_name(policy) or 'NetworkPolicy'} has invalid policyTypes"
+                policy_identity = (
+                    metadata_namespace(policy) or namespace,
+                    metadata_name(policy) or f"<unnamed:{id(policy)}>",
                 )
+                if policy_identity not in reported_invalid_policy_types:
+                    issues.append(
+                        f"{metadata_name(policy) or 'NetworkPolicy'} has invalid policyTypes"
+                    )
+                    reported_invalid_policy_types.add(policy_identity)
                 continue
             else:
                 effective_policy_types = set(configured_policy_types)
@@ -4546,6 +4553,18 @@ def validate_hosted_telnet_tls_values(
             )
         identity_mode = required_identity_mode
     service_ports = (tcp_service.get("spec") or {}).get("ports") or []
+    telnet_ports = [
+        port
+        for port in service_ports
+        if isinstance(port, dict)
+        and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("protocol") == "TCP"
+    ]
+    if len(telnet_ports) != 1:
+        issues.append(
+            "TCP Proxy Service requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+        )
     if identity_mode == "hosted-controller":
         explicit_node_port_entries = [
             port
@@ -4558,12 +4577,6 @@ def validate_hosted_telnet_tls_values(
                     "hosted-controller TCP Proxy Service must not declare an explicit nodePort"
                 )
         else:
-            telnet_ports = [
-                port
-                for port in service_ports
-                if isinstance(port, dict)
-                and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
-            ]
             if len(telnet_ports) != 1:
                 issues.append(
                     "trusted hosted-controller TCP Proxy Service must contain exactly one Telnet service port"

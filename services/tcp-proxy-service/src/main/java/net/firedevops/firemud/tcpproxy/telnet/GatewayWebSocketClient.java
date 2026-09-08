@@ -415,6 +415,9 @@ public final class GatewayWebSocketClient implements AutoCloseable {
       }
     }
     try {
+      // The constructor publishes the initial client state before starting this watcher, so a
+      // reloadNow callback can only replace a fully initialized generation and can retire it
+      // safely.
       certificateWatcher = TlsCertificateWatcher.createAndStart(watchedPaths, this::reloadNow);
     } catch (IOException e) {
       throw configurationFailure(

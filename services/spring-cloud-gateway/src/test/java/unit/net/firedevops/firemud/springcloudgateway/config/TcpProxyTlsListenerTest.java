@@ -53,6 +53,12 @@ class TcpProxyTlsListenerTest {
 
       assertThat(requestStatus(port, clientContext(true), "/actuator/health/liveness"))
           .isEqualTo(HttpStatus.NO_CONTENT.value());
+      assertThat(requestStatus(port, clientContext(true), "/actuator/health/readiness"))
+          .isEqualTo(HttpStatus.NO_CONTENT.value());
+      assertThat(requestStatus(port, clientContext(true), "/actuator/prometheus"))
+          .isEqualTo(HttpStatus.NOT_FOUND.value());
+      assertThat(requestStatus(port, clientContext(true), "/ws/game/../actuator/prometheus"))
+          .isEqualTo(HttpStatus.NOT_FOUND.value());
       Throwable handshakeFailure =
           catchThrowable(
               () -> requestStatus(port, clientContext(false), "/actuator/health/liveness"));
@@ -140,7 +146,7 @@ class TcpProxyTlsListenerTest {
     TcpProxyTrustPolicy policy = mock(TcpProxyTrustPolicy.class);
     when(policy.requiresClientCertificate()).thenReturn(true);
     when(policy.profileName()).thenReturn("breakglass_fingerprint");
-    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofMillis(100));
+    when(policy.timeUntilProfileExpiry()).thenReturn(Duration.ofSeconds(3));
     HttpHandler handler = (request, response) -> response.setComplete();
     TcpProxyTlsListener listener = new TcpProxyTlsListener(properties, policy, handler);
     Connection connection = null;

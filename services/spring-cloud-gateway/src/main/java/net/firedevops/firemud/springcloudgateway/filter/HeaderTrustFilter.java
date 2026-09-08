@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,12 +112,14 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
       try {
         TrustedTcpProxyIdentity.validateIncoming(
             incomingProxyTenantId, incomingProxyGameInstanceId);
+        validateIncomingRoutingBundle(incomingWorldSlug, incomingRealmSlug, incomingPointerVersion);
       } catch (RuntimeException ex) {
         LOG.debug("Rejecting session route: invalid trusted proxy identity", ex);
         exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
         return exchange.getResponse().setComplete();
       }
     }
+    boolean incomingRoutingBundlePresent = incomingWorldSlug != null;
 
     ServerWebExchange mutated =
         exchange
@@ -143,22 +146,33 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
                             if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);
                             }
-                            if (isSessionRoute) {
-                              if (incomingWorldSlug != null) {
-                                headers.set(HDR_WORLD_SLUG, incomingWorldSlug);
-                              }
-                              if (incomingRealmSlug != null) {
-                                headers.set(HDR_REALM_SLUG, incomingRealmSlug);
-                              }
-                              if (incomingPointerVersion != null) {
-                                headers.set(HDR_POINTER_VERSION, incomingPointerVersion);
-                              }
+                            if (isSessionRoute && incomingRoutingBundlePresent) {
+                              headers.set(HDR_WORLD_SLUG, incomingWorldSlug);
+                              headers.set(HDR_REALM_SLUG, incomingRealmSlug);
+                              headers.set(HDR_POINTER_VERSION, incomingPointerVersion);
                             }
                           }
                         }))
             .build();
 
     return chain.filter(mutated);
+  }
+
+  private static void validateIncomingRoutingBundle(
+      String worldSlug, String realmSlug, String pointerVersion) {
+    boolean anyPresent = worldSlug != null || realmSlug != null || pointerVersion != null;
+    if (!anyPresent) {
+      return;
+    }
+    if (worldSlug == null
+        || worldSlug.isBlank()
+        || realmSlug == null
+        || realmSlug.isBlank()
+        || pointerVersion == null
+        || pointerVersion.isBlank()) {
+      throw new IllegalArgumentException("Malformed trusted proxy routing bundle");
+    }
+    JwtClaims.requireLong(pointerVersion, HDR_POINTER_VERSION, false);
   }
 
   private static boolean presentsProxyHeaders(HttpHeaders headers) {

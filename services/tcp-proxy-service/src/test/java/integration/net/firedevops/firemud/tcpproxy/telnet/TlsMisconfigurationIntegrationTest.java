@@ -26,7 +26,7 @@ class TlsMisconfigurationIntegrationTest {
                     .properties(
                         "TCP_PROXY_PORT=0",
                         "TCP_PROXY_TLS_ENABLED=true",
-                        "GATEWAY_WS_URL=ws://localhost/ws",
+                        "GATEWAY_WS_URL=ws://localhost/ws/game",
                         "TCP_PROXY_TLS_CERT=/nonexistent/cert.pem",
                         "TCP_PROXY_TLS_KEY=/nonexistent/key.pem",
                         "spring.flyway.enabled=false",
@@ -86,7 +86,7 @@ class TlsMisconfigurationIntegrationTest {
     @Bean
     GatewayWebSocketClient gatewayWebSocketClient() {
       GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
-      Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws"));
+      Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws/game"));
       return client;
     }
   }
