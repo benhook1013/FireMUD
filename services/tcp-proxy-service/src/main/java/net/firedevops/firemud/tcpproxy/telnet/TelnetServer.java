@@ -24,6 +24,7 @@ import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
@@ -113,20 +114,37 @@ public final class TelnetServer {
     this.maxConnections = maxConnections;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.maxLineBytes = maxLineBytes;
-    this.defaultGameInstanceId = defaultGameInstanceId;
-    this.defaultTenantId = defaultTenantId;
-    this.defaultWorldSlug = defaultWorldSlug;
-    this.defaultRealmSlug = defaultRealmSlug;
-    this.defaultPointerVersion = defaultPointerVersion;
-    this.meterRegistry = meterRegistry;
+    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
     this.tlsMisconfigCounter = meterRegistry.counter("tcpproxy.tls.misconfig");
     this.connectionLimitExceededCounter =
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
+    TelnetRoutingBundle defaultRoutingBundle;
+    try {
+      defaultRoutingBundle =
+          TelnetRoutingBundle.validateConfiguredDefaults(
+              defaultGameInstanceId,
+              defaultTenantId,
+              defaultWorldSlug,
+              defaultRealmSlug,
+              defaultPointerVersion);
+    } catch (IllegalArgumentException e) {
+      tlsMisconfigCounter.increment();
+      String message = "TCP proxy default bridge metadata is invalid; reason=bad_header";
+      logger.error(message, e);
+      throw new IllegalStateException(message, e);
+    }
+    this.defaultGameInstanceId = defaultGameInstanceId;
+    this.defaultTenantId = defaultTenantId;
+    this.defaultWorldSlug = defaultRoutingBundle == null ? null : defaultRoutingBundle.worldSlug();
+    this.defaultRealmSlug = defaultRoutingBundle == null ? null : defaultRoutingBundle.realmSlug();
+    this.defaultPointerVersion =
+        defaultRoutingBundle == null ? null : defaultRoutingBundle.pointerVersion();
     this.eventService = eventService;
     this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
-    this.gatewayWsUrl = gatewayWebSocketClient.gatewayUri().toString();
+    this.gatewayWsUrl =
+        Objects.requireNonNull(gatewayWebSocketClient.gatewayUri(), "gatewayUri").toString();
     this.webSocketConnector = gatewayWebSocketClient::connect;
     this.runtimeIdentity = runtimeIdentity;
     Gauge.builder(

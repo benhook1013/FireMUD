@@ -385,12 +385,11 @@ require_contains "$image_wait_path" 'if ! publisher_payload="$('
 # shellcheck disable=SC2016 # Assert the literal PR-number workflow expression.
 assert_job_contains preview.yml preview-plan 'group: preview-plan-${{ github.event.pull_request.number }}'
 assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
-# Pause removal stays in the untrusted render-only workflow: removing the
-# exact pause label must produce a fresh eligible render that the trusted
-# workflow can consume, without giving the PR workflow lifecycle credentials.
+# Priority label changes stay in the untrusted render-only workflow: removing
+# that label produces a fresh eligible render that the trusted workflow can
+# consume, without giving the PR workflow lifecycle credentials.
 require_contains "$preview_path" '      - unlabeled'
 assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:priority'"
-assert_job_contains preview.yml preview-plan "github.event.label.name == 'preview:paused'"
 assert_job_contains preview.yml preview-plan "github.event.action != 'unlabeled'"
 # shellcheck disable=SC2016 # Assert literal event-to-environment bindings in workflow source.
 assert_job_contains preview.yml preview-plan 'EVENT_ACTION: ${{ github.event.action }}'
@@ -458,7 +457,7 @@ fi
 # fail-closed revalidation helper against current PR metadata.
 for revalidation_step in \
   'Revalidate open PR before privileged deployment' \
-  'Revalidate unpaused PR before Active request' \
+  'Revalidate open PR before Active request' \
   'Final revalidate open PR before server dry-run and apply'; do
   # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
   assert_step_contains hosted-identity-request.yml deploy-runtime "$revalidation_step" \
@@ -470,15 +469,11 @@ for revalidation_step in \
     '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 done
 
-if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)|any\(\.labels\[\]\?; \.name == "preview:paused"\)' "$hosted_identity_workflow_path"; then
-  echo "Trusted hosted workflow must use the centralized label authority" >&2
-  exit 1
-fi
-# The initial target check and both cleanup freshness gates inspect labels;
-# all three deploy mutation gates delegate their complete predicate to the
-# shared helper without retaining local predicate copies.
+# The initial target check inspects labels; all three deploy mutation gates
+# delegate their complete predicate to the shared helper without retaining
+# local predicate copies.
 # shellcheck disable=SC2016 # These assertions intentionally match literal workflow source.
-test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$hosted_identity_workflow_path")" -eq 3
+test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$hosted_identity_workflow_path")" -eq 1
 test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$hosted_identity_workflow_path")" -eq 3
 test "$(grep -Fc -- '--revalidate-deploy' "$hosted_identity_workflow_path")" -eq 0
 test "$(grep -Fc -- '--operation deploy' "$hosted_identity_workflow_path")" -eq 0
@@ -487,15 +482,13 @@ assert_job_contains hosted-identity-request.yml validate-target \
   '--inspect-labels --labels-json "$labels_json"'
 assert_job_contains hosted-identity-request.yml validate-target \
   'PR label metadata is missing or malformed'
-assert_job_contains hosted-identity-request.yml validate-target \
-  'PR is labelled preview:paused'
 # shellcheck disable=SC2016 # Assert the literal allocated Telnet port workflow argument.
 require_contains "$hosted_identity_workflow_path" '--expected-hosted-telnet-node-port "$TELNET_PORT"'
 assert_job_contains hosted-identity-request.yml deploy-runtime 'Enforce priority-aware preview capacity'
 require_ordered_sequence "$hosted_identity_workflow_path" \
   '      - name: Revalidate open PR before privileged deployment' \
   '      - name: Enforce priority-aware preview capacity' \
-  '      - name: Revalidate unpaused PR before Active request' \
+  '      - name: Revalidate open PR before Active request' \
   '      - name: Validate trusted hosted bridge render' \
   '      - name: Final revalidate open PR before server dry-run and apply' \
   '      - name: Apply validated PR runtime artifact' \
@@ -567,14 +560,10 @@ for helper in \
 done
 require_contains "$hosted_identity_workflow_path" 'workflow_run:'
 require_contains "$hosted_identity_workflow_path" 'pull_request_target:'
-# Pause addition and removal produce successful render-only workflow runs. The
-# trusted consumer re-reads current labels, so a queued stale pause run cannot
-# delete a resumed preview and an unpaused run deploys only its exact artifact.
-assert_job_contains hosted-identity-request.yml validate-target 'preview:paused'
-assert_job_contains hosted-identity-request.yml validate-target 'ACTION=inspect'
+# Every successful render-only workflow run is consumed only for its exact
+# immutable artifact and current open PR target.
+assert_job_contains hosted-identity-request.yml validate-target 'ACTION=deploy'
 assert_job_contains hosted-identity-request.yml validate-target 'ACTION=destroy'
-assert_job_contains hosted-identity-request.yml validate-target 'DESTROY_REASON=paused'
-assert_job_contains hosted-identity-request.yml validate-target 'DESTROY_REASON=closed'
 assert_job_contains hosted-identity-request.yml validate-target 'emit_no_action'
 # shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
 assert_job_contains hosted-identity-request.yml validate-target \
@@ -582,8 +571,8 @@ assert_job_contains hosted-identity-request.yml validate-target \
 # shellcheck disable=SC2016 # Assert the literal exact-artifact refusal diagnostic.
 assert_job_contains hosted-identity-request.yml validate-target \
   'without exactly one current ${expected_artifact_name} artifact'
-# Both destructive mutation boundaries must re-read the exact head and current
-# pause state so queued cleanup cannot delete or retire a resumed preview.
+# Both destructive mutation boundaries must re-read the exact head and closed
+# state so queued cleanup cannot delete an active preview.
 assert_job_contains hosted-identity-request.yml destroy-runtime \
   'Revalidate preview cleanup target before runtime deletion'
 assert_job_contains hosted-identity-request.yml retire-identity \
@@ -592,22 +581,11 @@ assert_job_contains hosted-identity-request.yml retire-identity \
 assert_step_contains hosted-identity-request.yml destroy-runtime \
   'Revalidate preview cleanup target before runtime deletion' \
   'EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}'
-# shellcheck disable=SC2016 # Assert the literal destroy-reason workflow expression.
-assert_step_contains hosted-identity-request.yml destroy-runtime \
-  'Revalidate preview cleanup target before runtime deletion' \
-  'DESTROY_REASON: ${{ needs.validate-target.outputs.destroy_reason }}'
 for cleanup_gate in \
   'destroy-runtime|Revalidate preview cleanup target before runtime deletion' \
   'retire-identity|Revalidate preview cleanup target before identity retirement'; do
   cleanup_job="${cleanup_gate%%|*}"
   cleanup_step="${cleanup_gate#*|}"
-  # shellcheck disable=SC2016 # Assert centralized label inspection in each trusted cleanup gate.
-  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
-    '--inspect-labels --labels-json "$labels_json"'
-  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
-    'label metadata is malformed'
-  assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
-    'preview:paused is no longer present'
   assert_step_contains hosted-identity-request.yml "$cleanup_job" "$cleanup_step" \
     'pull request is no longer closed'
   assert_job_contains hosted-identity-request.yml "$cleanup_job" \
@@ -639,7 +617,6 @@ assert_job_excludes hosted-identity-request.yml deploy-runtime 'issues: write'
 assert_job_contains hosted-identity-request.yml verify-runtime 'pull-requests: write'
 assert_job_contains hosted-identity-request.yml verify-runtime 'issues: write'
 require_contains "$hosted_identity_workflow_path" 'gh api --paginate --slurp'
-require_contains "$hosted_identity_workflow_path" 'preview:paused'
 require_contains "$hosted_identity_workflow_path" 'labels_valid='
 # shellcheck disable=SC2016 # Reject the literal legacy workflow-run query.
 if grep -Fq 'gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs' "$hosted_identity_workflow_path"; then

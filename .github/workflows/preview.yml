@@ -25,10 +25,7 @@ jobs:
   preview-plan:
     name: Preview Render Plan
     runs-on: ubuntu-latest
-    if: ${{ github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'preview:priority' || github.event.label.name == 'preview:paused') }}
-    # Pause additions and removals deliberately produce completed workflow
-    # runs so the trusted default-branch consumer can revalidate live state
-    # before cleanup or deployment. This job remains non-mutating.
+    if: ${{ github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'preview:priority') }}
     concurrency:
       group: preview-plan-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -72,7 +69,7 @@ jobs:
           case "$EVENT_ACTION" in
             labeled|unlabeled)
               case "$EVENT_LABEL_NAME" in
-                preview:priority|preview:paused) ;;
+                preview:priority) ;;
                 *)
                   echo "::error::Preview render received an unexpected label event" >&2
                   exit 1

@@ -18,6 +18,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.AfterEach;
@@ -112,6 +113,44 @@ class TelnetServerTest {
   }
 
   @Test
+  void invalidConfiguredDefaultsFailBeforeAcceptingSessions() {
+    String invalid = "safe\r\ninjected";
+    for (int index = 0; index < 5; index++) {
+      String gameInstanceId = index == 0 ? invalid : "instance";
+      String tenantId = index == 1 ? invalid : "tenant";
+      String worldSlug = index == 2 ? invalid : "world";
+      String realmSlug = index == 3 ? invalid : "realm";
+      String pointerVersion = index == 4 ? invalid : "1";
+      var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+      IllegalStateException ex =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  newServerWithDefaults(
+                      registry, gameInstanceId, tenantId, worldSlug, realmSlug, pointerVersion));
+
+      assertEquals(
+          "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
+      assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
+    }
+  }
+
+  @Test
+  void invalidConfiguredRoutingDefaultsFailWithStableReason() {
+    var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () -> newServerWithDefaults(registry, "instance", "tenant", "world", "realm", "0"));
+
+    assertEquals(
+        "TCP proxy default bridge metadata is invalid; reason=bad_header", ex.getMessage());
+    assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
+  }
+
+  @Test
   void configuredTlsCertificateAcceptsTlsHandshake(@TempDir Path tempDir) throws Exception {
     Path certificatePath = tempDir.resolve("dev-cert.pem");
     Path keyPath = tempDir.resolve("dev-key.pem");
@@ -185,5 +224,34 @@ class TelnetServerTest {
     GatewayWebSocketClient client = Mockito.mock(GatewayWebSocketClient.class);
     Mockito.when(client.gatewayUri()).thenReturn(URI.create("ws://localhost/ws"));
     return client;
+  }
+
+  private TelnetServer newServerWithDefaults(
+      io.micrometer.core.instrument.simple.SimpleMeterRegistry registry,
+      String gameInstanceId,
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String pointerVersion) {
+    return new TelnetServer(
+        0,
+        false,
+        "",
+        "",
+        false,
+        0,
+        0,
+        4096,
+        gameInstanceId,
+        tenantId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        registry,
+        Mockito.mock(TcpProxyEventService.class),
+        readyProbe(),
+        gatewayClient(),
+        new RuntimeIdentity(
+            "tcp-proxy-service", "tcp-proxy-test", null, Instant.EPOCH, null, null, null));
   }
 }

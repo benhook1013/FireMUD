@@ -405,8 +405,7 @@ module.canonical_gateway_ws_endpoint = lambda documents, expected: (
 module.validate_gateway_ws_listener = lambda documents, expected: (set(), [])
 module.validate_gateway_ws_network_policy = lambda documents, secret_name: []
 strategy_issue = (
-    "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
-    "cannot retain stale pods"
+    "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )
 _, current_issues = module.validate_gateway_ws_values(documents, expected)
 if strategy_issue in current_issues:

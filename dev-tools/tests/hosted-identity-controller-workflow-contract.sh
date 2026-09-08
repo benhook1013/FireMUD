@@ -57,12 +57,10 @@ for required in \
   'allocate-preview-telnet-port.sh' \
   'annotate-preview-namespace.sh' \
   'inject "$ARTIFACT_DIR/preview-rendered-sanitized.yaml"' \
-  'preview:paused' \
   'labels_valid=' \
-  'destroy_reason=' \
   'preview-eligibility.py' \
   '--inspect-labels --labels-json "$labels_json"' \
-  'Revalidate unpaused PR before Active request' \
+  'Revalidate open PR before Active request' \
   'Create and annotate exact preview runtime namespace' \
   'Restore preview runtime kubeconfig' \
   'Wait for exact WebSocket identity projections' \
@@ -83,13 +81,10 @@ for required in \
   'verify-runtime'; do
   contains "$trusted" "$required"
 done
-if grep -Eq 'all\(\.labels\[\]\?; \(type == "object"\)|any\(\.labels\[\]\?; \.name == "preview:paused"\)' "$trusted"; then
-  echo "trusted workflow duplicates the centralized label predicate" >&2
-  exit 1
-fi
-# The initial selector and both destructive freshness gates inspect labels.
+# The initial selector inspects labels; deploy mutation gates delegate their
+# complete predicate to the shared revalidation helper.
 # shellcheck disable=SC2016 # Match literal eligibility invocations in workflow source.
-test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted")" -eq 3
+test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted")" -eq 1
 test "$(grep -Fc -- '--operation deploy' "$trusted")" -eq 0
 for forbidden in \
   'ensure-hosted-identity-scope.sh' \
@@ -214,7 +209,7 @@ if "  request-active:\n" in trusted:
 ordered = (
     "annotate-preview-namespace.sh",
     "Write requester kubeconfig",
-    "Revalidate unpaused PR before Active request",
+    "Revalidate open PR before Active request",
     "Apply canonical Active request",
     "Restore preview runtime kubeconfig",
     "Wait for exact WebSocket identity projections",
@@ -235,7 +230,7 @@ document = yaml.safe_load(trusted)
 steps = document["jobs"]["deploy-runtime"]["steps"]
 by_name = {step.get("name"): step for step in steps if isinstance(step, dict)}
 early_name = "Revalidate open PR before privileged deployment"
-active_name = "Revalidate unpaused PR before Active request"
+active_name = "Revalidate open PR before Active request"
 final_name = "Final revalidate open PR before server dry-run and apply"
 static_preflight_name = "Validate trusted hosted bridge render"
 operator_preflight_name = "Validate controller-projected preview identity"
@@ -333,10 +328,8 @@ validate_job = document["jobs"]["validate-target"]
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step.get("run", "")
 for fragment in (
-    "ACTION=inspect",
+    "ACTION=deploy",
     "ACTION=destroy",
-    "DESTROY_REASON=paused",
-    "DESTROY_REASON=closed",
     "emit_no_action",
     "expected_artifact_name=\"preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}\"",
     'select(.name == $name and .expired == false)',
@@ -344,8 +337,8 @@ for fragment in (
 ):
     if fragment not in target_script:
         raise SystemExit(f"trusted workflow-run lifecycle selection lacks {fragment}")
-if validate_job.get("outputs", {}).get("destroy_reason") != "${{ steps.target.outputs.destroy_reason }}":
-    raise SystemExit("validate-target must expose the authoritative destroy reason")
+if "destroy_reason" in validate_job.get("outputs", {}):
+    raise SystemExit("validate-target must not expose a removed destroy reason")
 
 destroy_job = document["jobs"]["destroy-runtime"]
 retire_job = document["jobs"]["retire-identity"]
@@ -372,10 +365,9 @@ expected_cleanup_env = {
     "GH_TOKEN": "${{ github.token }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
-    "DESTROY_REASON": "${{ needs.validate-target.outputs.destroy_reason }}",
 }
 if destroy_gate.get("env") != expected_cleanup_env or retire_gate.get("env") != expected_cleanup_env:
-    raise SystemExit("trusted cleanup gates must bind the same exact PR, head, and destroy reason")
+    raise SystemExit("trusted cleanup gates must bind the same exact PR and head")
 if destroy_gate.get("run") != retire_gate.get("run"):
     raise SystemExit("runtime deletion and identity retirement must use identical cleanup revalidation")
 cleanup_script = destroy_gate.get("run", "")
@@ -383,15 +375,9 @@ for fragment in (
     'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"',
     '.head.repo.full_name // empty',
     '.head.sha // empty',
-    '.labels // null',
-    '--inspect-labels --labels-json "$labels_json"',
-    'case "$DESTROY_REASON" in',
-    "closed)",
-    "paused)",
+    '.state // empty',
+    '[[ "$current_state" == closed ]]',
     "pull request is no longer closed",
-    "paused cleanup requires an open pull request",
-    "label metadata is malformed",
-    "preview:paused is no longer present",
 ):
     if fragment not in cleanup_script:
         raise SystemExit(f"trusted cleanup revalidation lacks {fragment}")

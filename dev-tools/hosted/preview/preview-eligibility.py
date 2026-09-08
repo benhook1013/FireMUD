@@ -2,7 +2,7 @@
 """Evaluate whether a PR is eligible for preview lifecycle actions.
 
 The labels input is required so trusted reconciliation cannot interpret
-missing or malformed metadata as an unpaused PR.
+missing or malformed metadata as a preview-eligible PR.
 """
 
 from __future__ import annotations
@@ -20,21 +20,21 @@ DEPENDENCY_BOT_AUTHORS = {
 SUPPORTED_BASE_REFS = {"main", "develop"}
 
 
-def parse_labels(labels_json: str) -> tuple[bool, bool, bool]:
-    """Return (metadata_valid, is_priority, is_paused) for GitHub labels."""
+def parse_labels(labels_json: str) -> tuple[bool, bool]:
+    """Return (metadata_valid, is_priority) for GitHub labels."""
 
     try:
         labels = json.loads(labels_json)
     except json.JSONDecodeError:
-        return False, False, False
+        return False, False
     if not isinstance(labels, list):
-        return False, False, False
+        return False, False
     names: list[str] = []
     for label in labels:
         if not isinstance(label, dict) or not isinstance(label.get("name"), str):
-            return False, False, False
+            return False, False
         names.append(label["name"])
-    return True, "preview:priority" in names, "preview:paused" in names
+    return True, "preview:priority" in names
 
 
 def evaluate(
@@ -44,12 +44,10 @@ def evaluate(
     author: str,
     labels_json: str,
 ) -> tuple[bool, str]:
-    labels_valid, _, paused = parse_labels(labels_json)
+    labels_valid, _ = parse_labels(labels_json)
     if operation in {"deploy", "retain"}:
         if not labels_valid:
             return False, "malformed-label-metadata"
-        if paused:
-            return False, "preview-paused"
     if author in DEPENDENCY_BOT_AUTHORS:
         return False, "dependency-bot"
     if base_ref not in SUPPORTED_BASE_REFS:
@@ -105,11 +103,9 @@ def revalidate_deploy(
 
     labels = pull_request.get("labels")
     labels_json = json.dumps(labels, separators=(",", ":"))
-    labels_valid, _, paused = parse_labels(labels_json)
+    labels_valid, _ = parse_labels(labels_json)
     if not labels_valid:
         return "label metadata is malformed"
-    if paused:
-        return "preview:paused is present"
 
     base_ref = _nested_value(pull_request, "base", "ref")
     author = _nested_value(pull_request, "user", "login")
@@ -166,10 +162,9 @@ def main() -> int:
         parser.error("the following arguments are required: --labels-json")
 
     if args.inspect_labels:
-        labels_valid, priority, paused = parse_labels(args.labels_json)
+        labels_valid, priority = parse_labels(args.labels_json)
         print(f"labels_valid={'true' if labels_valid else 'false'}")
         print(f"priority={'true' if priority else 'false'}")
-        print(f"paused={'true' if paused else 'false'}")
         return 0
 
     missing = [

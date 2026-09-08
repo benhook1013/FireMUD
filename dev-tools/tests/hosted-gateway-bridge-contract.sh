@@ -687,8 +687,7 @@ if not any(
     )
 
 strategy_issue = (
-    "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "
-    "cannot retain stale pods"
+    "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
 )
 multi_container_proxy = copy.deepcopy(documents)
 proxy_copy = next(

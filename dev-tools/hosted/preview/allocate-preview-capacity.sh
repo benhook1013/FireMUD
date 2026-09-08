@@ -53,18 +53,15 @@ inspect_labels() {
   local inspection
   local labels_valid
   local is_priority
-  local is_paused
 
   inspection="$(python3 "$eligibility_script" --inspect-labels --labels-json "$labels_json")" || return 1
   labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$inspection")"
   is_priority="$(sed -n 's/^priority=//p' <<<"$inspection")"
-  is_paused="$(sed -n 's/^paused=//p' <<<"$inspection")"
   if [[ "$labels_valid" != true && "$labels_valid" != false ]] ||
-    [[ "$is_priority" != true && "$is_priority" != false ]] ||
-    [[ "$is_paused" != true && "$is_paused" != false ]]; then
+    [[ "$is_priority" != true && "$is_priority" != false ]]; then
     return 1
   fi
-  printf '%s\t%s\t%s\n' "$labels_valid" "$is_priority" "$is_paused"
+  printf '%s\t%s\n' "$labels_valid" "$is_priority"
 }
 
 get_pr_state() {
@@ -77,7 +74,6 @@ get_pr_state() {
   local inspection
   local labels_valid
   local is_priority
-  local is_paused
   local extra
 
   raw_metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
@@ -91,9 +87,9 @@ get_pr_state() {
   fi
   labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)" || return 1
   inspection="$(inspect_labels "$labels_json")" || return 1
-  IFS=$'\t' read -r labels_valid is_priority is_paused <<<"$inspection"
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$pr_state" "$head_sha" "$is_priority" "$is_paused" \
+  IFS=$'\t' read -r labels_valid is_priority <<<"$inspection"
+  printf '%s\t%s\t%s\t%s\n' \
+    "$pr_state" "$head_sha" "$is_priority" \
     "$([[ "$labels_valid" == true ]] && printf valid || printf invalid)"
 }
 
@@ -108,7 +104,6 @@ find_unsatisfied_priority_pr() {
   local eligibility_output
   local eligible
   local is_priority
-  local is_paused
   local labels_valid
   local labels_base64
   local labels_json
@@ -148,12 +143,12 @@ find_unsatisfied_priority_pr() {
       echo "Unable to inspect priority PR #${pr_number} label metadata" >&2
       return 1
     fi
-    IFS=$'\t' read -r labels_valid is_priority is_paused <<<"$label_inspection"
+    IFS=$'\t' read -r labels_valid is_priority <<<"$label_inspection"
     if [[ "$labels_valid" != true ]]; then
       echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
       return 1
     fi
-    if [[ "$is_priority" != true || "$is_paused" == true ]]; then
+    if [[ "$is_priority" != true ]]; then
       continue
     fi
     if ! eligibility_output="$(python3 "$eligibility_script" \
@@ -233,13 +228,9 @@ emit_output reclaimed_pr ""
 echo "Active preview namespaces excluding ${target_namespace}: ${active_count}"
 echo "Configured preview capacity limit: ${max_active}"
 target_metadata="$(get_pr_state "$target_pr_number")"
-IFS=$'\t' read -r target_state current_target_head target_is_priority target_is_paused target_labels_valid <<<"$target_metadata"
+IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
 if [[ "$target_labels_valid" != valid ]]; then
   echo "Refusing capacity action for target PR #${target_pr_number}: malformed label metadata" >&2
-  exit 1
-fi
-if [[ "$target_is_paused" == true ]]; then
-  echo "Refusing capacity action for paused target PR #${target_pr_number}" >&2
   exit 1
 fi
 if [[ "$target_state" != "open" || "$current_target_head" != "$target_head_sha" ]]; then
@@ -283,8 +274,8 @@ for row in "${sorted_candidates[@]}"; do
     echo "Skipping ${namespace}: PR #${pr_number} metadata is unavailable"
     continue
   fi
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_is_paused candidate_labels_valid <<<"$candidate_metadata"
-  if [[ "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" || "$candidate_is_paused" == "true" ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_labels_valid <<<"$candidate_metadata"
+  if [[ "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" ]]; then
     continue
   fi
   selected="$row"
@@ -376,8 +367,8 @@ revalidation_failure=""
 if ! bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"; then
   revalidation_failure="target PR #${target_pr_number} complete deploy contract could not be revalidated"
 elif target_metadata="$(get_pr_state "$target_pr_number")"; then
-  IFS=$'\t' read -r target_state current_target_head target_is_priority target_is_paused target_labels_valid <<<"$target_metadata"
-  if [[ "$target_labels_valid" != valid || "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" || "$target_is_paused" == "true" ]]; then
+  IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
+  if [[ "$target_labels_valid" != valid || "$target_state" != "open" || "$current_target_head" != "$target_head_sha" || "$target_is_priority" != "true" ]]; then
     revalidation_failure="target PR #${target_pr_number} is no longer the current priority target"
   fi
 else
@@ -385,8 +376,8 @@ else
 fi
 
 if candidate_metadata="$(get_pr_state "$selected_pr")"; then
-  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_is_paused candidate_labels_valid <<<"$candidate_metadata"
-  if [[ -z "$revalidation_failure" && ( "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" || "$candidate_is_paused" == "true" ) ]]; then
+  IFS=$'\t' read -r candidate_state _ candidate_is_priority candidate_labels_valid <<<"$candidate_metadata"
+  if [[ -z "$revalidation_failure" && ( "$candidate_labels_valid" != valid || "$candidate_state" != "open" || "$candidate_is_priority" == "true" ) ]]; then
     revalidation_failure="candidate PR #${selected_pr} is no longer an ordinary open PR"
   fi
 elif [[ -z "$revalidation_failure" ]]; then

@@ -48,9 +48,6 @@ assert_revalidation_refused \
   '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
   'label metadata is malformed'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[{"name":"preview:paused"}]}' \
-  'preview:paused is present'
-assert_revalidation_refused \
   '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
   'target is not preview-eligible (reason=unsupported-base-branch)'
 assert_revalidation_refused \
@@ -70,12 +67,6 @@ done
 inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]')"
 grep -q '^labels_valid=true$' <<<"$inspect_priority"
 grep -q '^priority=true$' <<<"$inspect_priority"
-grep -q '^paused=false$' <<<"$inspect_priority"
-
-inspect_paused="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"preview:paused"}]')"
-grep -q '^labels_valid=true$' <<<"$inspect_paused"
-grep -q '^priority=false$' <<<"$inspect_paused"
-grep -q '^paused=true$' <<<"$inspect_paused"
 
 assert_conflicting_modes_refused() {
   local conflicting_output
@@ -98,7 +89,6 @@ for malformed_labels in 'null' '{}' '[{"name":1}]' '{not-json'; do
   inspect_malformed="$(python3 "$SCRIPT" --inspect-labels --labels-json "$malformed_labels")"
   grep -q '^labels_valid=false$' <<<"$inspect_malformed"
   grep -q '^priority=false$' <<<"$inspect_malformed"
-  grep -q '^paused=false$' <<<"$inspect_malformed"
 done
 
 deploy_open="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[]')"
@@ -129,23 +119,15 @@ destroy_dependency_bot="$(python3 "$SCRIPT" --operation destroy --state closed -
 grep -q '^eligible=false$' <<<"$destroy_dependency_bot"
 grep -q '^reason=dependency-bot$' <<<"$destroy_dependency_bot"
 
-paused_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[{"name":"preview:paused"}]')"
-grep -q '^eligible=false$' <<<"$paused_deploy"
-grep -q '^reason=preview-paused$' <<<"$paused_deploy"
+unknown_label_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[{"name":"custom:label"}]')"
+grep -q '^eligible=true$' <<<"$unknown_label_deploy"
+grep -q '^reason=eligible$' <<<"$unknown_label_deploy"
 
-paused_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '[{"name":"preview:paused"}]')"
-grep -q '^eligible=false$' <<<"$paused_retain"
-grep -q '^reason=preview-paused$' <<<"$paused_retain"
-
-paused_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '[{"name":"preview:paused"}]')"
-grep -q '^eligible=true$' <<<"$paused_destroy"
-grep -q '^reason=eligible$' <<<"$paused_destroy"
-
-malformed_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+malformed_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=false$' <<<"$malformed_deploy"
 grep -q '^reason=malformed-label-metadata$' <<<"$malformed_deploy"
 
-malformed_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+malformed_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=false$' <<<"$malformed_retain"
 grep -q '^reason=malformed-label-metadata$' <<<"$malformed_retain"
 
@@ -153,7 +135,7 @@ invalid_json_retain="$(python3 "$SCRIPT" --operation retain --state open --base-
 grep -q '^eligible=false$' <<<"$invalid_json_retain"
 grep -q '^reason=malformed-label-metadata$' <<<"$invalid_json_retain"
 
-malformed_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '{"name":"preview:paused"}')"
+malformed_destroy="$(python3 "$SCRIPT" --operation destroy --state closed --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=true$' <<<"$malformed_destroy"
 grep -q '^reason=eligible$' <<<"$malformed_destroy"
 
