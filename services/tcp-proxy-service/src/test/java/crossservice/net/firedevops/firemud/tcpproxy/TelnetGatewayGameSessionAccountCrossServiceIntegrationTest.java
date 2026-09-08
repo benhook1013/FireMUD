@@ -600,6 +600,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetWhisperDeliversTargetAndObserverViews() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
+    STACK.clearScreenBuffers(
+        TENANT_ID,
+        DEMO_WORLD_INSTANCE_ID,
+        ACCOUNT_ID,
+        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        Long.parseLong(ChatTestFixtures.PLAYER_NYX));
 
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
@@ -623,6 +629,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
 
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
+      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
+          .contains(ChatTestFixtures.canonicalWhisperText());
       GameplayAsyncAssertions.assertBufferedScreenEventuallyContains(
           screenBufferService,
           targetContext,
@@ -633,8 +641,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           observerContext,
           COMMAND_WAIT,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
-      assertThat(scenario.actor().readLineContaining(ChatTestFixtures.canonicalWhisperText()))
-          .contains(ChatTestFixtures.canonicalWhisperText());
       assertThat(
               scenario.target().readLineContaining(ChatTestFixtures.canonicalWhisperTargetText()))
           .contains(ChatTestFixtures.canonicalWhisperTargetText());

@@ -337,13 +337,78 @@ def _heredoc_delimiter(opener: re.Match[str]) -> str:
 
 
 def _shell_tokens(source: str, source_label: str = "shell source") -> list[str]:
-    lexer = shlex.shlex(source, posix=True, punctuation_chars=";&|<>")
-    lexer.commenters = "#"
+    lexer = shlex.shlex(
+        _strip_shell_comments(source), posix=True, punctuation_chars=";&|<>"
+    )
+    lexer.commenters = ""
     lexer.whitespace_split = True
     try:
         return [token for token in lexer if token not in {"\n", "\r\n"}]
     except ValueError as error:
         raise AssertionError(f"{source_label} contains invalid shell syntax") from error
+
+
+def _strip_shell_comments(source: str) -> str:
+    """Strip comments whose hash begins a shell word while preserving line breaks."""
+
+    result: list[str] = []
+    quote: str | None = None
+    escaped = False
+    word_started = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if escaped:
+            result.append(character)
+            escaped = False
+            word_started = True
+            index += 1
+            continue
+        if character == "\\" and quote != "'":
+            result.append(character)
+            escaped = True
+            word_started = True
+            index += 1
+            continue
+        if quote is not None:
+            result.append(character)
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "'\"":
+            result.append(character)
+            quote = character
+            word_started = True
+            index += 1
+            continue
+        if (
+            character == "$"
+            and index + 1 < len(source)
+            and source[index + 1] in "{("
+        ):
+            opener = source[index + 1]
+            closer = "}" if opener == "{" else ")"
+            depth = 1
+            expansion_start = index
+            index += 2
+            while index < len(source) and depth:
+                if source[index] == opener:
+                    depth += 1
+                elif source[index] == closer:
+                    depth -= 1
+                index += 1
+            result.append(source[expansion_start:index])
+            word_started = True
+            continue
+        if character == "#" and not word_started:
+            while index < len(source) and source[index] not in "\r\n":
+                index += 1
+            continue
+        result.append(character)
+        word_started = not (character.isspace() or character in ";|&<>()")
+        index += 1
+    return "".join(result)
 
 
 def _shell_line_state(

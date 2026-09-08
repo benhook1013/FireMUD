@@ -581,6 +581,27 @@ class GatewayWebSocketClientTest {
   }
 
   @Test
+  void plaintextGatewayIsRejectedWhenAnyActiveProfileIsNotLocal() {
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new GatewayWebSocketClient(
+                    "ws://gateway.internal:8080/ws/game",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    new String[] {"prod", "local"},
+                    new SimpleMeterRegistry(),
+                    false));
+
+    assertTrue(failure.getMessage().contains("reason=bad_url"));
+  }
+
+  @Test
   void plaintextGatewayIsRejectedWithoutAnExplicitLocalProfile() {
     IllegalStateException failure =
         assertThrows(

@@ -423,7 +423,7 @@ revalidation_helper_path="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-
 require_contains "$allocator_path" 'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"'
 assert_step_contains preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
-  'revalidate-preview-deploy.sh'
+  'bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal workflow source.
 assert_step_contains preview.yml preview-deploy \
   'Revalidate preview target labels immediately before helm deploy' \
@@ -436,7 +436,10 @@ require_contains "$revalidation_helper_path" '--expected-head-sha "$expected_hea
 require_contains "$revalidation_helper_path" 'current pull request metadata is unavailable'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$revalidation_helper_path" '${refusal_reason:-preview eligibility evaluation failed}'
-if [[ "$(grep -Fhc -- 'revalidate-preview-deploy.sh' "$preview_path" "$allocator_path" | awk '{ total += $1 } END { print total }')" -ne 2 ]]; then
+workflow_revalidation_invocations="$(grep -Fc -- 'bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh' "$preview_path" || true)"
+# shellcheck disable=SC2016 # Count the literal allocator invocation, not its path assignment.
+allocator_revalidation_invocations="$(grep -Fc -- 'bash "$revalidate_deploy_script" "$target_pr_number" "$target_head_sha"' "$allocator_path" || true)"
+if [[ "$workflow_revalidation_invocations" -ne 1 || "$allocator_revalidation_invocations" -ne 1 ]]; then
   echo "Preview deploy must call the shared revalidation helper at exactly two boundaries" >&2
   exit 1
 fi

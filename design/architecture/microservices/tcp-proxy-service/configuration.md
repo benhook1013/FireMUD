@@ -115,7 +115,7 @@ When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion o
 
 The local environment consequence is:
 
-- Plaintext `ws://` requires at least one explicit `local`, `dev`, or `test` Spring profile; an empty active-profile set fails closed rather than implicitly selecting local trust.
+- Plaintext `ws://` requires a non-empty active-profile set where every profile is `local`, `dev`, or `test`; an empty set or any profile outside that allowlist fails closed rather than implicitly selecting local trust.
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.

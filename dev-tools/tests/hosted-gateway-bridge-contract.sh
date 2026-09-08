@@ -568,6 +568,16 @@ for label, mutation, expected_fragment in (
         ),
         "must not configure legacy TCP Proxy header trust",
     ),
+    (
+        "foreign-trust-environment",
+        lambda docs: mutate_env(
+            docs,
+            "spring-cloud-gateway",
+            "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT",
+            "dev-demo-cluster",
+        ),
+        "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT must be exactly 'pr-preview'",
+    ),
 ):
     mutated = copy.deepcopy(documents)
     mutation(mutated)

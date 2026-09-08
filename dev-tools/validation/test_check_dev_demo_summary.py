@@ -780,6 +780,11 @@ timeout --foreground 5s printf '%s\n' 'safe summary'
             self._write_workflow_fixture(root, valid_manifest)
             self.validator.validate_workflow(root)
 
+    def test_bootstrap_secret_detection_preserves_mid_word_hash(self):
+        source = "echo a#b; kubectl create secret generic unrelated-resource"
+
+        self.assertTrue(self.validator._bootstrap_creates_secret(source))
+
     def test_validate_workflow_ignores_secret_commands_in_quotes_and_comments(self):
         bootstrap_manifest = self._bootstrap_manifest_fixture()
         valid_manifest = bootstrap_manifest + r"""
