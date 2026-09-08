@@ -12,12 +12,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.tcpproxy.telnet.GatewayWebSocketClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /** Checks whether the downstream gateway gameplay admission path is currently ready. */
 @Component
 public final class GatewayGameplayReadinessProbe implements AutoCloseable {
+  private static final Logger logger = LoggerFactory.getLogger(GatewayGameplayReadinessProbe.class);
   private static final Duration POLL_INTERVAL = Duration.ofSeconds(1);
 
   private final GatewayWebSocketClient gatewayWebSocketClient;
@@ -88,6 +91,7 @@ public final class GatewayGameplayReadinessProbe implements AutoCloseable {
                 gatewayWebSocketClient.isReadyAsync(), "Gateway readiness future");
       } catch (RuntimeException e) {
         ready.set(false);
+        logger.debug("Gateway readiness poll failed to start; reporting unready", e);
         return;
       }
       inFlight.set(request);

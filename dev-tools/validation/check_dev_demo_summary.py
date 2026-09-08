@@ -395,10 +395,16 @@ def _shell_statements(
     """Yield shell statements separately from any attached heredoc bodies."""
     lines = source.splitlines()
     index = 0
-    while index < len(lines):
-        _, command_end = next(
-            _shell_command_line_ranges(source, source_label, start=index)
-        )
+
+    def statement_starts() -> Iterable[int]:
+        while index < len(lines):
+            yield index
+
+    for command_start, command_end in _shell_command_line_ranges(
+        source, source_label, starts=statement_starts()
+    ):
+        if command_start != index:
+            raise AssertionError(f"{source_label} shell statement boundary drifted")
         command = "\n".join(lines[index : command_end + 1])
         heredocs = _heredoc_specs(command, source_label)
         if not heredocs:
@@ -872,13 +878,17 @@ def _summary_heredoc(
 
 
 def _shell_command_line_ranges(
-    source: str, source_label: str = "shell source", *, start: int = 0
+    source: str,
+    source_label: str = "shell source",
+    *,
+    start: int = 0,
+    starts: Iterable[int] | None = None,
 ) -> Iterable[tuple[int, int]]:
     """Yield physical line ranges for quote-aware shell statements."""
 
     lines = source.splitlines()
-    index = start
-    while index < len(lines):
+
+    def command_end_for(index: int) -> int:
         command_end = index
         quote: str | None = None
         while command_end + 1 < len(lines):
@@ -888,6 +898,16 @@ def _shell_command_line_ranges(
             if not continues:
                 break
             command_end += 1
+        return command_end
+
+    if starts is not None:
+        for index in starts:
+            yield index, command_end_for(index)
+        return
+
+    index = start
+    while index < len(lines):
+        command_end = command_end_for(index)
         yield index, command_end
         index = command_end + 1
 

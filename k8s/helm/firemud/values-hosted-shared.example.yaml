@@ -27,7 +27,10 @@ previewStack:
 
   telnetTls:
     enabled: true
+    # Standalone-only Certificate input; hosted-controller mode ignores it.
     clusterIssuer: letsencrypt-prod
+    # Standalone-only Secret override; hosted-controller mode mounts the
+    # controller-projected <release>-telnet-tls Secret instead.
     secretName: __TELNET_TLS_SECRET_NAME__
 
   seed:

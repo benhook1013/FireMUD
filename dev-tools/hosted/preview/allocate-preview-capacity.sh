@@ -13,7 +13,7 @@ target_head_sha="$4"
 priority_label="preview:priority"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
-revalidate_deploy_script="${script_dir}/revalidate-preview-deploy.sh"
+revalidate_deploy_script="${PREVIEW_REVALIDATE_DEPLOY_SCRIPT:-${script_dir}/revalidate-preview-deploy.sh}"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 publish_reclaimed_script="${PREVIEW_RECLAIMED_PUBLISH_SCRIPT:-${script_dir}/publish-preview-reclaimed.sh}"
 publish_attempts="${PREVIEW_RECLAIM_PUBLISH_ATTEMPTS:-3}"
@@ -82,6 +82,9 @@ get_pr_state() {
 
   raw_metadata="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
     --jq '[.state, .head.sha, (.labels | tojson | @base64)] | @tsv')" || return 1
+  if [[ "$raw_metadata" == *$'\n'* || "$raw_metadata" == *$'\r'* ]]; then
+    return 1
+  fi
   IFS=$'\t' read -r pr_state head_sha labels_base64 extra <<<"$raw_metadata"
   if [[ -n "${extra:-}" || -z "$pr_state" || -z "$head_sha" || -z "$labels_base64" ]]; then
     return 1

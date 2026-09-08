@@ -39,7 +39,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLParameters;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.slf4j.Logger;
@@ -524,7 +523,7 @@ public final class GatewayWebSocketClient implements AutoCloseable {
     if (cause instanceof ConnectException) {
       return "connect_refused";
     }
-    if (cause instanceof SSLHandshakeException || cause instanceof SSLException) {
+    if (cause instanceof SSLException) {
       String message = String.valueOf(cause.getMessage()).toLowerCase(Locale.ROOT);
       if (message.contains("bad_certificate")
           || message.contains("certificate_required")

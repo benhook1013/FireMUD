@@ -4393,7 +4393,7 @@ def validate_gateway_ws_network_policy(
                 if not isinstance(port, dict) or "port" not in port:
                     issues.append(f"{label} must not contain an all-port rule")
                     matching.append(rule)
-                    continue
+                    break
                 value = port.get("port")
                 end_port = port.get("endPort")
                 if value == GATEWAY_WS_LISTENER_PORT or (
@@ -4402,6 +4402,7 @@ def validate_gateway_ws_network_policy(
                     and value <= GATEWAY_WS_LISTENER_PORT <= end_port
                 ):
                     matching.append(rule)
+                    break
                 elif isinstance(value, str):
                     issues.append(
                         f"{label} must not use a named port that could widen listener access"

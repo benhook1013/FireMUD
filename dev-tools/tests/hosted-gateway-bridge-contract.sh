@@ -694,6 +694,44 @@ for label, mutation in (
     if not any("must not contain an all-port rule" in issue for issue in all_port_issues):
         raise SystemExit(f"{label} Gateway policy was accepted: {all_port_issues}")
 
+for label, ports, expected_fragment in (
+    (
+        "repeated-listener-qualifiers",
+        [
+            {"protocol": "TCP", "port": 8443},
+            {"protocol": "TCP", "port": 8000, "endPort": 9000},
+        ],
+        "listener rule must be exactly TCP 8443",
+    ),
+    (
+        "repeated-malformed-qualifiers",
+        [{"protocol": "TCP"}, {"protocol": "TCP"}],
+        "must not contain an all-port rule",
+    ),
+):
+    repeated_qualifier_policy = copy.deepcopy(documents)
+    gateway_policy = next(
+        document
+        for document in repeated_qualifier_policy
+        if document.get("kind") == "NetworkPolicy"
+        and document.get("metadata", {}).get("name")
+        == "spring-cloud-gateway-ingress"
+    )
+    gateway_policy["spec"]["ingress"][0]["ports"] = ports
+    _, repeated_qualifier_issues = module.validate_gateway_ws_values(
+        repeated_qualifier_policy, expected
+    )
+    if not any(
+        expected_fragment in issue for issue in repeated_qualifier_issues
+    ) or any(
+        "exactly one app=tcp-proxy-service peer rule" in issue
+        for issue in repeated_qualifier_issues
+    ):
+        raise SystemExit(
+            f"{label} counted one Gateway policy rule more than once: "
+            f"{repeated_qualifier_issues}"
+        )
+
 for label, policy_name, policy_types, expected_fragment in (
     (
         "gateway-direction-disabled",

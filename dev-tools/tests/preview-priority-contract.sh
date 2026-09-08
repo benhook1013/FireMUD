@@ -112,7 +112,7 @@ for arg in "$@"; do
     has_jq=true
   fi
 done
-encode_fake_labels() {
+fake_labels_json() {
   local priority="$1"
   local paused="$2"
   local labels_valid="$3"
@@ -126,7 +126,10 @@ encode_fake_labels() {
   elif [[ "$paused" == true ]]; then
     labels_json='[{"name":"preview:paused"}]'
   fi
-  printf '%s' "$labels_json" | base64 | tr -d '\n'
+  printf '%s' "$labels_json"
+}
+encode_fake_labels() {
+  fake_labels_json "$@" | base64 | tr -d '\n'
 }
 case "$resource" in
   */pulls\?state=*)
@@ -147,7 +150,7 @@ case "$resource" in
       if [[ "${FAKE_TARGET_RAW_QUERY_FAIL:-false}" == true ]]; then
         exit 1
       fi
-      labels_json="$(encode_fake_labels "$priority" "$paused" "$labels_valid" | base64 --decode)"
+      labels_json="$(fake_labels_json "$priority" "$paused" "$labels_valid")"
       jq -cn \
         --arg state "${FAKE_TARGET_STATE:-open}" \
         --arg head "$FAKE_TARGET_HEAD" \
@@ -156,6 +159,10 @@ case "$resource" in
         --arg author "${FAKE_TARGET_AUTHOR:-human}" \
         --argjson labels "$labels_json" \
         '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
+      exit 0
+    fi
+    if [[ -n "${FAKE_TARGET_METADATA:-}" ]]; then
+      printf '%b' "$FAKE_TARGET_METADATA"
       exit 0
     fi
     count=0
@@ -286,6 +293,12 @@ fi
 printf '%s\n' "$phase" > "$FAKE_PUBLISHED_STATE"
 EOF
 
+cat > "$TEMP_DIR/revalidate" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\t%s\n' "$1" "$2" >> "$FAKE_REVALIDATE_LOG"
+EOF
+
 cat > "$TEMP_DIR/eligibility-fail.py" <<'EOF'
 raise SystemExit(1)
 EOF
@@ -295,7 +308,12 @@ import sys
 
 sys.stdout.write(os.environ["FAKE_ELIGIBILITY_OUTPUT"])
 EOF
-chmod +x "$TEMP_DIR/bin/kubectl" "$TEMP_DIR/bin/gh" "$TEMP_DIR/delete" "$TEMP_DIR/publish"
+chmod +x \
+  "$TEMP_DIR/bin/kubectl" \
+  "$TEMP_DIR/bin/gh" \
+  "$TEMP_DIR/delete" \
+  "$TEMP_DIR/publish" \
+  "$TEMP_DIR/revalidate"
 
 export PATH="$TEMP_DIR/bin:$PATH"
 export GITHUB_REPOSITORY="example/FireMUD"
@@ -315,6 +333,7 @@ export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RECONCILER_RUN_LIST_LOG="$TEMP_DIR/reconciler-run-list.log"
 export FAKE_RECONCILER_DISPATCH_LOG="$TEMP_DIR/reconciler-dispatch.log"
+export FAKE_REVALIDATE_LOG="$TEMP_DIR/revalidate.log"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -324,12 +343,13 @@ adversarial_paused_labels_base64="$(printf '%s' '[{"name":"preview:paused"},{"na
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RUN_LIST_LOG" "$FAKE_RECONCILER_DISPATCH_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RUN_LIST_LOG" "$FAKE_RECONCILER_DISPATCH_LOG" "$FAKE_REVALIDATE_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_PAUSED=false
   export FAKE_TARGET_LABELS_VALID=valid
   export FAKE_TARGET_RAW_QUERY_FAIL=false
+  export FAKE_TARGET_METADATA=''
   export FAKE_TARGET_STATE=open
   export FAKE_TARGET_REPOSITORY=example/FireMUD
   export FAKE_TARGET_BASE_REF=develop
@@ -365,6 +385,7 @@ reset_case() {
   export FAKE_RECONCILER_PR_ROWS=''
   export FAKE_ACTIVE_PREVIEW_RUN_ID=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
+  unset PREVIEW_REVALIDATE_DEPLOY_SCRIPT
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 }
 
@@ -390,6 +411,12 @@ assert_marker_count() {
     exit 1
   fi
 }
+
+reset_case
+export PREVIEW_REVALIDATE_DEPLOY_SCRIPT="$TEMP_DIR/revalidate"
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+grep -qx $'900\thead-900' "$FAKE_REVALIDATE_LOG"
+test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"
@@ -765,6 +792,20 @@ for target_contract_case in repository head base author metadata; do
   fi
   test ! -e "$FAKE_DELETE_LOG"
   unset expected_target_head
+done
+
+for malformed_target_metadata in \
+  $'open\thead-900' \
+  "open\thead-900\t${priority_labels_base64}\textra" \
+  $'open\thead-900\t'"${priority_labels_base64}"$'\nclosed\tforged-head\t'"${priority_labels_base64}"
+do
+  reset_case
+  export FAKE_TARGET_METADATA="$malformed_target_metadata"
+  if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+    echo "allocator accepted malformed target metadata record framing" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
 done
 
 reset_case

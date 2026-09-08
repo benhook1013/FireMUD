@@ -2027,8 +2027,14 @@ metadata:
   name: unrelated-resource
 RESOURCES"""
 
-        statements = list(validator._shell_statements(source))
+        with patch.object(
+            validator,
+            "_shell_command_line_ranges",
+            wraps=validator._shell_command_line_ranges,
+        ) as range_scanner:
+            statements = list(validator._shell_statements(source))
 
+        range_scanner.assert_called_once()
         self.assertEqual(len(statements), 2)
         self.assertEqual(statements[0][0], "cat <<'EXAMPLE'")
         self.assertEqual(
