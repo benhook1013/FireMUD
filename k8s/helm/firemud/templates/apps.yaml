@@ -29,9 +29,9 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ default 1 $service.replicaCount }}
-  {{- if or $mountGatewayWsServerTls $mountGatewayWsClientTls }}
-  # A bridge-identity withdrawal must not leave an old pod serving while a
-  # replacement is blocked on a missing/revoked controller projection.
+  {{- if and (eq $service.name "tcp-proxy-service") (or $mountGatewayWsServerTls $mountGatewayWsClientTls) }}
+  # A TCP Proxy bridge-identity withdrawal must not leave an old pod serving
+  # while a replacement is blocked on a missing/revoked controller projection.
   strategy:
     type: Recreate
   {{- end }}

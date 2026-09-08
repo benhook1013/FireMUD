@@ -571,6 +571,24 @@ assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
+selector_labels = {"app": "tcp-proxy-service", "environment": "preview"}
+if not module.kubernetes_selector_matches(
+    {
+        "matchLabels": {"app": "tcp-proxy-service"},
+        "matchExpressions": [],
+    },
+    selector_labels,
+):
+    raise SystemExit("valid Kubernetes selector unexpectedly failed to match")
+for malformed_selector in (
+    {"matchLabels": []},
+    {"matchLabels": None},
+    {"matchExpressions": {}},
+    {"matchExpressions": None},
+):
+    if module.kubernetes_selector_matches(malformed_selector, selector_labels):
+        raise SystemExit(f"malformed Kubernetes selector was accepted: {malformed_selector!r}")
+
 expected_rfc8785_digest = "sha256:fd8b688bfa8b71822975ab3519e20b09e43b67d382a9f32831bfa384df21a82d"
 actual_rfc8785_digest = module.canonical_evidence_digest({"\ufffd": 2, "\U0001f600": 1})
 if actual_rfc8785_digest != expected_rfc8785_digest:
@@ -898,7 +916,7 @@ metadata:
   name: spring-cloud-gateway
 spec:
   strategy:
-    type: Recreate
+    type: RollingUpdate
   template:
     metadata:
       labels:

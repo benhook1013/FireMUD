@@ -893,7 +893,9 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
     if verb is None or verb[0] not in {"apply", "create", "replace"}:
         return False
     values = arguments[verb[1] + 1 :]
-    for index, token in enumerate(values):
+    index = 0
+    while index < len(values):
+        token = values[index]
         if token == "--":
             break
         if token in {"-f", "--filename"}:
@@ -902,6 +904,9 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
                 and values[index + 1] in KUBECTL_MANIFEST_STDIN_FILENAMES
             ):
                 return True
+            # The following token is consumed by this value-taking option. Do
+            # not inspect it again as though it were another kubectl option.
+            index += 2
             continue
         for prefix in ("-f=", "-f", "--filename="):
             if (
@@ -909,6 +914,15 @@ def _kubectl_reads_manifest_stdin(arguments: list[str]) -> bool:
                 and token[len(prefix) :] in KUBECTL_MANIFEST_STDIN_FILENAMES
             ):
                 return True
+        if (token.startswith("-f") and len(token) > 2) or token.startswith(
+            "--filename="
+        ):
+            index += 1
+            continue
+        if token in KUBECTL_VALUE_FLAGS:
+            index += 2
+            continue
+        index += 1
     return False
 
 

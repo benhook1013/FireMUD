@@ -866,6 +866,20 @@ RESOURCES"""
                     self.validator._kubectl_reads_manifest_stdin(arguments)
                 )
 
+    def test_kubectl_reads_manifest_stdin_skips_consumed_option_values(self):
+        non_stdin_commands = (
+            ["apply", "-f", "--filename", "manifest.yaml"],
+            ["apply", "--filename", "-f", "manifest.yaml"],
+            ["apply", "-f", "-fmanifest.yaml"],
+            ["apply", "--filename", "--filename=manifest.yaml"],
+            ["apply", "--namespace", "-f", "manifest.yaml"],
+        )
+        for arguments in non_stdin_commands:
+            with self.subTest(arguments=arguments):
+                self.assertFalse(
+                    self.validator._kubectl_reads_manifest_stdin(arguments)
+                )
+
     def test_kubectl_reads_manifest_stdin_stops_at_option_terminator(self):
         commands = (
             ["apply", "--", "-f/dev/stdin"],

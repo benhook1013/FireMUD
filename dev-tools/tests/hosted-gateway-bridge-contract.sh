@@ -32,6 +32,30 @@ FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
     "$DEV_RENDERED" dev dev >"$TMP_DIR/dev-preflight.json"
 
+DISABLED_TELNET_CERT_RENDERED="$TMP_DIR/disabled-telnet-certificate.yaml"
+helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$TMP_DIR/preview-values.yaml" \
+  --set previewStack.enabled=false \
+  --set previewStack.telnetTls.enabled=true \
+  --set-string 'previewStack.telnetTls.secretName=' \
+  --namespace pr-123 >"$DISABLED_TELNET_CERT_RENDERED"
+python3 - "$DISABLED_TELNET_CERT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = [
+    document
+    for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+]
+if any(document.get("kind") == "Certificate" for document in documents):
+    raise SystemExit(
+        "disabled previewStack rendered a standalone Telnet TLS Certificate"
+    )
+PY
+
 OVERRIDE_RENDERED="$TMP_DIR/trust-environment-override.yaml"
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$TMP_DIR/preview-values.yaml" \
@@ -462,10 +486,32 @@ proxy = next(
     if document.get("kind") == "Deployment"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
 )
-if gateway.get("spec", {}).get("strategy") != {"type": "Recreate"}:
-    raise SystemExit("Gateway identity withdrawal can retain a stale rolling-update pod")
+gateway_strategy = gateway.get("spec", {}).get("strategy")
+if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"}:
+    raise SystemExit("Gateway Deployment must retain Kubernetes' RollingUpdate default")
 if proxy.get("spec", {}).get("strategy") != {"type": "Recreate"}:
     raise SystemExit("TCP Proxy identity withdrawal can retain a stale rolling-update pod")
+
+gateway_strategy_documents = copy.deepcopy(documents)
+gateway_copy = next(
+    document
+    for document in gateway_strategy_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+gateway_copy["spec"]["strategy"] = {"type": "Recreate"}
+_, gateway_strategy_issues = module.validate_gateway_ws_values(
+    gateway_strategy_documents, expected
+)
+if not any(
+    "Gateway bridge Deployment strategy must be RollingUpdate or omitted"
+    in issue
+    for issue in gateway_strategy_issues
+):
+    raise SystemExit(
+        "Gateway Recreate strategy was accepted for the bridge listener: "
+        f"{gateway_strategy_issues}"
+    )
 
 strategy_issue = (
     "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal "

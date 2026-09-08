@@ -28,6 +28,8 @@ import java.nio.file.StandardCopyOption;
 import java.security.PublicKey;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -92,6 +94,22 @@ class GatewayWebSocketClientTest {
     }
     collected.addSuppressed(error);
     return collected;
+  }
+
+  @Test
+  void rotatedGatewayCertificatesRemainValidForAtLeastThirtyDays() throws Exception {
+    Instant minimumNotAfter = Instant.now().plus(30, ChronoUnit.DAYS);
+    TlsMaterial rotatedMaterial = copyRotatedTlsMaterial();
+    for (Path fixture : List.of(rotatedMaterial.caCertificate(), rotatedMaterial.certificate())) {
+      X509Certificate certificate = readCertificate(fixture);
+      assertTrue(
+          certificate.getNotAfter().toInstant().isAfter(minimumNotAfter),
+          () ->
+              fixture
+                  + " expires at "
+                  + certificate.getNotAfter()
+                  + "; regenerate the rotated fixtures using services/tcp-proxy-service/src/test/resources/certs/README.md");
+    }
   }
 
   @Test

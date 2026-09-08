@@ -3990,9 +3990,10 @@ def validate_gateway_ws_listener(
     if len(deployments) != 1:
         return set(), ["exactly one rendered spring-cloud-gateway Deployment is required"]
     document = deployments[0]
-    if (document.get("spec") or {}).get("strategy") != {"type": "Recreate"}:
+    gateway_strategy = (document.get("spec") or {}).get("strategy")
+    if gateway_strategy is not None and gateway_strategy != {"type": "RollingUpdate"}:
         issues = [
-            "Gateway bridge Deployment strategy must be Recreate so identity withdrawal cannot retain stale pods"
+            "Gateway bridge Deployment strategy must be RollingUpdate or omitted so Kubernetes uses its default"
         ]
     else:
         issues = []
@@ -4276,10 +4277,14 @@ def kubernetes_selector_matches(
 ) -> bool:
     if not isinstance(selector, dict) or not isinstance(labels, dict):
         return False
-    for key, value in (selector.get("matchLabels") or {}).items():
+    match_labels = selector.get("matchLabels", {})
+    match_expressions = selector.get("matchExpressions", [])
+    if not isinstance(match_labels, dict) or not isinstance(match_expressions, list):
+        return False
+    for key, value in match_labels.items():
         if labels.get(key) != value:
             return False
-    for expression in selector.get("matchExpressions") or []:
+    for expression in match_expressions:
         if not isinstance(expression, dict):
             return False
         key = expression.get("key")
