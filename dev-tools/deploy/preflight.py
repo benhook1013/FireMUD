@@ -4116,7 +4116,7 @@ def validate_gateway_ws_values(
             "strategy"
         ) != {"type": "Recreate"}:
             issues.append(
-                "TCP Proxy bridge Deployment strategy must be Recreate so identity withdrawal cannot retain stale pods"
+                "TCP Proxy bridge Deployment strategy must be Recreate for planned identity replacement"
             )
         for container, volumes in bridge_containers:
             env, env_issues = effective_container_env(
@@ -6696,6 +6696,17 @@ def wait_for_secret_key_requirements(
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
     for attempt in range(HOSTED_BRIDGE_SECRET_READY_ATTEMPTS):
+        if attempt:
+            pending_names = ", ".join(
+                secret_name for secret_name, _ in pending
+            )
+            print(
+                "Hosted bridge Secret projection retry "
+                f"attempt {attempt + 1}/{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS}; "
+                f"pending Secrets: {pending_names}",
+                file=sys.stderr,
+                flush=True,
+            )
         retry_pending: list[tuple[str, set[str]]] = []
         for secret_name, required_keys in pending:
             issue, retryable = secret_keys_lookup_failure(

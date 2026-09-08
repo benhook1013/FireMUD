@@ -2128,10 +2128,12 @@ PY
 done
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import contextlib
 import copy
 import hashlib
-import json
 import importlib.util
+import io
+import json
 import pathlib
 import sys
 import yaml
@@ -2293,6 +2295,8 @@ try:
     ]
     lookup_attempts = {}
     sleep_delays = []
+    progress_stdout = io.StringIO()
+    progress_stderr = io.StringIO()
 
     def staged_projection_lookup(*args, **kwargs):
         if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
@@ -2319,9 +2323,12 @@ try:
 
     module.subprocess.run = staged_projection_lookup
     module.time.sleep = sleep_delays.append
-    projection_issues = module.wait_for_secret_key_requirements(
-        secret_requirements, "pr-123"
-    )
+    with contextlib.redirect_stdout(progress_stdout), contextlib.redirect_stderr(
+        progress_stderr
+    ):
+        projection_issues = module.wait_for_secret_key_requirements(
+            secret_requirements, "pr-123"
+        )
     if projection_issues:
         raise SystemExit(
             f"converged controller Secret projections were rejected: {projection_issues}"
@@ -2335,6 +2342,16 @@ try:
         raise SystemExit(f"controller Secret retries were incorrect: {lookup_attempts}")
     if sleep_delays != [module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS]:
         raise SystemExit(f"controller Secret retry delay was incorrect: {sleep_delays}")
+    progress_lines = progress_stderr.getvalue().splitlines()
+    if progress_stdout.getvalue():
+        raise SystemExit(
+            f"controller Secret retry progress leaked onto stdout: {progress_stdout.getvalue()!r}"
+        )
+    if progress_lines != [
+        "Hosted bridge Secret projection retry attempt 2/15; "
+        "pending Secrets: pr-123-gateway-internal-ws, pr-123-tcp-proxy-bridge"
+    ]:
+        raise SystemExit(f"controller Secret retry progress was incorrect: {progress_lines}")
 
     exhaustion_calls = []
     exhaustion_delays = []
