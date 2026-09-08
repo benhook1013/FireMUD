@@ -14,10 +14,36 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.config.CommonCoreAutoConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 
 class TlsCertificateWatcherTest {
+  @Test
+  void noWatchersReportReloadDisabled() {
+    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+  }
+
+  @Test
+  void autoConfiguredHealthIndicatorReportsAggregateHealth() {
+    HealthIndicator indicator =
+        new CommonCoreAutoConfiguration().tlsCertificateReloadHealthIndicator();
+
+    assertHealth("UP", "disabled_or_not_configured", indicator.health());
+  }
+
+  @Test
+  void healthyWatcherReportsWatching(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+
+    try (TlsCertificateWatcher ignored =
+        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {})) {
+      assertHealth("UP", "watching", TlsCertificateWatcher.health());
+    }
+  }
+
   @Test
   void rapidDirectFileChangesTriggerReload(@TempDir Path directory) throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
@@ -172,6 +198,7 @@ class TlsCertificateWatcherTest {
       assertTrue(retiredReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
       assertFalse(watcher.hasAllRequiredRegistrations());
+      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
 
       synchronized (reloadPhase) {
         Files.writeString(retainedCertificate, "certificate-2");
@@ -180,7 +207,43 @@ class TlsCertificateWatcherTest {
       assertTrue(retainedReload.await(5, TimeUnit.SECONDS));
       assertTrue(watcher.isRunning());
       assertFalse(watcher.hasAllRequiredRegistrations());
+      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
     }
+  }
+
+  @Test
+  void losingFinalWatchKeyReportsStoppedUntilCloseRemovesWatcher(@TempDir Path directory)
+      throws Exception {
+    Path watchedDirectory = Files.createDirectory(directory.resolve("certificate"));
+    Path certificate = Files.writeString(watchedDirectory.resolve("tls.crt"), "certificate-1");
+
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
+    try {
+      Files.delete(certificate);
+      Files.delete(watchedDirectory);
+      awaitStopped(watcher);
+      assertHealth("OUT_OF_SERVICE", "watcher_unhealthy", TlsCertificateWatcher.health());
+    } finally {
+      watcher.close();
+    }
+    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+  }
+
+  @Test
+  void closingHealthyWatcherRemovesItFromAggregateHealth(@TempDir Path directory) throws Exception {
+    Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
+    TlsCertificateWatcher watcher =
+        TlsCertificateWatcher.createAndStart(List.of(certificate), () -> {});
+
+    assertHealth("UP", "watching", TlsCertificateWatcher.health());
+    watcher.close();
+    assertHealth("UP", "disabled_or_not_configured", TlsCertificateWatcher.health());
+  }
+
+  private static void assertHealth(String status, String tlsReload, Health health) {
+    assertEquals(status, health.getStatus().getCode());
+    assertEquals(tlsReload, health.getDetails().get("tlsReload"));
   }
 
   private static void awaitStopped(TlsCertificateWatcher watcher) throws Exception {

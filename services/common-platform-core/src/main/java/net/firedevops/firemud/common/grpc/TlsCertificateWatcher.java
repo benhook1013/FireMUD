@@ -11,13 +11,16 @@ import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
+import org.springframework.boot.health.contributor.Health;
 
 /**
  * Watches a set of certificate files for modifications and invokes a callback when any of them
@@ -29,6 +32,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private static final Duration RELOAD_DEBOUNCE = Duration.ofMillis(100);
   private static final Duration MAX_RELOAD_DELAY = Duration.ofSeconds(1);
   private static final Path PROJECTED_DATA_LINK = Path.of("..data");
+  private static final Set<TlsCertificateWatcher> ACTIVE_WATCHERS = ConcurrentHashMap.newKeySet();
 
   private final WatchService watchService;
   private final Map<WatchKey, Path> keys = new HashMap<>();
@@ -36,6 +40,7 @@ public class TlsCertificateWatcher implements AutoCloseable {
   private final Runnable onChange;
   private final AtomicBoolean running = new AtomicBoolean(true);
   private final AtomicBoolean allRequiredRegistrationsValid = new AtomicBoolean(true);
+  private final AtomicBoolean started = new AtomicBoolean();
   private final Thread thread;
 
   public static TlsCertificateWatcher createAndStart(List<Path> files, Runnable onChange)
@@ -70,7 +75,16 @@ public class TlsCertificateWatcher implements AutoCloseable {
   }
 
   public void start() {
-    thread.start();
+    if (!started.compareAndSet(false, true)) {
+      throw new IllegalThreadStateException("TLS certificate watcher has already been started");
+    }
+    ACTIVE_WATCHERS.add(this);
+    try {
+      thread.start();
+    } catch (RuntimeException e) {
+      ACTIVE_WATCHERS.remove(this);
+      throw e;
+    }
   }
 
   private void processEvents() {
@@ -169,12 +183,43 @@ public class TlsCertificateWatcher implements AutoCloseable {
     return running.get() && allRequiredRegistrationsValid.get();
   }
 
+  /** Returns the aggregate health of all successfully started certificate watchers. */
+  public static Health health() {
+    List<TlsCertificateWatcher> activeWatcherSnapshot = List.copyOf(ACTIVE_WATCHERS);
+    int activeWatchers = activeWatcherSnapshot.size();
+    int healthyWatchers =
+        (int)
+            activeWatcherSnapshot.stream()
+                .filter(TlsCertificateWatcher::hasAllRequiredRegistrations)
+                .count();
+    int unhealthyWatchers = activeWatchers - healthyWatchers;
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("activeWatchers", activeWatchers);
+    details.put("healthyWatchers", healthyWatchers);
+    details.put("unhealthyWatchers", unhealthyWatchers);
+
+    if (activeWatchers == 0) {
+      return Health.up()
+          .withDetail("tlsReload", "disabled_or_not_configured")
+          .withDetails(details)
+          .build();
+    }
+    if (unhealthyWatchers == 0) {
+      return Health.up().withDetail("tlsReload", "watching").withDetails(details).build();
+    }
+    return Health.outOfService()
+        .withDetail("tlsReload", "watcher_unhealthy")
+        .withDetails(details)
+        .build();
+  }
+
   @Override
   public void close() throws IOException {
     running.set(false);
     try {
       watchService.close();
     } finally {
+      ACTIVE_WATCHERS.remove(this);
       if (thread.isAlive()) {
         thread.interrupt();
       }
