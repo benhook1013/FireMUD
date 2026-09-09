@@ -128,6 +128,41 @@ class HostedStatusServiceTest {
   }
 
   @Test
+  void firstRuntimeProfileObservationUsesDistinctPendingReason() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("pr-42")
+            .withNamespace("firemud-system")
+            .withGeneration(7L)
+            .build());
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    var observed =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid-observed", "head-observed", "head-observed", 32002, true);
+
+    HostedEnvironmentIdentityStatus status = service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Ready,
+        "Reconciled",
+        "served",
+        true,
+        observed,
+        null,
+        null,
+        null);
+
+    HostedCondition condition = status.getConditions().get(0);
+    assertEquals("False", condition.getStatus());
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, status.getPhase());
+    assertEquals("RuntimeIdentityObserved", condition.getReason());
+    assertEquals(
+        "runtime identity was observed for the first time; fresh convergence is required",
+        condition.getMessage());
+  }
+
+  @Test
   void missingOrExplicitAbsencePreservesRuntimeTuple() {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(

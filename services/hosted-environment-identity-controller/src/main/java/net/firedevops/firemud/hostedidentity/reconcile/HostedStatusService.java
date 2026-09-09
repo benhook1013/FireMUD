@@ -90,9 +90,14 @@ public class HostedStatusService {
         phase = Phase.Pending;
       }
     } else if (profileChanged && ready) {
-      reason = "RuntimeIdentityChanged";
-      message =
-          "runtime Namespace UID, requested head, or deployed head changed; fresh convergence is required";
+      if (previousProfile == null) {
+        reason = "RuntimeIdentityObserved";
+        message = "runtime identity was observed for the first time; fresh convergence is required";
+      } else {
+        reason = "RuntimeIdentityChanged";
+        message =
+            "runtime Namespace UID, requested head, or deployed head changed; fresh convergence is required";
+      }
       if (phase == Phase.Ready) {
         phase = Phase.Pending;
       }
