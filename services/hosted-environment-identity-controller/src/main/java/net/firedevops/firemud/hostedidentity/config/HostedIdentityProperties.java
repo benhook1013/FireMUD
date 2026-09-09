@@ -57,8 +57,20 @@ public class HostedIdentityProperties implements InitializingBean {
     requireCanonicalTelnetPort(
         "dev-demo Telnet port", devDemoTelnetPort, CANONICAL_DEV_DEMO_TELNET_PORT);
     requireValidGrpcRenewBefore(grpcRenewBefore);
+    requireValidOptionalSha256Pin("ingress trust-anchor SHA-256 pin", ingressTrustAnchorSha256);
+    requireValidOptionalSha256Pin("telnet trust-anchor SHA-256 pin", telnetTrustAnchorSha256);
+    requireValidOptionalSha256Pin("gRPC trust-anchor SHA-256 pin", grpcTrustAnchorSha256);
+    requireValidOptionalSha256Pin("ingress leaf SHA-256 pin", ingressLeafSha256);
+    requireValidOptionalSha256Pin("telnet leaf SHA-256 pin", telnetLeafSha256);
     if (reconcileInterval == null || reconcileInterval.compareTo(Duration.ofSeconds(1)) < 0) {
       throw new IllegalStateException("reconcile interval must be at least 1 second");
+    }
+  }
+
+  private static void requireValidOptionalSha256Pin(String propertyName, String value) {
+    if (value != null && !value.isEmpty() && !value.matches("[0-9a-f]{64}")) {
+      throw new IllegalStateException(
+          propertyName + " must be empty or 64 lowercase hexadecimal characters");
     }
   }
 

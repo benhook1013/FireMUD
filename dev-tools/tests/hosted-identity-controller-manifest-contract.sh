@@ -1259,7 +1259,14 @@ with tempfile.TemporaryDirectory() as directory:
     tcp_proxy = {
         "apiVersion": "v1",
         "kind": "Service",
-        "metadata": {"name": "tcp-proxy-service", "namespace": "pr-42"},
+        "metadata": {
+            "name": "tcp-proxy-service",
+            "namespace": "pr-42",
+            "labels": {
+                **validator.EXPECTED_TOP_LEVEL_LABELS,
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        },
         "spec": copy.deepcopy(
             validator.EXPECTED_SERVICE_SPECS["tcp-proxy-service"]
         ),
@@ -1283,7 +1290,7 @@ with tempfile.TemporaryDirectory() as directory:
     tcp_source = temp_dir / "tcp-proxy-service.yaml"
     tcp_output = temp_dir / "tcp-proxy-service-with-port.yaml"
     tcp_source.write_text(yaml.safe_dump(tcp_proxy), encoding="utf-8")
-    validator.inject_telnet_port(tcp_source, tcp_output, 32000)
+    validator.inject_telnet_port(tcp_source, tcp_output, 32000, "pr-42")
     injected = yaml.safe_load(tcp_output.read_text(encoding="utf-8"))
     assert injected["spec"]["ports"] == [
         {

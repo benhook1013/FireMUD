@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Duration;
+import java.util.function.BiConsumer;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -129,6 +130,29 @@ class HostedIdentityPropertiesTest {
     HostedIdentityProperties minimum = new HostedIdentityProperties();
     minimum.setReconcileInterval(Duration.ofSeconds(1));
     assertDoesNotThrow(minimum::afterPropertiesSet);
+  }
+
+  @Test
+  void validatesOptionalSha256PinsWhenConfigured() {
+    assertInvalidPin(HostedIdentityProperties::setIngressTrustAnchorSha256);
+    assertInvalidPin(HostedIdentityProperties::setTelnetTrustAnchorSha256);
+    assertInvalidPin(HostedIdentityProperties::setGrpcTrustAnchorSha256);
+    assertInvalidPin(HostedIdentityProperties::setIngressLeafSha256);
+    assertInvalidPin(HostedIdentityProperties::setTelnetLeafSha256);
+
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setIngressTrustAnchorSha256("a".repeat(64));
+    properties.setTelnetTrustAnchorSha256("b".repeat(64));
+    properties.setGrpcTrustAnchorSha256("c".repeat(64));
+    properties.setIngressLeafSha256("d".repeat(64));
+    properties.setTelnetLeafSha256("e".repeat(64));
+    assertDoesNotThrow(properties::afterPropertiesSet);
+  }
+
+  private static void assertInvalidPin(BiConsumer<HostedIdentityProperties, String> setter) {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    setter.accept(properties, "A".repeat(64));
+    assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
   }
 
   @Test

@@ -55,9 +55,6 @@ jobs:
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
-          INPUT_PR_NUMBER: ''
-          INPUT_HEAD_SHA: ''
-          INPUT_ACTION: ''
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == workflow_run ]]; then
@@ -72,10 +69,6 @@ jobs:
             PR_NUMBER="$EVENT_PR_NUMBER"
             ACTION=destroy
             EXPECTED_HEAD_SHA="$EVENT_HEAD_SHA"
-          else
-            PR_NUMBER="$INPUT_PR_NUMBER"
-            ACTION="$INPUT_ACTION"
-            EXPECTED_HEAD_SHA="$INPUT_HEAD_SHA"
           fi
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$ACTION" == deploy || "$ACTION" == destroy ]]

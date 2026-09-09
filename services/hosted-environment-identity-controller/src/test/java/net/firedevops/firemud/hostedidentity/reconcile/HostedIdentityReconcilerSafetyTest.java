@@ -48,6 +48,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -372,6 +373,88 @@ class HostedIdentityReconcilerSafetyTest {
     verify(fixture.projections, never())
         .acknowledge(
             any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+  }
+
+  @Test
+  void identityProjectionFenceNamesTheProtectedAction() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.runtime.read(fixture.client, fixture.plan))
+        .thenReturn(expected)
+        .thenThrow(new IllegalStateException("invalid runtime profile"));
+    when(fixture.projections.project(
+            any(),
+            any(),
+            anyString(),
+            any(Secret.class),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            any()))
+        .thenAnswer(
+            invocation -> {
+              Supplier<Boolean> guard = invocation.getArgument(8);
+              guard.get();
+              throw new AssertionError("runtime-profile guard unexpectedly passed");
+            });
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedCondition condition =
+        result.getResource().orElseThrow().getStatus().getConditions().get(0);
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals("RuntimeProfileInvalid", condition.getReason());
+    assertEquals(
+        "runtime profile became malformed before identity projection; identity projection is withheld: invalid runtime profile",
+        condition.getMessage());
+  }
+
+  @Test
+  void projectionAcknowledgementFenceNamesTheProtectedAction() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.runtime.read(fixture.client, fixture.plan))
+        .thenReturn(expected, expected, expected)
+        .thenThrow(new IllegalStateException("invalid runtime profile"));
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+    when(fixture.projections.acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
+        .thenAnswer(
+            invocation -> {
+              Supplier<Boolean> guard = invocation.getArgument(7);
+              guard.get();
+              throw new AssertionError("runtime-profile guard unexpectedly passed");
+            });
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedCondition condition =
+        result.getResource().orElseThrow().getStatus().getConditions().get(0);
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals("RuntimeProfileInvalid", condition.getReason());
+    assertEquals(
+        "runtime profile became malformed before projection acknowledgement; projection acknowledgement is withheld: invalid runtime profile",
+        condition.getMessage());
   }
 
   @Test
@@ -1123,11 +1206,9 @@ class HostedIdentityReconcilerSafetyTest {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
             "uid", "a".repeat(40), "a".repeat(40), 32016, true);
-    var changed =
-        new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32015, true);
     DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
-    when(fixture.runtime.read(fixture.client, fixture.plan)).thenReturn(changed);
+    when(fixture.runtime.read(fixture.client, fixture.plan))
+        .thenReturn(RuntimeProfileService.RuntimeProfile.absent());
 
     for (String role :
         java.util.List.of(
@@ -1137,7 +1218,9 @@ class HostedIdentityReconcilerSafetyTest {
           assertThrows(
               IllegalStateException.class,
               () -> fixture.reconciler.runtimeProjection(fixture.plan, expected, role));
-      org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("Telnet port"));
+      assertEquals(
+          "runtime Namespace disappeared before runtime projection read; runtime projection read is withheld",
+          failure.getMessage());
     }
     verify(fixture.client, never()).secrets();
   }

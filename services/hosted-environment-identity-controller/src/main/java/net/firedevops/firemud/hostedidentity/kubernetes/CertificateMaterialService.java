@@ -848,6 +848,9 @@ public class CertificateMaterialService {
   }
 
   private static boolean hasOnlyDesiredShape(Object desired, Object existing, String path) {
+    if (existing == null) {
+      return true;
+    }
     if (desired instanceof Map<?, ?> desiredMap) {
       if (!(existing instanceof Map<?, ?> existingMap)) {
         return false;

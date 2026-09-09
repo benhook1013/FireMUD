@@ -96,6 +96,7 @@ public class CertificateResourceFactory {
 
     Map<String, Object> privateKey = new LinkedHashMap<>();
     privateKey.put("algorithm", "RSA");
+    privateKey.put("size", 2048);
     privateKey.put("encoding", "PKCS8");
     privateKey.put("rotationPolicy", "Always");
 

@@ -84,9 +84,6 @@ class HostedIdentityScopeServiceTest {
 
   @Test
   void roleOwnershipAndUnknownMetadataDriftRemainFailClosed() {
-    RoleClient fixture = roleClient();
-    KubernetesClient client = fixture.client();
-    Resource<Role> operation = fixture.operation();
     Role desired = role("get");
     Role wrongOwner =
         new RoleBuilder(desired)
@@ -101,15 +98,12 @@ class HostedIdentityScopeServiceTest {
             .withOwnerReferences(new OwnerReferenceBuilder().withName("attacker").build())
             .endMetadata()
             .build();
-    when(operation.get()).thenReturn(wrongOwner, unknownMetadata);
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> HostedIdentityScopeService.ensureRole(client, "pr-42", desired));
-    assertThrows(
-        IllegalStateException.class,
-        () -> HostedIdentityScopeService.ensureRole(client, "pr-42", desired));
-    verify(operation, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Role>>any());
+    IllegalStateException ownershipFailure = assertRoleDriftFailsClosed(wrongOwner, desired);
+    assertEquals("hosted identity scope Role drifted", ownershipFailure.getMessage());
+    IllegalStateException unknownMetadataFailure =
+        assertRoleDriftFailsClosed(unknownMetadata, desired);
+    assertEquals("hosted identity scope Role drifted", unknownMetadataFailure.getMessage());
   }
 
   @Test
@@ -152,9 +146,6 @@ class HostedIdentityScopeServiceTest {
   @Test
   void bindingIdentityRoleRefAndUnknownMetadataDriftRemainFailClosed() {
     EnvironmentIdentityPlan plan = plan();
-    BindingClient fixture = bindingClient();
-    KubernetesClient client = fixture.client();
-    Resource<RoleBinding> operation = fixture.operation();
     RoleBinding exactMetadata =
         binding(
             new RoleRefBuilder()
@@ -188,26 +179,45 @@ class HostedIdentityScopeServiceTest {
                     .withName("other-scope")
                     .build())
             .build();
-    when(operation.get()).thenReturn(wrongIdentity, unknownMetadata, wrongRoleRef);
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            HostedIdentityScopeService.ensureBinding(
-                client, "pr-42", "scope", ROLE_LABELS, "scope", plan));
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            HostedIdentityScopeService.ensureBinding(
-                client, "pr-42", "scope", ROLE_LABELS, "scope", plan));
-    IllegalStateException roleRefFailure =
+    IllegalStateException identityFailure = assertBindingDriftFailsClosed(wrongIdentity, plan);
+    assertEquals("hosted identity scope RoleBinding drifted", identityFailure.getMessage());
+    IllegalStateException unknownMetadataFailure =
+        assertBindingDriftFailsClosed(unknownMetadata, plan);
+    assertEquals("hosted identity scope RoleBinding drifted", unknownMetadataFailure.getMessage());
+    IllegalStateException roleRefFailure = assertBindingDriftFailsClosed(wrongRoleRef, plan);
+    assertEquals("hosted identity scope RoleBinding roleRef drifted", roleRefFailure.getMessage());
+  }
+
+  private static IllegalStateException assertRoleDriftFailsClosed(Role current, Role desired) {
+    RoleClient fixture = roleClient();
+    when(fixture.operation().get()).thenReturn(current);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityScopeService.ensureRole(fixture.client(), "pr-42", desired));
+
+    verify(fixture.operation(), never())
+        .edit(org.mockito.ArgumentMatchers.<UnaryOperator<Role>>any());
+    return failure;
+  }
+
+  private static IllegalStateException assertBindingDriftFailsClosed(
+      RoleBinding current, EnvironmentIdentityPlan plan) {
+    BindingClient fixture = bindingClient();
+    when(fixture.operation().get()).thenReturn(current);
+
+    IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
             () ->
                 HostedIdentityScopeService.ensureBinding(
-                    client, "pr-42", "scope", ROLE_LABELS, "scope", plan));
-    assertEquals("hosted identity scope RoleBinding roleRef drifted", roleRefFailure.getMessage());
-    verify(operation, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<RoleBinding>>any());
+                    fixture.client(), "pr-42", "scope", ROLE_LABELS, "scope", plan));
+
+    verify(fixture.operation(), never())
+        .edit(org.mockito.ArgumentMatchers.<UnaryOperator<RoleBinding>>any());
+    return failure;
   }
 
   private static Role role(String verb) {

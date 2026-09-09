@@ -64,6 +64,34 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void projectRejectsMissingProvenanceBeforeWriting() {
+    EnvironmentIdentityPlan plan = plan();
+    Secret source =
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key")))
+            .build();
+    for (String provenance : new String[] {null, "", "   "}) {
+      IllegalArgumentException exception =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  new SecretProjectionService()
+                      .project(
+                          mock(KubernetesClient.class),
+                          plan,
+                          HostedIdentityContract.INGRESS_ROLE,
+                          source,
+                          1L,
+                          1L,
+                          "a".repeat(64),
+                          provenance,
+                          () -> true));
+      assertEquals("projection provenance is required", exception.getMessage());
+    }
+  }
+
+  @Test
   void revisionRejectsMissingAndMalformedMaterialWithoutMaskingTheCause() {
     IllegalArgumentException missing =
         assertThrows(

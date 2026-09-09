@@ -199,6 +199,28 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
         ):
             self._validate_manifest(self._manifest_fixture(copy.deepcopy(volume)))
 
+    def test_manifest_walk_rejects_cross_namespace_identity_references(self):
+        cases = (
+            {
+                "projected": {
+                    "sources": [
+                        {"secret": {"name": "pr-41-gateway-internal-ws"}}
+                    ]
+                }
+            },
+            {
+                "csi": {
+                    "nodePublishSecretRef": {"name": "pr-41-tcp-proxy-bridge"}
+                }
+            },
+        )
+        for volume in cases:
+            with self.subTest(volume=volume), self.assertRaisesRegex(
+                ValueError,
+                "contains an unapproved Secret reference",
+            ):
+                self._validate_manifest(self._manifest_fixture(volume))
+
     def test_manifest_walk_ignores_unrelated_secret_like_dictionaries(self):
         document = self._manifest_fixture({"emptyDir": {}})
         document["spec"]["unrelated"] = {
@@ -206,6 +228,50 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "nodePublishSecretRef": {"name": "untrusted-secret"},
         }
         self._validate_manifest(document)
+
+
+class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+
+    def _sanitize_config_map_data(self, data):
+        document = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "firemud-config"},
+            "data": data,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            destination = Path(directory) / "sanitized.yaml"
+            source.write_text(yaml.safe_dump(document), encoding="utf-8")
+            self.validator.sanitize(source, destination)
+            return yaml.safe_load(destination.read_text(encoding="utf-8"))["data"]
+
+    def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
+        sanitized = self._sanitize_config_map_data(
+            {
+                "FIREMUD_POSTGRES_PASSWORD_FILE": "password-value",
+                "firemud_minio_secret_key": "secret-key-value",
+                "AuthTokenValue": "token-value",
+                "TLS_PRIVATE_KEY_PEM": "private-key-value",
+                "aws_access_key_id": "access-key-value",
+                "database_credential_file": "credential-value",
+            }
+        )
+
+        self.assertEqual(sanitized, {})
+
+    def test_sanitize_preserves_keys_without_sensitive_tokens(self):
+        expected = {
+            "FIREMUD_PUBLIC_KEY_URL": "https://example.test/jwks.json",
+            "FIREMUD_AUTH_MODE": "preview",
+            "FIREMUD_KEYSTORE_PATH": "/var/run/firemud/keystore",
+            "IDENTITY_PROVIDER": "workload-identity",
+        }
+
+        self.assertEqual(self._sanitize_config_map_data(expected), expected)
 
 
 if __name__ == "__main__":

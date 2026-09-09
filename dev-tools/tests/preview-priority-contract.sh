@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+DELETE_HOSTED_NAMESPACE="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
@@ -92,17 +93,20 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"*
   if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]]; then
     exit 0
   fi
-  printf 'namespace/%s\n' "$3"
+  printf 'namespace/%s\n' "${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
   exit 0
 fi
 if [[ "$1" == delete && "$2" == namespace ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]]; then
+    exit 1
+  fi
   exit 0
 fi
 if [[ "$1" == wait && "$2" == --for=delete ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  : > "$FAKE_RUNTIME_WAIT_MARKER"
   if [[ "${FAKE_RUNTIME_WAIT_ERROR:-false}" == true ]]; then
-    : > "$FAKE_RUNTIME_WAIT_MARKER"
     exit 1
   fi
   exit 0
@@ -155,6 +159,15 @@ case "$namespace" in
     ;;
   *) exit 1 ;;
 esac
+EOF
+
+cat > "$TEMP_DIR/bin/helm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_HELM_LOG"
+if [[ "${FAKE_HELM_UNINSTALL_ERROR:-false}" == true ]]; then
+  exit 1
+fi
 EOF
 
 cat > "$TEMP_DIR/bin/gh" <<'EOF'
@@ -352,7 +365,12 @@ import sys
 
 sys.stdout.write(os.environ["FAKE_ELIGIBILITY_OUTPUT"])
 EOF
-chmod +x "$TEMP_DIR/bin/kubectl" "$TEMP_DIR/bin/gh" "$TEMP_DIR/delete" "$TEMP_DIR/publish"
+chmod +x \
+  "$TEMP_DIR/bin/kubectl" \
+  "$TEMP_DIR/bin/gh" \
+  "$TEMP_DIR/bin/helm" \
+  "$TEMP_DIR/delete" \
+  "$TEMP_DIR/publish"
 
 export PATH="$TEMP_DIR/bin:$PATH"
 export GITHUB_REPOSITORY="example/FireMUD"
@@ -372,6 +390,7 @@ export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
+export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
 export FAKE_TARGET_HEAD="head-900"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -380,7 +399,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -414,10 +433,14 @@ reset_case() {
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
   export FAKE_RUNTIME_LOOKUP_ERROR=false
+  export FAKE_RUNTIME_LOOKUP_IDENTITY=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
+  export FAKE_RUNTIME_DELETE_ERROR=false
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
+  export FAKE_HELM_UNINSTALL_ERROR=false
+  unset PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
@@ -841,6 +864,20 @@ export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_bas
 bash "$PRUNER" --apply
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 
+for invalid_preview_row in \
+  'production\t101' \
+  'pr-101\t102' \
+  'pr-101\t001' \
+  'pr-01\t1'; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS="${invalid_preview_row}\n"
+  bash "$PRUNER" --apply
+  if [[ -e "$FAKE_DELETE_LOG" ]]; then
+    echo "pruner invoked deletion for noncanonical or mismatched preview identity" >&2
+    exit 1
+  fi
+done
+
 reset_case
 export FAKE_RUNTIME_NAMESPACE_PRESENT=false
 bash "$PRUNER" --delete-runtime pr-101
@@ -888,6 +925,115 @@ if bash "$PRUNER" --delete-runtime pr-101; then
   echo "runtime deletion suppressed a wait failure after the absence recheck failed" >&2
   exit 1
 fi
+
+for invalid_hosted_identity in \
+  'production production' \
+  'pr-101 pr-102' \
+  'dev dev-demo' \
+  'pr-01 pr-01'; do
+  reset_case
+  read -r invalid_namespace invalid_release <<<"$invalid_hosted_identity"
+  if bash "$DELETE_HOSTED_NAMESPACE" "$invalid_namespace" "$invalid_release"; then
+    echo "hosted deletion accepted noncanonical namespace/release identity" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_HELM_LOG"
+  test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
+done
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+bash "$DELETE_HOSTED_NAMESPACE" dev dev
+grep -qx 'get namespace dev --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
+test ! -e "$FAKE_HELM_LOG"
+test "$(wc -l < "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+bash "$DELETE_HOSTED_NAMESPACE" dev dev
+grep -qx 'uninstall dev --namespace dev --ignore-not-found' "$FAKE_HELM_LOG"
+grep -qx 'delete namespace dev --ignore-not-found=true --wait=false' \
+  "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'wait --for=delete namespace/dev --timeout=180s' "$FAKE_RUNTIME_KUBECTL_LOG"
+
+reset_case
+export FAKE_RUNTIME_LOOKUP_ERROR=true
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion treated an initial namespace lookup error as absence" >&2
+  exit 1
+fi
+test ! -e "$FAKE_HELM_LOG"
+test "$(wc -l < "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 1
+
+reset_case
+export FAKE_RUNTIME_LOOKUP_IDENTITY=pr-102
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion accepted an unexpected namespace lookup identity" >&2
+  exit 1
+fi
+test ! -e "$FAKE_HELM_LOG"
+
+reset_case
+export FAKE_HELM_UNINSTALL_ERROR=true
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion suppressed a Helm uninstall failure" >&2
+  exit 1
+fi
+grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
+if grep -q '^delete namespace ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "hosted deletion continued after a Helm uninstall failure" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_DELETE_ERROR=true
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion suppressed a namespace delete failure" >&2
+  exit 1
+fi
+grep -qx 'delete namespace pr-101 --ignore-not-found=true --wait=false' \
+  "$FAKE_RUNTIME_KUBECTL_LOG"
+if grep -q '^wait ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
+  echo "hosted deletion continued after a namespace delete failure" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
+grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
+test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
+grep -qx 'wait --for=delete namespace/pr-101 --timeout=180s' "$FAKE_RUNTIME_KUBECTL_LOG"
+
+reset_case
+export FAKE_RUNTIME_WAIT_ERROR=true
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101
+
+reset_case
+export FAKE_RUNTIME_WAIT_ERROR=true
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion suppressed a wait failure while the namespace remained present" >&2
+  exit 1
+fi
+
+reset_case
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+export FAKE_RUNTIME_RECHECK_ERROR=true
+if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
+  echo "hosted deletion suppressed a final namespace lookup failure" >&2
+  exit 1
+fi
+
+for invalid_delete_timeout in 0 invalid 3601 99999999999999999999; do
+  reset_case
+  export PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$invalid_delete_timeout"
+  if bash "$DELETE_HOSTED_NAMESPACE" dev dev; then
+    echo "hosted deletion accepted an unbounded or invalid timeout" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
+done
 
 for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
   reset_case
@@ -1168,6 +1314,12 @@ grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+# shellcheck disable=SC2016 # Assert literal default helper selection.
+grep -Fq 'delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+# shellcheck disable=SC2016 # Assert literal helper invocation arguments.
+grep -Fq 'bash "$delete_script" "$namespace" "$release_name"' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   "$trusted_workflow" \
   "$reconciler_workflow" \

@@ -34,6 +34,9 @@ public class SecretProjectionService {
     requireGeneration(sourceGeneration);
     requireGeneration(sourceObjectGeneration);
     requireFingerprint(spkiSha256, "SPKI fingerprint");
+    if (provenance == null || provenance.isBlank()) {
+      throw new IllegalArgumentException("projection provenance is required");
+    }
     if (source == null || source.getData() == null || source.getData().isEmpty()) {
       throw new IllegalArgumentException("validated source Secret is required");
     }

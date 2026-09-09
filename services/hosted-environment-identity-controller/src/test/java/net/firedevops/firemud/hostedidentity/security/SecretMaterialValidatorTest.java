@@ -358,8 +358,12 @@ class SecretMaterialValidatorTest {
     when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
     when(caResource.get()).thenReturn(rotatedCa);
     when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(replacementResource);
-    when(replacementResource.replace()).thenReturn(existing);
+        .thenAnswer(
+            invocation -> {
+              Secret candidate = invocation.getArgument(0);
+              when(replacementResource.replace()).thenReturn(candidate);
+              return replacementResource;
+            });
 
     IllegalStateException stalePin =
         assertThrows(
@@ -391,12 +395,13 @@ class SecretMaterialValidatorTest {
     }
     existing.getMetadata().setResourceVersion("7");
 
-    generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
+    Secret repaired = generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
 
     org.mockito.ArgumentCaptor<Secret> replacement =
         org.mockito.ArgumentCaptor.forClass(Secret.class);
     verify(identitySecrets).resource(replacement.capture());
     Secret rotated = replacement.getValue();
+    assertSame(rotated, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));
     assertEquals("7", rotated.getMetadata().getResourceVersion());
     assertEquals(rotatedCa.getData().get("ca.crt"), rotated.getData().get("ca.crt"));

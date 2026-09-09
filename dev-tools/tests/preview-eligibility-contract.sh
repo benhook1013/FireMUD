@@ -63,6 +63,9 @@ assert_revalidation_refused \
   '{not-json' \
   'current pull request metadata is malformed'
 assert_revalidation_refused \
+  '[]' \
+  'current pull request metadata is malformed'
+assert_revalidation_refused \
   '{"state":"closed","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'pull request is not open (state=closed)'
 assert_revalidation_refused \

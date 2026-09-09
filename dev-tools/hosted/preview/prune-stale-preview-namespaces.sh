@@ -74,6 +74,7 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
+delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 
 mapfile -t namespace_rows < <(
   kubectl get namespaces -l firemud.dev/preview=true \
@@ -91,8 +92,13 @@ for row in "${namespace_rows[@]}"; do
   pr_number="${row#*$'\t'}"
   release_name="$namespace"
 
-  if [[ -z "$pr_number" || "$pr_number" == "$namespace" ]]; then
-    echo "Skipping ${namespace}: missing firemud.dev/pr-number label"
+  if [[ ! "$namespace" =~ ^pr-([1-9][0-9]*)$ ]]; then
+    echo "Keeping ${namespace}: namespace is not a canonical PR preview runtime"
+    continue
+  fi
+  namespace_pr_number="${BASH_REMATCH[1]}"
+  if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ ]] || [[ "$pr_number" != "$namespace_pr_number" ]]; then
+    echo "Keeping ${namespace}: firemud.dev/pr-number label does not match the namespace"
     continue
   fi
 
@@ -166,10 +172,6 @@ for row in "${namespace_rows[@]}"; do
 
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
-    if [[ -n "${PREVIEW_DELETE_SCRIPT:-}" ]]; then
-      bash "$PREVIEW_DELETE_SCRIPT" "$namespace" "$release_name"
-    else
-      delete_runtime_namespace "$namespace"
-    fi
+    bash "$delete_script" "$namespace" "$release_name"
   fi
 done
