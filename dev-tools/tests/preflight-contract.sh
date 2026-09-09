@@ -2015,6 +2015,7 @@ import copy
 import hashlib
 import json
 import importlib.util
+import os
 import pathlib
 import sys
 import yaml
@@ -2173,6 +2174,58 @@ original_subprocess_run = module.subprocess.run
 original_secret_ready_attempts = module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
 original_secret_retry_delay = module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
 original_time_sleep = module.time.sleep
+
+secret_ready_timeout_env = "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
+original_secret_ready_timeout_env = os.environ.get(secret_ready_timeout_env)
+try:
+    os.environ.pop(secret_ready_timeout_env, None)
+    default_attempts = module.hosted_bridge_secret_ready_attempts()
+    if default_attempts != module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+        raise SystemExit("default hosted bridge Secret readiness budget was not preserved")
+    if (
+        default_attempts * module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+        < module.HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    ):
+        raise SystemExit("default hosted bridge Secret readiness budget is too short")
+
+    os.environ[secret_ready_timeout_env] = str(
+        module.HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS
+    )
+    expected_max_attempts = (
+        module.HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS
+        + module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+        - 1
+    ) // module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+    if module.hosted_bridge_secret_ready_attempts() != expected_max_attempts:
+        raise SystemExit("maximum hosted bridge Secret readiness budget was not honored")
+
+    os.environ[secret_ready_timeout_env] = "1"
+    if module.hosted_bridge_secret_ready_attempts() != 1:
+        raise SystemExit("minimum hosted bridge Secret readiness budget was not honored")
+
+    expected_timeout_error = (
+        "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+        "between 1 and 900"
+    )
+    for invalid_timeout in ("", "0", "901", "not-a-number"):
+        os.environ[secret_ready_timeout_env] = invalid_timeout
+        try:
+            module.hosted_bridge_secret_ready_attempts()
+        except ValueError as exc:
+            if str(exc) != expected_timeout_error:
+                raise SystemExit(
+                    f"invalid hosted bridge Secret readiness budget error changed: {exc}"
+                ) from exc
+        else:
+            raise SystemExit(
+                f"invalid hosted bridge Secret readiness budget was accepted: {invalid_timeout!r}"
+            )
+finally:
+    if original_secret_ready_timeout_env is None:
+        os.environ.pop(secret_ready_timeout_env, None)
+    else:
+        os.environ[secret_ready_timeout_env] = original_secret_ready_timeout_env
+
 try:
     def secret_lookup(payload):
         def lookup(args, **kwargs):
@@ -8562,6 +8615,26 @@ def run_hosted(path, *extra_args):
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+malformed_invocation = subprocess.run(
+    [
+        sys.executable,
+        str(root / "dev-tools/deploy/preflight.py"),
+        "hosted-bridge",
+    ],
+    env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "ci-static"},
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if malformed_invocation.returncode == 0 or malformed_invocation.stderr.strip() != (
+    "malformed hosted-bridge invocation: expected 3 or 5 arguments after hosted-bridge"
+):
+    raise SystemExit(
+        "hosted-bridge malformed invocation did not receive its specific error: "
+        f"{malformed_invocation.stderr!r}"
     )
 
 

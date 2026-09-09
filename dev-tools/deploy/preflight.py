@@ -49,6 +49,9 @@ Environment variables:
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
+  FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+                                     Optional bounded operator hosted-bridge Secret
+                                     readiness budget (default: 300, maximum: 900)
 
 The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
 apply. The optional expected port adds an exact trusted post-render Telnet
@@ -84,8 +87,14 @@ RECOVERY_JSON_READ_ERRORS = JSON_READ_ERRORS + (ValueError,)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
-HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 15
+HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS = 300
+HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS = 900
 HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
+HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = (
+    HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+    - 1
+) // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
 JWT_CUSTODY_MODES = (
     "LEGACY_SECRET_DIAGNOSTIC",
     "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
@@ -6402,13 +6411,48 @@ def secret_keys_lookup_failure(
     return None, False
 
 
+def hosted_bridge_secret_ready_attempts() -> int:
+    """Resolve the bounded hosted-bridge Secret readiness retry budget."""
+    configured_timeout = os.environ.get(
+        "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
+    )
+    if configured_timeout is None:
+        return HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+    if not re.fullmatch(r"[1-9][0-9]*", configured_timeout):
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    timeout_seconds = int(configured_timeout)
+    if timeout_seconds > HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS:
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    if HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS <= 0:
+        raise ValueError("HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS must be positive")
+    return max(
+        1,
+        (
+            timeout_seconds
+            + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+            - 1
+        )
+        // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS,
+    )
+
+
 def wait_for_secret_key_requirements(
-    secret_requirements: list[tuple[str, set[str]]], namespace: str
+    secret_requirements: list[tuple[str, set[str]]],
+    namespace: str,
+    ready_attempts: int | None = None,
 ) -> list[str]:
     """Bound one controller-projection wait across all required Secrets."""
+    if ready_attempts is None:
+        ready_attempts = HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
-    for attempt in range(HOSTED_BRIDGE_SECRET_READY_ATTEMPTS):
+    for attempt in range(ready_attempts):
         retry_pending: list[tuple[str, set[str]]] = []
         for secret_name, required_keys in pending:
             issue, retryable = secret_keys_lookup_failure(
@@ -6423,12 +6467,12 @@ def wait_for_secret_key_requirements(
         if not retry_pending:
             return []
         pending = retry_pending
-        if attempt + 1 < HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+        if attempt + 1 < ready_attempts:
             time.sleep(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS)
     return [
         (
             f"{latest_issues[secret_name]} (still not ready after "
-            f"{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS} attempts)"
+            f"{ready_attempts} attempts)"
         )
         for secret_name, _ in pending
     ]
@@ -6517,6 +6561,10 @@ def hosted_bridge_preflight(
         *label_bridge_validation_issues(gateway_issues, telnet_issues),
     ]
     if context == "operator" and not release_identity_issues:
+        try:
+            secret_ready_attempts = hosted_bridge_secret_ready_attempts()
+        except ValueError as exc:
+            fail(str(exc))
         secret_requirements = [
             (
                 f"{release_name}-gateway-internal-ws",
@@ -6531,7 +6579,7 @@ def hosted_bridge_preflight(
         issues.extend(
             f"Controller projection: {issue}"
             for issue in wait_for_secret_key_requirements(
-                secret_requirements, namespace
+                secret_requirements, namespace, secret_ready_attempts
             )
         )
     status, message = bridge_validation_result(issues)
@@ -6551,7 +6599,12 @@ def hosted_bridge_preflight(
 
 
 def main() -> int:
-    if len(sys.argv) in {5, 7} and sys.argv[1] == "hosted-bridge":
+    if len(sys.argv) > 1 and sys.argv[1] == "hosted-bridge":
+        if len(sys.argv) not in {5, 7}:
+            fail(
+                "malformed hosted-bridge invocation: expected 3 or 5 arguments "
+                "after hosted-bridge"
+            )
         expected_hosted_telnet_node_port = None
         if len(sys.argv) == 7:
             if sys.argv[5] != "--expected-hosted-telnet-node-port":

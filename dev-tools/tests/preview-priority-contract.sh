@@ -1773,6 +1773,15 @@ grep -Fq -- '--retire-terminal-identities' "$janitor_workflow"
 # Ordinary runtime cleanup callers must not opt into retained-identity retirement.
 test "$(grep -Fc -- '--retire-terminal-identities' "$ROOT_DIR/.github/workflows/preview.yml")" -eq 0
 test "$(grep -Fc -- '--retire-terminal-identities' "$trusted_workflow")" -eq 0
+python3 - "$ROOT_DIR/.github/workflows/preview.yml" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+preview = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert preview["jobs"]["preview-destroy"]["timeout-minutes"] == 60
+PY
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"

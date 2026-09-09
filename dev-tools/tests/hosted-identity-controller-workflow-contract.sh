@@ -212,6 +212,7 @@ assert validate_job["timeout-minutes"] == 10
 assert jobs["deploy-runtime"]["permissions"] == {
     "actions": "read",
     "contents": "read",
+    "issues": "write",
     "packages": "read",
     "pull-requests": "read",
 }
@@ -323,6 +324,29 @@ assert apply_lines[dry_run_line - 1] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
+
+deploy_failure = next(
+    step
+    for step in deploy_steps
+    if step.get("name") == "Publish trusted preview deployment failure"
+)
+assert deploy_failure["if"] == "${{ !cancelled() && failure() }}"
+assert deploy_failure["uses"] == "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+assert deploy_failure["env"] == {
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+}
+deploy_failure_script = deploy_failure["with"]["script"]
+for fragment in (
+    'mode: "failure"',
+    'markerPolicy: "replace"',
+    'statePolicy: "expected-open"',
+    'telnetPort: "unavailable"',
+    'failureStage: "deploy-runtime"',
+):
+    assert fragment in deploy_failure_script, fragment
 
 runtime_rollout_call = (
     'bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh'

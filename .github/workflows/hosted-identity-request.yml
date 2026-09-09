@@ -192,6 +192,7 @@ jobs:
       contents: read # Check out the trusted default-branch deployment implementation.
       packages: read # Pull the trusted runtime images from GHCR.
       pull-requests: read # Revalidate the current pull-request target before deployment.
+      issues: write # Publish the required deploy failure state.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -665,6 +666,31 @@ jobs:
           [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+
+      - name: Publish trusted preview deployment failure
+        if: ${{ !cancelled() && failure() }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "failure",
+              markerPolicy: "replace",
+              statePolicy: "expected-open",
+              telnetPort: "unavailable",
+              failureStage: "deploy-runtime",
+              staleDescription: "trusted preview deployment failure",
+            });
 
   verify-runtime:
     name: Verify Hosted Preview Runtime

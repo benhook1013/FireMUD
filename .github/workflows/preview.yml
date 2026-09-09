@@ -681,6 +681,7 @@ jobs:
 
   preview-destroy:
     name: Destroy Preview Release
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
