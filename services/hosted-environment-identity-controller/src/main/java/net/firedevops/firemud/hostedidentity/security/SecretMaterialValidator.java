@@ -164,7 +164,12 @@ public class SecretMaterialValidator {
       if (secret == null || secret.getData() == null || secret.getData().get("ca.crt") == null) {
         throw new IllegalArgumentException("Secret has no ca.crt");
       }
-      return sha256(parseCertificates(secret.getData().get("ca.crt")).get(0).getEncoded());
+      List<X509Certificate> certificates = parseCertificates(secret.getData().get("ca.crt"));
+      if (certificates.size() != 1) {
+        throw new IllegalArgumentException(
+            "Secret ca.crt must contain exactly one X.509 certificate");
+      }
+      return sha256(certificates.get(0).getEncoded());
     } catch (RuntimeException exception) {
       throw exception;
     } catch (Exception exception) {

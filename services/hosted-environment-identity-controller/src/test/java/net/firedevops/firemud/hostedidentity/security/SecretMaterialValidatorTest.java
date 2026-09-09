@@ -88,6 +88,30 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void trustAnchorFingerprintRequiresExactlyOneCertificate() throws Exception {
+    Secret singleCertificate = generatedCa(Instant.now(), Duration.ofDays(60));
+    String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(singleCertificate);
+    assertEquals(64, fingerprint.length());
+
+    Secret secondCertificate = generatedCa(Instant.now(), Duration.ofDays(60));
+    Map<String, String> multiCertificateData = new LinkedHashMap<>(singleCertificate.getData());
+    multiCertificateData.put(
+        "ca.crt",
+        encode(
+            pemText(singleCertificate.getData().get("ca.crt"))
+                + pemText(secondCertificate.getData().get("ca.crt"))));
+    Secret multiCertificate =
+        new SecretBuilder(singleCertificate).withData(multiCertificateData).build();
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> SecretMaterialValidator.trustAnchorFingerprint(multiCertificate));
+    assertEquals(
+        "Secret ca.crt must contain exactly one X.509 certificate", failure.getMessage());
+  }
+
+  @Test
   void websocketIdentityValidationRequiresExactSanAndEkuProfiles() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
