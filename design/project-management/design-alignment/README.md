@@ -20,33 +20,33 @@ Completed phases: capability allocation, implementation/proof reconciliation, cr
 
 ### Corpus section programme status
 
-This compact checklist preserves the last recorded section map and status from the historical corpus programme. It is a non-normative planning record: later work may supersede a row, and a row marked complete records historical evidence rather than fresh current-head proof. The lane owner updates this table when a section actually completes; individual 5B pull requests retain their own tracking.
+This compact checklist preserves the last recorded section map and status from the historical corpus programme. It is a non-normative planning record: later work may supersede a row, a row marked complete records historical evidence rather than fresh current-head proof, and pending rows require reconciliation of preserved preparation before resuming. The lane owner updates this table when a section actually completes; individual 5B pull requests retain their own tracking.
 
 | Section | Original scope | Status |
 | --- | --- | --- |
-| 1A | Identity, entitlement, and hosted terms | Pending; historical preparation only; reconcile preserved work before resuming |
-| 1B | Admission, session continuity, and reconnect | Pending; historical preparation only; reconcile preserved work before resuming |
-| 1C | Commands, output, and frontend presentation | Pending; historical preparation only; reconcile preserved work before resuming |
-| 1D | Social, communication, and moderation-facing UX | Pending; historical preparation only; reconcile preserved work before resuming |
-| 2A | Tick scheduling and region authority | Pending; historical preparation only; reconcile preserved work before resuming |
-| 2B | Mutation and spatial authority | Pending; non-Weather review was prepared, while the Weather seam remains unresolved |
-| 2C | Gameplay entities, effects, and economy | Pending; historical preparation only; reconcile preserved work before resuming |
-| 3A | Authored content and extension packaging | Pending; historical preparation only; reconcile preserved work before resuming |
-| 3B | Settings, policy, and effective configuration | Pending; historical preparation only; reconcile preserved work before resuming |
-| 3C | Release lifecycle and activation | Pending; historical preparation only; reconcile preserved work before resuming |
-| 4A | Script ingress, sandbox, and runtime execution | Pending; historical preparation only; reconcile preserved work before resuming |
-| 4B | Scheduling, quotas, reload, and operational fairness | Pending; historical preparation only; reconcile preserved work before resuming |
+| 1A | Identity, entitlement, and hosted terms | Pending |
+| 1B | Admission, session continuity, and reconnect | Pending |
+| 1C | Commands, output, and frontend presentation | Pending |
+| 1D | Social, communication, and moderation-facing UX | Pending |
+| 2A | Tick scheduling and region authority | Pending |
+| 2B | Mutation and spatial authority | Pending; historical Weather work needs reconciliation |
+| 2C | Gameplay entities, effects, and economy | Pending |
+| 3A | Authored content and extension packaging | Pending |
+| 3B | Settings, policy, and effective configuration | Pending |
+| 3C | Release lifecycle and activation | Pending |
+| 4A | Script ingress, sandbox, and runtime execution | Pending |
+| 4B | Scheduling, quotas, reload, and operational fairness | Pending |
 | 5A | API, message, identifier, tenant, time, and authorization primitives | Historically complete; recorded complete through the merged 5A slice in PR #2662 |
 | 5B | SQL, migration, schema, and retention | In progress and unfinished; selected PR #2677 is paused, PRs #2678 and #2679 remain parked, and merged PR #2698 does not establish whole-5B completion |
 | 5C | Redis roles and cache/rate-limit semantics | Unfinished prepared work; later 5C material is preserved with the 5D work in PR #2661 and needs current reconciliation |
 | 5D | Idempotency, outbox, replay, saga, and workflow patterns | Unfinished prepared work; later 5D material is preserved with the 5C work in PR #2661 and needs current reconciliation |
-| 6A | Gateway routes, traffic planes, sharding, and close taxonomy | Pending; historical preparation only; reconcile preserved work before resuming |
-| 6B | WebSocket, Telnet, protocol bridge, and session transport | Pending; historical preparation only; reconcile preserved work before resuming |
-| 6C | Logging & Admin/operator ingress and action authorization | Pending; historical preparation only; reconcile preserved work before resuming |
-| 6D | Environments, deployment, assets, backup, and delivery | Pending; prepared work is preserved for later reconciliation |
-| 7A | Logs, metrics, tracing, SLOs, and degraded operation | Pending; the detailed historical section-status record was not preserved |
-| 7B | Verification boundaries, recovery evidence, and compliance | Pending; the detailed historical section-status record was not preserved |
-| 7C | Incident and operational proof surfaces | Pending; prepared work is preserved for later reconciliation |
+| 6A | Gateway routes, traffic planes, sharding, and close taxonomy | Pending |
+| 6B | WebSocket, Telnet, protocol bridge, and session transport | Pending |
+| 6C | Logging & Admin/operator ingress and action authorization | Pending |
+| 6D | Environments, deployment, assets, backup, and delivery | Pending |
+| 7A | Logs, metrics, tracing, SLOs, and degraded operation | Pending; no detailed status found in recovered records |
+| 7B | Verification boundaries, recovery evidence, and compliance | Pending; no detailed status found in recovered records |
+| 7C | Incident and operational proof surfaces | Pending |
 
 ## Implementation Status
 
