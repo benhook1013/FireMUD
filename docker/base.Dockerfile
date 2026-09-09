@@ -1,5 +1,5 @@
 # Shared base image for FireMUD services
-FROM eclipse-temurin:25.0.4_7-jre@sha256:f9e65324a37f28209ce7dd0e5149a7aa954520ed936fb87813cf6ded2400a112
+FROM eclipse-temurin:25.0.4_7-jre@sha256:131166eb43967b8496fbb63bb430151a5de9ef5ece383b4aebe6c121da72cc74
 LABEL org.opencontainers.image.source="https://github.com/benhook1013/FireMUD"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

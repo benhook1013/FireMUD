@@ -206,7 +206,7 @@ run_wrapper() {
   : >"$HEAD_FILE"
   : >"$BASE_FILE"
   : >"$STATUS_FILE"
-  git --git-dir="$REMOTE" update-ref refs/heads/develop "$BASE_SHA"
+  git --git-dir="$REMOTE" update-ref refs/heads/develop "${TEST_FETCH_BASE_SHA:-$BASE_SHA}"
   (
     cd "$REPO"
     env \
@@ -255,6 +255,19 @@ pinned_ref="$(sed -n 's/^pinned_base_ref=//p' "$RUN_LOG_DIR/metadata")"
 [[ "$(sed -n '4p' "$ARGS_FILE")" == --base ]] || exit 1
 grep -q '^refs/heads/codex-review-base/run\.' < <(sed -n '5p' "$ARGS_FILE")
 [[ "$(wc -l <"$ARGS_FILE")" == 5 ]] || exit 1
+
+# The live base branch can advance after GitHub records the pull request base.
+# Fetch and pin that immutable PR base commit rather than reviewing the new tip.
+set +e
+TEST_FETCH_BASE_SHA="$LOCAL_HEAD_SHA" run_wrapper success 0
+advanced_base_status="$?"
+set -e
+[[ "$advanced_base_status" == 0 ]] || {
+  echo "advanced-base wrapper run failed: $RUN_ERROR" >&2
+  exit 1
+}
+[[ "$RUN_OUTPUT" == *"base_sha=$BASE_SHA"* ]] || exit 1
+[[ "$(cat "$BASE_FILE")" == "$BASE_SHA" ]] || exit 1
 
 # The base branch may advance independently after the candidate fork. GitHub and
 # the wrapper must still agree on the published three-dot scope, while local fixes

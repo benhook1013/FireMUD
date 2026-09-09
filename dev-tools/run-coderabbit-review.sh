@@ -149,13 +149,13 @@ expected_path_count="$(count_nul_paths "$log_dir/expected-files.nul")"
 [[ "$expected_path_count" == "$expected_files" ]] ||
   die "pull request file list/count mismatch (files: $expected_path_count, changedFiles: $expected_files)"
 
-git -C "$source_root" fetch --no-tags "$remote" "refs/heads/$base_ref_name" \
+git -C "$source_root" fetch --no-tags "$remote" "$base_sha" \
   >"$log_dir/base-fetch.stdout" 2>"$log_dir/base-fetch.stderr" ||
-  die "could not fetch pull request base branch $base_ref_name"
+  die "could not fetch exact pull request base $base_sha from $base_ref_name"
 fetched_base_sha="$(git -C "$source_root" rev-parse 'FETCH_HEAD^{commit}')" ||
   die "could not resolve fetched pull request base"
 [[ "${fetched_base_sha,,}" == "${base_sha,,}" ]] ||
-  die "pull request base moved during fetch (expected $base_sha, fetched $fetched_base_sha); refusing to review an ambiguous base"
+  die "fetched pull request base does not match metadata (expected $base_sha, fetched $fetched_base_sha)"
 
 if ! git -C "$source_root" cat-file -e "$pr_head_sha^{commit}" 2>/dev/null; then
   git -C "$source_root" fetch --no-tags "$remote" "refs/pull/$pr_number/head" \
