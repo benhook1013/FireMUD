@@ -427,10 +427,12 @@ jobs:
 
       - name: Show namespace state
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        env:
+          CERTIFICATE_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
         run: |
           kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
-          if [[ "${{ steps.certificate-identity.outputs.mode }}" == "standalone" ]]; then
+          if [[ "$CERTIFICATE_IDENTITY_MODE" == "standalone" ]]; then
             kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
           fi
 

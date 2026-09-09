@@ -238,6 +238,7 @@ dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
     bash "$target_metadata_run"
 )
 grep -qx 'api repos/example/FireMUD/pulls/900' "$TEMP_DIR/gh.log"
+test "$(wc -l < "$TEMP_DIR/gh.log")" -eq 1
 dispatch_labels_json="$(sed -n 's/^labels_json=//p' "$dispatch_metadata_output")"
 test "$dispatch_labels_json" = '[{"name":"preview:priority"},{"name":"custom:label"}]'
 dispatch_eligibility_output="$TEMP_DIR/dispatch-eligibility.out"
