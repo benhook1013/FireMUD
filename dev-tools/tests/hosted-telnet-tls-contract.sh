@@ -320,11 +320,23 @@ assert any(
 ), "standalone mode accepted a mismatched direct TLS Service listener"
 
 controller_documents = load_yaml_mappings(Path(os.environ["CONTROLLER_RENDERED"]))
-controller_issues = preflight.validate_hosted_telnet_tls_values(controller_documents)
+for document in controller_documents:
+    metadata = document.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.setdefault("namespace", "pr-42")
+controller_issues = preflight.validate_hosted_telnet_tls_values(
+    controller_documents,
+    target_namespace="pr-42",
+)
 assert not controller_issues, controller_issues
 null_identity_documents = load_yaml_mappings(Path(os.environ["NULL_IDENTITY_RENDERED"]))
+for document in null_identity_documents:
+    metadata = document.get("metadata")
+    if isinstance(metadata, dict):
+        metadata.setdefault("namespace", "pr-42")
 null_identity_issues = preflight.validate_hosted_telnet_tls_values(
-    null_identity_documents
+    null_identity_documents,
+    target_namespace="pr-42",
 )
 assert not null_identity_issues, null_identity_issues
 null_identity_resources = [
@@ -362,17 +374,6 @@ for document in (controller_deployment, controller_service):
     assert document["metadata"]["labels"][
         "firemud.dev/certificate-identity-mode"
     ] == "hosted-controller"
-controller_telnet_port = next(
-    port
-    for port in controller_service["spec"]["ports"]
-    if port.get("port") == 2323
-)
-assert controller_telnet_port["nodePort"] == 32042, (
-    "hosted-controller render did not bind the allocated Telnet NodePort"
-)
-assert controller_service["metadata"]["annotations"][
-    "firemud.dev/allocated-telnet-port"
-] == "32042"
 controller_volume = next(
     volume
     for volume in controller_deployment["spec"]["template"]["spec"]["volumes"]
@@ -390,11 +391,13 @@ controller_without_nodeport_service = [
     )
 ]
 assert not preflight.validate_hosted_telnet_tls_values(
-    controller_without_nodeport_service
+    controller_without_nodeport_service,
+    target_namespace="pr-42",
 ), "optional hosted Telnet validation rejected an inapplicable render"
 missing_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
     controller_without_nodeport_service,
     required_identity_mode="hosted-controller",
+    target_namespace="pr-42",
 )
 assert any(
     "requires exactly one tcp-proxy-service NodePort Service" in issue
@@ -408,12 +411,14 @@ controller_with_certificate.append(
         "kind": "Certificate",
         "metadata": {
             "name": "preview-release-telnet-tls",
+            "namespace": "pr-42",
         },
         "spec": {"secretName": "preview-release-telnet-tls"},
     }
 )
 controller_certificate_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_with_certificate
+    controller_with_certificate,
+    target_namespace="pr-42",
 )
 assert any(
     "hosted-controller TCP Proxy TLS must not render" in issue
@@ -428,7 +433,8 @@ next(
     and document["metadata"]["name"] == "tcp-proxy-service"
 )["metadata"]["labels"].pop("firemud.dev/certificate-identity-mode")
 mode_mismatch_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_mode_mismatch
+    controller_mode_mismatch,
+    target_namespace="pr-42",
 )
 assert any(
     "certificate identity mode labels must match" in issue
@@ -445,7 +451,8 @@ for document in controller_missing_modes:
             "firemud.dev/certificate-identity-mode"
         )
 missing_modes_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_missing_modes
+    controller_missing_modes,
+    target_namespace="pr-42",
 )
 assert any(
     "require explicit certificate identity mode labels" in issue
@@ -462,7 +469,8 @@ next(
     if port.get("port") == 2323
 ).pop("nodePort")
 missing_explicit_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_missing_nodeport
+    controller_missing_nodeport,
+    target_namespace="pr-42",
 )
 assert any(
     "requires exactly one explicit allocated nodePort" in issue
@@ -477,7 +485,8 @@ next(
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
 )["metadata"]["annotations"].pop("firemud.dev/allocated-telnet-port")
 missing_allocation_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_missing_allocation
+    controller_missing_allocation,
+    target_namespace="pr-42",
 )
 assert any(
     "requires an allocated Telnet port annotation" in issue
@@ -494,31 +503,65 @@ next(
     if port.get("port") == 2323
 )["nodePort"] = 32043
 wrong_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
-    controller_wrong_nodeport
+    controller_wrong_nodeport,
+    target_namespace="pr-42",
 )
 assert any(
     "nodePort must match its allocated Telnet port" in issue
     for issue in wrong_nodeport_issues
 ), "hosted-controller mode accepted the wrong allocated TCP Proxy nodePort"
 
-controller_additional_nodeport = deepcopy(controller_documents)
-next(
+trusted_controller_nodeport = deepcopy(controller_documents)
+trusted_nodeport_service = next(
     document
-    for document in controller_additional_nodeport
+    for document in trusted_controller_nodeport
     if document.get("kind") == "Service"
     and document.get("metadata", {}).get("name") == "tcp-proxy-service"
-)["spec"]["ports"].append(
-    {
-        "name": "unrelated",
-        "port": 9000,
-        "targetPort": 9000,
-        "protocol": "TCP",
-        "nodePort": 32043,
-    }
 )
-assert not preflight.validate_hosted_telnet_tls_values(
-    controller_additional_nodeport
-), "an unrelated NodePort was mistaken for the allocated Telnet listener"
+next(
+    port
+    for port in trusted_nodeport_service["spec"]["ports"]
+    if port.get("port") == 2323
+)["nodePort"] = 32042
+trusted_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32042,
+    target_namespace="pr-42",
+)
+assert not trusted_nodeport_issues, trusted_nodeport_issues
+
+mismatched_trusted_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32043,
+    target_namespace="pr-42",
+)
+assert any(
+    "Telnet nodePort must equal 32043" in issue
+    for issue in mismatched_trusted_nodeport_issues
+), "trusted NodePort was accepted against a mismatched expected-port input"
+
+trusted_controller_extra_nodeport = deepcopy(trusted_controller_nodeport)
+extra_nodeport_service = next(
+    document
+    for document in trusted_controller_extra_nodeport
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+extra_nodeport_service["spec"]["ports"].append(
+    {"name": "unexpected", "protocol": "TCP", "port": 9999, "nodePort": 32008}
+)
+extra_nodeport_issues = preflight.validate_hosted_telnet_tls_values(
+    trusted_controller_extra_nodeport,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=32042,
+    target_namespace="pr-42",
+)
+assert any(
+    "must not declare any other explicit nodePorts" in issue
+    for issue in extra_nodeport_issues
+), "trusted NodePort input allowed an additional explicit NodePort"
 
 unknown_mode = deepcopy(controller_documents)
 for document in unknown_mode:
@@ -529,7 +572,10 @@ for document in unknown_mode:
         document["metadata"]["labels"][
             "firemud.dev/certificate-identity-mode"
         ] = "other"
-unknown_mode_issues = preflight.validate_hosted_telnet_tls_values(unknown_mode)
+unknown_mode_issues = preflight.validate_hosted_telnet_tls_values(
+    unknown_mode,
+    target_namespace="pr-42",
+)
 assert any(
     "certificate identity mode must be standalone or hosted-controller" in issue
     for issue in unknown_mode_issues

@@ -72,7 +72,61 @@ helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
 
 FIREMUD_PREFLIGHT_CONTEXT=ci-static \
   python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
-    "$RENDERED" pr-123 pr-123 >"$TMP_DIR/preflight.json"
+    "$RENDERED" pr-123 pr-123 >"$TMP_DIR/no-flag-preflight.json"
+FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$RENDERED" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32123 >"$TMP_DIR/preflight.json"
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$RENDERED" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32124 >"$TMP_DIR/mismatched-preflight.json"; then
+  echo "hosted bridge preflight accepted a mismatched expected Telnet NodePort" >&2
+  exit 1
+fi
+if ! grep -Fq 'Telnet nodePort must equal 32124' "$TMP_DIR/mismatched-preflight.json"; then
+  echo "hosted bridge preflight did not diagnose the mismatched expected Telnet NodePort" >&2
+  exit 1
+fi
+
+EXTRA_NODEPORT_RENDERED="$TMP_DIR/extra-nodeport-rendered.yaml"
+python3 - "$RENDERED" "$EXTRA_NODEPORT_RENDERED" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source, destination = map(Path, sys.argv[1:])
+documents = list(yaml.safe_load_all(source.read_text(encoding="utf-8")))
+service = next(
+    document
+    for document in documents
+    if isinstance(document, dict)
+    and document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+service["spec"]["ports"].append(
+    {
+        "name": "unexpected",
+        "port": 9999,
+        "targetPort": 9999,
+        "protocol": "TCP",
+        "nodePort": 32124,
+    }
+)
+destination.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
+PY
+if FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+  python3 "$ROOT_DIR/dev-tools/deploy/preflight.py" hosted-bridge \
+    "$EXTRA_NODEPORT_RENDERED" pr-123 pr-123 \
+    --expected-hosted-telnet-node-port 32123 >"$TMP_DIR/extra-nodeport-preflight.json"; then
+  echo "hosted bridge preflight accepted an extra explicit NodePort" >&2
+  exit 1
+fi
+if ! grep -Fq 'must not declare any other explicit nodePorts' "$TMP_DIR/extra-nodeport-preflight.json"; then
+  echo "hosted bridge preflight did not diagnose an extra explicit NodePort" >&2
+  exit 1
+fi
 
 DISABLED_GATEWAY_WS_TLS_RENDERED="$TMP_DIR/disabled-gateway-ws-tls.yaml"
 helm template pr-123 "$ROOT_DIR/k8s/helm/firemud" \
@@ -767,7 +821,11 @@ with mock.patch.object(
     side_effect=record_operator_secret_lookup,
 ), mock.patch.object(module.sys, "stdout", io.StringIO()):
     operator_result = module.hosted_bridge_preflight(
-        rendered_path, "pr-123", "pr-123", "operator"
+        rendered_path,
+        "pr-123",
+        "pr-123",
+        "operator",
+        expected_hosted_telnet_node_port=32123,
     )
 if operator_result != 0:
     raise SystemExit("operator preflight rejected ready controller-projected Secrets")
