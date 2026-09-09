@@ -1685,6 +1685,30 @@ run_trusted_target_fixture() {
   )
 }
 
+unsupported_target_output="$TEMP_DIR/trusted-target-unsupported.out"
+if (
+  cd "$ROOT_DIR"
+  env \
+    PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    EVENT_NAME=workflow_dispatch \
+    EVENT_ACTION='' \
+    WORKFLOW_RUN_ID='' \
+    WORKFLOW_RUN_HEAD_SHA='' \
+    EVENT_PR_NUMBER='' \
+    EVENT_HEAD_SHA='' \
+    GITHUB_OUTPUT="$unsupported_target_output" \
+    bash "$TRUSTED_TARGET_RUN"
+) >"$TEMP_DIR/trusted-target-unsupported.stdout" 2>"$TEMP_DIR/trusted-target-unsupported.stderr"; then
+  echo "trusted identity target accepted an unsupported event" >&2
+  exit 1
+fi
+grep -Fqx \
+  '::error title=Unsupported lifecycle event::Cannot validate hosted identity request for event workflow_dispatch.' \
+  "$TEMP_DIR/trusted-target-unsupported.stderr"
+test ! -s "$unsupported_target_output"
+
 # The successor lifecycle resolver remains checked in but dormant. An exact
 # validated artifact can resolve deploy once a successor producer is activated.
 reset_case

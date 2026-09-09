@@ -93,14 +93,34 @@ jobs:
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
-          [[ "$ACTION" == "deploy" || "$ACTION" == "destroy" ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ -n "$IMAGE_TAG" ]]
-          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
-          [[ "$HOSTNAME" == "dev.preview.firedevops.net" ]]
-          [[ "$RUNTIME_NAMESPACE" == "dev" ]]
-          [[ "$RELEASE_NAME" == "dev" ]]
-          [[ "$TELNET_PORT" == "32016" ]]
+          if [[ "$ACTION" != "deploy" && "$ACTION" != "destroy" ]]; then
+            echo "::error title=Invalid dev-demo action::Expected deploy or destroy." >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          if [[ -z "$IMAGE_TAG" || ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error title=Invalid dev-demo image tag::Expected a non-empty tag of at most 128 safe characters." >&2
+            exit 1
+          fi
+          if [[ "$HOSTNAME" != "dev.preview.firedevops.net" ]]; then
+            echo "::error title=Invalid dev-demo hostname::Expected the canonical dev.preview.firedevops.net hostname." >&2
+            exit 1
+          fi
+          if [[ "$RUNTIME_NAMESPACE" != "dev" ]]; then
+            echo "::error title=Invalid dev-demo namespace::Expected the canonical dev namespace." >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_NAME" != "dev" ]]; then
+            echo "::error title=Invalid dev-demo release::Expected the canonical dev release name." >&2
+            exit 1
+          fi
+          if [[ "$TELNET_PORT" != "32016" ]]; then
+            echo "::error title=Invalid dev-demo Telnet port::Expected the canonical 32016 port." >&2
+            exit 1
+          fi
           {
             echo "action=${ACTION}"
             echo "namespace=${RUNTIME_NAMESPACE}"

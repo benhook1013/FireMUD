@@ -1313,6 +1313,8 @@ def validate_metadata(
     metadata = _require_mapping(
         json.loads(path.read_text(encoding="utf-8")), "metadata"
     )
+    if not isinstance(pr_number, str) or re.fullmatch(r"[1-9][0-9]*", pr_number) is None:
+        fail("PR number must be a positive canonical decimal string")
     normalized_pr_number = int(pr_number)
     expected = {
         "schemaVersion": 1,

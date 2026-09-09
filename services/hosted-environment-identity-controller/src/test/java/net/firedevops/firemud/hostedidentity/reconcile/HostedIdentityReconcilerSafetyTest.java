@@ -1203,6 +1203,29 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void sourceReadyBridgeUsesRuntimeProjectionMaterial() {
+    CertificateMaterialService.RoleMaterial sourceReady =
+        material(3, 2, "2".repeat(64), "source-ready");
+    Secret runtime =
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded("runtime")))
+            .build();
+    AtomicBoolean runtimeRead = new AtomicBoolean();
+
+    Secret selected =
+        HostedIdentityReconciler.bridgeProbeMaterial(
+            sourceReady,
+            () -> {
+              runtimeRead.set(true);
+              return runtime;
+            });
+
+    assertSame(runtime, selected);
+    assertEquals(true, runtimeRead.get());
+  }
+
+  @Test
   void runtimeProjectionGuardRejectsBothBridgeReadsBeforeSecretAccess() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(

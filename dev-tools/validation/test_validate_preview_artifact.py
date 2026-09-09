@@ -315,7 +315,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     )
                 validate_manifest.assert_not_called()
 
-    def test_metadata_uses_normalized_pr_number_for_manifest_namespace(self):
+    def test_metadata_uses_canonical_pr_number_for_manifest_namespace(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest_path = Path(directory) / "manifest.yaml"
             metadata_path = Path(directory) / "metadata.json"
@@ -329,7 +329,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     manifest_path,
                     "example/FireMUD",
                     "42",
-                    "042",
+                    "42",
                     "base-42",
                     "head-42",
                     "merge-42",
@@ -343,6 +343,29 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                 "pr-42-head-42",
                 "pr-42.preview.example.test",
             )
+
+    def test_metadata_rejects_noncanonical_pr_number_forms(self):
+        for pr_number in ("0", "-1", "+1", " 1", "1 ", "01"):
+            with self.subTest(pr_number=pr_number), tempfile.TemporaryDirectory() as directory:
+                manifest_path = Path(directory) / "manifest.yaml"
+                metadata_path = Path(directory) / "metadata.json"
+                manifest_path.write_text("placeholder", encoding="utf-8")
+                metadata_path.write_text(
+                    json.dumps(self._metadata_fixture(manifest_path)), encoding="utf-8"
+                )
+                with self.assertRaisesRegex(ValueError, "positive canonical decimal"):
+                    self.validator.validate_metadata(
+                        metadata_path,
+                        manifest_path,
+                        "example/FireMUD",
+                        "42",
+                        pr_number,
+                        "base-42",
+                        "head-42",
+                        "merge-42",
+                        "pr-42-head-42",
+                        "pr-42.preview.example.test",
+                    )
 
 
 class PreviewArtifactTelnetInjectionTest(unittest.TestCase):

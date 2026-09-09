@@ -103,13 +103,13 @@ derive_run = next(step["run"] for step in plan_steps if step.get("id") == "deriv
 for required in (
     'RUNTIME_NAMESPACE="dev"',
     'RELEASE_NAME="dev"',
-    '[[ "$ACTION" == "deploy" || "$ACTION" == "destroy" ]]',
-    '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    '[[ -n "$IMAGE_TAG" ]]',
-    '[[ "$HOSTNAME" == "dev.preview.firedevops.net" ]]',
-    '[[ "$RUNTIME_NAMESPACE" == "dev" ]]',
-    '[[ "$RELEASE_NAME" == "dev" ]]',
-    '[[ "$TELNET_PORT" == "32016" ]]',
+    'Invalid dev-demo action',
+    'Invalid dev-demo head SHA',
+    'Invalid dev-demo image tag',
+    'Invalid dev-demo hostname',
+    'Invalid dev-demo namespace',
+    'Invalid dev-demo release',
+    'Invalid dev-demo Telnet port',
 ):
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")

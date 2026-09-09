@@ -80,6 +80,9 @@ jobs:
             PR_NUMBER="$EVENT_PR_NUMBER"
             ACTION=destroy
             EXPECTED_HEAD_SHA="$EVENT_HEAD_SHA"
+          else
+            echo "::error title=Unsupported lifecycle event::Cannot validate hosted identity request for event ${EVENT_NAME}." >&2
+            exit 1
           fi
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$ACTION" == deploy || "$ACTION" == destroy ]]
