@@ -65,6 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
+          set -euo pipefail
           preview_workflow_name="PR Preview Environment"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
           max_active="${PREVIEW_MAX_ACTIVE:-1}"

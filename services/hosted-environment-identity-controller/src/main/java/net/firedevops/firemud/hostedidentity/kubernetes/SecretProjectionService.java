@@ -135,7 +135,12 @@ public class SecretProjectionService {
         if (!guardPassed(runtimeProfileCurrent)) {
           return guardFailed(revision);
         }
-        client.secrets().inNamespace(plan.runtimeNamespace()).resource(candidate).replace();
+        client
+            .secrets()
+            .inNamespace(plan.runtimeNamespace())
+            .resource(candidate)
+            .lockResourceVersion(existing.getMetadata().getResourceVersion())
+            .replace();
       }
     } catch (KubernetesClientException exception) {
       if (exception.getCode() != 409) throw exception;
@@ -274,7 +279,12 @@ public class SecretProjectionService {
         if (!guardPassed(runtimeProfileCurrent)) {
           return PreservationResult.GUARD_FAILED;
         }
-        client.secrets().inNamespace(plan.identityNamespace()).resource(predecessor).replace();
+        client
+            .secrets()
+            .inNamespace(plan.identityNamespace())
+            .resource(predecessor)
+            .lockResourceVersion(prior.getMetadata().getResourceVersion())
+            .replace();
       }
       return PreservationResult.PRESERVED;
     } catch (KubernetesClientException exception) {

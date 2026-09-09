@@ -120,7 +120,12 @@ public class GrpcTransportBundleGenerator {
     Secret replacement = generate(plan, caSource, attemptedGeneration, renewBefore, now);
     replacement.getMetadata().setResourceVersion(existingResourceVersion);
     try {
-      return client.secrets().inNamespace(plan.identityNamespace()).resource(replacement).replace();
+      return client
+          .secrets()
+          .inNamespace(plan.identityNamespace())
+          .resource(replacement)
+          .lockResourceVersion(existingResourceVersion)
+          .replace();
     } catch (KubernetesClientException exception) {
       if (exception.getCode() != 409) {
         throw exception;

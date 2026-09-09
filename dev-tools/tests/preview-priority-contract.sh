@@ -1454,6 +1454,7 @@ extract_workflow_step_run \
   "$reconciler_workflow" \
   "Dispatch preview deploys for drifted PRs" \
   "$RECONCILER_RUN"
+grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
 
 reset_case
 reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"

@@ -17,6 +17,7 @@ import io.fabric8.kubernetes.api.model.SecretList;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
@@ -359,6 +360,7 @@ class SecretMaterialValidatorTest {
     Resource<Secret> existingResource = mock(Resource.class);
     Resource<Secret> caResource = mock(Resource.class);
     Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
     when(client.secrets()).thenReturn(secrets);
     when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
     when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
@@ -366,11 +368,12 @@ class SecretMaterialValidatorTest {
     when(existingResource.get()).thenReturn(existing);
     when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
     when(caResource.get()).thenReturn(rotatedCa);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
     when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
         .thenAnswer(
             invocation -> {
               Secret candidate = invocation.getArgument(0);
-              when(replacementResource.replace()).thenReturn(candidate);
+              when(lockedReplacementResource.replace()).thenReturn(candidate);
               return replacementResource;
             });
 
@@ -409,6 +412,8 @@ class SecretMaterialValidatorTest {
     org.mockito.ArgumentCaptor<Secret> replacement =
         org.mockito.ArgumentCaptor.forClass(Secret.class);
     verify(identitySecrets).resource(replacement.capture());
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
     Secret rotated = replacement.getValue();
     assertSame(rotated, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));

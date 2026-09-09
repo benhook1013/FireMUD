@@ -1478,6 +1478,27 @@ class SecretProjectionServiceTest {
     Resource<Secret> predecessorResource = mock(Resource.class);
     when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
         .thenReturn(predecessorResource);
+    Secret prior =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName() + "-previous",
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, acceptedSpki));
+    prior.getMetadata().setNamespace(plan.identityNamespace());
+    prior.getMetadata().setResourceVersion("6");
+    when(predecessorResource.get()).thenReturn(prior);
+    Resource<Secret> predecessorReplacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedPredecessorResource = mock(ReplaceDeletable.class);
+    when(secretClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(predecessorReplacementResource);
+    when(predecessorReplacementResource.lockResourceVersion("6"))
+        .thenReturn(lockedPredecessorResource);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
+    when(secretClient.runtimeSecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
 
     var result =
         service.project(
@@ -1504,6 +1525,10 @@ class SecretProjectionServiceTest {
         acceptedSpki, annotations.get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
     assertEquals("pending", annotations.get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
     assertEquals("projected", result.state());
+    verify(predecessorReplacementResource).lockResourceVersion("6");
+    verify(lockedPredecessorResource).replace();
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
 
     Secret capturedReplacement = candidate.getValue();
     when(existingResource.get()).thenReturn(capturedReplacement);
@@ -2852,10 +2877,20 @@ class SecretProjectionServiceTest {
     when(client.secrets()).thenReturn(secrets);
     when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
     when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    Resource<Secret> runtimeReplacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> runtimeLockedResource = mock(ReplaceDeletable.class);
+    when(runtimeReplacementResource.lockResourceVersion(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(runtimeLockedResource);
+    Resource<Secret> identityReplacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> identityLockedResource = mock(ReplaceDeletable.class);
+    when(identityReplacementResource.lockResourceVersion(
+            org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(identityLockedResource);
     when(runtimeSecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(mock(Resource.class));
+        .thenReturn(runtimeReplacementResource);
     when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(mock(Resource.class));
+        .thenReturn(identityReplacementResource);
     return new SecretClient(client, runtimeSecrets, identitySecrets);
   }
 

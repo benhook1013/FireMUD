@@ -227,7 +227,9 @@ public class DeploymentRolloutService {
     mutation.apply(replacement);
     replacement.getMetadata().setResourceVersion(observed.getMetadata().getResourceVersion());
     try {
-      operation.replace(replacement);
+      operation
+          .lockResourceVersion(observed.getMetadata().getResourceVersion())
+          .replace(replacement);
     } catch (KubernetesClientException exception) {
       if (exception.getCode() != 409) {
         throw exception;

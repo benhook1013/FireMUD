@@ -17,6 +17,7 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.AppsAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import java.util.List;
 import java.util.Map;
@@ -94,6 +95,8 @@ class DeploymentRolloutServiceTest {
             3L);
     when(proxy.get()).thenReturn(oldProxy);
     when(account.get()).thenReturn(readyAccount);
+    ReplaceDeletable<Deployment> lockedProxy = mock(ReplaceDeletable.class);
+    when(proxy.lockResourceVersion("rv-3")).thenReturn(lockedProxy);
     DeploymentRolloutService service = new DeploymentRolloutService();
 
     DeploymentRolloutService.RolloutResult first =
@@ -103,7 +106,7 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, first.telnetReady());
     assertEquals(false, first.grpcReady());
     ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
-    verify(proxy, times(1)).replace(replacement.capture());
+    verify(lockedProxy, times(1)).replace(replacement.capture());
     Deployment converged = replacement.getValue();
     Map<String, String> annotations =
         converged.getSpec().getTemplate().getMetadata().getAnnotations();
@@ -112,6 +115,7 @@ class DeploymentRolloutServiceTest {
     assertEquals("grpc-new", annotations.get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
     assertEquals(
         oldProxy.getMetadata().getResourceVersion(), converged.getMetadata().getResourceVersion());
+    verify(proxy).lockResourceVersion("rv-3");
 
     converged.getMetadata().setGeneration(4L);
     converged.getStatus().setObservedGeneration(4L);
@@ -122,7 +126,7 @@ class DeploymentRolloutServiceTest {
     assertEquals(true, second.ready());
     assertEquals(true, second.telnetReady());
     assertEquals(true, second.grpcReady());
-    verify(proxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(lockedProxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
@@ -143,8 +147,10 @@ class DeploymentRolloutServiceTest {
     when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
     Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
     when(proxy.get()).thenReturn(observed);
+    ReplaceDeletable<Deployment> lockedProxy = mock(ReplaceDeletable.class);
+    when(proxy.lockResourceVersion("rv-3")).thenReturn(lockedProxy);
     doThrow(new KubernetesClientException("conflict", 409, null))
-        .when(proxy)
+        .when(lockedProxy)
         .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
 
     DeploymentRolloutService.RolloutResult result =
@@ -153,7 +159,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    verify(proxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy).lockResourceVersion("rv-3");
+    verify(lockedProxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -408,6 +415,10 @@ class DeploymentRolloutServiceTest {
     Deployment runningProxy = readyDeployment("tcp-proxy-service", Map.of(), 3L);
     when(gateway.get()).thenReturn(runningGateway);
     when(proxy.get()).thenReturn(runningProxy);
+    ReplaceDeletable<Deployment> lockedGateway = mock(ReplaceDeletable.class);
+    ReplaceDeletable<Deployment> lockedProxy = mock(ReplaceDeletable.class);
+    when(gateway.lockResourceVersion("rv-3")).thenReturn(lockedGateway);
+    when(proxy.lockResourceVersion("rv-3")).thenReturn(lockedProxy);
 
     DeploymentRolloutService service = new DeploymentRolloutService();
     DeploymentRolloutService.RetirementResult first = service.stopBridges(client, plan, () -> true);
@@ -417,8 +428,10 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, first.proxyStopped());
     ArgumentCaptor<Deployment> gatewayReplacement = ArgumentCaptor.forClass(Deployment.class);
     ArgumentCaptor<Deployment> proxyReplacement = ArgumentCaptor.forClass(Deployment.class);
-    verify(gateway).replace(gatewayReplacement.capture());
-    verify(proxy).replace(proxyReplacement.capture());
+    verify(gateway).lockResourceVersion("rv-3");
+    verify(proxy).lockResourceVersion("rv-3");
+    verify(lockedGateway).replace(gatewayReplacement.capture());
+    verify(lockedProxy).replace(proxyReplacement.capture());
     Deployment editedGateway = gatewayReplacement.getValue();
     Deployment editedProxy = proxyReplacement.getValue();
     assertEquals(0, editedGateway.getSpec().getReplicas());
@@ -443,8 +456,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(true, second.proxyStopped());
     verify(gateway, times(2)).get();
     verify(proxy, times(2)).get();
-    verify(gateway, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
-    verify(proxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(lockedGateway, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(lockedProxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -466,8 +479,10 @@ class DeploymentRolloutServiceTest {
     when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
     when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
     when(proxy.get()).thenReturn(null);
+    ReplaceDeletable<Deployment> lockedGateway = mock(ReplaceDeletable.class);
+    when(gateway.lockResourceVersion("rv-3")).thenReturn(lockedGateway);
     doThrow(new KubernetesClientException("conflict", 409, null))
-        .when(gateway)
+        .when(lockedGateway)
         .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
 
     DeploymentRolloutService.RetirementResult result =
@@ -476,7 +491,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.stopped());
     assertEquals(false, result.gatewayStopped());
     assertEquals(true, result.proxyStopped());
-    verify(gateway).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(gateway).lockResourceVersion("rv-3");
+    verify(lockedGateway).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(proxy).get();
   }
 
