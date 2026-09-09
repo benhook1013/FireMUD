@@ -68,6 +68,8 @@ class HostedIdentityScopeServiceTest {
             "social-groups-service",
             "world-management-service"),
         new java.util.HashSet<>(HostedIdentityScopeService.requiredDeploymentNames(plan)));
+    assertEquals(
+        plan.grpcConsumers(), HostedIdentityScopeService.requiredDeploymentNames(plan));
   }
 
   private static final Map<String, String> ROLE_LABELS =

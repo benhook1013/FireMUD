@@ -197,8 +197,8 @@ public class HostedIdentityScopeService {
   }
 
   static List<String> requiredDeploymentNames(EnvironmentIdentityPlan plan) {
-    LinkedHashSet<String> names = new LinkedHashSet<>(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
-    names.addAll(plan.grpcConsumers());
+    LinkedHashSet<String> names = new LinkedHashSet<>(plan.grpcConsumers());
+    names.addAll(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     return List.copyOf(names);
   }
 
