@@ -568,12 +568,14 @@ spec:
           - DELETE
         resources:
           - namespaces
+          - namespaces/status
+          - namespaces/finalize
         scope: Cluster
   matchConditions:
     - name: hosted-system-namespace-only
       expression: >-
         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
-        (request.operation == 'UPDATE' && request.name == 'firemud-system') ||
+        (request.operation == 'UPDATE' && request.subResource == '' && request.name == 'firemud-system') ||
         (request.operation == 'DELETE' &&
          (request.name == 'firemud-system' || request.name == 'dev-identity' || request.name.matches('^pr-[1-9][0-9]*-identity$'))) ||
         (request.operation != 'DELETE' &&
@@ -582,9 +584,11 @@ spec:
     - expression: >-
         (request.userInfo.groups.exists(group, group == 'system:masters') &&
          request.operation in ['CREATE', 'DELETE'] &&
+         request.subResource == '' &&
          (request.operation == 'DELETE' ? request.name : object.metadata.name)
            .matches('^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$')) ||
         (request.operation == 'UPDATE' &&
+         request.subResource == '' &&
          request.name == 'firemud-system' &&
          object.metadata.name == 'firemud-system' &&
          oldObject.metadata.name == 'firemud-system' &&
@@ -597,7 +601,23 @@ spec:
          has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
          (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) &&
          object.spec == oldObject.spec) ||
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.operation == 'UPDATE' &&
+         request.subResource in ['status', 'finalize'] &&
+         request.name.matches('^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$') &&
+         object.metadata.name == oldObject.metadata.name &&
+         object.metadata.namespace == oldObject.metadata.namespace &&
+         has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+         (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) &&
+         has(object.metadata.annotations) == has(oldObject.metadata.annotations) &&
+         (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
+         has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+         (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) &&
+         has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+         (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) &&
+         (request.subResource == 'finalize' || object.spec == oldObject.spec)) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         request.subResource == '' &&
          ((request.operation == 'DELETE' && request.name.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
            (!has(oldObject.metadata.ownerReferences) || oldObject.metadata.ownerReferences.size() == 0) &&
            (!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0) &&

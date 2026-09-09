@@ -281,6 +281,11 @@ for text_value in \
   firemud-hosted-system-namespace-guard \
   "request.operation == 'UPDATE'" \
   "request.operation in ['CREATE', 'DELETE']" \
+  namespaces/status \
+  namespaces/finalize \
+  "request.subResource == ''" \
+  "request.subResource in ['status', 'finalize']" \
+  system:serviceaccount:kube-system:namespace-controller \
   "has(object.metadata.labels) == has(oldObject.metadata.labels)" \
   "has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)" \
   "object.metadata.finalizers == oldObject.metadata.finalizers" \
@@ -676,9 +681,17 @@ assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:fire
 assert "object.metadata.labels.size() == 5" in binding_expression
 assert "object.subjects.size() == 1" in binding_expression
 namespace_expression = policies["firemud-hosted-system-namespace-guard"]["spec"]["validations"][0]["expression"]
+namespace_rule = policies["firemud-hosted-system-namespace-guard"]["spec"]["matchConstraints"]["resourceRules"][0]
+assert namespace_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
+assert namespace_rule["resources"] == ["namespaces", "namespaces/status", "namespaces/finalize"]
 assert namespace_expression.startswith(f"({break_glass} &&")
 assert "(request.operation == 'DELETE' ? request.name : object.metadata.name)" in namespace_expression
 assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_expression
+assert "request.subResource == ''" in namespace_expression
+assert "request.subResource in ['status', 'finalize']" in namespace_expression
+assert "request.operation == 'UPDATE'" in namespace_expression
+assert "system:serviceaccount:kube-system:namespace-controller" in namespace_expression
+assert "(request.subResource == 'finalize' || object.spec == oldObject.spec)" in namespace_expression
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression
 assert "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
