@@ -207,9 +207,11 @@ jobs:
           set -euo pipefail
           if ! command -v helm >/dev/null 2>&1; then
             HELM_VERSION='v3.20.1'
+            HELM_SHA256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'
             INSTALL_DIR="$RUNNER_TEMP/bin"
             mkdir -p "$INSTALL_DIR"
             curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "$RUNNER_TEMP/helm.tgz"
+            printf '%s  %s\n' "$HELM_SHA256" "$RUNNER_TEMP/helm.tgz" | sha256sum --check --status
             tar -xzf "$RUNNER_TEMP/helm.tgz" -C "$RUNNER_TEMP"
             install "$RUNNER_TEMP/linux-amd64/helm" "$INSTALL_DIR/helm"
             echo "$INSTALL_DIR" >> "$GITHUB_PATH"

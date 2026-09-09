@@ -111,9 +111,13 @@ public class GrpcTransportBundleGenerator {
     if (!trustAnchorChanged && !renewalRequired(existing, renewBefore, now)) {
       return existing;
     }
+    String existingResourceVersion = existing.getMetadata().getResourceVersion();
+    if (existingResourceVersion == null || existingResourceVersion.isBlank()) {
+      throw new IllegalStateException("existing gRPC Secret has no resourceVersion for repair");
+    }
     long attemptedGeneration = nextGeneration(currentGeneration);
     Secret replacement = generate(plan, caSource, attemptedGeneration, renewBefore, now);
-    replacement.getMetadata().setResourceVersion(existing.getMetadata().getResourceVersion());
+    replacement.getMetadata().setResourceVersion(existingResourceVersion);
     try {
       return client.secrets().inNamespace(plan.identityNamespace()).resource(replacement).replace();
     } catch (KubernetesClientException exception) {

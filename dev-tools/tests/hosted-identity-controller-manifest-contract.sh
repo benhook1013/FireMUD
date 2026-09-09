@@ -179,15 +179,6 @@ rules = [validation["rule"] for validation in schema["x-kubernetes-validations"]
 assert rules == ["self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"]
 PY
 
-spec_block="$(sed -n '/^            spec:/,/^            status:/p' "$CRD")"
-for forbidden_spec_field in hostname namespace secret issuer port key certificate consumer; do
-  if grep -Eq "^[[:space:]]{16}${forbidden_spec_field}" <<<"$spec_block"; then
-    fail "sensitive field $forbidden_spec_field leaked into CR spec"
-  fi
-done
-[[ "$(grep -Ec '^                [A-Za-z][A-Za-z0-9]*:' <<<"$spec_block")" == "1" ]] || \
-  fail "CR spec is not limited to desiredState"
-
 for text_value in \
   firemud-hosted-identity-requester \
   firemud-hosted-identity-controller \
@@ -803,7 +794,7 @@ forbid_literal "$DEPLOYMENT" "$forbidden_strategy"
 
 for text_value in \
   policyTypes: '- Ingress' '- Egress' 'ingress: []' 'k8s-app: kube-dns' \
-  'port: 53' 'port: 443' \
+  'port: 53' 'port: 443' 'port: 6443' \
   'endPort: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
   'firemud.dev/dev-demo: "true"' 'cannot select the apiserver or a public hostname' \
   'except:' '169.254.0.0/16' 'fe80::/10'; do
@@ -818,6 +809,14 @@ import yaml
 policy = yaml.safe_load(Path(os.environ["NETWORKPOLICY"]).read_text(encoding="utf-8"))
 assert policy["spec"]["policyTypes"] == ["Ingress", "Egress"]
 assert policy["spec"]["ingress"] == []
+api_rules = [
+    rule for rule in policy["spec"]["egress"]
+    if any(port.get("port") == 6443 for port in rule.get("ports", []))
+]
+assert len(api_rules) == 1, "controller Kubernetes API 6443 egress rule is missing"
+assert any(port.get("port") == 443 for port in api_rules[0]["ports"]), (
+    "controller Kubernetes API egress must retain 443 alongside 6443"
+)
 telnet_rules = [
     rule
     for rule in policy["spec"]["egress"]

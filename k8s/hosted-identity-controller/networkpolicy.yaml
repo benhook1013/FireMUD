@@ -34,8 +34,12 @@ spec:
         - protocol: TCP
           port: 53
     # A NetworkPolicy cannot select the apiserver or a public hostname.  The
-    # controller therefore needs TCP/443 to the cluster's API endpoint and to
-    # the fixed, derived public HTTPS identity endpoint.  The application must
+    # hosted k3s kubernetes.default Service is exposed on ClusterIP :443 and
+    # DNATs to the hosted node API endpoint :6443; kube-router evaluates the
+    # post-DNAT port.
+    # The controller therefore needs TCP/443 and TCP/6443 to the API endpoint,
+    # while retaining 443 for the fixed, derived public HTTPS identity endpoint.
+    # The application must
     # still enforce its exact SNI/SAN/issuer allowlist; this is intentionally not
     # presented as unrestricted destination trust.
     - to:
@@ -50,6 +54,8 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 6443
     # Hosted Telnet uses preview allocator NodePorts 32000-32015 plus the fixed
     # dev-demo NodePort 32016.
     # The controller probes only the port derived from the canonical identity;

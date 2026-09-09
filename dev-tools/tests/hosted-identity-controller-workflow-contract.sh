@@ -184,6 +184,10 @@ deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
 }
+helm_setup = deploy_by_name["Set up Helm"]["run"]
+assert "HELM_VERSION='v3.20.1'" in helm_setup
+assert "HELM_SHA256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" in helm_setup
+assert 'sha256sum --check --status' in helm_setup
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)

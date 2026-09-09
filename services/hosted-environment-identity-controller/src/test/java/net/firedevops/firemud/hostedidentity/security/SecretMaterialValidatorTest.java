@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
@@ -367,6 +368,28 @@ class SecretMaterialValidatorTest {
     verify(identitySecrets, org.mockito.Mockito.never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
 
+    when(caResource.get()).thenReturn(oldCa);
+    for (String resourceVersion : new String[] {null, ""}) {
+      existing.getMetadata().setResourceVersion(resourceVersion);
+      assertSame(existing, generator.ensure(client, plan, 4L, renewBefore, oldTrustAnchor));
+      verify(identitySecrets, org.mockito.Mockito.never())
+          .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    }
+    when(caResource.get()).thenReturn(rotatedCa);
+
+    for (String resourceVersion : new String[] {null, ""}) {
+      existing.getMetadata().setResourceVersion(resourceVersion);
+      IllegalStateException missingVersion =
+          assertThrows(
+              IllegalStateException.class,
+              () -> generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor));
+      assertEquals(
+          "existing gRPC Secret has no resourceVersion for repair", missingVersion.getMessage());
+      verify(identitySecrets, org.mockito.Mockito.never())
+          .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    }
+    existing.getMetadata().setResourceVersion("7");
+
     generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
 
     org.mockito.ArgumentCaptor<Secret> replacement =
@@ -485,7 +508,7 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
-  void grpcCaRejectsNonCanonicalKeysAndMismatchedPrivateKey() {
+  void grpcCaRejectsNonCanonicalKeysAndMismatchedPrivateKey() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret generated = new GrpcTransportBundleGenerator().generate(plan);
@@ -504,14 +527,15 @@ class SecretMaterialValidatorTest {
                     "ca.crt", generated.getData().get("ca.crt"),
                     "ca.key", generated.getData().get("tls.key")))
             .build();
+    Secret matchingCa = generatedCa(Instant.now(), Duration.ofDays(60), new X500Name("CN=fixture"));
     Secret wrongPemLabels =
-        new SecretBuilder(generated)
+        new SecretBuilder(matchingCa)
             .withData(
                 Map.of(
                     "ca.crt",
-                    relabel(generated.getData().get("ca.crt"), "CERTIFICATE", "X509 CERTIFICATE"),
+                    relabel(matchingCa.getData().get("ca.crt"), "CERTIFICATE", "X509 CERTIFICATE"),
                     "ca.key",
-                    generated.getData().get("tls.key")))
+                    matchingCa.getData().get("ca.key")))
             .build();
 
     assertThrows(
@@ -520,9 +544,13 @@ class SecretMaterialValidatorTest {
     assertThrows(
         IllegalStateException.class,
         () -> GrpcTransportBundleGenerator.validateCa(mismatchedKey, fingerprint));
-    assertThrows(
-        IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.validateCa(wrongPemLabels, fingerprint));
+    var wrongPemException =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                GrpcTransportBundleGenerator.validateCa(
+                    wrongPemLabels, SecretMaterialValidator.trustAnchorFingerprint(matchingCa)));
+    assertEquals("configured gRPC CA material is invalid", wrongPemException.getMessage());
   }
 
   @Test
