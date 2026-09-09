@@ -2174,6 +2174,7 @@ original_subprocess_run = module.subprocess.run
 original_secret_ready_attempts = module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
 original_secret_retry_delay = module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
 original_time_sleep = module.time.sleep
+original_time_monotonic = module.time.monotonic
 
 secret_ready_timeout_env = "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
 original_secret_ready_timeout_env = os.environ.get(secret_ready_timeout_env)
@@ -2288,11 +2289,40 @@ try:
         or "still not ready after 2 attempts" not in exhausted_issues[0]
     ):
         raise SystemExit(f"non-string Secret value did not exhaust as retryable: {exhausted_issues}")
+
+    monotonic_now = [0.0]
+    slow_lookup_calls = [0]
+
+    def slow_retry_lookup(args, **kwargs):
+        if kwargs.get("timeout") != 5.0:
+            raise SystemExit("slow Secret lookup did not receive the remaining readiness budget")
+        slow_lookup_calls[0] += 1
+        monotonic_now[0] += 6.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    module.time.monotonic = lambda: monotonic_now[0]
+    module.subprocess.run = slow_retry_lookup
+    deadline_issues = module.wait_for_secret_key_requirements(
+        [("slow", {"tls.crt"})],
+        "pr-42",
+        ready_attempts=3,
+        ready_timeout_seconds=5,
+    )
+    if slow_lookup_calls[0] != 1:
+        raise SystemExit(
+            "Secret readiness performed another lookup after the monotonic deadline expired"
+        )
+    if (
+        len(deadline_issues) != 1
+        or "still not ready after 1 attempts" not in deadline_issues[0]
+    ):
+        raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
 finally:
     module.subprocess.run = original_subprocess_run
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
     module.time.sleep = original_time_sleep
+    module.time.monotonic = original_time_monotonic
 
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):

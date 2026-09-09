@@ -118,8 +118,16 @@ class DeploymentRolloutServiceTest {
     verify(proxy).lockResourceVersion("rv-3");
 
     converged.getMetadata().setGeneration(4L);
-    converged.getStatus().setObservedGeneration(4L);
+    converged.getStatus().setObservedGeneration(3L);
     when(proxy.get()).thenReturn(converged);
+    DeploymentRolloutService.RolloutResult staleObservedGeneration =
+        service.sync(client, plan, "telnet-new", "grpc-new", () -> true);
+
+    assertEquals(false, staleObservedGeneration.ready());
+    assertEquals(false, staleObservedGeneration.telnetReady());
+    assertEquals(false, staleObservedGeneration.grpcReady());
+
+    converged.getStatus().setObservedGeneration(4L);
     DeploymentRolloutService.RolloutResult second =
         service.sync(client, plan, "telnet-new", "grpc-new", () -> true);
 

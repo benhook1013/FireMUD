@@ -6328,9 +6328,14 @@ def write_report(
 
 
 def secret_keys_lookup_failure(
-    secret_name: str, namespace: str, required_keys: set[str]
+    secret_name: str,
+    namespace: str,
+    required_keys: set[str],
+    timeout_seconds: float | None = None,
 ) -> tuple[str | None, bool]:
     """Return a Secret-key issue and whether controller convergence may resolve it."""
+    if timeout_seconds is None:
+        timeout_seconds = SECRET_LOOKUP_TIMEOUT_SECONDS
     try:
         result = subprocess.run(
             [
@@ -6346,7 +6351,7 @@ def secret_keys_lookup_failure(
             check=False,
             capture_output=True,
             text=True,
-            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
         return (
@@ -6411,13 +6416,13 @@ def secret_keys_lookup_failure(
     return None, False
 
 
-def hosted_bridge_secret_ready_attempts() -> int:
-    """Resolve the bounded hosted-bridge Secret readiness retry budget."""
+def hosted_bridge_secret_ready_timeout_seconds() -> int:
+    """Resolve the validated hosted-bridge Secret readiness wall-clock budget."""
     configured_timeout = os.environ.get(
         "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS"
     )
     if configured_timeout is None:
-        return HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+        return HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
     if not re.fullmatch(r"[1-9][0-9]*", configured_timeout):
         raise ValueError(
             "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
@@ -6425,6 +6430,23 @@ def hosted_bridge_secret_ready_attempts() -> int:
         )
     timeout_seconds = int(configured_timeout)
     if timeout_seconds > HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS:
+        raise ValueError(
+            "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
+            f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
+        )
+    return timeout_seconds
+
+
+def hosted_bridge_secret_ready_attempts(timeout_seconds: int | None = None) -> int:
+    """Resolve the bounded hosted-bridge Secret readiness retry budget."""
+    if timeout_seconds is None:
+        if (
+            os.environ.get("FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS")
+            is None
+        ):
+            return HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+        timeout_seconds = hosted_bridge_secret_ready_timeout_seconds()
+    if not 1 <= timeout_seconds <= HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS:
         raise ValueError(
             "FIREMUD_HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS must be an integer "
             f"between 1 and {HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS}"
@@ -6446,17 +6468,37 @@ def wait_for_secret_key_requirements(
     secret_requirements: list[tuple[str, set[str]]],
     namespace: str,
     ready_attempts: int | None = None,
+    ready_timeout_seconds: int | None = None,
 ) -> list[str]:
     """Bound one controller-projection wait across all required Secrets."""
     if ready_attempts is None:
         ready_attempts = HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+    if ready_timeout_seconds is None:
+        ready_timeout_seconds = HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + ready_timeout_seconds
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
+    attempts_completed = 0
     for attempt in range(ready_attempts):
+        if attempt > 0 and time.monotonic() >= deadline:
+            break
+        attempts_completed = attempt + 1
         retry_pending: list[tuple[str, set[str]]] = []
-        for secret_name, required_keys in pending:
+        for pending_index, (secret_name, required_keys) in enumerate(pending):
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                for skipped_name, skipped_keys in pending[pending_index:]:
+                    latest_issues[skipped_name] = (
+                        f"Secret readiness deadline expired before lookup for "
+                        f"{namespace}/{skipped_name}"
+                    )
+                    retry_pending.append((skipped_name, skipped_keys))
+                break
             issue, retryable = secret_keys_lookup_failure(
-                secret_name, namespace, required_keys
+                secret_name,
+                namespace,
+                required_keys,
+                min(SECRET_LOOKUP_TIMEOUT_SECONDS, remaining_seconds),
             )
             if issue is None:
                 continue
@@ -6468,11 +6510,15 @@ def wait_for_secret_key_requirements(
             return []
         pending = retry_pending
         if attempt + 1 < ready_attempts:
-            time.sleep(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS)
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
+    reported_attempts = attempts_completed or ready_attempts
     return [
         (
             f"{latest_issues[secret_name]} (still not ready after "
-            f"{ready_attempts} attempts)"
+            f"{reported_attempts} attempts)"
         )
         for secret_name, _ in pending
     ]
@@ -6562,7 +6608,10 @@ def hosted_bridge_preflight(
     ]
     if context == "operator" and not release_identity_issues:
         try:
-            secret_ready_attempts = hosted_bridge_secret_ready_attempts()
+            secret_ready_timeout_seconds = hosted_bridge_secret_ready_timeout_seconds()
+            secret_ready_attempts = hosted_bridge_secret_ready_attempts(
+                secret_ready_timeout_seconds
+            )
         except ValueError as exc:
             fail(str(exc))
         secret_requirements = [
@@ -6579,7 +6628,10 @@ def hosted_bridge_preflight(
         issues.extend(
             f"Controller projection: {issue}"
             for issue in wait_for_secret_key_requirements(
-                secret_requirements, namespace, secret_ready_attempts
+                secret_requirements,
+                namespace,
+                secret_ready_attempts,
+                secret_ready_timeout_seconds,
             )
         )
     status, message = bridge_validation_result(issues)

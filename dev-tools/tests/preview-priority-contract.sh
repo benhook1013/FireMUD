@@ -1488,6 +1488,13 @@ extract_workflow_step_run \
   "Dispatch preview deploys for drifted PRs" \
   "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
+grep -Fq -- \
+  '--jq '\''first(.[] | select(.status == "queued" or .status == "in_progress") | .databaseId) // empty'\''' \
+  "$RECONCILER_RUN"
+if grep -Fq '| head -n 1' "$RECONCILER_RUN"; then
+  echo "reconciler must select an active preview run without a pipefail-unsafe head" >&2
+  exit 1
+fi
 
 reset_case
 reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"

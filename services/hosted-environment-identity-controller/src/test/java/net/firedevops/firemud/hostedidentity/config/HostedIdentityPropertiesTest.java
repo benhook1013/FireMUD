@@ -37,6 +37,7 @@ class HostedIdentityPropertiesTest {
 
     assertTrue(binding.isBound());
     assertDoesNotThrow(properties::afterPropertiesSet);
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
     assertEquals(
         "firemud.dev/requested-preview-head-sha", properties.getPreviewRequestedHeadAnnotation());
     assertEquals(
