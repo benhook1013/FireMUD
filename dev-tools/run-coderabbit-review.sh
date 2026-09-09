@@ -21,6 +21,15 @@ die() {
   exit 1
 }
 
+count_nul_paths() {
+  local count=0
+
+  while IFS= read -r -d '' _; do
+    count=$((count + 1))
+  done <"$1"
+  printf '%s\n' "$count"
+}
+
 cleanup() {
   local exit_status=$?
 
@@ -74,7 +83,7 @@ done
   exit 2
 }
 
-for dependency in git gh jq coderabbit; do
+for dependency in git gh jq coderabbit flock; do
   command -v "$dependency" >/dev/null 2>&1 || {
     printf 'error: required executable not found: %s\n' "$dependency" >&2
     exit 1
@@ -94,6 +103,10 @@ fi
 log_root="$git_common_dir/coderabbit-review-logs"
 mkdir -p "$log_root"
 chmod 700 "$log_root"
+lock_file="$log_root/review.lock"
+exec {lock_fd}>"$lock_file"
+chmod 600 "$lock_file"
+flock -n "$lock_fd" || die "another CodeRabbit wrapper is already running (lock: $lock_file)"
 log_dir="$(mktemp -d "$log_root/run.XXXXXX")"
 chmod 700 "$log_dir"
 temp_root="$(mktemp -d "${TMPDIR:-/tmp}/firemud-coderabbit-review.XXXXXX")"
@@ -114,10 +127,13 @@ git -C "$source_root" status --porcelain >"$log_dir/source-status" || die "could
 candidate_sha="$(git -C "$source_root" rev-parse 'HEAD^{commit}')" || die "could not resolve committed HEAD"
 
 gh pr view "$pr_number" --repo "$repo" \
-  --json baseRefName,baseRefOid,headRefName,headRefOid,changedFiles \
+  --json state,baseRefName,baseRefOid,headRefName,headRefOid,changedFiles,files \
   >"$log_dir/pull-request.json" 2>"$log_dir/pull-request.stderr" ||
   die "could not read pull request metadata"
 
+pr_state="$(jq -er '.state | strings | ascii_upcase' "$log_dir/pull-request.json")" ||
+  die "pull request metadata has no state"
+[[ "$pr_state" == "OPEN" ]] || die "pull request is not OPEN (state: $pr_state)"
 base_ref_name="$(jq -er '.baseRefName | select(type == "string" and length > 0)' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no base branch"
 base_sha="$(jq -er '.baseRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' "$log_dir/pull-request.json")" ||
@@ -126,6 +142,11 @@ pr_head_sha="$(jq -er '.headRefOid | select(type == "string" and test("^[0-9a-fA
   die "pull request metadata has no full head commit"
 expected_files="$(jq -er '.changedFiles | select(type == "number" and floor == . and . >= 0)' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no changed-file count"
+jq -jr '.files[]? | (.path, "\u0000")' "$log_dir/pull-request.json" | sort -z >"$log_dir/expected-files.nul" ||
+  die "pull request metadata has no readable file list"
+expected_path_count="$(count_nul_paths "$log_dir/expected-files.nul")"
+[[ "$expected_path_count" == "$expected_files" ]] ||
+  die "pull request file list/count mismatch (files: $expected_path_count, changedFiles: $expected_files)"
 
 git -C "$source_root" fetch --no-tags "$remote" "refs/heads/$base_ref_name" \
   >"$log_dir/base-fetch.stdout" 2>"$log_dir/base-fetch.stderr" ||
@@ -151,7 +172,18 @@ git -C "$source_root" merge-base --is-ancestor "$pr_head_sha" "$candidate_sha" |
   die "committed HEAD is neither the pull request head nor a descendant containing its fixes"
 
 merge_base="$(<"$log_dir/merge-base")"
-candidate_files="$(git -C "$source_root" diff --name-only "$base_sha...$candidate_sha" | awk 'NF { count++ } END { print count + 0 }')"
+git -C "$source_root" diff --name-only -z "$base_sha...$pr_head_sha" >"$log_dir/published-files.nul" ||
+  die "could not calculate the published pull request scope"
+sort -z -o "$log_dir/published-files.nul" "$log_dir/published-files.nul"
+published_files="$(count_nul_paths "$log_dir/published-files.nul")"
+[[ "$published_files" != 0 ]] || die "pull request has zero changed files; refusing to spend review quota"
+cmp -s "$log_dir/expected-files.nul" "$log_dir/published-files.nul" ||
+  die "published pull request file paths do not match GitHub's file list"
+git -C "$source_root" diff --name-only -z "$base_sha...$candidate_sha" >"$log_dir/candidate-files.nul" ||
+  die "could not calculate the candidate scope"
+sort -z -o "$log_dir/candidate-files.nul" "$log_dir/candidate-files.nul"
+candidate_files="$(count_nul_paths "$log_dir/candidate-files.nul")"
+[[ "$candidate_files" != 0 ]] || die "candidate has zero changed files; refusing to spend review quota"
 unpublished_commits="$(git -C "$source_root" rev-list --count "$pr_head_sha..$candidate_sha")"
 if [[ "$unpublished_commits" == 0 ]]; then
   published_status="published-head"
@@ -171,6 +203,7 @@ git -C "$source_root" worktree add --detach "$candidate_worktree" "$candidate_sh
 cat >"$log_dir/metadata" <<EOF
 repository=$repo
 pull_request=$pr_number
+pr_state=$pr_state
 source_root=$source_root
 candidate_worktree=$candidate_worktree
 candidate_sha=$candidate_sha
@@ -180,6 +213,7 @@ base_sha=$base_sha
 pinned_base_ref=$pinned_base_ref
 merge_base=$merge_base
 expected_files=$expected_files
+published_files=$published_files
 candidate_files=$candidate_files
 published_status=$published_status
 EOF
@@ -188,6 +222,18 @@ EOF
   printf '%q ' review --agent --committed --base "$pinned_base_ref"
   printf '\n'
 } >"$log_dir/argv"
+
+printf 'repository=%s\n' "$repo"
+printf 'pull_request=%s\n' "$pr_number"
+printf 'candidate_sha=%s\n' "$candidate_sha"
+printf 'base_sha=%s\n' "$base_sha"
+printf 'pinned_base_ref=%s\n' "$pinned_base_ref"
+printf 'merge_base=%s\n' "$merge_base"
+printf 'expected_files=%s\n' "$expected_files"
+printf 'published_files=%s\n' "$published_files"
+printf 'candidate_files=%s\n' "$candidate_files"
+printf 'published_status=%s\n' "$published_status"
+printf 'log_dir=%s\n' "$log_dir"
 
 set +e
 (
@@ -198,16 +244,6 @@ set +e
 cli_status=$?
 set -e
 printf '%s\n' "$cli_status" >"$log_dir/exit-status"
-
-printf 'repository=%s\n' "$repo"
-printf 'pull_request=%s\n' "$pr_number"
-printf 'candidate_sha=%s\n' "$candidate_sha"
-printf 'base_sha=%s\n' "$base_sha"
-printf 'merge_base=%s\n' "$merge_base"
-printf 'expected_files=%s\n' "$expected_files"
-printf 'candidate_files=%s\n' "$candidate_files"
-printf 'published_status=%s\n' "$published_status"
-printf 'log_dir=%s\n' "$log_dir"
 
 cat "$log_dir/stdout"
 if [[ -s "$log_dir/stderr" ]]; then
