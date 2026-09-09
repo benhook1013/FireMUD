@@ -205,7 +205,7 @@ case "$resource" in
     if [[ -v FAKE_SOURCE_ARTIFACTS_JSON ]]; then
       printf '%s' "$FAKE_SOURCE_ARTIFACTS_JSON"
     else
-      printf '%s' '[{"artifacts":[{"name":"preview-render-pr-900-head-900","expired":false}]}]'
+      printf '%s' '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]'
     fi
     ;;
   */pulls\?state=*)
@@ -391,7 +391,7 @@ export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
-export FAKE_TARGET_HEAD="head-900"
+export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
@@ -1229,10 +1229,10 @@ run_trusted_target_fixture() {
 # validated artifact can resolve deploy once a successor producer is activated.
 reset_case
 run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-head-900","expired":false}]}]' \
+  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
   valid "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-exact-artifact.out"
 grep -qx 'action=deploy' "$TEMP_DIR/trusted-target-exact-artifact.out"
-grep -qx 'head_sha=head-900' "$TEMP_DIR/trusted-target-exact-artifact.out"
+grep -qx 'head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$TEMP_DIR/trusted-target-exact-artifact.out"
 
 # The prerequisite's old preview producer publishes no validated artifact, so
 # its only reachable workflow_run source must resolve no action.
@@ -1244,14 +1244,14 @@ grep -qx 'action=none' "$TEMP_DIR/trusted-target-no-artifact.out"
 
 reset_case
 run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-head-900","expired":false}]}]' \
+  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
   malformed "$FAKE_TARGET_HEAD" "$TEMP_DIR/trusted-target-malformed.out"
 grep -qx 'action=none' "$TEMP_DIR/trusted-target-malformed.out"
 
 reset_case
 run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-head-900","expired":false}]}]' \
-  valid stale-head "$TEMP_DIR/trusted-target-stale.out"
+  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
+  valid bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$TEMP_DIR/trusted-target-stale.out"
 grep -qx 'action=none' "$TEMP_DIR/trusted-target-stale.out"
 
 TRUSTED_WORKFLOW="$trusted_workflow" python3 - <<'PY'
