@@ -30,6 +30,12 @@ class AdmissionValidatorTest {
   }
 
   @Test
+  void nullDesiredStateIsRejectedBeforePlanning() {
+    assertRejectedBeforePlanning(
+        resource -> resource.getSpec().setDesiredState(null), "spec.desiredState is required");
+  }
+
+  @Test
   void wrongNamespaceIsRejectedBeforePlanning() {
     assertRejectedBeforePlanning(
         resource -> resource.getMetadata().setNamespace("other"),
@@ -60,6 +66,22 @@ class AdmissionValidatorTest {
           resource.setStatus(status);
         },
         "a Retired identity cannot be reactivated");
+  }
+
+  @Test
+  void retiredIdentityWithRetiredDesiredStateProceedsToPlanning() {
+    EnvironmentIdentityPlanner planner = planner();
+    HostedEnvironmentIdentity resource = validResource();
+    resource
+        .getSpec()
+        .setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    status.setPhase(HostedEnvironmentIdentityStatus.Phase.Retired);
+    resource.setStatus(status);
+
+    new AdmissionValidator(planner).validate(resource);
+
+    verify(planner).plan("pr-42");
   }
 
   @Test

@@ -80,6 +80,38 @@ if [[ "$*" == *"get namespaces"* ]]; then
   printf '%b' "${FAKE_NAMESPACE_ROWS:-}"
   exit 0
 fi
+if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
+  "$*" == *"--ignore-not-found -o json"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+  count=0
+  if [[ -f "$FAKE_NAMESPACE_SNAPSHOT_CALLS" ]]; then
+    count="$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")"
+  fi
+  count=$((count + 1))
+  printf '%s' "$count" > "$FAKE_NAMESPACE_SNAPSHOT_CALLS"
+  if [[ "${FAKE_NAMESPACE_SNAPSHOT_ERROR:-false}" == true ]] ||
+    [[ "${FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR:-false}" == true && "$count" -gt 1 ]]; then
+    exit 1
+  fi
+  if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]]; then
+    exit 0
+  fi
+  snapshot_head="${FAKE_PR_901_HEAD:-}"
+  snapshot_requested_head="${FAKE_PR_901_REQUESTED_HEAD:-}"
+  if [[ "$count" -gt 1 ]]; then
+    if [[ -v FAKE_PR_901_RECHECK_HEAD ]]; then
+      snapshot_head="$FAKE_PR_901_RECHECK_HEAD"
+    fi
+    if [[ -v FAKE_PR_901_RECHECK_REQUESTED_HEAD ]]; then
+      snapshot_requested_head="$FAKE_PR_901_RECHECK_REQUESTED_HEAD"
+    fi
+  fi
+  jq -cn \
+    --arg head "$snapshot_head" \
+    --arg requested_head "$snapshot_requested_head" \
+    '{metadata:{name:"pr-901",annotations:{"firemud.dev/last-preview-head-sha":$head,"firemud.dev/requested-preview-head-sha":$requested_head}}}'
+  exit 0
+fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
   if [[ -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" ]]; then
@@ -143,6 +175,10 @@ if [[ "$1" == annotate && "$2" == namespace ]]; then
 fi
 if [[ "$*" == *"get hostedenvironmentidentity"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_IDENTITY_LOG"
+  if [[ -n "${FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE:-}" &&
+    "${5:-}" == "$FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE" ]]; then
+    exit 1
+  fi
   printf '%s' "${FAKE_IDENTITY_JSON:-}"
   exit 0
 fi
@@ -327,7 +363,13 @@ case "$resource" in
     fi
     printf 'open\thead-101\t%s\n' "$(encode_fake_labels "$priority" "$labels_valid")"
   ;;
-  */pulls/102) printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" valid)" ;;
+  */pulls/102)
+    if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
+      printf 'open\tfeature/stack\thuman\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" valid)"
+    else
+      printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" valid)"
+    fi
+    ;;
   */issues/comments/*)
     if [[ "$*" == *"--method DELETE"* ]]; then
       printf 'DELETE %s\n' "${resource##*/}" >> "$FAKE_COMMENT_METHOD_LOG"
@@ -465,6 +507,8 @@ export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
+export FAKE_NAMESPACE_SNAPSHOT_LOG="$TEMP_DIR/namespace-snapshot.log"
+export FAKE_NAMESPACE_SNAPSHOT_CALLS="$TEMP_DIR/namespace-snapshot-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
@@ -484,7 +528,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -502,11 +546,17 @@ reset_case() {
   export FAKE_NAMESPACE_JSON_QUERY_FAIL=false
   export FAKE_NAMESPACE_JSON_PARSE_FAIL=false
   export FAKE_PR_102_PRIORITY=true
+  export FAKE_PRUNE_MULTI_TEST=false
+  export FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE=''
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_QUERY_FAIL=false
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
   export FAKE_PR_901_REQUESTED_HEAD=''
+  export FAKE_PR_901_NAMESPACE_ABSENT=false
+  unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD
+  export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
+  export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
   export FAKE_REQUESTED_HEAD_READ_ERROR=false
   export FAKE_REQUESTED_HEAD_NOT_FOUND=false
   export FAKE_REQUESTED_HEAD_RECHECK_ERROR=false
@@ -976,6 +1026,26 @@ grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --wait=t
   "$FAKE_IDENTITY_LOG"
 
 reset_case
+export FAKE_NAMESPACE_ROWS=$'pr-101\t101\npr-102\t102\n'
+export FAKE_PRUNE_METADATA=$'open\tfeature/stack\thuman\t'"${adversarial_labels_base64}"$'\n'
+export FAKE_PR_102_PRIORITY=false
+export FAKE_PRUNE_MULTI_TEST=true
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+export FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE=pr-101
+export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-102"}}'
+if bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/multiple-retire.out" 2>&1; then
+  echo "pruner suppressed an aggregate hosted identity retirement failure" >&2
+  exit 1
+fi
+grep -Fqx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
+test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
+grep -Fqx '1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
+  "$TEMP_DIR/multiple-retire.out"
+
+reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
 export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
 export HOSTED_IDENTITY_MODE=hosted-controller
@@ -1354,6 +1424,56 @@ if ! grep -qx 'Preview pr-901 already aligned to head-901' "$reconciler_valid_ou
   sed 's/^/reconciler output: /' "$reconciler_valid_output" >&2
   exit 1
 fi
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+
+reset_case
+reconciler_empty_deployed_output="$TEMP_DIR/reconciler-empty-deployed.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD='' \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_empty_deployed_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_empty_deployed_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+
+reset_case
+reconciler_namespace_absent_output="$TEMP_DIR/reconciler-namespace-absent.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_namespace_absent_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_namespace_absent_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+
+reset_case
+reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_NAMESPACE_SNAPSHOT_ERROR=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash -e "$RECONCILER_RUN"
+) > "$reconciler_namespace_error_output" 2>&1; then
+  echo "reconciler suppressed an initial namespace snapshot API error" >&2
+  exit 1
+fi
+grep -q 'Unable to inspect namespace pr-901' "$reconciler_namespace_error_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
 
 reset_case
 reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
@@ -1370,77 +1490,65 @@ grep -qx 'Repaired missing requested head for aligned preview pr-901' \
 grep -Fqx \
   'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
   "$FAKE_ANNOTATE_LOG"
-grep -Fq -- '--ignore-not-found -o jsonpath=' "$FAKE_REQUESTED_HEAD_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
-reconciler_deleted_requested_output="$TEMP_DIR/reconciler-deleted-requested.out"
-(
-  cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
-    FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=stale-head \
-    FAKE_REQUESTED_HEAD_READ_ERROR=true \
-    FAKE_REQUESTED_HEAD_NOT_FOUND=true \
-    PREVIEW_MAX_ACTIVE=3 \
-    bash -e "$RECONCILER_RUN"
-) > "$reconciler_deleted_requested_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
-  "$reconciler_deleted_requested_output"
-grep -Fq -- '--ignore-not-found -o jsonpath=' "$FAKE_REQUESTED_HEAD_LOG"
-grep -Fqx 'get namespace pr-901 --ignore-not-found -o name' \
-  "$FAKE_RUNTIME_KUBECTL_LOG"
-test ! -e "$FAKE_ANNOTATE_LOG"
-grep -Fq 'inputs[pr_number]=901' "$FAKE_DISPATCH_LOG"
-
-reset_case
-reconciler_requested_read_error_output="$TEMP_DIR/reconciler-requested-read-error.out"
-if (
-  cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
-    FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=stale-head \
-    FAKE_REQUESTED_HEAD_READ_ERROR=true \
-    PREVIEW_MAX_ACTIVE=3 \
-    bash -e "$RECONCILER_RUN"
-) > "$reconciler_requested_read_error_output" 2>&1; then
-  echo "reconciler suppressed a requested-head annotation API error" >&2
-  exit 1
-fi
-test ! -e "$FAKE_ANNOTATE_LOG"
-
-reset_case
-reconciler_requested_recheck_error_output="$TEMP_DIR/reconciler-requested-recheck-error.out"
+reconciler_namespace_recheck_error_output="$TEMP_DIR/reconciler-namespace-recheck-error.out"
 if (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
-    FAKE_REQUESTED_HEAD_READ_ERROR=true \
-    FAKE_REQUESTED_HEAD_NOT_FOUND=true \
-    FAKE_REQUESTED_HEAD_RECHECK_ERROR=true \
+    FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash -e "$RECONCILER_RUN"
-) > "$reconciler_requested_recheck_error_output" 2>&1; then
+) > "$reconciler_namespace_recheck_error_output" 2>&1; then
   echo "reconciler suppressed a namespace recheck API error" >&2
   exit 1
 fi
+grep -q 'Unable to recheck namespace pr-901 before annotation repair' \
+  "$reconciler_namespace_recheck_error_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 
 reset_case
-reconciler_mismatched_requested_output="$TEMP_DIR/reconciler-mismatched-requested.out"
+reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
 (
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=head-old \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_PR_901_RECHECK_REQUESTED_HEAD=raced-head \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_mismatched_requested_output"
-grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
-  "$reconciler_mismatched_requested_output"
+) > "$reconciler_changed_requested_output"
+grep -qx \
+  'Skipping preview repair for PR #901: requested head changed during annotation repair check.' \
+  "$reconciler_changed_requested_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
-grep -Fq 'inputs[pr_number]=901' "$FAKE_DISPATCH_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+
+reset_case
+reconciler_changed_deployed_output="$TEMP_DIR/reconciler-changed-deployed.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_PR_901_RECHECK_HEAD=changed-head \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_changed_deployed_output"
+grep -qx \
+  'Skipping preview repair for PR #901: deployed head changed during annotation repair check.' \
+  "$reconciler_changed_deployed_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 
 reset_case
 malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"
@@ -1551,6 +1659,7 @@ janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 # Dormant successor deployment and cleanup code remains source-bound and
 # fail-closed until successor triggers and producer artifacts are activated.
 grep -q 'ACTION=deploy' "$trusted_workflow"
+test "$(grep -Fc -- '            ACTION=deploy' "$trusted_workflow")" -eq 1
 grep -q 'emit_no_action' "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
 grep -Fq 'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"' "$trusted_workflow"
@@ -1607,9 +1716,21 @@ test "$(grep -Fc -- '--retire-terminal-identities' "$trusted_workflow")" -eq 0
 grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
-# shellcheck disable=SC2016 # Assert missing namespaces are tolerated while other get errors fail.
-grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath=' \
+# shellcheck disable=SC2016 # Assert one fail-closed JSON snapshot feeds each namespace decision.
+grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
   "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert the initial and fresh namespace snapshots.
+test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 2
+# shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
+grep -Fq 'requested head changed during annotation repair check' "$reconciler_workflow"
+# The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;
+# no preceding restore step may imply a different runner-wide kubeconfig.
+if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
+  echo "Preview janitor retained an ineffective runtime kubeconfig restore step" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
+grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.

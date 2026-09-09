@@ -905,7 +905,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               + "; "
               + guardedAction
               + " is withheld: "
-              + boundedMessage(exception));
+              + boundedMessage(exception),
+          exception);
     }
     if (!current.present()) {
       throw new RuntimeProfileFenceException(
@@ -947,6 +948,16 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     private RuntimeProfileFenceException(
         HostedEnvironmentIdentityStatus.Phase phase, String reason, String message) {
       super(message);
+      this.phase = phase;
+      this.reason = reason;
+    }
+
+    private RuntimeProfileFenceException(
+        HostedEnvironmentIdentityStatus.Phase phase,
+        String reason,
+        String message,
+        Throwable cause) {
+      super(message, cause);
       this.phase = phase;
       this.reason = reason;
     }

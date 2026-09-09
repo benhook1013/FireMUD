@@ -20,8 +20,10 @@ import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.SecretList;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
+import io.fabric8.kubernetes.client.dsl.ReplaceDeletable;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -1163,6 +1165,60 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void postSnapshotRotationStillInitializesAnUninitializedRoleBehindTheSelectedChange() {
+    StableBatchFixture fixture = stableBatchFixture();
+    Resource<Secret> gatewayProjection =
+        fixture
+            .secretClient()
+            .runtimeSecrets()
+            .withName(fixture.plan().gatewayInternalWsSecretName());
+    when(gatewayProjection.get()).thenReturn(null);
+
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    assertEquals("source-ready", fixture.batch().ingress().state());
+
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
+    Resource<Secret> telnetSourceResource = mock(Resource.class);
+    when(fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()))
+        .thenReturn(telnetSourceResource);
+    when(telnetSourceResource.get())
+        .thenReturn(
+            certManagerSource(
+                fixture.plan(),
+                HostedIdentityContract.TELNET_ROLE,
+                fixture.plan().telnetSecretName(),
+                telnetReplacement));
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().telnetCertificateName(),
+        true,
+        2,
+        telnetReplacement);
+    assertEquals("source-ready", fixture.batch().telnet().state());
+
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().gatewayInternalWsCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+
+    CertificateMaterialService.RoleMaterial gateway = fixture.batch().gatewayInternalWs();
+
+    assertEquals("source-ready", gateway.state());
+    assertEquals(fixture.acceptedData(), gateway.source().getData());
+  }
+
+  @Test
   void unacceptedProjectionPinsItsMaterialUntilAcceptanceThenAdvancesOnRestart() {
     StableBatchFixture fixture = stableBatchFixture();
     Secret ingressProjection =
@@ -1214,6 +1270,10 @@ class SecretProjectionServiceTest {
             pinned.provenance(),
             ALWAYS_CURRENT);
     assertEquals("awaiting-acceptance", pending.state());
+    Resource<Secret> projectionResource =
+        fixture.secretClient().runtimeSecrets().withName(fixture.plan().ingressSecretName());
+    ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
+    when(projectionResource.lockResourceVersion("7")).thenReturn(lockedResource);
     assertEquals(
         true,
         projections
@@ -1247,6 +1307,113 @@ class SecretProjectionServiceTest {
 
     assertEquals("source-ready", advanced.state());
     assertEquals(replacement, advanced.source().getData());
+  }
+
+  @Test
+  void uniqueValidCertificateRequestAmongOwnedDuplicatesAllowsMaterialization() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        sourceData);
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-valid",
+                sourceData,
+                true),
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-stale",
+                Map.of("tls.crt", encoded("stale"), "tls.key", encoded("key-1")),
+                true)));
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("source-ready", material.state());
+  }
+
+  @Test
+  void zeroValidCertificateRequestsAmongOwnedDuplicatesKeepsMaterializationPending() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-stale-1",
+                Map.of("tls.crt", encoded("stale-1"), "tls.key", encoded("key-1")),
+                true),
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-stale-2",
+                Map.of("tls.crt", encoded("stale-2"), "tls.key", encoded("key-1")),
+                true)));
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("materialization-pending", material.state());
+  }
+
+  @Test
+  void multipleValidCertificateRequestsKeepsMaterializationPending() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        sourceData);
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-valid-1",
+                sourceData,
+                true),
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-valid-2",
+                sourceData,
+                true)));
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("materialization-pending", material.state());
   }
 
   @Test
@@ -1433,6 +1600,8 @@ class SecretProjectionServiceTest {
     when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
         .thenReturn(existingResource);
     when(existingResource.get()).thenReturn(drifted);
+    ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
+    when(existingResource.lockResourceVersion("7")).thenReturn(lockedResource);
     Secret source = new SecretBuilder().withType("kubernetes.io/tls").withData(desiredData).build();
 
     var repair =
@@ -1520,7 +1689,59 @@ class SecretProjectionServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
-    verify(existingResource).replace(repaired);
+    verify(existingResource).lockResourceVersion("7");
+    verify(lockedResource).replace(repaired);
+  }
+
+  @Test
+  void acknowledgementReturnsPendingOnLockedResourceVersionConflict() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretProjectionService service = new SecretProjectionService();
+    SecretClient secretClient = secretClient(plan);
+    Map<String, String> data =
+        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, data);
+    Map<String, String> pendingAnnotations = acceptedAnnotations(revision, "1".repeat(64));
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    Secret current =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            data,
+            pendingAnnotations);
+    current.getMetadata().setResourceVersion("7");
+    Resource<Secret> currentResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(currentResource);
+    when(currentResource.get()).thenReturn(current);
+    ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
+    when(currentResource.lockResourceVersion("7")).thenReturn(lockedResource);
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(lockedResource)
+        .replace(current);
+
+    SecretProjectionService.ProjectionResult result =
+        service.acknowledge(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            revision,
+            1,
+            1,
+            "1".repeat(64),
+            ALWAYS_CURRENT);
+
+    assertEquals("acceptance-cas-conflict", result.state());
+    assertEquals(revision, result.revision());
+    verify(currentResource).lockResourceVersion("7");
+    verify(lockedResource).replace(current);
+    verify(currentResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
@@ -2541,6 +2762,83 @@ class SecretProjectionServiceTest {
         .thenReturn(requests);
     when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
     when(identityRequests.list()).thenReturn(requestList);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void stubCertificateRequests(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      List<GenericKubernetesResource> requestsToReturn) {
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        requests = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityRequests = mock(NonNamespaceOperation.class);
+    GenericKubernetesResourceList requestList = new GenericKubernetesResourceList();
+    requestList.setItems(requestsToReturn);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS))
+        .thenReturn(requests);
+    when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
+    when(identityRequests.list()).thenReturn(requestList);
+  }
+
+  private static GenericKubernetesResource certificateRequest(
+      EnvironmentIdentityPlan plan,
+      String certificateName,
+      long revision,
+      String requestName,
+      Map<String, String> sourceData,
+      boolean ready) {
+    String issuer =
+        certificateName.equals(plan.ingressCertificateName())
+            ? plan.ingressIssuer()
+            : certificateName.equals(plan.telnetCertificateName())
+                ? plan.telnetIssuer()
+                : plan.grpcIssuer();
+    GenericKubernetesResource request = new GenericKubernetesResource();
+    request.setApiVersion("cert-manager.io/v1");
+    request.setKind("CertificateRequest");
+    request.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(requestName)
+            .withNamespace(plan.identityNamespace())
+            .withAnnotations(
+                Map.of(
+                    "cert-manager.io/certificate-name",
+                    certificateName,
+                    "cert-manager.io/certificate-revision",
+                    Long.toString(revision)))
+            .withOwnerReferences(
+                new OwnerReferenceBuilder()
+                    .withApiVersion("cert-manager.io/v1")
+                    .withKind("Certificate")
+                    .withName(certificateName)
+                    .withUid("uid-" + certificateName)
+                    .withController(true)
+                    .build())
+            .build());
+    Map<String, Object> status = new LinkedHashMap<>();
+    status.put("certificate", sourceData.get("tls.crt"));
+    if (sourceData.containsKey("ca.crt")) {
+      status.put("ca", sourceData.get("ca.crt"));
+    }
+    status.put(
+        "conditions",
+        ready ? List.of(Map.of("type", "Ready", "status", "True")) : List.of());
+    request.setAdditionalProperties(
+        Map.of(
+            "spec",
+            Map.of(
+                "issuerRef",
+                Map.of("name", issuer, "kind", "ClusterIssuer", "group", "cert-manager.io")),
+            "status",
+            status));
+    return request;
   }
 
   @SuppressWarnings("unchecked")

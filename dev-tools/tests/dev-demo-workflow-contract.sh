@@ -328,6 +328,8 @@ if reconcile_run.count("while (( page <= max_history_pages )); do") != 2:
     raise SystemExit("both runtime history scans must enforce max_history_pages")
 if reconcile_run.count('if (( page > max_history_pages )); then') != 2:
     raise SystemExit("both runtime history scans must fail closed after max_history_pages")
+if reconcile_run.count('failed_attempts="${bootstrap_failed_attempts:-0}"') != 1:
+    raise SystemExit("completed-history scan must carry over bootstrap retry usage")
 
 nonterminal_guard = '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]'
 for candidate_status in ("requested", "waiting", "pending"):

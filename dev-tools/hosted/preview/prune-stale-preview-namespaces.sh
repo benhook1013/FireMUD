@@ -175,6 +175,7 @@ if (( ${#namespace_rows[@]} == 0 )); then
   exit 0
 fi
 
+retirement_failures=0
 for row in "${namespace_rows[@]}"; do
   namespace="${row%%$'\t'*}"
   pr_number="${row#*$'\t'}"
@@ -262,7 +263,14 @@ for row in "${namespace_rows[@]}"; do
   if [[ "$apply" == true ]]; then
     bash "$delete_script" "$namespace" "$release_name"
     if [[ "$retire_terminal_identities" == true ]]; then
-      retire_hosted_identity "$namespace"
+      if ! retire_hosted_identity "$namespace"; then
+        retirement_failures=$((retirement_failures + 1))
+      fi
     fi
   fi
 done
+
+if (( retirement_failures > 0 )); then
+  echo "${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
+  exit 1
+fi

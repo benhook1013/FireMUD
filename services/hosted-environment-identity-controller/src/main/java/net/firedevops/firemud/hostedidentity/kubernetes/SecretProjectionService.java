@@ -205,7 +205,7 @@ public class SecretProjectionService {
       if (!guardPassed(runtimeProfileCurrent)) {
         return guardFailed(revision);
       }
-      operation.replace(current);
+      operation.lockResourceVersion(current.getMetadata().getResourceVersion()).replace(current);
       return ProjectionResult.synced(revision);
     } catch (KubernetesClientException exception) {
       if (exception.getCode() != 409) throw exception;

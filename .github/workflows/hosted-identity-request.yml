@@ -130,7 +130,6 @@ jobs:
               <<<"$artifacts_json")"
             [[ "$artifact_count" == 1 ]] || emit_no_action \
               "Ignoring source render without exactly one current ${expected_artifact_name} artifact."
-            ACTION=deploy
           else
             [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
               "Ignoring closed pull request because its head repository is not trusted."

@@ -648,7 +648,7 @@ public class CertificateMaterialService {
 
   private static boolean certificateRequestMatchesSource(
       KubernetesClient client, String namespace, ReadyCertificate certificate, Secret source) {
-    List<GenericKubernetesResource> matches =
+    List<GenericKubernetesResource> ownedRequests =
         client
             .genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS)
             .inNamespace(namespace)
@@ -657,16 +657,32 @@ public class CertificateMaterialService {
             .stream()
             .filter(request -> certificateRequestOwnedBy(request, certificate))
             .toList();
-    if (matches.size() > 1) {
-      throw new IllegalStateException("certificate issuance evidence is ambiguous");
-    }
-    if (matches.isEmpty()) {
-      return false;
-    }
-    GenericKubernetesResource request = matches.get(0);
-    if (!certificate.issuerReference().equals(issuerReference(request))) {
+
+    if (ownedRequests.size() == 1
+        && !certificate.issuerReference().equals(issuerReference(ownedRequests.get(0)))) {
       throw new IllegalStateException("CertificateRequest issuer binding is invalid");
     }
+
+    long validRequestCount =
+        ownedRequests.stream()
+            .filter(request -> certificateRequestHasExpectedIssuer(request, certificate))
+            .filter(request -> certificateRequestMatchesSourceData(request, source))
+            .limit(2)
+            .count();
+    return validRequestCount == 1;
+  }
+
+  private static boolean certificateRequestHasExpectedIssuer(
+      GenericKubernetesResource request, ReadyCertificate certificate) {
+    try {
+      return certificate.issuerReference().equals(issuerReference(request));
+    } catch (IllegalStateException exception) {
+      return false;
+    }
+  }
+
+  private static boolean certificateRequestMatchesSourceData(
+      GenericKubernetesResource request, Secret source) {
     if (request.getAdditionalProperties() == null) {
       return false;
     }
@@ -1064,7 +1080,9 @@ public class CertificateMaterialService {
     }
 
     private boolean deferBehindPostSnapshotRotation(String role) {
-      return postSnapshotRotationRole != null && !role.equals(postSnapshotRotationRole);
+      return postSnapshotRotationRole != null
+          && !role.equals(postSnapshotRotationRole)
+          && !initializing(role);
     }
   }
 

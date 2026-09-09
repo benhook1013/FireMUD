@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -1222,6 +1223,29 @@ class HostedIdentityReconcilerSafetyTest {
           "runtime Namespace disappeared before runtime projection read; runtime projection read is withheld",
           failure.getMessage());
     }
+    verify(fixture.client, never()).secrets();
+  }
+
+  @Test
+  void runtimeProfileFencePreservesMalformedProfileCause() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    IllegalStateException cause = new IllegalStateException("invalid runtime profile");
+    when(fixture.runtime.read(fixture.client, fixture.plan)).thenThrow(cause);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                fixture.reconciler.runtimeProjection(
+                    fixture.plan, expected, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
+
+    assertEquals(
+        "runtime profile became malformed before runtime projection read; runtime projection read is withheld: invalid runtime profile",
+        failure.getMessage());
+    assertSame(cause, failure.getCause());
     verify(fixture.client, never()).secrets();
   }
 

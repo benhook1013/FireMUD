@@ -68,6 +68,33 @@ jobs:
           preview_workflow_name="PR Preview Environment"
           eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
           max_active="${PREVIEW_MAX_ACTIVE:-1}"
+
+          parse_namespace_heads() {
+            jq -er '
+              def annotation($annotations; $name):
+                ($annotations[$name] // "")
+                | if type != "string" then
+                    error("namespace head annotation is not a string")
+                  elif test("[|\\r\\n]") then
+                    error("namespace head annotation contains an unsafe delimiter")
+                  else
+                    .
+                  end;
+              if type != "object" or (.metadata | type) != "object" then
+                error("namespace snapshot is not an object with metadata")
+              elif ((.metadata.annotations // {}) | type) != "object" then
+                error("namespace annotations are not an object")
+              else
+                (.metadata.annotations // {}) as $annotations
+                | [
+                    annotation($annotations; "firemud.dev/last-preview-head-sha"),
+                    annotation($annotations; "firemud.dev/requested-preview-head-sha")
+                  ]
+                | join("|")
+              end
+            ' <<<"$1"
+          }
+
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
@@ -98,30 +125,55 @@ jobs:
 
             namespace="pr-${pr_number}"
             desired_image_tag="${head_sha}"
-            current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
             namespace_exists=false
-            if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+            current_head_sha=""
+            requested_head_sha=""
+            if ! namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to inspect namespace ${namespace}; refusing preview reconcile." >&2
+              exit 1
+            fi
+            if [[ -n "${namespace_json}" ]]; then
               namespace_exists=true
+              if ! namespace_heads="$(parse_namespace_heads "${namespace_json}")"; then
+                echo "Unable to parse namespace ${namespace} snapshot; refusing preview reconcile." >&2
+                exit 1
+              fi
+              IFS='|' read -r current_head_sha requested_head_sha <<<"${namespace_heads}"
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-preview-head-sha}')"
               if [[ -z "${requested_head_sha}" ]]; then
-                if ! namespace_lookup="$(kubectl get namespace "${namespace}" --ignore-not-found -o name)"; then
-                  echo "Unable to determine whether namespace ${namespace} exists." >&2
+                if ! fresh_namespace_json="$(
+                  kubectl get namespace "${namespace}" --ignore-not-found -o json
+                )"; then
+                  echo "Unable to recheck namespace ${namespace} before annotation repair." >&2
                   exit 1
                 fi
-                if [[ -z "${namespace_lookup}" ]]; then
+                if [[ -z "${fresh_namespace_json}" ]]; then
                   namespace_exists=false
-                elif [[ "${namespace_lookup}" != "namespace/${namespace}" ]]; then
-                  echo "Namespace ${namespace} lookup returned an unexpected identity." >&2
+                elif ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
+                  echo "Unable to parse namespace ${namespace} recheck; refusing annotation repair." >&2
                   exit 1
                 else
-                  kubectl annotate namespace "${namespace}" \
-                    "firemud.dev/requested-preview-head-sha=${head_sha}" \
-                    --overwrite >/dev/null
-                  echo "Repaired missing requested head for aligned preview ${namespace}"
-                  continue
+                  IFS='|' read -r fresh_head_sha fresh_requested_head_sha <<<"${fresh_namespace_heads}"
+                  if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
+                    echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
+                    continue
+                  elif [[ -z "${fresh_requested_head_sha}" ]]; then
+                    kubectl annotate namespace "${namespace}" \
+                      "firemud.dev/requested-preview-head-sha=${head_sha}" \
+                      --overwrite >/dev/null
+                    echo "Repaired missing requested head for aligned preview ${namespace}"
+                    continue
+                  elif [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
+                    echo "Preview ${namespace} already aligned to ${head_sha}"
+                    continue
+                  else
+                    echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+                    continue
+                  fi
                 fi
               elif [[ "${requested_head_sha}" == "${head_sha}" ]]; then
                 echo "Preview ${namespace} already aligned to ${head_sha}"
