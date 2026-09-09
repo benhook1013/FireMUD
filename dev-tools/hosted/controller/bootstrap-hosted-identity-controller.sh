@@ -135,7 +135,12 @@ kubectl -n "$CONTROL_NAMESPACE" get deployment "$DEPLOYMENT_NAME" \
   -o jsonpath='{.status.availableReplicas}/{.spec.replicas}{"\n"}'
 crd_deadline=$((SECONDS + WAIT_SECONDS))
 while :; do
+  crd_remaining=$((crd_deadline - SECONDS))
+  if ((crd_remaining <= 0)); then
+    fail "HostedEnvironmentIdentity CRD is not Established=True"
+  fi
   if crd_established="$(kubectl get crd hostedenvironmentidentities.platform.firemud.dev \
+    --request-timeout="${crd_remaining}s" \
     -o jsonpath='{.status.conditions[?(@.type=="Established")].status}')" &&
     [[ "$crd_established" == "True" ]]; then
     break
