@@ -67,6 +67,11 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
+EXPECTED_TOP_LEVEL_LABELS = {
+    "app.kubernetes.io/name": "firemud",
+    "app.kubernetes.io/managed-by": "Helm",
+    "helm.sh/chart": "firemud-0.1.0",
+}
 
 
 def _application_service_spec(
@@ -415,6 +420,50 @@ def _require_mapping_list(value: object, path: str) -> list[dict]:
     return value
 
 
+def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
+    """Require the exact Helm-authored metadata admitted into the trusted apply."""
+
+    kind = document.get("kind", "object")
+    metadata = _require_mapping(document.get("metadata"), f"{kind}.metadata")
+    name = metadata.get("name")
+    allowed_fields = {"name", "namespace", "labels"}
+    unexpected_fields = set(metadata) - allowed_fields
+    if unexpected_fields:
+        fail(
+            f"{kind}/{name} metadata contains unsupported fields: "
+            f"{sorted(unexpected_fields)}"
+        )
+    expected_labels = {
+        **EXPECTED_TOP_LEVEL_LABELS,
+        "app.kubernetes.io/instance": expected_namespace,
+    }
+    if metadata.get("labels") != expected_labels:
+        fail(f"{kind}/{name} has unsafe Helm metadata labels")
+    namespace = metadata.get("namespace")
+    if namespace is not None and namespace != expected_namespace:
+        fail(f"{kind}/{name} targets namespace {namespace!r}")
+    return metadata
+
+
+def _validate_workload_selector_metadata(document: dict) -> None:
+    """Keep workload labels exact so Services and policies cannot be retargeted."""
+
+    kind = document["kind"]
+    name = document["metadata"]["name"]
+    spec = _require_mapping(document.get("spec"), f"{kind}/{name}.spec")
+    template = _require_mapping(spec.get("template"), f"{kind}/{name}.spec.template")
+    template_metadata = _require_mapping(
+        template.get("metadata"), f"{kind}/{name}.spec.template.metadata"
+    )
+    expected_app = "firemud-seed" if kind == "Job" else name
+    if template_metadata != {"labels": {"app": expected_app}}:
+        fail(f"{kind}/{name} has unsafe pod-template metadata")
+    if kind == "Deployment" and spec.get("selector") != {
+        "matchLabels": {"app": expected_app}
+    }:
+        fail(f"Deployment/{name} has an unsafe selector")
+
+
 def _is_expected_secret_reference(value: object) -> bool:
     return isinstance(value, str) and value in EXPECTED_SECRET_REFS
 
@@ -706,9 +755,13 @@ def inject_telnet_port(
     for document in documents:
         if not isinstance(document, dict):
             fail("validated preview render contains a non-object document")
-        metadata = _require_mapping(
-            document.get("metadata"),
-            f"{document.get('kind', 'object')}.metadata",
+        metadata = (
+            _validate_object_metadata(document, expected_namespace)
+            if expected_namespace is not None
+            else _require_mapping(
+                document.get("metadata"),
+                f"{document.get('kind', 'object')}.metadata",
+            )
         )
         if expected_namespace is not None:
             namespace = metadata.get("namespace")
@@ -752,16 +805,15 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
     for index, document in enumerate(documents):
         if not isinstance(document, dict):
             fail(f"prepared preview document {index} is not an object")
-        metadata = _require_mapping(
-            document.get("metadata"),
-            f"prepared preview document {index}.metadata",
-        )
+        metadata = _validate_object_metadata(document, expected_namespace)
         name = metadata.get("name")
         if metadata.get("namespace") != expected_namespace:
             fail(
                 f"{document.get('kind')}/{name} must explicitly target namespace "
                 f"{expected_namespace!r}"
             )
+        if document.get("kind") in {"Deployment", "Job"}:
+            _validate_workload_selector_metadata(document)
         for location, value in walk(document):
             if location.endswith(".nodePort"):
                 node_ports.append((f"{document.get('kind')}/{name}", location, value))
@@ -1143,19 +1195,27 @@ def validate_manifest(
         identity = (document.get("apiVersion"), document.get("kind"))
         if identity not in EXPECTED_KINDS:
             fail(f"manifest contains unsupported object {identity}")
-        metadata = document.get("metadata") or {}
+        metadata = _require_mapping(
+            document.get("metadata"), f"{document.get('kind', 'object')}.metadata"
+        )
         name = metadata.get("name")
         if not isinstance(name, str) or not NAME_RE.fullmatch(name):
             fail(f"manifest object has unsafe name: {name!r}")
         if name not in EXPECTED_NAMES[document["kind"]]:
             fail(f"manifest contains unexpected {document['kind']}/{name}")
+        if document["kind"] in {"Deployment", "Job"}:
+            pod = ((document.get("spec") or {}).get("template") or {}).get("spec")
+            _validate_restricted_pod_security(
+                pod,
+                f"{document['kind']}/{name}.spec.template.spec",
+            )
+        if document["kind"] == "Ingress":
+            validate_ingress(document, expected_namespace, expected_hostname)
+        metadata = _validate_object_metadata(document, expected_namespace)
         object_key = (document["kind"], name)
         if object_key in seen:
             fail(f"manifest contains duplicate {document['kind']}/{name}")
         seen.add(object_key)
-        namespace = metadata.get("namespace")
-        if namespace is not None and namespace != expected_namespace:
-            fail(f"{document['kind']}/{name} targets namespace {namespace!r}")
         _validate_no_annotations(document)
         for location, value in walk(document):
             if location.endswith(".nodePort"):
@@ -1172,13 +1232,7 @@ def validate_manifest(
             if location.endswith(".image") and isinstance(value, str):
                 _validate_image_reference(location, value, expected_image_tag)
         if document["kind"] in {"Deployment", "Job"}:
-            pod = ((document.get("spec") or {}).get("template") or {}).get("spec")
-            _validate_restricted_pod_security(
-                pod,
-                f"{document['kind']}/{name}.spec.template.spec",
-            )
-        if document["kind"] == "Ingress":
-            validate_ingress(document, expected_namespace, expected_hostname)
+            _validate_workload_selector_metadata(document)
     if seen != EXPECTED_OBJECTS:
         missing = sorted(EXPECTED_OBJECTS - seen)
         extra = sorted(seen - EXPECTED_OBJECTS)

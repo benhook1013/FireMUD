@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
@@ -27,7 +28,9 @@ public class SecretProjectionService {
       long sourceGeneration,
       long sourceObjectGeneration,
       String spkiSha256,
-      String provenance) {
+      String provenance,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    requireGuard(runtimeProfileCurrent);
     requireGeneration(sourceGeneration);
     requireGeneration(sourceObjectGeneration);
     requireFingerprint(spkiSha256, "SPKI fingerprint");
@@ -37,7 +40,11 @@ public class SecretProjectionService {
     Map<String, String> data = projectedData(role, source.getData());
     String revision = revisionForData(data);
     String name = targetName(plan, role);
-    Secret existing = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return guardFailed(revision);
+    }
+    var operation = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name);
+    Secret existing = operation.get();
     if (existing != null) {
       requireOwned(existing, plan.name(), role, "runtime projection Secret");
       Map<String, String> old = existing.getMetadata().getAnnotations();
@@ -75,7 +82,12 @@ public class SecretProjectionService {
             oldGeneration,
             oldObjectGeneration,
             oldSpki);
-        if (!preservePredecessor(client, plan, role, name, existing)) {
+        PreservationResult preservation =
+            preservePredecessor(client, plan, role, name, existing, runtimeProfileCurrent);
+        if (preservation == PreservationResult.GUARD_FAILED) {
+          return guardFailed(oldRevision);
+        }
+        if (preservation == PreservationResult.CAS_CONFLICT) {
           return ProjectionResult.awaiting("predecessor-cas-conflict", oldRevision);
         }
       }
@@ -108,10 +120,16 @@ public class SecretProjectionService {
             .build();
     try {
       if (existing == null) {
+        if (!guardPassed(runtimeProfileCurrent)) {
+          return guardFailed(revision);
+        }
         client.secrets().inNamespace(plan.runtimeNamespace()).resource(candidate).create();
       } else {
         requireResourceVersion(existing);
         candidate.getMetadata().setResourceVersion(existing.getMetadata().getResourceVersion());
+        if (!guardPassed(runtimeProfileCurrent)) {
+          return guardFailed(revision);
+        }
         client.secrets().inNamespace(plan.runtimeNamespace()).resource(candidate).replace();
       }
     } catch (KubernetesClientException exception) {
@@ -128,11 +146,16 @@ public class SecretProjectionService {
       String expectedRevision,
       long expectedGeneration,
       long expectedObjectGeneration,
-      String expectedSpki) {
+      String expectedSpki,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    requireGuard(runtimeProfileCurrent);
     requireRevision(expectedRevision, "expected revision");
     requireGeneration(expectedGeneration);
     requireGeneration(expectedObjectGeneration);
     requireFingerprint(expectedSpki, "expected SPKI fingerprint");
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return guardFailed(expectedRevision);
+    }
     var operation =
         client.secrets().inNamespace(plan.runtimeNamespace()).withName(targetName(plan, role));
     Secret current = operation.get();
@@ -156,6 +179,9 @@ public class SecretProjectionService {
     if (accepted(annotations, revision, sourceGeneration, sourceObjectGeneration, spki))
       return ProjectionResult.synced(revision);
     requireResourceVersion(current);
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return guardFailed(revision);
+    }
     Map<String, String> updated = new LinkedHashMap<>(annotations);
     updated.put(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION, revision);
     updated.put(
@@ -168,6 +194,9 @@ public class SecretProjectionService {
     updated.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "accepted");
     current.getMetadata().setAnnotations(updated);
     try {
+      if (!guardPassed(runtimeProfileCurrent)) {
+        return guardFailed(revision);
+      }
       operation.replace(current);
       return ProjectionResult.synced(revision);
     } catch (KubernetesClientException exception) {
@@ -194,12 +223,16 @@ public class SecretProjectionService {
     }
   }
 
-  private static boolean preservePredecessor(
+  private static PreservationResult preservePredecessor(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String role,
       String targetName,
-      Secret existing) {
+      Secret existing,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return PreservationResult.GUARD_FAILED;
+    }
     String name = targetName + "-previous";
     Map<String, String> annotations = new LinkedHashMap<>(existing.getMetadata().getAnnotations());
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "predecessor");
@@ -216,21 +249,50 @@ public class SecretProjectionService {
             .withData(existing.getData())
             .build();
     var operation = client.secrets().inNamespace(plan.identityNamespace()).withName(name);
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return PreservationResult.GUARD_FAILED;
+    }
     Secret prior = operation.get();
     try {
       if (prior == null) {
+        if (!guardPassed(runtimeProfileCurrent)) {
+          return PreservationResult.GUARD_FAILED;
+        }
         client.secrets().inNamespace(plan.identityNamespace()).resource(predecessor).create();
       } else {
         requireOwned(prior, plan.name(), role, "predecessor Secret");
         requireResourceVersion(prior);
         predecessor.getMetadata().setResourceVersion(prior.getMetadata().getResourceVersion());
+        if (!guardPassed(runtimeProfileCurrent)) {
+          return PreservationResult.GUARD_FAILED;
+        }
         client.secrets().inNamespace(plan.identityNamespace()).resource(predecessor).replace();
       }
-      return true;
+      return PreservationResult.PRESERVED;
     } catch (KubernetesClientException exception) {
       if (exception.getCode() != 409) throw exception;
-      return false;
+      return PreservationResult.CAS_CONFLICT;
     }
+  }
+
+  private static ProjectionResult guardFailed(String revision) {
+    return ProjectionResult.awaiting("runtime-profile-changed", revision);
+  }
+
+  private static void requireGuard(Supplier<Boolean> runtimeProfileCurrent) {
+    if (runtimeProfileCurrent == null) {
+      throw new IllegalArgumentException("runtime profile guard is required");
+    }
+  }
+
+  private static boolean guardPassed(Supplier<Boolean> runtimeProfileCurrent) {
+    return Boolean.TRUE.equals(runtimeProfileCurrent.get());
+  }
+
+  private enum PreservationResult {
+    PRESERVED,
+    CAS_CONFLICT,
+    GUARD_FAILED
   }
 
   private static Map<String, String> projectedData(String role, Map<String, String> sourceData) {

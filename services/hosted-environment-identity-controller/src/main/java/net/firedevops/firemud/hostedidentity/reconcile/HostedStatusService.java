@@ -174,7 +174,8 @@ public class HostedStatusService {
     }
     return Objects.equals(current.runtimeNamespaceUid(), previous.getRuntimeNamespaceUid())
         && Objects.equals(current.requestedHeadSha(), previous.getRequestedHeadSha())
-        && Objects.equals(current.deployedHeadSha(), previous.getDeployedHeadSha());
+        && Objects.equals(current.deployedHeadSha(), previous.getDeployedHeadSha())
+        && Objects.equals(current.telnetPort(), previous.getTelnetPort());
   }
 
   private static boolean currentPresent(RuntimeProfileService.RuntimeProfile current) {

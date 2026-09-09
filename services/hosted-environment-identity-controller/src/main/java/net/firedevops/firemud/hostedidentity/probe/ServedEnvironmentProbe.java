@@ -122,21 +122,21 @@ public class ServedEnvironmentProbe {
         "mtls-handshake");
   }
 
-  private ProbeResult grpc(
-      EnvironmentIdentityPlan plan, Secret material, String expectedFingerprint) {
+  ProbeResult grpc(EnvironmentIdentityPlan plan, Secret material, String expectedFingerprint) {
     if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
-    String hostname = grpcHostname(plan);
     return internalTlsProbe(
-        () ->
-            openGrpcTlsSocket(
-                hostname,
-                hostname,
-                GRPC_PORT,
-                expectedFingerprint,
-                material,
-                properties.getGrpcTrustAnchorSha256()),
+        () -> {
+          String hostname = grpcHostname(plan);
+          return openGrpcTlsSocket(
+              hostname,
+              hostname,
+              GRPC_PORT,
+              expectedFingerprint,
+              material,
+              properties.getGrpcTrustAnchorSha256());
+        },
         "mtls-handshake");
   }
 

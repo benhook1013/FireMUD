@@ -21,6 +21,7 @@ class HostedStatusServiceTest {
     previous.setRuntimeNamespaceUid("uid-before");
     previous.setRequestedHeadSha("head-before");
     previous.setDeployedHeadSha("head-before");
+    previous.setTelnetPort(32002);
     var current =
         new RuntimeProfileService.RuntimeProfile(
             "uid-after", "head-after", "head-after", 32002, true);
@@ -31,6 +32,53 @@ class HostedStatusServiceTest {
             previous,
             new RuntimeProfileService.RuntimeProfile(
                 "uid-before", "head-before", "head-before", 32002, true)));
+  }
+
+  @Test
+  void readyConditionIsClearedForTelnetPortDrift() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("pr-42")
+            .withNamespace("firemud-system")
+            .withGeneration(12L)
+            .build());
+    RuntimeProfile previous = new RuntimeProfile();
+    previous.setRuntimeNamespaceUid("uid");
+    previous.setRequestedHeadSha("a".repeat(40));
+    previous.setDeployedHeadSha("a".repeat(40));
+    previous.setTelnetPort(32002);
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    oldStatus.setProfile(previous);
+    oldStatus.setConditions(
+        java.util.List.of(new HostedCondition("Ready", "True", "Reconciled", "served")));
+    resource.setStatus(oldStatus);
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    RuntimeProfileService.RuntimeProfile current =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32003, true);
+    HostedEnvironmentIdentityStatus.RoleStatus role =
+        HostedStatusService.role(
+            "sha256:" + "b".repeat(64), 1L, 1L, "c".repeat(64), "cert-manager", "accepted");
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Ready,
+        "Reconciled",
+        "served",
+        true,
+        current,
+        role,
+        role,
+        role,
+        role,
+        role);
+
+    assertFalse(HostedStatusService.profileMatches(previous, current));
+    assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, resource.getStatus().getPhase());
+    assertEquals("RuntimeIdentityChanged", resource.getStatus().getConditions().get(0).getReason());
   }
 
   @Test

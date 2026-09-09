@@ -244,18 +244,20 @@ public class HostedIdentityScopeService {
         "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
   }
 
-  private static void ensureRole(KubernetesClient client, String namespace, Role desired) {
+  static void ensureRole(KubernetesClient client, String namespace, Role desired) {
     var operation =
         client.rbac().roles().inNamespace(namespace).withName(desired.getMetadata().getName());
     Role current = operation.get();
     if (current == null) {
       client.rbac().roles().inNamespace(namespace).resource(desired).create();
-    } else if (!roleEquivalent(current, desired)) {
+    } else if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
       throw new IllegalStateException("hosted identity scope Role drifted");
+    } else if (!roleRulesEquivalent(current, desired)) {
+      operation.edit(resource -> applyDesiredRoleSpec(resource, desired));
     }
   }
 
-  private static void ensureBinding(
+  static void ensureBinding(
       KubernetesClient client,
       String namespace,
       String name,
@@ -287,8 +289,12 @@ public class HostedIdentityScopeService {
     RoleBinding current = operation.get();
     if (current == null) {
       client.rbac().roleBindings().inNamespace(namespace).resource(desired).create();
-    } else if (!bindingEquivalent(current, desired)) {
+    } else if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
       throw new IllegalStateException("hosted identity scope RoleBinding drifted");
+    } else if (!roleRefEquivalent(current, desired)) {
+      throw new IllegalStateException("hosted identity scope RoleBinding roleRef drifted");
+    } else if (!bindingSubjectsEquivalent(current, desired)) {
+      operation.edit(resource -> applyDesiredBindingSpec(resource, desired));
     }
   }
 
@@ -298,6 +304,10 @@ public class HostedIdentityScopeService {
         || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
       return false;
     }
+    return roleRulesEquivalent(current, desired);
+  }
+
+  private static boolean roleRulesEquivalent(Role current, Role desired) {
     List<PolicyRule> currentRules = emptyIfNull(current.getRules());
     List<PolicyRule> desiredRules = emptyIfNull(desired.getRules());
     if (currentRules.size() != desiredRules.size()) {
@@ -314,14 +324,29 @@ public class HostedIdentityScopeService {
   static boolean bindingEquivalent(RoleBinding current, RoleBinding desired) {
     if (current == null
         || desired == null
-        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())
-        || current.getRoleRef() == null
-        || desired.getRoleRef() == null
-        || !java.util.Objects.equals(
+        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
+      return false;
+    }
+    return bindingSpecEquivalent(current, desired);
+  }
+
+  private static boolean bindingSpecEquivalent(RoleBinding current, RoleBinding desired) {
+    return roleRefEquivalent(current, desired) && bindingSubjectsEquivalent(current, desired);
+  }
+
+  private static boolean roleRefEquivalent(RoleBinding current, RoleBinding desired) {
+    return current != null
+        && desired != null
+        && current.getRoleRef() != null
+        && desired.getRoleRef() != null
+        && java.util.Objects.equals(
             current.getRoleRef().getApiGroup(), desired.getRoleRef().getApiGroup())
-        || !java.util.Objects.equals(current.getRoleRef().getKind(), desired.getRoleRef().getKind())
-        || !java.util.Objects.equals(
-            current.getRoleRef().getName(), desired.getRoleRef().getName())) {
+        && java.util.Objects.equals(current.getRoleRef().getKind(), desired.getRoleRef().getKind())
+        && java.util.Objects.equals(current.getRoleRef().getName(), desired.getRoleRef().getName());
+  }
+
+  private static boolean bindingSubjectsEquivalent(RoleBinding current, RoleBinding desired) {
+    if (current == null || desired == null) {
       return false;
     }
     var currentSubjects = emptyIfNull(current.getSubjects());
@@ -340,6 +365,26 @@ public class HostedIdentityScopeService {
       }
     }
     return true;
+  }
+
+  private static Role applyDesiredRoleSpec(Role current, Role desired) {
+    if (current == null
+        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
+      throw new IllegalStateException("hosted identity scope Role drifted during reconciliation");
+    }
+    current.setRules(desired.getRules());
+    return current;
+  }
+
+  private static RoleBinding applyDesiredBindingSpec(RoleBinding current, RoleBinding desired) {
+    if (current == null
+        || !managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())
+        || !roleRefEquivalent(current, desired)) {
+      throw new IllegalStateException(
+          "hosted identity scope RoleBinding drifted during reconciliation");
+    }
+    current.setSubjects(desired.getSubjects());
+    return current;
   }
 
   static boolean policyRuleEquivalent(PolicyRule current, PolicyRule desired) {

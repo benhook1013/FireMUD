@@ -194,7 +194,6 @@ for text_value in \
   "request.namespace == 'firemud-system'" \
   request.subResource \
   hostedenvironmentidentities/status \
-  hostedenvironmentidentities/finalizers \
   oldObject.spec.desiredState \
   "oldObject.status.phase == 'Retired'" \
   ownerReferences \
@@ -220,7 +219,7 @@ for text_value in \
   firemud-hosted-runtime-scope \
   controller-scope \
   firemud-hosted-system-namespace-guard \
-  "request.operation in ['UPDATE', 'PATCH']" \
+  "request.operation == 'UPDATE'" \
   "request.operation in ['CREATE', 'DELETE']" \
   "has(object.metadata.labels) == has(oldObject.metadata.labels)" \
   "has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)" \
@@ -262,6 +261,26 @@ assert all(
     binding.get("spec", {}).get("validationActions") == ["Deny"]
     for binding in binding_documents
 )
+valid_admission_operations = {"CREATE", "UPDATE", "DELETE", "CONNECT"}
+for policy in policy_documents:
+    rules = policy.get("spec", {}).get("matchConstraints", {}).get("resourceRules", [])
+    assert rules, policy["metadata"]["name"]
+    for rule in rules:
+        operations = rule.get("operations", [])
+        assert operations, policy["metadata"]["name"]
+        assert set(operations) <= valid_admission_operations, (
+            policy["metadata"]["name"],
+            operations,
+        )
+        assert len(operations) == len(set(operations)), (
+            policy["metadata"]["name"],
+            operations,
+        )
+    for validation in policy.get("spec", {}).get("validations", []):
+        assert "PATCH" not in validation.get("expression", ""), (
+            policy["metadata"]["name"],
+            validation.get("expression", ""),
+        )
 policies = {document["metadata"]["name"]: document for document in policy_documents}
 assert len(policies) == len(policy_documents)
 break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
@@ -305,13 +324,29 @@ controller = (
     "system:serviceaccount:firemud-system:firemud-hosted-identity-controller"
 )
 assert controller in main_authorization
-controller_finalizer = next(
+controller_finalizer_expression = next(
     expression
     for expression in main_expressions
-    if expression.startswith(f"request.userInfo.username != '{controller}'")
+    if f"request.userInfo.username != '{controller}'" in expression
+    and "object.metadata.finalizers.filter" in expression
 )
+assert controller_finalizer_expression.startswith(f"{break_glass} ||")
+main_rule = policies["firemud-hosted-identity-main"]["spec"]["matchConstraints"][
+    "resourceRules"
+][0]
+assert main_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
+assert main_rule["resources"] == ["hostedenvironmentidentities"]
+main_route = next(
+    expression for expression in main_expressions if "request.subResource == ''" in expression
+)
+assert main_route.startswith("request.subResource == '' &&")
+subresource_rule = policies["firemud-hosted-identity-subresources"]["spec"][
+    "matchConstraints"
+]["resourceRules"][0]
+assert subresource_rule["operations"] == ["UPDATE"]
+assert subresource_rule["resources"] == ["hostedenvironmentidentities/status"]
 for required in (
-    "request.operation == 'PATCH'",
+    "request.operation == 'UPDATE'",
     "object.spec == oldObject.spec",
     "has(object.status) == has(oldObject.status)",
     "(!has(object.status) || object.status == oldObject.status)",
@@ -323,12 +358,12 @@ for required in (
     "(!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations)",
     "has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences)",
     "(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)",
-    "(!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0)",
-    "object.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity']",
-    "oldObject.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity']",
-    "(!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)",
+    "oldObject.metadata.finalizers.exists",
+    "object.metadata.finalizers.exists",
+    "object.metadata.finalizers.filter",
+    "oldObject.metadata.finalizers.filter",
 ):
-    assert required in controller_finalizer, required
+    assert required in controller_finalizer_expression, required
 
 requester_metadata = next(
     expression
@@ -336,8 +371,9 @@ requester_metadata = next(
     if "has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)"
     in expression
 )
+assert requester_metadata.startswith(f"{break_glass} ||")
 for required in (
-    "request.operation in ['UPDATE', 'PATCH']",
+    "request.operation == 'UPDATE'",
     "has(object.metadata.finalizers) == has(oldObject.metadata.finalizers)",
     "(!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)",
     "request.operation == 'CREATE'",
@@ -346,10 +382,145 @@ for required in (
     assert required in requester_metadata, required
 
 controller_finalizer_value = ["platform.firemud.dev/hosted-environment-identity"]
+controller_finalizer_name = controller_finalizer_value[0]
+
+
+def identity_object(finalizers=None):
+    metadata = {
+        "name": "pr-42",
+        "namespace": "firemud-system",
+        "labels": {"example.test/label": "preserved"},
+        "annotations": {"example.test/annotation": "preserved"},
+        "ownerReferences": [{"apiVersion": "v1", "kind": "ConfigMap", "name": "owner"}],
+    }
+    if finalizers is not None:
+        metadata["finalizers"] = finalizers
+    return {
+        "metadata": metadata,
+        "spec": {"desiredState": "Active"},
+        "status": {"phase": "Pending"},
+    }
+
+
+def main_policy_controller_update_accepted(
+    old_object,
+    new_object,
+    *,
+    operation="UPDATE",
+    sub_resource="",
+    username=controller,
+    groups=(),
+):
+    if operation not in main_rule["operations"] or sub_resource != "":
+        return False
+    if new_object["metadata"]["namespace"] != "firemud-system":
+        return False
+    if re.fullmatch(r"(?:dev-demo|pr-[1-9][0-9]*)", new_object["metadata"]["name"]) is None:
+        return False
+    system_masters = "system:masters" in groups
+    if not system_masters and username not in (
+        "system:serviceaccount:firemud-system:firemud-hosted-identity-requester",
+        controller,
+    ):
+        return False
+
+    old_metadata = old_object["metadata"]
+    new_metadata = new_object["metadata"]
+    old = old_metadata.get("finalizers", [])
+    new = new_metadata.get("finalizers", [])
+    addition = (
+        controller_finalizer_name not in old
+        and controller_finalizer_name in new
+        and len(new) == len(old) + 1
+        and [value for value in new if value != controller_finalizer_name] == old
+    )
+    removal = (
+        controller_finalizer_name in old
+        and controller_finalizer_name not in new
+        and len(old) == len(new) + 1
+        and new == [value for value in old if value != controller_finalizer_name]
+    )
+    unchanged_fields = all(
+        (field in new_metadata) == (field in old_metadata)
+        and (field not in new_metadata or new_metadata[field] == old_metadata[field])
+        for field in ("labels", "annotations", "ownerReferences")
+    )
+    controller_shape = (
+        operation == "UPDATE"
+        and new_object["spec"] == old_object["spec"]
+        and ("status" in new_object) == ("status" in old_object)
+        and ("status" not in new_object or new_object["status"] == old_object["status"])
+        and new_metadata["name"] == old_metadata["name"]
+        and new_metadata["namespace"] == old_metadata["namespace"]
+        and unchanged_fields
+        and (addition or removal)
+    )
+    if not system_masters and username == controller and not controller_shape:
+        return False
+    if new_object["spec"]["desiredState"] not in ("Active", "Retired"):
+        return False
+    if not (
+        new_object["spec"]["desiredState"] == old_object["spec"]["desiredState"]
+        or (
+            old_object["spec"]["desiredState"] == "Active"
+            and new_object["spec"]["desiredState"] == "Retired"
+        )
+    ):
+        return False
+    return system_masters or username == controller
+
+
+external = "example.test/external"
+replacement = "example.test/replacement"
+for old_finalizers, new_finalizers in (
+    (None, controller_finalizer_value),
+    ([], controller_finalizer_value),
+    ([external], [external, controller_finalizer_name]),
+    ([external], [controller_finalizer_name, external]),
+    ([external, controller_finalizer_name], [external]),
+    ([controller_finalizer_name, external], [external]),
+):
+    assert main_policy_controller_update_accepted(
+        identity_object(old_finalizers), identity_object(new_finalizers)
+    )
+
+for old_finalizers, new_finalizers in (
+    ([external, controller_finalizer_name], controller_finalizer_value),
+    ([external], []),
+    ([external], [replacement]),
+    ([external], [replacement, controller_finalizer_name]),
+    ([external, controller_finalizer_name], [replacement]),
+    ([external], [external]),
+):
+    assert not main_policy_controller_update_accepted(
+        identity_object(old_finalizers), identity_object(new_finalizers)
+    )
+
+reordered_old = ["example.test/first", "example.test/second"]
+reordered_new = ["example.test/second", controller_finalizer_name, "example.test/first"]
+assert not main_policy_controller_update_accepted(
+    identity_object(reordered_old), identity_object(reordered_new)
+)
+metadata_mutation_old = identity_object([external])
+metadata_mutation_new = identity_object([external, controller_finalizer_name])
+metadata_mutation_new["metadata"]["labels"] = {"example.test/label": "changed"}
+assert not main_policy_controller_update_accepted(
+    metadata_mutation_old, metadata_mutation_new
+)
+assert not main_policy_controller_update_accepted(
+    identity_object([external]),
+    identity_object([external, controller_finalizer_name]),
+    sub_resource="finalizers",
+)
+assert main_policy_controller_update_accepted(
+    identity_object([external, controller_finalizer_name]),
+    identity_object([]),
+    groups=("system:masters",),
+)
 
 
 def requester_finalizers_accepted(operation, new_metadata, old_metadata=None):
-    if operation in ("UPDATE", "PATCH"):
+    if operation == "UPDATE":
         return (
             ("finalizers" in new_metadata) == ("finalizers" in old_metadata)
             and (
@@ -364,19 +535,18 @@ def requester_finalizers_accepted(operation, new_metadata, old_metadata=None):
 
 absent_finalizers = {}
 present_finalizer = {"finalizers": controller_finalizer_value}
-for operation in ("UPDATE", "PATCH"):
-    assert requester_finalizers_accepted(
-        operation, absent_finalizers, absent_finalizers
-    )
-    assert requester_finalizers_accepted(
-        operation, present_finalizer, present_finalizer
-    )
-    assert not requester_finalizers_accepted(
-        operation, present_finalizer, absent_finalizers
-    )
-    assert not requester_finalizers_accepted(
-        operation, absent_finalizers, present_finalizer
-    )
+assert requester_finalizers_accepted(
+    "UPDATE", absent_finalizers, absent_finalizers
+)
+assert requester_finalizers_accepted(
+    "UPDATE", present_finalizer, present_finalizer
+)
+assert not requester_finalizers_accepted(
+    "UPDATE", present_finalizer, absent_finalizers
+)
+assert not requester_finalizers_accepted(
+    "UPDATE", absent_finalizers, present_finalizer
+)
 assert requester_finalizers_accepted("CREATE", absent_finalizers)
 assert requester_finalizers_accepted("CREATE", {"finalizers": []})
 assert not requester_finalizers_accepted("CREATE", present_finalizer)
@@ -455,21 +625,6 @@ assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match
 assert "object.metadata.name == 'firemud-grpc-tls'" in secret_match
 
-noncanonical_cert_manager_request = {
-    "username": "system:serviceaccount:cert-manager:cert-manager",
-    "namespace": "pr-42-identity",
-    "name": "unexpected-cert-manager-secret",
-}
-assert noncanonical_cert_manager_request["username"] in cert_manager_match
-assert re.fullmatch(
-    r"(?:dev-identity|pr-[1-9][0-9]*-identity)",
-    noncanonical_cert_manager_request["namespace"],
-)
-assert not re.fullmatch(
-    r"(?:firemud-grpc-tls(?:-previous)?|(?:dev|pr-[1-9][0-9]*)-(?:tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)(?:-previous)?)",
-    noncanonical_cert_manager_request["name"],
-)
-
 secret_expressions = [
     validation["expression"]
     for validation in secret_policy["spec"]["validations"]
@@ -506,6 +661,8 @@ assert "spring-cloud-gateway-mtls." in profile_expression
 assert ".svc.cluster.local" in profile_expression
 assert "spiffe://firemud/ns/" in profile_expression
 assert "/sa/tcp-proxy-service" in profile_expression
+assert "has(object.spec.encodeUsagesInRequest)" in profile_expression
+assert "object.spec.encodeUsagesInRequest == true" in profile_expression
 assert (
     "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||\n"
     "    ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
@@ -613,6 +770,7 @@ for text_value in \
   "/actuator/health/liveness" \
   "/actuator/health/readiness" \
   "replicas: 1" \
+  "progressDeadlineSeconds: 420" \
   "type: Recreate" \
   FIREMUD_HOSTED_IDENTITY_CONTROL_NAMESPACE \
   FIREMUD_HOSTED_IDENTITY_PREVIEW_DOMAIN \

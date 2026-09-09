@@ -6,6 +6,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
@@ -20,79 +21,125 @@ public class DeploymentRolloutService {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String telnetRevision,
-      String grpcRevision) {
-    boolean telnetReady =
-        syncOne(
-            client,
-            plan.runtimeNamespace(),
-            "tcp-proxy-service",
-            HostedIdentityContract.TELNET_REVISION_ANNOTATION,
-            telnetRevision);
-    boolean grpcReady = true;
+      String grpcRevision,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    if (runtimeProfileCurrent == null) {
+      throw new IllegalArgumentException("runtime profile guard is required");
+    }
+    Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
+    revisionsByDeployment
+        .computeIfAbsent("tcp-proxy-service", ignored -> new LinkedHashMap<>())
+        .put(HostedIdentityContract.TELNET_REVISION_ANNOTATION, telnetRevision);
     for (String consumer : plan.grpcConsumers()) {
-      grpcReady &=
+      revisionsByDeployment
+          .computeIfAbsent(consumer, ignored -> new LinkedHashMap<>())
+          .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, grpcRevision);
+    }
+    Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
+    for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
+      SyncOneResult result =
           syncOne(
               client,
               plan.runtimeNamespace(),
-              consumer,
-              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
-              grpcRevision);
+              entry.getKey(),
+              entry.getValue(),
+              runtimeProfileCurrent);
+      readinessByDeployment.put(entry.getKey(), result.ready());
+      if (!result.guardPassed()) {
+        break;
+      }
     }
+    boolean telnetReady = readinessByDeployment.getOrDefault("tcp-proxy-service", false);
+    boolean grpcReady =
+        plan.grpcConsumers().stream()
+            .allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
     return new RolloutResult(telnetReady && grpcReady, telnetReady, grpcReady);
   }
 
-  /** Terminates both bridge endpoints for the monotonic Retired identity-removal intent. */
-  public RetirementResult stopBridges(KubernetesClient client, EnvironmentIdentityPlan plan) {
-    boolean gatewayStopped = stopOne(client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(0));
-    boolean proxyStopped = stopOne(client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(1));
+  /**
+   * Terminates both bridge endpoints for the monotonic Retired identity-removal intent while
+   * fencing every read/edit boundary with the current runtime identity. A false guard means the
+   * namespace identity is no longer safe to mutate; callers may throw from the guard to preserve
+   * the precise failure reason.
+   */
+  public RetirementResult stopBridges(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    if (runtimeProfileCurrent == null) {
+      throw new IllegalArgumentException("runtime profile guard is required");
+    }
+    StopOneResult gateway =
+        stopOne(client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(0), runtimeProfileCurrent);
+    StopOneResult proxy =
+        gateway.guardPassed()
+            ? stopOne(
+                client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(1), runtimeProfileCurrent)
+            : new StopOneResult(false, false);
+    boolean gatewayStopped = gateway.stopped();
+    boolean proxyStopped = proxy.stopped();
     return new RetirementResult(gatewayStopped && proxyStopped, gatewayStopped, proxyStopped);
   }
 
-  private boolean stopOne(KubernetesClient client, String namespace, String deploymentName) {
+  private StopOneResult stopOne(
+      KubernetesClient client,
+      String namespace,
+      String deploymentName,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return new StopOneResult(false, false);
+    }
     var operation = client.apps().deployments().inNamespace(namespace).withName(deploymentName);
     Deployment deployment = operation.get();
     if (deployment == null) {
-      return true;
+      return new StopOneResult(true, true);
     }
     if (deployment.getSpec() == null) {
       throw new IllegalStateException("Deployment has no spec: " + deploymentName);
     }
     Integer replicas = deployment.getSpec().getReplicas();
     if (replicas == null || replicas != 0) {
+      if (!guardPassed(runtimeProfileCurrent)) {
+        return new StopOneResult(false, false);
+      }
       operation.edit(DeploymentRolloutService::applyRetirementScaleDown);
-      return false;
+      return new StopOneResult(false, true);
     }
-    return retirementScaleDownObserved(deployment);
+    return new StopOneResult(retirementScaleDownObserved(deployment), true);
   }
 
-  private boolean syncOne(
+  private SyncOneResult syncOne(
       KubernetesClient client,
       String namespace,
       String deploymentName,
-      String annotationKey,
-      String revision) {
-    Deployment deployment =
-        client.apps().deployments().inNamespace(namespace).withName(deploymentName).get();
+      Map<String, String> desiredRevisions,
+      Supplier<Boolean> runtimeProfileCurrent) {
+    if (!guardPassed(runtimeProfileCurrent)) {
+      return new SyncOneResult(false, false);
+    }
+    var operation = client.apps().deployments().inNamespace(namespace).withName(deploymentName);
+    Deployment deployment = operation.get();
     if (deployment == null
         || deployment.getSpec() == null
         || deployment.getSpec().getTemplate() == null) {
-      return false;
+      return new SyncOneResult(false, true);
     }
     ObjectMeta templateMetadata = deployment.getSpec().getTemplate().getMetadata();
     Map<String, String> annotations =
         templateMetadata == null || templateMetadata.getAnnotations() == null
             ? new LinkedHashMap<>()
             : new LinkedHashMap<>(templateMetadata.getAnnotations());
-    if (!revision.equals(annotations.get(annotationKey))) {
-      client
-          .apps()
-          .deployments()
-          .inNamespace(namespace)
-          .withName(deploymentName)
-          .edit(current -> applyRevision(current, annotationKey, revision));
-      return false;
+    boolean revisionChanged =
+        desiredRevisions.entrySet().stream()
+            .anyMatch(entry -> !entry.getValue().equals(annotations.get(entry.getKey())));
+    if (revisionChanged) {
+      if (!guardPassed(runtimeProfileCurrent)) {
+        return new SyncOneResult(false, false);
+      }
+      operation.edit(current -> applyRevisions(current, desiredRevisions));
+      return new SyncOneResult(false, true);
     }
-    return activeRolloutObserved(deployment);
+    return new SyncOneResult(activeRolloutObserved(deployment), true);
   }
 
   static boolean activeRolloutObserved(Deployment deployment) {
@@ -115,6 +162,10 @@ public class DeploymentRolloutService {
   }
 
   static Deployment applyRevision(Deployment deployment, String annotationKey, String revision) {
+    return applyRevisions(deployment, Map.of(annotationKey, revision));
+  }
+
+  static Deployment applyRevisions(Deployment deployment, Map<String, String> desiredRevisions) {
     if (deployment == null
         || deployment.getSpec() == null
         || deployment.getSpec().getTemplate() == null) {
@@ -129,7 +180,7 @@ public class DeploymentRolloutService {
         metadata.getAnnotations() == null
             ? new LinkedHashMap<>()
             : new LinkedHashMap<>(metadata.getAnnotations());
-    annotations.put(annotationKey, revision);
+    annotations.putAll(desiredRevisions);
     metadata.setAnnotations(annotations);
     return deployment;
   }
@@ -155,6 +206,14 @@ public class DeploymentRolloutService {
   private static int value(Integer value) {
     return value == null ? 0 : value;
   }
+
+  private static boolean guardPassed(Supplier<Boolean> runtimeProfileCurrent) {
+    return Boolean.TRUE.equals(runtimeProfileCurrent.get());
+  }
+
+  private record SyncOneResult(boolean ready, boolean guardPassed) {}
+
+  private record StopOneResult(boolean stopped, boolean guardPassed) {}
 
   public record RolloutResult(boolean ready, boolean telnetReady, boolean grpcReady) {}
 

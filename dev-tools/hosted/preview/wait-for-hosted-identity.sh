@@ -92,20 +92,26 @@ if [[ "${1:-}" == "--retired" ]]; then
 
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS < deadline )); do
-    if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" -o json 2>/dev/null)"; then
-      generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"
-      observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"
-      phase="$(jq -r '.status.phase // empty' <<<"$identity_json")"
-      ready_status="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .status) // empty' <<<"$identity_json")"
-      ready_generation="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .observedGeneration) // empty' <<<"$identity_json")"
-      if [[ "$phase" == "Retired" && "$observed_generation" == "$generation" && "$ready_status" == "False" && "$ready_generation" == "$generation" ]]; then
-        printf 'identity=%s\nphase=%s\nobservedGeneration=%s\n' \
-          "$identity_name" "$phase" "$observed_generation"
-        exit 0
+    if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
+      if [[ -z "$identity_json" ]]; then
+        echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear before retirement."
+      else
+        generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"
+        observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"
+        phase="$(jq -r '.status.phase // empty' <<<"$identity_json")"
+        ready_status="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .status) // empty' <<<"$identity_json")"
+        ready_generation="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .observedGeneration) // empty' <<<"$identity_json")"
+        if [[ "$phase" == "Retired" && "$observed_generation" == "$generation" && "$ready_status" == "False" && "$ready_generation" == "$generation" ]]; then
+          printf 'identity=%s\nphase=%s\nobservedGeneration=%s\n' \
+            "$identity_name" "$phase" "$observed_generation"
+          exit 0
+        fi
+        echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation:-missing} Retired/Ready=False (phase=${phase:-missing}, observed=${observed_generation:-missing})."
       fi
-      echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation:-missing} Retired/Ready=False (phase=${phase:-missing}, observed=${observed_generation:-missing})."
     else
-      echo "Waiting for HostedEnvironmentIdentity/${identity_name}..."
+      kubectl_status=$?
+      echo "Unable to determine retirement state for HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
+      exit "$kubectl_status"
     fi
     sleep 5
   done

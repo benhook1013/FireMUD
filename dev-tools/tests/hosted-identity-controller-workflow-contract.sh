@@ -16,6 +16,7 @@ waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
+render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 
 contains() {
@@ -72,6 +73,7 @@ done
 # Shared lifecycle helpers retain the complete controller projection boundary.
 contains "$waiter" '.status.observedGeneration'
 contains "$waiter" '--retired'
+contains "$waiter" '--ignore-not-found'
 # shellcheck disable=SC2016 # Match the literal generation comparison in waiter source.
 contains "$waiter" '"$ready_generation" == "$generation"'
 contains "$waiter" '.status.conditions[]? | select(.type == "Ready")'
@@ -213,14 +215,34 @@ apply_run = apply_step["run"]
 target_validation = (
     'runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"'
 )
-assert apply_run.count(target_validation) == 2
+revalidate_target = "bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+assert apply_step["env"]["GH_TOKEN"] == "${{ github.token }}"
+assert apply_step["env"]["PR_NUMBER"] == "${{ needs.validate-target.outputs.pr_number }}"
+assert apply_step["env"]["EXPECTED_HEAD_SHA"] == "${{ needs.validate-target.outputs.head_sha }}"
+assert apply_run.count(target_validation) == 1
+assert apply_run.count(revalidate_target) == 2
 dry_run = "kubectl apply --dry-run=server"
 actual_apply = "kubectl apply --server-side"
-first_validation = apply_run.index(target_validation)
+validation_position = apply_run.index(target_validation)
+first_revalidation = apply_run.index(revalidate_target)
 dry_run_position = apply_run.index(dry_run)
-second_validation = apply_run.index(target_validation, first_validation + 1)
+second_revalidation = apply_run.index(revalidate_target, first_revalidation + 1)
 actual_apply_position = apply_run.index(actual_apply)
-assert first_validation < dry_run_position < second_validation < actual_apply_position
+assert (
+    validation_position
+    < first_revalidation
+    < dry_run_position
+    < second_revalidation
+    < actual_apply_position
+)
+apply_lines = [line.strip() for line in apply_run.splitlines()]
+dry_run_line = next(index for index, line in enumerate(apply_lines) if dry_run in line)
+actual_apply_line = next(index for index, line in enumerate(apply_lines) if actual_apply in line)
+assert apply_lines[dry_run_line - 2] == revalidate_target + " \\"
+assert apply_lines[dry_run_line - 1] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
+assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+assert actual_apply_line == dry_run_line + 3
 assert "preflight.py hosted-bridge" not in Path(sys.argv[1]).read_text(encoding="utf-8")
 
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
@@ -315,6 +337,42 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Exercise the real downstream Helm producer before checking mutations. This
+# proves that the closed metadata allowlist accepts exactly the top-level and
+# pod-template labels emitted by the chart.
+rendered_values="$TEMP_DIR/preview-values.yaml"
+rendered_manifest="$TEMP_DIR/preview-rendered.yaml"
+python3 "$render_preview_values" \
+  "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
+  "$rendered_values" 42 pr-42 pr-42 pr-42.preview.example.test \
+  pr-42-head-42 32000
+helm template pr-42 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$rendered_values" --namespace pr-42 \
+  --show-only templates/apps.yaml >"$rendered_manifest"
+
+python3 - "$artifact_validator" "$rendered_manifest" <<'PY'
+import runpy
+import sys
+
+import yaml
+
+validator = runpy.run_path(sys.argv[1])
+documents = [
+    document
+    for document in yaml.safe_load_all(open(sys.argv[2], encoding="utf-8"))
+    if document is not None
+]
+
+for document in documents:
+    metadata = validator["_validate_object_metadata"](document, "pr-42")
+    assert metadata["labels"] == {
+        **validator["EXPECTED_TOP_LEVEL_LABELS"],
+        "app.kubernetes.io/instance": "pr-42",
+    }
+    if document["kind"] == "Deployment":
+        validator["_validate_workload_selector_metadata"](document)
+PY
 
 # Explicit-null pod templates are authored artifact errors, not validator
 # tracebacks, in both the sanitizer and trusted manifest-validation paths.
@@ -496,14 +554,42 @@ documents = [
     {
         "apiVersion": "v1",
         "kind": "Service",
-        "metadata": {"name": "tcp-proxy-service"},
+        "metadata": {
+            "name": "tcp-proxy-service",
+            "labels": {
+                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        },
         "spec": {"ports": [{"port": 2323}]},
     },
     {
         "apiVersion": "v1",
         "kind": "ConfigMap",
-        "metadata": {"name": "firemud-config", "namespace": "pr-42"},
+        "metadata": {
+            "name": "firemud-config",
+            "namespace": "pr-42",
+            "labels": {
+                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        },
         "data": {},
+    },
+    {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": "account-service",
+            "labels": {
+                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        },
+        "spec": {
+            "selector": {"matchLabels": {"app": "account-service"}},
+            "template": {"metadata": {"labels": {"app": "account-service"}}},
+        },
     },
 ]
 source.write_text(yaml.safe_dump_all(documents), encoding="utf-8")
@@ -514,14 +600,16 @@ if any(document["metadata"].get("namespace") != "pr-42" for document in prepared
     raise SystemExit("trusted runtime preparation left a namespace implicit")
 
 
-def expect_rejected(case_name, mutation):
+def expect_rejected(case_name, mutation, expected_message=None):
     mutated = copy.deepcopy(prepared_documents)
     mutation(mutated)
     path = tmp / f"runtime-target-{case_name}.yaml"
     path.write_text(yaml.safe_dump_all(mutated), encoding="utf-8")
     try:
         validate_target(path, "pr-42", 32000)
-    except ValueError:
+    except ValueError as exc:
+        if expected_message is not None and expected_message not in str(exc):
+            raise AssertionError((case_name, str(exc))) from exc
         return
     raise SystemExit(f"runtime target validator accepted {case_name}")
 
@@ -538,6 +626,61 @@ expect_rejected(
     "extra-node-port",
     lambda current: current[1].setdefault("spec", {}).__setitem__("nodePort", 32001),
 )
+expect_rejected(
+    "finalizers",
+    lambda current: current[0]["metadata"].__setitem__(
+        "finalizers", ["untrusted.example/finalizer"]
+    ),
+    "metadata contains unsupported fields: ['finalizers']",
+)
+expect_rejected(
+    "owner-references",
+    lambda current: current[0]["metadata"].__setitem__(
+        "ownerReferences",
+        [{"apiVersion": "v1", "kind": "Secret", "name": "capture"}],
+    ),
+    "metadata contains unsupported fields: ['ownerReferences']",
+)
+expect_rejected(
+    "unknown-metadata-field",
+    lambda current: current[0]["metadata"].__setitem__("generateName", "escape-"),
+    "metadata contains unsupported fields: ['generateName']",
+)
+expect_rejected(
+    "unknown-top-level-label",
+    lambda current: current[0]["metadata"]["labels"].__setitem__(
+        "untrusted.example/route", "capture"
+    ),
+    "unsafe Helm metadata labels",
+)
+expect_rejected(
+    "modified-helm-label",
+    lambda current: current[0]["metadata"]["labels"].__setitem__(
+        "app.kubernetes.io/instance", "pr-43"
+    ),
+    "unsafe Helm metadata labels",
+)
+expect_rejected(
+    "selector-label",
+    lambda current: current[2]["spec"]["template"]["metadata"]["labels"].__setitem__(
+        "app", "postgres"
+    ),
+    "unsafe pod-template metadata",
+)
+expect_rejected(
+    "unknown-pod-label",
+    lambda current: current[2]["spec"]["template"]["metadata"]["labels"].__setitem__(
+        "untrusted.example/route", "capture"
+    ),
+    "unsafe pod-template metadata",
+)
+expect_rejected(
+    "workload-selector",
+    lambda current: current[2]["spec"]["selector"]["matchLabels"].__setitem__(
+        "app", "postgres"
+    ),
+    "unsafe selector",
+)
 try:
     validate_target(prepared, "pr-42", 32001)
 except ValueError:
@@ -545,6 +688,254 @@ except ValueError:
 else:
     raise SystemExit("runtime target validator accepted the wrong allocated port")
 PY
+
+# Execute the exact trusted apply and deployed-head blocks. The changing PR
+# fixtures prove that close/head races after server dry-run stop the real apply
+# and therefore cannot publish deployed-head evidence.
+apply_runtime_step="$TEMP_DIR/apply-runtime-step.sh"
+record_preview_head_step="$TEMP_DIR/record-preview-head-step.sh"
+prepared_render="$TEMP_DIR/runtime-target-prepared.yaml"
+python3 - "$trusted" "$apply_runtime_step" "$record_preview_head_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["deploy-runtime"]["steps"]
+apply_step = next(
+    step for step in steps if step.get("name") == "Apply validated PR runtime artifact"
+)
+record_step = next(
+    step for step in steps if step.get("name") == "Record exact deployed preview head"
+)
+Path(sys.argv[2]).write_text(apply_step["run"], encoding="utf-8")
+Path(sys.argv[3]).write_text(record_step["run"], encoding="utf-8")
+PY
+
+apply_stub_dir="$TEMP_DIR/apply-stubs"
+mkdir -p "$apply_stub_dir"
+cat >"$apply_stub_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 2 && "$1" == api && "$2" == "repos/example/FireMUD/pulls/42" ]]
+count=0
+if [[ -f "${TEST_GH_COUNT:?}" ]]; then
+  count="$(<"$TEST_GH_COUNT")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$TEST_GH_COUNT"
+printf 'gh-%s\n' "$count" >>"${TEST_APPLY_LOG:?}"
+
+state=open
+head_sha="${TEST_EXPECTED_HEAD:?}"
+case "${TEST_APPLY_SCENARIO:?}" in
+  success)
+    ;;
+  closed-first)
+    state=closed
+    ;;
+  closed-second)
+    if (( count == 2 )); then
+      state=closed
+    fi
+    ;;
+  stale-second)
+    if (( count == 2 )); then
+      head_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    fi
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+jq -nc \
+  --arg state "$state" \
+  --arg head "$head_sha" \
+  '{state:$state,head:{sha:$head,repo:{full_name:"example/FireMUD"}},base:{ref:"develop"},user:{login:"trusted-user"},labels:[]}'
+SH
+cat >"$apply_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == apply && "$2" == --dry-run=server ]]; then
+  [[ $# -eq 8 ]]
+  [[ "$3" == --server-side ]]
+  [[ "$4" == --field-manager=trusted-hosted-preview ]]
+  [[ "$5" == -n && "$6" == pr-42 && "$7" == -f ]]
+  [[ "$8" == "${ARTIFACT_PATH:?}" ]]
+  printf 'dry-run\n' >>"${TEST_APPLY_LOG:?}"
+  exit 0
+fi
+if [[ "$1" == apply && "$2" == --server-side ]]; then
+  [[ $# -eq 7 ]]
+  [[ "$3" == --field-manager=trusted-hosted-preview ]]
+  [[ "$4" == -n && "$5" == pr-42 && "$6" == -f ]]
+  [[ "$7" == "${ARTIFACT_PATH:?}" ]]
+  printf 'apply\n' >>"${TEST_APPLY_LOG:?}"
+  exit 0
+fi
+if [[ "$1" == annotate ]]; then
+  [[ $# -eq 5 ]]
+  [[ "$2" == namespace && "$3" == pr-42 ]]
+  [[ "$4" == "firemud.dev/last-preview-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
+  [[ "$5" == --overwrite ]]
+  printf 'deployed-head=%s\n' "$4" >>"${TEST_APPLY_LOG:?}"
+  exit 0
+fi
+printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$apply_stub_dir/gh" "$apply_stub_dir/kubectl"
+
+run_apply_fixture() {
+  local scenario="$1"
+  local expected_log="$2"
+  local expected_error="${3:-}"
+  local apply_log="$TEMP_DIR/apply-${scenario}.log"
+  local gh_count="$TEMP_DIR/apply-${scenario}.gh-count"
+  local apply_error="$TEMP_DIR/apply-${scenario}.error"
+  local head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  local status
+
+  : >"$apply_log"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    env \
+      PATH="$apply_stub_dir:$PATH" \
+      GH_TOKEN=fake \
+      GITHUB_REPOSITORY=example/FireMUD \
+      PR_NUMBER=42 \
+      EXPECTED_HEAD_SHA="$head_sha" \
+      RUNTIME_NAMESPACE=pr-42 \
+      ARTIFACT_PATH="$prepared_render" \
+      TELNET_PORT=32000 \
+      TEST_APPLY_SCENARIO="$scenario" \
+      TEST_EXPECTED_HEAD="$head_sha" \
+      TEST_GH_COUNT="$gh_count" \
+      TEST_APPLY_LOG="$apply_log" \
+      bash "$apply_runtime_step"
+  ) >"$TEMP_DIR/apply-${scenario}.output" 2>"$apply_error"
+  status=$?
+  set -e
+
+  if [[ "$scenario" == success ]]; then
+    [[ "$status" -eq 0 ]]
+    (
+      cd "$ROOT_DIR"
+      env \
+        PATH="$apply_stub_dir:$PATH" \
+        RUNTIME_NAMESPACE=pr-42 \
+        PR_NUMBER=42 \
+        HEAD_SHA="$head_sha" \
+        TEST_EXPECTED_HEAD="$head_sha" \
+        TEST_APPLY_LOG="$apply_log" \
+        bash "$record_preview_head_step"
+    )
+  else
+    [[ "$status" -ne 0 ]]
+    grep -Fq "$expected_error" "$apply_error"
+  fi
+
+  [[ "$(paste -sd ' ' "$apply_log")" == "$expected_log" ]]
+}
+
+run_apply_fixture closed-first \
+  "gh-1" \
+  "pull request is not open"
+run_apply_fixture closed-second \
+  "gh-1 dry-run gh-2" \
+  "pull request is not open"
+run_apply_fixture stale-second \
+  "gh-1 dry-run gh-2" \
+  "head is stale"
+run_apply_fixture success \
+  "gh-1 dry-run gh-2 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+# The retired waiter treats kubectl's structured NotFound result as an empty,
+# retryable lookup, while permission/API failures remain immediately fatal.
+retirement_stub_dir="$TEMP_DIR/retirement-waiter-stubs"
+mkdir -p "$retirement_stub_dir"
+real_sleep_path="$(command -v sleep)"
+cat >"$retirement_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${WAITER_KUBECTL_LOG:?}"
+[[ "$*" == "-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" ]]
+case "${WAITER_SCENARIO:?}" in
+  not-found)
+    exit 0
+    ;;
+  forbidden)
+    printf 'Error from server (Forbidden): hostedenvironmentidentities is forbidden\n' >&2
+    exit 42
+    ;;
+  api-error)
+    printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+    exit 43
+    ;;
+  *)
+    printf 'unexpected waiter scenario: %s\n' "$WAITER_SCENARIO" >&2
+    exit 2
+    ;;
+esac
+SH
+cat >"$retirement_stub_dir/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${WAITER_SLEEP_LOG:?}"
+exec "${REAL_SLEEP_PATH:?}" 0.2
+SH
+chmod +x "$retirement_stub_dir/kubectl" "$retirement_stub_dir/sleep"
+
+run_retirement_waiter_fixture() {
+  local scenario="$1"
+  local expected_status="$2"
+  local kubectl_log="$TEMP_DIR/retirement-${scenario}.kubectl.log"
+  local sleep_log="$TEMP_DIR/retirement-${scenario}.sleep.log"
+  local output="$TEMP_DIR/retirement-${scenario}.output"
+  local error="$TEMP_DIR/retirement-${scenario}.error"
+  local status
+
+  : >"$kubectl_log"
+  : >"$sleep_log"
+  set +e
+  env \
+    PATH="$retirement_stub_dir:$PATH" \
+    REAL_SLEEP_PATH="$real_sleep_path" \
+    WAITER_SCENARIO="$scenario" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    WAITER_SLEEP_LOG="$sleep_log" \
+    bash "$waiter" --retired pr-42 1 \
+    >"$output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq "$expected_status" ]]
+  [[ "$(head -n 1 "$kubectl_log")" == "-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" ]]
+  if [[ "$scenario" == not-found ]]; then
+    [[ "$(wc -l <"$kubectl_log")" -ge 2 ]]
+    [[ "$(wc -l <"$sleep_log")" -ge 1 ]]
+    grep -Fq 'to appear before retirement' "$output"
+    grep -Fq 'Timed out waiting for HostedEnvironmentIdentity/pr-42 to retire.' "$error"
+  else
+    [[ "$(wc -l <"$kubectl_log")" -eq 1 ]]
+    [[ ! -s "$sleep_log" ]]
+    grep -Fq 'kubectl get failed' "$error"
+    case "$scenario" in
+      forbidden)
+        grep -Fq 'Error from server (Forbidden)' "$error"
+        ;;
+      api-error)
+        grep -Fq 'Unable to connect to the server' "$error"
+        ;;
+    esac
+  fi
+}
+
+run_retirement_waiter_fixture not-found 1
+run_retirement_waiter_fixture forbidden 42
+run_retirement_waiter_fixture api-error 43
 
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys

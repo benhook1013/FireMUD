@@ -111,6 +111,7 @@ jobs:
             bootstrap_candidate_status=""
             bootstrap_candidate_conclusion=""
             bootstrap_failed_attempts=0
+            bootstrap_exact_run_count=0
             bootstrap_complete=false
             for ((bootstrap_page = 1; bootstrap_page <= max_history_pages; bootstrap_page += 1)); do
               bootstrap_run_page="$(list_run_page "$bootstrap_page")"
@@ -135,6 +136,8 @@ jobs:
                   <<<"${bootstrap_exact_runs}"
               )"
               bootstrap_failed_attempts=$((bootstrap_failed_attempts + page_bootstrap_failures))
+              page_bootstrap_exact_run_count="$(jq -r 'length' <<<"${bootstrap_exact_runs}")"
+              bootstrap_exact_run_count=$((bootstrap_exact_run_count + page_bootstrap_exact_run_count))
               page_bootstrap_oldest="$(jq -r '.[-1].created_at // empty' <<<"${bootstrap_exact_runs}")"
               if [[ -n "$page_bootstrap_oldest" ]]; then
                 bootstrap_oldest="$page_bootstrap_oldest"
@@ -153,7 +156,7 @@ jobs:
                 bootstrap_complete=true
                 break
               fi
-              if (( bootstrap_page_size < 100 )) && [[ -n "$bootstrap_candidate_status" ]]; then
+              if (( bootstrap_page_size < 100 )); then
                 bootstrap_complete=true
                 break
               fi
@@ -162,9 +165,14 @@ jobs:
               echo "::error title=Dev-demo history bootstrap exhausted::No decisive exact deploy history for ${desired_head_sha} with title '${expected_deploy_title}' was found within ${max_history_pages} pages; refusing a history-blind dispatch."
               exit 1
             fi
-            [[ -n "$bootstrap_oldest" ]]
-            history_not_before="$bootstrap_oldest"
-            echo "No develop push anchor exists for ${desired_head_sha}; using bounded exact-target dev-demo history from ${history_not_before}."
+            if (( bootstrap_exact_run_count == 0 )); then
+              history_not_before="1970-01-01T00:00:00Z"
+              echo "No develop push anchor or exact-target dev-demo attempt exists for ${desired_head_sha}; retained history is complete and dispatch may proceed."
+            else
+              [[ -n "$bootstrap_oldest" ]]
+              history_not_before="$bootstrap_oldest"
+              echo "No develop push anchor exists for ${desired_head_sha}; using bounded exact-target dev-demo history from ${history_not_before}."
+            fi
           fi
 
           # Re-runs retain their original workflow-run identity and can therefore

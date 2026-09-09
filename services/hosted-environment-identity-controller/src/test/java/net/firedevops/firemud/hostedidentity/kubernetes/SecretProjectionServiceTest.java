@@ -28,6 +28,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -40,6 +41,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 
 class SecretProjectionServiceTest {
+  private static final Supplier<Boolean> ALWAYS_CURRENT = () -> true;
+
   @Test
   void revisionIsStableAndIndependentOfMapOrder() {
     SecretProjectionService service = new SecretProjectionService();
@@ -100,7 +103,8 @@ class SecretProjectionServiceTest {
             1,
             1,
             "1".repeat(64),
-            HostedIdentityContract.TRANSPORT_PROVENANCE);
+            HostedIdentityContract.TRANSPORT_PROVENANCE,
+            ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -111,6 +115,241 @@ class SecretProjectionServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.PROVENANCE_ANNOTATION));
+  }
+
+  @Test
+  void runtimeProfileFenceStopsProjectionBeforeTargetReplacement() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    SecretProjectionService service = new SecretProjectionService();
+    Map<String, String> desiredData =
+        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, desiredData);
+    Secret existing =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            Map.of("tls.crt", encoded("tampered"), "tls.key", encoded("key")),
+            acceptedAnnotations(revision, "1".repeat(64)));
+    existing.getMetadata().setResourceVersion("7");
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Secret source = new SecretBuilder().withType("kubernetes.io/tls").withData(desiredData).build();
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SecretProjectionService.ProjectionResult result =
+        service.project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            source,
+            1,
+            1,
+            "1".repeat(64),
+            "cert-manager",
+            () -> guardCalls.getAndIncrement() == 0);
+
+    assertEquals("runtime-profile-changed", result.state());
+    verify(secretClient.runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(existingResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  void runtimeProfileFenceStopsTargetCreationAfterTargetRead() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    SecretProjectionService service = new SecretProjectionService();
+    Resource<Secret> targetResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(targetResource);
+    when(targetResource.get()).thenReturn(null);
+    Secret source =
+        new SecretBuilder()
+            .withType("kubernetes.io/tls")
+            .withData(Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key")))
+            .build();
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SecretProjectionService.ProjectionResult result =
+        service.project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            source,
+            1,
+            1,
+            "1".repeat(64),
+            "cert-manager",
+            () -> guardCalls.getAndIncrement() == 0);
+
+    assertEquals("runtime-profile-changed", result.state());
+    verify(targetResource).get();
+    verify(secretClient.runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  void runtimeProfileFenceStopsPredecessorReadBeforePreservation() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    SecretProjectionService service = new SecretProjectionService();
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    String acceptedRevision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, acceptedData);
+    Secret existing =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, "1".repeat(64)));
+    existing.getMetadata().setResourceVersion("7");
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
+        .thenReturn(predecessorResource);
+    when(predecessorResource.get()).thenReturn(null);
+    Secret source =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SecretProjectionService.ProjectionResult result =
+        service.project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            source,
+            2,
+            2,
+            "2".repeat(64),
+            "cert-manager",
+            () -> guardCalls.getAndIncrement() < 2);
+
+    assertEquals("runtime-profile-changed", result.state());
+    verify(predecessorResource, never()).get();
+    verify(secretClient.identitySecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(secretClient.runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  void runtimeProfileFenceStopsPredecessorReplacementAfterRead() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    SecretProjectionService service = new SecretProjectionService();
+    Map<String, String> acceptedData =
+        Map.of("tls.crt", encoded("accepted"), "tls.key", encoded("key-1"));
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    String acceptedRevision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, acceptedData);
+    Secret existing =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, "1".repeat(64)));
+    existing.getMetadata().setResourceVersion("7");
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(plan.ingressSecretName() + "-previous"))
+        .thenReturn(predecessorResource);
+    Secret prior =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName() + "-previous",
+            acceptedData,
+            acceptedAnnotations(acceptedRevision, "1".repeat(64)));
+    prior.getMetadata().setNamespace(plan.identityNamespace());
+    prior.getMetadata().setResourceVersion("8");
+    when(predecessorResource.get()).thenReturn(prior);
+    Secret source =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SecretProjectionService.ProjectionResult result =
+        service.project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            source,
+            2,
+            2,
+            "2".repeat(64),
+            "cert-manager",
+            () -> guardCalls.getAndIncrement() < 3);
+
+    assertEquals("runtime-profile-changed", result.state());
+    verify(predecessorResource).get();
+    verify(secretClient.identitySecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(secretClient.runtimeSecrets(), never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  void runtimeProfileFenceStopsAcknowledgementBeforeReplacement() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    SecretProjectionService service = new SecretProjectionService();
+    Map<String, String> data = Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, data);
+    Map<String, String> pendingAnnotations = acceptedAnnotations(revision, "1".repeat(64));
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    Secret current =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            data,
+            pendingAnnotations);
+    current.getMetadata().setResourceVersion("7");
+    Resource<Secret> currentResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(currentResource);
+    when(currentResource.get()).thenReturn(current);
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    SecretProjectionService.ProjectionResult result =
+        service.acknowledge(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            revision,
+            1,
+            1,
+            "1".repeat(64),
+            () -> guardCalls.getAndIncrement() < 2);
+
+    assertEquals("runtime-profile-changed", result.state());
+    verify(currentResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
@@ -477,12 +716,21 @@ class SecretProjectionServiceTest {
     SecretProjectionService service = new SecretProjectionService();
     assertThrows(
         IllegalStateException.class,
-        () -> service.acknowledge(null, null, "ingress", "1".repeat(64), 1, 1, "2".repeat(64)));
+        () ->
+            service.acknowledge(
+                null, null, "ingress", "1".repeat(64), 1, 1, "2".repeat(64), ALWAYS_CURRENT));
     assertThrows(
         IllegalStateException.class,
         () ->
             service.acknowledge(
-                null, null, "ingress", "sha256:" + "1".repeat(63), 1, 1, "2".repeat(64)));
+                null,
+                null,
+                "ingress",
+                "sha256:" + "1".repeat(63),
+                1,
+                1,
+                "2".repeat(64),
+                ALWAYS_CURRENT));
   }
 
   @Test
@@ -565,6 +813,8 @@ class SecretProjectionServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
+            "encodeUsagesInRequest",
+            true,
             "privateKey",
             Map.of("algorithm", "RSA"),
             "dnsNames",
@@ -573,6 +823,8 @@ class SecretProjectionServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
+            "encodeUsagesInRequest",
+            true,
             "revisionHistoryLimit",
             1L,
             "privateKey",
@@ -584,6 +836,9 @@ class SecretProjectionServiceTest {
     assertEquals(true, CertificateMaterialService.desiredSubsetEquivalent(desired, defaulted));
     Map<String, Object> changed = new java.util.LinkedHashMap<>(defaulted);
     changed.put("secretName", "other");
+    assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
+    changed = new java.util.LinkedHashMap<>(defaulted);
+    changed.put("encodeUsagesInRequest", false);
     assertEquals(false, CertificateMaterialService.desiredSubsetEquivalent(desired, changed));
     for (Map.Entry<String, Object> semanticExtra :
         Map.<String, Object>of(
@@ -646,6 +901,7 @@ class SecretProjectionServiceTest {
     readback.put("revisionHistoryLimit", 1);
 
     assertEquals(true, CertificateMaterialService.desiredSubsetEquivalent(desired, readback));
+    assertEquals(true, readback.get("encodeUsagesInRequest"));
     Map<?, ?> secretTemplate = (Map<?, ?>) readback.get("secretTemplate");
     assertEquals(
         HostedIdentityContract.managedLabels(plan.name(), HostedIdentityContract.INGRESS_ROLE),
@@ -876,7 +1132,8 @@ class SecretProjectionServiceTest {
             pinned.sourceGeneration(),
             pinned.sourceObjectGeneration(),
             pinned.summary().spkiSha256(),
-            pinned.provenance());
+            pinned.provenance(),
+            ALWAYS_CURRENT);
     assertEquals("awaiting-acceptance", pending.state());
     assertEquals(
         true,
@@ -888,7 +1145,8 @@ class SecretProjectionServiceTest {
                 pending.revision(),
                 pinned.sourceGeneration(),
                 pinned.sourceObjectGeneration(),
-                pinned.summary().spkiSha256())
+                pinned.summary().spkiSha256(),
+                ALWAYS_CURRENT)
             .isSynced());
 
     CertificateMaterialService restarted =
@@ -984,7 +1242,8 @@ class SecretProjectionServiceTest {
             2,
             2,
             "2".repeat(64),
-            "cert-manager");
+            "cert-manager",
+            ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -1106,7 +1365,8 @@ class SecretProjectionServiceTest {
             1,
             1,
             spki,
-            "cert-manager");
+            "cert-manager",
+            ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -1137,7 +1397,8 @@ class SecretProjectionServiceTest {
             1,
             1,
             spki,
-            "cert-manager");
+            "cert-manager",
+            ALWAYS_CURRENT);
     assertEquals("awaiting-acceptance", pendingAcceptance.state());
     verify(secretClient.runtimeSecrets(), org.mockito.Mockito.times(1))
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -1145,14 +1406,28 @@ class SecretProjectionServiceTest {
     repaired.setData(Map.of("tls.crt", encoded("tampered-again"), "tls.key", encoded("key")));
     var rejectedAcceptance =
         service.acknowledge(
-            secretClient.client(), plan, HostedIdentityContract.INGRESS_ROLE, revision, 1, 1, spki);
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            revision,
+            1,
+            1,
+            spki,
+            ALWAYS_CURRENT);
     assertEquals("projection-material-changed", rejectedAcceptance.state());
     verify(existingResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
 
     repaired.setData(desiredData);
     var accepted =
         service.acknowledge(
-            secretClient.client(), plan, HostedIdentityContract.INGRESS_ROLE, revision, 1, 1, spki);
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            revision,
+            1,
+            1,
+            spki,
+            ALWAYS_CURRENT);
     assertEquals(true, accepted.isSynced());
     assertEquals(
         revision,
@@ -1207,7 +1482,8 @@ class SecretProjectionServiceTest {
                     1,
                     1,
                     spki,
-                    "cert-manager"));
+                    "cert-manager",
+                    ALWAYS_CURRENT));
 
     assertEquals("accepted projection snapshot is incomplete", exception.getMessage());
     verify(secretClient.runtimeSecrets(), never())
@@ -1253,7 +1529,8 @@ class SecretProjectionServiceTest {
             1,
             1,
             spki,
-            "cert-manager");
+            "cert-manager",
+            ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -1309,7 +1586,8 @@ class SecretProjectionServiceTest {
             2,
             2,
             "2".repeat(64),
-            "cert-manager");
+            "cert-manager",
+            ALWAYS_CURRENT);
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
@@ -1371,7 +1649,8 @@ class SecretProjectionServiceTest {
                     2,
                     2,
                     "2".repeat(64),
-                    "cert-manager"));
+                    "cert-manager",
+                    ALWAYS_CURRENT));
 
     assertEquals("runtime projection revision does not match its material", exception.getMessage());
     verify(secretClient.runtimeSecrets(), never())
@@ -1398,7 +1677,8 @@ class SecretProjectionServiceTest {
             material.sourceGeneration(),
             material.sourceObjectGeneration(),
             material.summary().spkiSha256(),
-            material.provenance());
+            material.provenance(),
+            ALWAYS_CURRENT);
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
     assertEquals("projected", repair.state());
@@ -1429,7 +1709,8 @@ class SecretProjectionServiceTest {
                 ingress.sourceGeneration(),
                 ingress.sourceObjectGeneration(),
                 ingress.summary().spkiSha256(),
-                ingress.provenance());
+                ingress.provenance(),
+                ALWAYS_CURRENT);
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
     assertEquals("projected", repair.state());
@@ -1472,7 +1753,8 @@ class SecretProjectionServiceTest {
                 ingress.sourceGeneration(),
                 ingress.sourceObjectGeneration(),
                 ingress.summary().spkiSha256(),
-                ingress.provenance())
+                ingress.provenance(),
+                ALWAYS_CURRENT)
             .state());
     assertEquals(
         "projected",
@@ -1485,7 +1767,8 @@ class SecretProjectionServiceTest {
                 telnet.sourceGeneration(),
                 telnet.sourceObjectGeneration(),
                 telnet.summary().spkiSha256(),
-                telnet.provenance())
+                telnet.provenance(),
+                ALWAYS_CURRENT)
             .state());
     ArgumentCaptor<Secret> candidates = ArgumentCaptor.forClass(Secret.class);
     verify(fixture.secretClient().runtimeSecrets(), org.mockito.Mockito.times(2))
@@ -1578,7 +1861,8 @@ class SecretProjectionServiceTest {
                 gateway.sourceGeneration(),
                 gateway.sourceObjectGeneration(),
                 gateway.summary().spkiSha256(),
-                gateway.provenance());
+                gateway.provenance(),
+                ALWAYS_CURRENT);
     assertEquals("projected", gatewayProjection.state());
     ArgumentCaptor<String> anchors = ArgumentCaptor.forClass(String.class);
     verify(validator, org.mockito.Mockito.times(3))
@@ -1648,7 +1932,8 @@ class SecretProjectionServiceTest {
                 material.sourceGeneration(),
                 material.sourceObjectGeneration(),
                 material.summary().spkiSha256(),
-                material.provenance());
+                material.provenance(),
+                ALWAYS_CURRENT);
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
     assertEquals("projected", repair.state());

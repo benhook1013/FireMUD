@@ -55,6 +55,7 @@ class CertificateResourceFactoryTest {
       assertEquals("ClusterIssuer", issuerRef.get("kind"));
       assertEquals("cert-manager.io", issuerRef.get("group"));
       assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
+      assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
     }
     assertEquals(
         "pr-42.preview.firedevops.net", ((java.util.List<?>) ingressSpec.get("dnsNames")).get(0));

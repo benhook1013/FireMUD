@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
@@ -111,7 +112,12 @@ class HostedIdentityReconcilerSafetyTest {
             "serialized-deferred-drift");
 
     SecretProjectionService.ProjectionResult result =
-        reconciler.project(plan, material, HostedIdentityContract.TELNET_ROLE);
+        reconciler.project(
+            plan,
+            new RuntimeProfileService.RuntimeProfile(
+                "uid", "a".repeat(40), "a".repeat(40), 32016, true),
+            material,
+            HostedIdentityContract.TELNET_ROLE);
 
     assertEquals("serialized-deferred-drift", result.state());
     assertEquals(revision, result.revision());
@@ -256,7 +262,8 @@ class HostedIdentityReconcilerSafetyTest {
             org.mockito.ArgumentMatchers.eq(aligned.client),
             org.mockito.ArgumentMatchers.eq(aligned.plan),
             anyString(),
-            anyString()))
+            anyString(),
+            any()))
         .thenThrow(new IllegalStateException("downstream-rollout-boundary"));
 
     UpdateControl<HostedEnvironmentIdentity> result = aligned.reconcile();
@@ -272,8 +279,183 @@ class HostedIdentityReconcilerSafetyTest {
             org.mockito.ArgumentMatchers.eq(aligned.client),
             org.mockito.ArgumentMatchers.eq(aligned.plan),
             anyString(),
-            anyString());
+            anyString(),
+            any());
     verifyNoInteractions(aligned.probes);
+  }
+
+  @Test
+  void readinessBoundaryRejectsAChangedRuntimeTupleBeforeAcknowledgement() {
+    var initial =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    var changed =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32015, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(initial);
+    when(fixture.runtime.read(fixture.client, fixture.plan)).thenReturn(initial, initial, changed);
+    when(fixture.rollout.sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "RuntimeIdentityChanged",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        result
+            .getResource()
+            .orElseThrow()
+            .getStatus()
+            .getConditions()
+            .get(0)
+            .getMessage()
+            .contains("Telnet port"));
+    verify(fixture.projections, never())
+        .acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+  }
+
+  @Test
+  void malformedRuntimeProfileAtReadinessBoundaryFailsClosedWithoutAcknowledgement() {
+    var initial =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(initial);
+    when(fixture.runtime.read(fixture.client, fixture.plan))
+        .thenReturn(initial, initial)
+        .thenThrow(new IllegalStateException("invalid runtime profile"));
+    when(fixture.rollout.sync(
+            org.mockito.ArgumentMatchers.eq(fixture.client),
+            org.mockito.ArgumentMatchers.eq(fixture.plan),
+            anyString(),
+            anyString(),
+            any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "RuntimeProfileInvalid",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    verify(fixture.projections, never())
+        .acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+  }
+
+  @Test
+  void runtimeProfileChangedProjectionResultStopsLaterProjectionMutations() {
+    var profile =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
+    SecretProjectionService.ProjectionResult runtimeChanged =
+        SecretProjectionService.ProjectionResult.awaiting("runtime-profile-changed", "revision");
+    when(fixture.projections.project(
+            any(),
+            any(),
+            anyString(),
+            any(Secret.class),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            any()))
+        .thenReturn(runtimeChanged);
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "RuntimeIdentityChanged",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    verify(fixture.projections, org.mockito.Mockito.times(1))
+        .project(
+            any(),
+            any(),
+            anyString(),
+            any(Secret.class),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            any());
+    verifyNoInteractions(fixture.rollout, fixture.probes);
+    verify(fixture.projections, never())
+        .acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+  }
+
+  @Test
+  void runtimeProfileChangedAcknowledgementStopsLaterAcknowledgementsAndReady() {
+    var profile =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
+    SecretProjectionService.ProjectionResult runtimeChanged =
+        SecretProjectionService.ProjectionResult.awaiting("runtime-profile-changed", "revision");
+    when(fixture.projections.acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
+        .thenReturn(runtimeChanged);
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "RuntimeIdentityChanged",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    verify(fixture.projections, org.mockito.Mockito.times(1))
+        .acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+    assertEquals(
+        "False", result.getResource().orElseThrow().getStatus().getConditions().get(0).getStatus());
   }
 
   @Test
@@ -300,6 +482,8 @@ class HostedIdentityReconcilerSafetyTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     properties.setActivationMode("active");
     KubernetesClient client = mock(KubernetesClient.class);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
     NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
     Resource namespace = mock(Resource.class);
     when(client.namespaces()).thenReturn(namespaces);
@@ -316,7 +500,7 @@ class HostedIdentityReconcilerSafetyTest {
             mock(CertificateMaterialService.class),
             mock(SecretProjectionService.class),
             mock(HostedIdentityScopeService.class),
-            mock(RuntimeProfileService.class),
+            runtime,
             mock(DeploymentRolloutService.class),
             mock(ServedEnvironmentProbe.class),
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
@@ -360,9 +544,15 @@ class HostedIdentityReconcilerSafetyTest {
     SecretProjectionService projections = mock(SecretProjectionService.class);
     HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    var runtimeProfile =
+        new RuntimeProfileService.RuntimeProfile(
+            "runtime-uid", "a".repeat(40), "a".repeat(40), 32000, true);
+    when(runtime.read(any(), any())).thenReturn(runtimeProfile);
     DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
     when(rollout.stopBridges(
-            org.mockito.ArgumentMatchers.eq(client), org.mockito.ArgumentMatchers.any()))
+            org.mockito.ArgumentMatchers.eq(client),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
         .thenReturn(new DeploymentRolloutService.RetirementResult(false, false, false));
     ServedEnvironmentProbe probes = mock(ServedEnvironmentProbe.class);
     Context<HostedEnvironmentIdentity> context = mock(Context.class);
@@ -387,18 +577,157 @@ class HostedIdentityReconcilerSafetyTest {
         .setDesiredState(
             net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
                 .Retired);
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    HostedEnvironmentIdentityStatus.RuntimeProfile priorProfile =
+        new HostedEnvironmentIdentityStatus.RuntimeProfile();
+    priorProfile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
+    priorProfile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
+    priorProfile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
+    priorProfile.setTelnetPort(runtimeProfile.telnetPort());
+    priorStatus.setProfile(priorProfile);
+    resource.setStatus(priorStatus);
 
     UpdateControl<HostedEnvironmentIdentity> result = reconciler.reconcile(resource, context);
 
     verify(rollout)
-        .stopBridges(org.mockito.ArgumentMatchers.eq(client), org.mockito.ArgumentMatchers.any());
+        .stopBridges(
+            org.mockito.ArgumentMatchers.eq(client),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
     verify(operations, never()).removeFinalizer(HostedIdentityContract.FINALIZER);
-    verifyNoInteractions(certificates, projections, scope, runtime, probes);
+    verifyNoInteractions(certificates, projections, scope, probes);
     assertEquals(
         HostedEnvironmentIdentityStatus.Phase.Retiring,
         result.getResource().orElseThrow().getStatus().getPhase());
     assertEquals(
         "BridgeShutdownPending",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+  }
+
+  @Test
+  void retirementWithLiveRuntimeWithoutPriorIdentityProofWithholdsBridgeShutdown() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("active");
+    KubernetesClient client = mock(KubernetesClient.class);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    when(runtime.read(any(), any()))
+        .thenReturn(
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "a".repeat(40), "a".repeat(40), 32000, true));
+    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            new EnvironmentIdentityPlanner(properties),
+            mock(CertificateMaterialService.class),
+            mock(SecretProjectionService.class),
+            mock(HostedIdentityScopeService.class),
+            runtime,
+            rollout,
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
+            properties);
+    HostedEnvironmentIdentity resource = resource();
+    resource
+        .getSpec()
+        .setDesiredState(
+            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
+                .Retired);
+
+    UpdateControl<HostedEnvironmentIdentity> result =
+        reconciler.reconcile(resource, mock(Context.class));
+
+    verifyNoInteractions(rollout);
+    assertEquals(
+        "RuntimeIdentityUnproven",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+  }
+
+  @Test
+  void retirementWithMalformedLiveRuntimeProfileWithholdsBridgeShutdown() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("active");
+    KubernetesClient client = mock(KubernetesClient.class);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    when(runtime.read(any(), any()))
+        .thenThrow(new IllegalStateException("invalid runtime profile"));
+    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            new EnvironmentIdentityPlanner(properties),
+            mock(CertificateMaterialService.class),
+            mock(SecretProjectionService.class),
+            mock(HostedIdentityScopeService.class),
+            runtime,
+            rollout,
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
+            properties);
+    HostedEnvironmentIdentity resource = resource();
+    resource
+        .getSpec()
+        .setDesiredState(
+            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
+                .Retired);
+
+    UpdateControl<HostedEnvironmentIdentity> result =
+        reconciler.reconcile(resource, mock(Context.class));
+
+    verifyNoInteractions(rollout);
+    assertEquals(
+        "RuntimeProfileInvalid",
+        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+  }
+
+  @Test
+  void retirementWithReplacedLiveRuntimeProfileWithholdsBridgeShutdown() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("active");
+    KubernetesClient client = mock(KubernetesClient.class);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    when(runtime.read(any(), any()))
+        .thenReturn(
+            new RuntimeProfileService.RuntimeProfile(
+                "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true));
+    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            new EnvironmentIdentityPlanner(properties),
+            mock(CertificateMaterialService.class),
+            mock(SecretProjectionService.class),
+            mock(HostedIdentityScopeService.class),
+            runtime,
+            rollout,
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
+            properties);
+    HostedEnvironmentIdentity resource = resource();
+    resource
+        .getSpec()
+        .setDesiredState(
+            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
+                .Retired);
+    HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
+    HostedEnvironmentIdentityStatus.RuntimeProfile priorProfile =
+        new HostedEnvironmentIdentityStatus.RuntimeProfile();
+    priorProfile.setRuntimeNamespaceUid("original-uid");
+    priorProfile.setRequestedHeadSha("a".repeat(40));
+    priorProfile.setDeployedHeadSha("a".repeat(40));
+    priorProfile.setTelnetPort(32000);
+    priorStatus.setProfile(priorProfile);
+    resource.setStatus(priorStatus);
+
+    UpdateControl<HostedEnvironmentIdentity> result =
+        reconciler.reconcile(resource, mock(Context.class));
+
+    verifyNoInteractions(rollout);
+    assertEquals(
+        "RuntimeIdentityChanged",
         result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
   }
 
@@ -789,6 +1118,30 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(false, runtimeRead.get());
   }
 
+  @Test
+  void runtimeProjectionGuardRejectsBothBridgeReadsBeforeSecretAccess() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    var changed =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32015, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.runtime.read(fixture.client, fixture.plan)).thenReturn(changed);
+
+    for (String role :
+        java.util.List.of(
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)) {
+      IllegalStateException failure =
+          assertThrows(
+              IllegalStateException.class,
+              () -> fixture.reconciler.runtimeProjection(fixture.plan, expected, role));
+      org.junit.jupiter.api.Assertions.assertTrue(failure.getMessage().contains("Telnet port"));
+    }
+    verify(fixture.client, never()).secrets();
+  }
+
   private static CertificateMaterialService.RoleMaterial material(
       long generation, long objectGeneration, String spki, String certificate) {
     return material(generation, objectGeneration, spki, certificate, "source-ready");
@@ -883,7 +1236,12 @@ class HostedIdentityReconcilerSafetyTest {
       when(batch.gatewayInternalWs())
           .thenReturn(material(plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, "3"));
       when(batch.tcpProxyBridge())
-          .thenReturn(material(plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
+          .thenReturn(
+              material(
+                  plan,
+                  HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
+                  "4",
+                  "serialized-deferred-drift"));
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
       when(projections.project(
               org.mockito.ArgumentMatchers.eq(client),
@@ -893,7 +1251,8 @@ class HostedIdentityReconcilerSafetyTest {
               anyLong(),
               anyLong(),
               anyString(),
-              anyString()))
+              anyString(),
+              any()))
           .thenAnswer(
               invocation ->
                   SecretProjectionService.ProjectionResult.synced(
@@ -937,6 +1296,14 @@ class HostedIdentityReconcilerSafetyTest {
         net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
         String role,
         String fingerprintDigit) {
+      return material(plan, role, fingerprintDigit, "source-ready");
+    }
+
+    private static CertificateMaterialService.RoleMaterial material(
+        net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
+        String role,
+        String fingerprintDigit,
+        String state) {
       Secret source =
           new SecretBuilder()
               .withNewMetadata()
@@ -959,13 +1326,14 @@ class HostedIdentityReconcilerSafetyTest {
           1,
           1,
           "fixture",
-          "source-ready");
+          state);
     }
   }
 
   private static final class RetirementDeletionFixture {
     private final KubernetesClient client = mock(KubernetesClient.class);
     private final Resource<Namespace> identityNamespace = mock(Resource.class);
+    private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     private final Resource<Role> identityRole = mock(Resource.class);
     private final Resource<RoleBinding> identityBinding = mock(Resource.class);
     private final NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
@@ -989,6 +1357,7 @@ class HostedIdentityReconcilerSafetyTest {
       when(runtimeNamespace.get()).thenReturn(null);
       when(namespaces.withName("pr-42-identity")).thenReturn(identityNamespace);
       when(identityNamespace.get()).thenReturn(identityNamespace(false));
+      when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
 
       stubOwnedScope();
       stubMaterialLookups();
@@ -1000,7 +1369,7 @@ class HostedIdentityReconcilerSafetyTest {
               mock(CertificateMaterialService.class),
               mock(SecretProjectionService.class),
               mock(HostedIdentityScopeService.class),
-              mock(RuntimeProfileService.class),
+              runtime,
               mock(DeploymentRolloutService.class),
               mock(ServedEnvironmentProbe.class),
               new HostedStatusService(new EnvironmentIdentityPlanner(properties)),

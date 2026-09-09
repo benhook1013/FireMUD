@@ -21,7 +21,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - hostedenvironmentidentities
@@ -34,11 +33,12 @@ spec:
       message: HostedEnvironmentIdentity name must be dev-demo or pr-N
       reason: Invalid
     - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
-      message: only system:masters, the fixed hosted-identity requester, or the controller's exact finalizer patch may change an identity
+      message: only system:masters, the fixed hosted-identity requester, or the controller's exact finalizer update may change an identity
       reason: Forbidden
     - expression: >-
+        request.userInfo.groups.exists(group, group == 'system:masters') ||
         request.userInfo.username != 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
-        (request.operation == 'PATCH' &&
+        (request.operation == 'UPDATE' &&
          object.spec == oldObject.spec &&
          has(object.status) == has(oldObject.status) &&
          (!has(object.status) || object.status == oldObject.status) &&
@@ -50,22 +50,34 @@ spec:
          (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) &&
          has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
          (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) &&
-         (((!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0) &&
-           object.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity']) ||
-          (oldObject.metadata.finalizers == ['platform.firemud.dev/hosted-environment-identity'] &&
-           (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))))
-      message: the controller may patch only the exact hosted identity finalizer while spec and all other mutable metadata remain unchanged
+         (((!has(oldObject.metadata.finalizers) ||
+            !oldObject.metadata.finalizers.exists(f, f == 'platform.firemud.dev/hosted-environment-identity')) &&
+           has(object.metadata.finalizers) &&
+           object.metadata.finalizers.exists(f, f == 'platform.firemud.dev/hosted-environment-identity') &&
+           object.metadata.finalizers.size() ==
+             (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers.size() : 0) + 1 &&
+           object.metadata.finalizers.filter(f, f != 'platform.firemud.dev/hosted-environment-identity') ==
+             (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : [])) ||
+          (has(oldObject.metadata.finalizers) &&
+           oldObject.metadata.finalizers.exists(f, f == 'platform.firemud.dev/hosted-environment-identity') &&
+           (!has(object.metadata.finalizers) ||
+            !object.metadata.finalizers.exists(f, f == 'platform.firemud.dev/hosted-environment-identity')) &&
+           oldObject.metadata.finalizers.size() ==
+             (has(object.metadata.finalizers) ? object.metadata.finalizers.size() : 0) + 1 &&
+           (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+             oldObject.metadata.finalizers.filter(f, f != 'platform.firemud.dev/hosted-environment-identity'))))
+      message: the controller may add or remove only its canonical finalizer while preserving spec, status, and all unrelated metadata and finalizers
       reason: Forbidden
     - expression: "request.operation == 'DELETE' || object.spec.desiredState in ['Active', 'Retired']"
       message: spec contains only desiredState Active or Retired
       reason: Invalid
-    - expression: "!(request.operation in ['UPDATE', 'PATCH']) || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
+    - expression: "request.operation != 'UPDATE' || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
       message: desiredState is monotonic; Active may transition only to Retired
       reason: Invalid
     - expression: "request.operation != 'DELETE' || (has(oldObject.status) && has(oldObject.status.phase) && oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
       message: an identity may be deleted only after the controller reports Retired
       reason: Forbidden
-    - expression: "request.operation == 'DELETE' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (((request.operation in ['UPDATE', 'PATCH']) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)) || (request.operation == 'CREATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
+    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.operation == 'DELETE' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (((request.operation == 'UPDATE') && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)) || (request.operation == 'CREATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
       message: requester metadata may not claim controller ownership or reserved firemud labels
       reason: Forbidden
 ---
@@ -88,23 +100,18 @@ spec:
           - v1alpha1
         operations:
           - UPDATE
-          - PATCH
         resources:
           - hostedenvironmentidentities/status
-          - hostedenvironmentidentities/finalizers
         scope: Namespaced
   validations:
-    - expression: "request.namespace == 'firemud-system' && request.name.matches('^(dev-demo|pr-[1-9][0-9]*)$') && request.subResource in ['status', 'finalizers']"
-      message: controller subresource updates are limited to a canonical firemud-system identity
+    - expression: "request.namespace == 'firemud-system' && request.name.matches('^(dev-demo|pr-[1-9][0-9]*)$') && request.subResource == 'status'"
+      message: controller status updates are limited to a canonical firemud-system identity
       reason: Forbidden
     - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
-      message: only system:masters or the hosted-identity controller may write status or finalizers
+      message: only system:masters or the hosted-identity controller may write status
       reason: Forbidden
     - expression: "request.subResource != 'status' || object.spec.desiredState == oldObject.spec.desiredState"
       message: status updates may not change spec
-      reason: Forbidden
-    - expression: "request.subResource != 'finalizers' || (!has(object.metadata.finalizers) || object.metadata.finalizers.all(f, f == 'platform.firemud.dev/hosted-environment-identity'))"
-      message: only the controller finalizer is permitted
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -127,7 +134,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - secrets
@@ -184,7 +190,7 @@ spec:
              (object.metadata.name == 'firemud-grpc-tls-previous' ||
               object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)-previous$'))))))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
-         request.operation in ['CREATE', 'UPDATE', 'PATCH'] &&
+         request.operation in ['CREATE', 'UPDATE'] &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
          object.type == 'kubernetes.io/tls' &&
          has(object.metadata.labels) &&
@@ -225,7 +231,7 @@ spec:
       reason: Forbidden
     - expression: >-
         request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' ||
-        (request.operation in ['CREATE', 'UPDATE', 'PATCH'] &&
+        (request.operation in ['CREATE', 'UPDATE'] &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
          object.metadata.name != 'firemud-grpc-tls' &&
          ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) ||
@@ -256,7 +262,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - certificates
@@ -282,6 +287,8 @@ spec:
             object.metadata.name == 'firemud-grpc-tls') &&
            object.spec.secretName == object.metadata.name &&
            object.spec.privateKey.rotationPolicy == 'Always' &&
+           has(object.spec.encodeUsagesInRequest) &&
+           object.spec.encodeUsagesInRequest == true &&
            has(object.spec.usages) &&
            object.spec.usages.size() > 0 &&
            object.spec.usages.all(usage,
@@ -296,7 +303,7 @@ spec:
              object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
-         request.operation in ['UPDATE', 'PATCH'] &&
+         request.operation == 'UPDATE' &&
          (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
           object.metadata.name == 'firemud-grpc-tls') &&
          object.spec == oldObject.spec)
@@ -323,7 +330,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - roles
@@ -472,7 +478,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - rolebindings
@@ -552,7 +557,6 @@ spec:
         operations:
           - CREATE
           - UPDATE
-          - PATCH
           - DELETE
         resources:
           - namespaces
@@ -561,7 +565,7 @@ spec:
     - name: hosted-system-namespace-only
       expression: >-
         request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
-        (request.operation in ['UPDATE', 'PATCH'] && request.name == 'firemud-system') ||
+        (request.operation == 'UPDATE' && request.name == 'firemud-system') ||
         (request.operation == 'DELETE' &&
          (request.name == 'firemud-system' || request.name == 'dev-identity' || request.name.matches('^pr-[1-9][0-9]*-identity$'))) ||
         (request.operation != 'DELETE' &&
@@ -572,7 +576,7 @@ spec:
          request.operation in ['CREATE', 'DELETE'] &&
          (request.operation == 'DELETE' ? request.name : object.metadata.name)
            .matches('^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$')) ||
-        (request.operation in ['UPDATE', 'PATCH'] &&
+        (request.operation == 'UPDATE' &&
          request.name == 'firemud-system' &&
          object.metadata.name == 'firemud-system' &&
          oldObject.metadata.name == 'firemud-system' &&

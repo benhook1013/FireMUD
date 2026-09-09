@@ -107,6 +107,44 @@ class RuntimeProfileServiceTest {
   }
 
   @Test
+  void exactComparisonIncludesEveryRuntimeIdentityField() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "runtime-uid", "a".repeat(40), "a".repeat(40), 32002, true);
+
+    assertTrue(RuntimeProfileService.exactlyMatches(expected, expected));
+    assertFalse(
+        RuntimeProfileService.exactlyMatches(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "other-uid", "a".repeat(40), "a".repeat(40), 32002, true)));
+    assertFalse(
+        RuntimeProfileService.exactlyMatches(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "b".repeat(40), "a".repeat(40), 32002, true)));
+    assertFalse(
+        RuntimeProfileService.exactlyMatches(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "a".repeat(40), "b".repeat(40), 32002, true)));
+    assertFalse(
+        RuntimeProfileService.exactlyMatches(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "a".repeat(40), "a".repeat(40), 32003, true)));
+    assertFalse(
+        RuntimeProfileService.exactlyMatches(
+            expected, RuntimeProfileService.RuntimeProfile.absent()));
+    assertEquals(
+        "Telnet port",
+        RuntimeProfileService.changedFields(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "a".repeat(40), "a".repeat(40), 32003, true)));
+  }
+
+  @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
   void previewSeparatesRequestedHeadFromSuccessfulDeploymentEvidence() {
     var plan = planner.plan("pr-42");

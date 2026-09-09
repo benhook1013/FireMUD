@@ -11,7 +11,7 @@ metadata:
 spec:
   replicas: 1
   revisionHistoryLimit: 2
-  progressDeadlineSeconds: 300
+  progressDeadlineSeconds: 420
   selector:
     matchLabels:
       app.kubernetes.io/name: hosted-environment-identity-controller

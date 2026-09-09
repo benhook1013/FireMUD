@@ -3,6 +3,8 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +77,51 @@ public class RuntimeProfileService {
     } catch (NumberFormatException exception) {
       throw new IllegalStateException("runtime Namespace has an invalid Telnet port identity");
     }
+  }
+
+  /**
+   * Compares the complete runtime identity tuple, including presence and the allocated port.
+   *
+   * <p>The comparison deliberately does not reduce the tuple to the namespace UID or head SHA:
+   * those values alone cannot detect a stale port binding or a namespace disappearing between
+   * reconciliation boundaries.
+   */
+  public static boolean exactlyMatches(RuntimeProfile expected, RuntimeProfile actual) {
+    return Objects.equals(expected, actual);
+  }
+
+  /** Returns the identity fields that changed between two runtime observations. */
+  public static String changedFields(RuntimeProfile expected, RuntimeProfile actual) {
+    List<String> changed = new ArrayList<>();
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::runtimeNamespaceUid),
+        value(actual, RuntimeProfile::runtimeNamespaceUid))) {
+      changed.add("runtime Namespace UID");
+    }
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::requestedHeadSha),
+        value(actual, RuntimeProfile::requestedHeadSha))) {
+      changed.add("requested head");
+    }
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::deployedHeadSha),
+        value(actual, RuntimeProfile::deployedHeadSha))) {
+      changed.add("deployed head");
+    }
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::telnetPort), value(actual, RuntimeProfile::telnetPort))) {
+      changed.add("Telnet port");
+    }
+    if (!Objects.equals(
+        value(expected, RuntimeProfile::present), value(actual, RuntimeProfile::present))) {
+      changed.add("presence");
+    }
+    return changed.isEmpty() ? "runtime identity tuple" : String.join(", ", changed);
+  }
+
+  private static <T> T value(
+      RuntimeProfile profile, java.util.function.Function<RuntimeProfile, T> field) {
+    return profile == null ? null : field.apply(profile);
   }
 
   private static String requiredCanonicalHead(

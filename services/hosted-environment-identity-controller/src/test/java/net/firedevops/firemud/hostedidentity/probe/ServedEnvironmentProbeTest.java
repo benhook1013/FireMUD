@@ -13,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -95,6 +96,43 @@ class ServedEnvironmentProbeTest {
                 },
                 "mtls-handshake")
             .reason());
+  }
+
+  @Test
+  void missingFixedGrpcProbeConsumerFailsAsInvalidConfiguration() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    EnvironmentIdentityPlan missingProbeConsumer =
+        new EnvironmentIdentityPlan(
+            plan.name(),
+            plan.controlNamespace(),
+            plan.identityNamespace(),
+            plan.runtimeNamespace(),
+            plan.hostname(),
+            plan.ingressCertificateName(),
+            plan.ingressSecretName(),
+            plan.telnetCertificateName(),
+            plan.telnetSecretName(),
+            plan.gatewayInternalWsCertificateName(),
+            plan.gatewayInternalWsSecretName(),
+            plan.gatewayInternalWsDnsName(),
+            plan.tcpProxyBridgeCertificateName(),
+            plan.tcpProxyBridgeSecretName(),
+            plan.tcpProxyBridgeUriSan(),
+            plan.grpcCertificateName(),
+            plan.grpcSecretName(),
+            plan.ingressIssuer(),
+            plan.telnetIssuer(),
+            plan.grpcIssuer(),
+            plan.caSecretName(),
+            List.of("tcp-proxy-service"));
+
+    ServedEnvironmentProbe.ProbeResult result =
+        new ServedEnvironmentProbe(properties)
+            .grpc(missingProbeConsumer, new Secret(), "1".repeat(64));
+
+    assertEquals(false, result.ready());
+    assertEquals("material-or-configuration-invalid", result.reason());
   }
 
   @Test

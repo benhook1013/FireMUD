@@ -235,6 +235,11 @@ for required in (
     'bootstrap_complete=true',
     '[[ "$bootstrap_complete" != true ]]',
     "bootstrap_failed_attempts",
+    "bootstrap_exact_run_count",
+    'if (( bootstrap_page_size < 100 )); then',
+    'if (( bootstrap_exact_run_count == 0 )); then',
+    'history_not_before="1970-01-01T00:00:00Z"',
+    "retained history is complete and dispatch may proceed",
     ".head_sha == $head and .display_title == $title",
     "No decisive exact deploy history",
     "refusing a history-blind dispatch",
@@ -476,8 +481,9 @@ def bootstrap_history(
             candidate.get("status") != "completed"
             or candidate.get("conclusion") == "success"
             or failures >= 3
-            or len(page) < 100
         ):
+            return oldest
+        if len(page) < 100:
             return oldest
     raise RuntimeError(
         f"no decisive exact deploy history within {max_pages} pages"
@@ -498,12 +504,15 @@ if bootstrap_anchor != "2026-09-09T05:20:00Z":
         f"bounded exact bootstrap selected the wrong timestamp: {bootstrap_anchor}"
     )
 
-try:
-    bootstrap_history([[]])
-except RuntimeError:
-    pass
-else:
-    raise SystemExit("bounded bootstrap accepted empty exact-target history")
+if bootstrap_history([[]]) is not None:
+    raise SystemExit("empty retained history did not prove zero exact-target attempts")
+
+full_irrelevant_page = irrelevant_history[:100]
+short_final_pages = [full_irrelevant_page, irrelevant_history[100:101]]
+if bootstrap_history(short_final_pages) is not None:
+    raise SystemExit(
+        "short final retained-history page did not prove zero exact-target attempts"
+    )
 
 full_pages = [
     [

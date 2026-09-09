@@ -106,8 +106,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       if (isRetiring(resource)) {
         return retire(resource, plan, context);
       }
-      RuntimeProfileService.RuntimeProfile runtimeProfile =
-          runtimeProfileService.read(client, plan);
+      RuntimeProfileService.RuntimeProfile runtimeProfile;
+      try {
+        runtimeProfile = runtimeProfileService.read(client, plan);
+      } catch (IllegalStateException exception) {
+        return status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Blocked,
+            "RuntimeProfileInvalid",
+            boundedMessage(exception),
+            false,
+            null,
+            null,
+            null,
+            null);
+      }
       if (!runtimeProfile.present()) {
         return status(
             resource,
@@ -211,16 +224,87 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       validateSourceProgress(grpc, previousRole(resource, HostedIdentityContract.GRPC_ROLE));
       validateDistinctIdentities(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc);
 
+      RuntimeProfileService.RuntimeProfile expectedProfile = runtimeProfile;
       SecretProjectionService.ProjectionResult ingressProjection =
-          project(plan, ingress, HostedIdentityContract.INGRESS_ROLE);
+          project(plan, expectedProfile, ingress, HostedIdentityContract.INGRESS_ROLE);
+      UpdateControl<HostedEnvironmentIdentity> projectionFence =
+          runtimeProfileChangedStatus(
+              resource,
+              runtimeProfile,
+              ingress,
+              telnet,
+              gatewayInternalWs,
+              tcpProxyBridge,
+              grpc,
+              ingressProjection);
+      if (projectionFence != null) {
+        return projectionFence;
+      }
       SecretProjectionService.ProjectionResult telnetProjection =
-          project(plan, telnet, HostedIdentityContract.TELNET_ROLE);
+          project(plan, expectedProfile, telnet, HostedIdentityContract.TELNET_ROLE);
+      projectionFence =
+          runtimeProfileChangedStatus(
+              resource,
+              runtimeProfile,
+              ingress,
+              telnet,
+              gatewayInternalWs,
+              tcpProxyBridge,
+              grpc,
+              telnetProjection);
+      if (projectionFence != null) {
+        return projectionFence;
+      }
       SecretProjectionService.ProjectionResult gatewayInternalWsProjection =
-          project(plan, gatewayInternalWs, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
+          project(
+              plan,
+              expectedProfile,
+              gatewayInternalWs,
+              HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
+      projectionFence =
+          runtimeProfileChangedStatus(
+              resource,
+              runtimeProfile,
+              ingress,
+              telnet,
+              gatewayInternalWs,
+              tcpProxyBridge,
+              grpc,
+              gatewayInternalWsProjection);
+      if (projectionFence != null) {
+        return projectionFence;
+      }
       SecretProjectionService.ProjectionResult tcpProxyBridgeProjection =
-          project(plan, tcpProxyBridge, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
+          project(
+              plan, expectedProfile, tcpProxyBridge, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
+      projectionFence =
+          runtimeProfileChangedStatus(
+              resource,
+              runtimeProfile,
+              ingress,
+              telnet,
+              gatewayInternalWs,
+              tcpProxyBridge,
+              grpc,
+              tcpProxyBridgeProjection);
+      if (projectionFence != null) {
+        return projectionFence;
+      }
       SecretProjectionService.ProjectionResult grpcProjection =
-          project(plan, grpc, HostedIdentityContract.GRPC_ROLE);
+          project(plan, expectedProfile, grpc, HostedIdentityContract.GRPC_ROLE);
+      projectionFence =
+          runtimeProfileChangedStatus(
+              resource,
+              runtimeProfile,
+              ingress,
+              telnet,
+              gatewayInternalWs,
+              tcpProxyBridge,
+              grpc,
+              grpcProjection);
+      if (projectionFence != null) {
+        return projectionFence;
+      }
       ReadinessStatus deploymentHead = deploymentHeadStatus(runtimeProfile);
       if (!deploymentHead.ready()) {
         return status(
@@ -236,9 +320,30 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             tcpProxyBridge,
             grpc);
       }
+      RuntimeProfileValidation beforeRollout =
+          revalidateRuntimeProfile(plan, runtimeProfile, "the rollout boundary");
+      if (!beforeRollout.valid()) {
+        return status(
+            resource,
+            beforeRollout.phase(),
+            beforeRollout.reason(),
+            beforeRollout.message(),
+            false,
+            beforeRollout.profile(),
+            ingress,
+            telnet,
+            gatewayInternalWs,
+            tcpProxyBridge,
+            grpc);
+      }
+      runtimeProfile = beforeRollout.profile();
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
-              client, plan, telnetProjection.revision(), grpcProjection.revision());
+              client,
+              plan,
+              telnetProjection.revision(),
+              grpcProjection.revision(),
+              () -> assertRuntimeProfileCurrent(plan, expectedProfile));
       ServedEnvironmentProbe.ProbeResult probes =
           servedEnvironmentProbe.probe(
               plan,
@@ -247,10 +352,30 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               telnet.summary().certificateFingerprint(),
               bridgeProbeMaterial(
                   tcpProxyBridge,
-                  () -> runtimeProjection(plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
+                  () ->
+                      runtimeProjection(
+                          plan, expectedProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
               gatewayInternalWs.summary().certificateFingerprint(),
               grpc.source(),
               grpc.summary().certificateFingerprint());
+      RuntimeProfileValidation beforeAcknowledgement =
+          revalidateRuntimeProfile(plan, runtimeProfile, "the readiness boundary");
+      if (!beforeAcknowledgement.valid()) {
+        return status(
+            resource,
+            beforeAcknowledgement.phase(),
+            beforeAcknowledgement.reason(),
+            beforeAcknowledgement.message(),
+            false,
+            beforeAcknowledgement.profile(),
+            ingress,
+            telnet,
+            gatewayInternalWs,
+            tcpProxyBridge,
+            grpc);
+      }
+      runtimeProfile = beforeAcknowledgement.profile();
+      RuntimeProfileService.RuntimeProfile acknowledgementProfile = runtimeProfile;
       if (rollout.ready() && probes.ready()) {
         ingressProjection =
             projectionService.acknowledge(
@@ -260,7 +385,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 ingressProjection.revision(),
                 ingress.sourceGeneration(),
                 ingress.sourceObjectGeneration(),
-                ingress.summary().spkiSha256());
+                ingress.summary().spkiSha256(),
+                () -> assertRuntimeProfileCurrent(plan, acknowledgementProfile));
+        UpdateControl<HostedEnvironmentIdentity> acknowledgementFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                ingressProjection);
+        if (acknowledgementFence != null) {
+          return acknowledgementFence;
+        }
         telnetProjection =
             projectionService.acknowledge(
                 client,
@@ -269,7 +408,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 telnetProjection.revision(),
                 telnet.sourceGeneration(),
                 telnet.sourceObjectGeneration(),
-                telnet.summary().spkiSha256());
+                telnet.summary().spkiSha256(),
+                () -> assertRuntimeProfileCurrent(plan, acknowledgementProfile));
+        acknowledgementFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                telnetProjection);
+        if (acknowledgementFence != null) {
+          return acknowledgementFence;
+        }
         gatewayInternalWsProjection =
             projectionService.acknowledge(
                 client,
@@ -278,7 +431,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 gatewayInternalWsProjection.revision(),
                 gatewayInternalWs.sourceGeneration(),
                 gatewayInternalWs.sourceObjectGeneration(),
-                gatewayInternalWs.summary().spkiSha256());
+                gatewayInternalWs.summary().spkiSha256(),
+                () -> assertRuntimeProfileCurrent(plan, acknowledgementProfile));
+        acknowledgementFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                gatewayInternalWsProjection);
+        if (acknowledgementFence != null) {
+          return acknowledgementFence;
+        }
         tcpProxyBridgeProjection =
             projectionService.acknowledge(
                 client,
@@ -287,7 +454,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 tcpProxyBridgeProjection.revision(),
                 tcpProxyBridge.sourceGeneration(),
                 tcpProxyBridge.sourceObjectGeneration(),
-                tcpProxyBridge.summary().spkiSha256());
+                tcpProxyBridge.summary().spkiSha256(),
+                () -> assertRuntimeProfileCurrent(plan, acknowledgementProfile));
+        acknowledgementFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                tcpProxyBridgeProjection);
+        if (acknowledgementFence != null) {
+          return acknowledgementFence;
+        }
         grpcProjection =
             projectionService.acknowledge(
                 client,
@@ -296,7 +477,21 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 grpcProjection.revision(),
                 grpc.sourceGeneration(),
                 grpc.sourceObjectGeneration(),
-                grpc.summary().spkiSha256());
+                grpc.summary().spkiSha256(),
+                () -> assertRuntimeProfileCurrent(plan, acknowledgementProfile));
+        acknowledgementFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                grpcProjection);
+        if (acknowledgementFence != null) {
+          return acknowledgementFence;
+        }
       }
       ReadinessStatus readiness =
           readinessStatus(
@@ -320,6 +515,17 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           gatewayInternalWs,
           tcpProxyBridge,
           grpc);
+    } catch (RuntimeProfileFenceException exception) {
+      return status(
+          resource,
+          exception.phase(),
+          exception.reason(),
+          exception.getMessage(),
+          false,
+          null,
+          null,
+          null,
+          null);
     } catch (Exception exception) {
       return status(
           resource,
@@ -385,11 +591,87 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         false);
   }
 
+  private RuntimeProfileValidation revalidateRuntimeProfile(
+      EnvironmentIdentityPlan plan,
+      RuntimeProfileService.RuntimeProfile expected,
+      String boundary) {
+    RuntimeProfileService.RuntimeProfile current;
+    try {
+      current = runtimeProfileService.read(client, plan);
+    } catch (IllegalStateException exception) {
+      return new RuntimeProfileValidation(
+          null,
+          HostedEnvironmentIdentityStatus.Phase.Blocked,
+          "RuntimeProfileInvalid",
+          "runtime profile became malformed at " + boundary + ": " + boundedMessage(exception),
+          false);
+    }
+    if (!current.present()) {
+      return new RuntimeProfileValidation(
+          current,
+          HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
+          "RuntimeAbsent",
+          "runtime Namespace disappeared at "
+              + boundary
+              + "; stale convergence was not acknowledged",
+          false);
+    }
+    if (!RuntimeProfileService.exactlyMatches(expected, current)) {
+      return new RuntimeProfileValidation(
+          current,
+          HostedEnvironmentIdentityStatus.Phase.Verifying,
+          "RuntimeIdentityChanged",
+          "runtime identity changed at "
+              + boundary
+              + " ("
+              + RuntimeProfileService.changedFields(expected, current)
+              + "); fresh convergence is required",
+          false);
+    }
+    return new RuntimeProfileValidation(current, null, null, null, true);
+  }
+
   record ReadinessStatus(
       HostedEnvironmentIdentityStatus.Phase phase, String reason, String message, boolean ready) {}
 
+  private record RuntimeProfileValidation(
+      RuntimeProfileService.RuntimeProfile profile,
+      HostedEnvironmentIdentityStatus.Phase phase,
+      String reason,
+      String message,
+      boolean valid) {}
+
+  private UpdateControl<HostedEnvironmentIdentity> runtimeProfileChangedStatus(
+      HostedEnvironmentIdentity resource,
+      RuntimeProfileService.RuntimeProfile runtimeProfile,
+      CertificateMaterialService.RoleMaterial ingress,
+      CertificateMaterialService.RoleMaterial telnet,
+      CertificateMaterialService.RoleMaterial gatewayInternalWs,
+      CertificateMaterialService.RoleMaterial tcpProxyBridge,
+      CertificateMaterialService.RoleMaterial grpc,
+      SecretProjectionService.ProjectionResult projection) {
+    if (projection == null || !"runtime-profile-changed".equals(projection.state())) {
+      return null;
+    }
+    return status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        "RuntimeIdentityChanged",
+        "runtime profile changed during guarded identity convergence; fresh convergence is required",
+        false,
+        runtimeProfile,
+        ingress,
+        telnet,
+        gatewayInternalWs,
+        tcpProxyBridge,
+        grpc);
+  }
+
   SecretProjectionService.ProjectionResult project(
-      EnvironmentIdentityPlan plan, CertificateMaterialService.RoleMaterial material, String role) {
+      EnvironmentIdentityPlan plan,
+      RuntimeProfileService.RuntimeProfile expectedProfile,
+      CertificateMaterialService.RoleMaterial material,
+      String role) {
     validateSourceLabels(material.source(), plan, role);
     if (material.projectionDeferred()) {
       return SecretProjectionService.ProjectionResult.awaiting(
@@ -407,10 +689,14 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         material.sourceGeneration(),
         material.sourceObjectGeneration(),
         material.summary().spkiSha256(),
-        provenance);
+        provenance,
+        () -> assertRuntimeProfileCurrent(plan, expectedProfile));
   }
 
-  private Secret runtimeProjection(EnvironmentIdentityPlan plan, String role) {
+  Secret runtimeProjection(
+      EnvironmentIdentityPlan plan,
+      RuntimeProfileService.RuntimeProfile expectedProfile,
+      String role) {
     String name =
         switch (role) {
           case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE ->
@@ -419,6 +705,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           default ->
               throw new IllegalArgumentException("unsupported bridge identity role: " + role);
         };
+    assertRuntimeProfileCurrent(plan, expectedProfile);
     Secret secret = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     validateSourceLabels(secret, plan, role);
     return secret;
@@ -443,10 +730,70 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       HostedEnvironmentIdentity resource,
       EnvironmentIdentityPlan plan,
       Context<HostedEnvironmentIdentity> context) {
-    Namespace runtimeNamespace = client.namespaces().withName(plan.runtimeNamespace()).get();
-    if (runtimeNamespace != null) {
-      DeploymentRolloutService.RetirementResult shutdown =
-          deploymentRolloutService.stopBridges(client, plan);
+    RuntimeProfileService.RuntimeProfile runtimeProfile;
+    try {
+      runtimeProfile = runtimeProfileService.read(client, plan);
+    } catch (IllegalStateException exception) {
+      return status(
+          resource,
+          HostedEnvironmentIdentityStatus.Phase.Retiring,
+          "RuntimeProfileInvalid",
+          "runtime profile is malformed; bridge shutdown and identity deletion are withheld: "
+              + boundedMessage(exception),
+          false,
+          null,
+          null,
+          null,
+          null);
+    }
+    if (runtimeProfile.present()) {
+      RuntimeProfileService.RuntimeProfile observedProfile =
+          previouslyObservedRuntimeProfile(resource);
+      if (observedProfile == null) {
+        return status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Retiring,
+            "RuntimeIdentityUnproven",
+            "retirement requires a complete previously observed runtime profile; bridge shutdown "
+                + "and identity deletion are withheld",
+            false,
+            null,
+            null,
+            null,
+            null);
+      }
+      if (!RuntimeProfileService.exactlyMatches(observedProfile, runtimeProfile)) {
+        return status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Retiring,
+            "RuntimeIdentityChanged",
+            "runtime Namespace identity does not match its previously observed status profile ("
+                + RuntimeProfileService.changedFields(observedProfile, runtimeProfile)
+                + "); bridge shutdown and identity deletion are withheld",
+            false,
+            null,
+            null,
+            null,
+            null);
+      }
+      RuntimeProfileService.RuntimeProfile expectedProfile = runtimeProfile;
+      DeploymentRolloutService.RetirementResult shutdown;
+      try {
+        shutdown =
+            deploymentRolloutService.stopBridges(
+                client, plan, () -> assertRuntimeProfileCurrent(plan, expectedProfile));
+      } catch (RuntimeProfileFenceException exception) {
+        return status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Retiring,
+            exception.reason(),
+            exception.getMessage(),
+            false,
+            null,
+            null,
+            null,
+            null);
+      }
       return status(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retiring,
@@ -500,6 +847,86 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return UpdateControl.noUpdate();
     }
     return finishRetirement(context);
+  }
+
+  private RuntimeProfileService.RuntimeProfile previouslyObservedRuntimeProfile(
+      HostedEnvironmentIdentity resource) {
+    if (resource.getStatus() == null || resource.getStatus().getProfile() == null) {
+      return null;
+    }
+    HostedEnvironmentIdentityStatus.RuntimeProfile profile = resource.getStatus().getProfile();
+    if (profile.getRuntimeNamespaceUid() == null
+        || profile.getRuntimeNamespaceUid().isBlank()
+        || !canonicalHead(profile.getRequestedHeadSha())
+        || !optionalCanonicalHead(profile.getDeployedHeadSha())
+        || profile.getTelnetPort() == null
+        || profile.getTelnetPort() < 1
+        || profile.getTelnetPort() > 65535) {
+      return null;
+    }
+    return new RuntimeProfileService.RuntimeProfile(
+        profile.getRuntimeNamespaceUid(),
+        profile.getRequestedHeadSha(),
+        profile.getDeployedHeadSha(),
+        profile.getTelnetPort(),
+        true);
+  }
+
+  private boolean assertRuntimeProfileCurrent(
+      EnvironmentIdentityPlan plan, RuntimeProfileService.RuntimeProfile expectedProfile) {
+    RuntimeProfileService.RuntimeProfile current;
+    try {
+      current = runtimeProfileService.read(client, plan);
+    } catch (IllegalStateException exception) {
+      throw new RuntimeProfileFenceException(
+          HostedEnvironmentIdentityStatus.Phase.Blocked,
+          "RuntimeProfileInvalid",
+          "runtime profile became malformed before bridge mutation; shutdown is withheld: "
+              + boundedMessage(exception));
+    }
+    if (!current.present()) {
+      throw new RuntimeProfileFenceException(
+          HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
+          "RuntimeAbsent",
+          "runtime Namespace disappeared before bridge mutation; shutdown is withheld");
+    }
+    if (!RuntimeProfileService.exactlyMatches(expectedProfile, current)) {
+      throw new RuntimeProfileFenceException(
+          HostedEnvironmentIdentityStatus.Phase.Verifying,
+          "RuntimeIdentityChanged",
+          "runtime Namespace identity changed before bridge mutation ("
+              + RuntimeProfileService.changedFields(expectedProfile, current)
+              + "); shutdown is withheld");
+    }
+    return true;
+  }
+
+  private static boolean canonicalHead(String head) {
+    return head != null && head.matches("[0-9a-f]{40}");
+  }
+
+  private static boolean optionalCanonicalHead(String head) {
+    return head == null || canonicalHead(head);
+  }
+
+  private static final class RuntimeProfileFenceException extends IllegalStateException {
+    private final HostedEnvironmentIdentityStatus.Phase phase;
+    private final String reason;
+
+    private RuntimeProfileFenceException(
+        HostedEnvironmentIdentityStatus.Phase phase, String reason, String message) {
+      super(message);
+      this.phase = phase;
+      this.reason = reason;
+    }
+
+    private HostedEnvironmentIdentityStatus.Phase phase() {
+      return phase;
+    }
+
+    private String reason() {
+      return reason;
+    }
   }
 
   static boolean retiredStatusIsCurrent(HostedEnvironmentIdentity resource) {

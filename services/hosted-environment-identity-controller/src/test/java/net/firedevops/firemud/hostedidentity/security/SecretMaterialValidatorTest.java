@@ -35,6 +35,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -56,6 +57,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class SecretMaterialValidatorTest {
+  private static final AtomicLong CA_SERIAL = new AtomicLong(1);
+
   @Test
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() {
     EnvironmentIdentityPlan plan =
@@ -626,7 +629,7 @@ class SecretMaterialValidatorTest {
     var builder =
         new JcaX509v3CertificateBuilder(
             name,
-            BigInteger.valueOf(42),
+            BigInteger.valueOf(CA_SERIAL.getAndIncrement()),
             Date.from(now.minus(Duration.ofMinutes(1))),
             Date.from(now.plus(lifetime)),
             name,

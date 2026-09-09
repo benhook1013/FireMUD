@@ -124,6 +124,7 @@ public class CertificateResourceFactory {
       spec.put("uris", new ArrayList<>(uriSans));
     }
     spec.put("usages", new ArrayList<>(usages));
+    spec.put("encodeUsagesInRequest", true);
     spec.put("issuerRef", issuerRef);
     if (duration != null) {
       HostedIdentityProperties.requireValidGrpcRenewBefore(renewBefore);

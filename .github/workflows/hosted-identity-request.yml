@@ -437,6 +437,9 @@ jobs:
       - name: Apply validated PR runtime artifact
         id: deploy-runtime-artifact
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
           TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
@@ -444,9 +447,11 @@ jobs:
           set -euo pipefail
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
 
       - name: Record exact deployed preview head
