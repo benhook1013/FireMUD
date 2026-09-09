@@ -231,7 +231,7 @@ expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
 expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
   patch hostedenvironmentidentities.platform.firemud.dev
 expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
-  update hostedenvironmentidentities/status.platform.firemud.dev
+  update hostedenvironmentidentities.platform.firemud.dev/status
 expect_can_i yes --as="$controller_sa" get namespace
 expect_can_i yes --as="$requester_sa" --namespace="$CONTROL_NAMESPACE" \
   create hostedenvironmentidentities.platform.firemud.dev

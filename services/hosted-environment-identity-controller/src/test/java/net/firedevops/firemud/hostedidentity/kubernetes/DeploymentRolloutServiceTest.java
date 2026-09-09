@@ -27,6 +27,27 @@ import org.mockito.ArgumentCaptor;
 
 class DeploymentRolloutServiceTest {
   @Test
+  void mixedRevisionEditPreservesCurrentRoleAndUpdatesOnlyStaleRole() {
+    Deployment deployment =
+        readyDeployment(
+            "tcp-proxy-service",
+            Map.of(
+                HostedIdentityContract.TELNET_REVISION_ANNOTATION,
+                "telnet-old",
+                HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                "grpc-current"),
+            3L);
+
+    Deployment edited =
+        DeploymentRolloutService.applyRevisions(
+            deployment, Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-new"));
+
+    Map<String, String> annotations = edited.getSpec().getTemplate().getMetadata().getAnnotations();
+    assertEquals("telnet-new", annotations.get(HostedIdentityContract.TELNET_REVISION_ANNOTATION));
+    assertEquals("grpc-current", annotations.get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+  }
+
+  @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
   void tcpProxyTelnetAndGrpcChangesUseOneEditAndConvergeTogether() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");

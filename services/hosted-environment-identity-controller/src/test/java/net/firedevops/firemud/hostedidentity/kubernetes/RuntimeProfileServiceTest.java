@@ -156,6 +156,12 @@ class RuntimeProfileServiceTest {
             expected,
             new RuntimeProfileService.RuntimeProfile(
                 "runtime-uid", "a".repeat(40), "a".repeat(40), 32003, true)));
+    assertEquals(
+        "runtime Namespace UID, requested head, deployed head, Telnet port",
+        RuntimeProfileService.changedFields(
+            expected,
+            new RuntimeProfileService.RuntimeProfile(
+                "other-uid", "b".repeat(40), "b".repeat(40), 32003, true)));
   }
 
   @Test

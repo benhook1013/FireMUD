@@ -2,10 +2,15 @@ package net.firedevops.firemud.hostedidentity.probe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import io.fabric8.kubernetes.api.model.Secret;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
@@ -89,6 +94,15 @@ class ServedEnvironmentProbeTest {
                 "mtls-handshake")
             .reason());
     assertEquals(
+        "material-or-configuration-invalid",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  ServedEnvironmentProbe.grpcSslContext(new Secret(), null);
+                  return null;
+                },
+                "mtls-handshake")
+            .reason());
+    assertEquals(
         "connection-failed",
         ServedEnvironmentProbe.internalTlsProbe(
                 () -> {
@@ -99,7 +113,27 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
-  void missingFixedGrpcProbeConsumerFailsAsInvalidConfiguration() {
+  void servedProbeClosesSocketWhenSetupFailsBeforeOwnershipTransfer() throws Exception {
+    SSLSocket socket = mock(SSLSocket.class);
+    doThrow(new IOException("connect failed"))
+        .when(socket)
+        .connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
+    var method =
+        ServedEnvironmentProbe.class.getDeclaredMethod(
+            "openTlsSocket", String.class, int.class, String.class, SSLSocket.class);
+    method.setAccessible(true);
+
+    InvocationTargetException failure =
+        assertThrows(
+            InvocationTargetException.class,
+            () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
+    assertEquals(IOException.class, failure.getCause().getClass());
+    assertEquals("connect failed", failure.getCause().getMessage());
+    verify(socket).close();
+  }
+
+  @Test
+  void missingFixedGrpcProbeConsumerFailsAsInvalidConfiguration() throws Exception {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     EnvironmentIdentityPlan missingProbeConsumer =
@@ -127,9 +161,11 @@ class ServedEnvironmentProbeTest {
             plan.caSecretName(),
             List.of("tcp-proxy-service"));
 
+    Secret material = generatedMaterial(plan);
+    properties.setGrpcTrustAnchorSha256(fingerprint(material.getData().get("ca.crt")));
     ServedEnvironmentProbe.ProbeResult result =
         new ServedEnvironmentProbe(properties)
-            .grpc(missingProbeConsumer, new Secret(), "1".repeat(64));
+            .grpc(missingProbeConsumer, material, fingerprint(material.getData().get("tls.crt")));
 
     assertEquals(false, result.ready());
     assertEquals("material-or-configuration-invalid", result.reason());

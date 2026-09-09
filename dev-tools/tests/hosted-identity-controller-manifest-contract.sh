@@ -353,6 +353,10 @@ for required in (
     "object.metadata.finalizers.exists",
     "object.metadata.finalizers.filter",
     "oldObject.metadata.finalizers.filter",
+    "object.metadata.finalizers.size() ==",
+    "oldObject.metadata.finalizers.size() ==",
+    "f != 'platform.firemud.dev/hosted-environment-identity'",
+    "f == 'platform.firemud.dev/hosted-environment-identity'",
 ):
     assert required in controller_finalizer_expression, required
 

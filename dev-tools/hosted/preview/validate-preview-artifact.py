@@ -795,7 +795,7 @@ def inject_telnet_port(
                     f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
                 )
             metadata["namespace"] = expected_namespace
-        if not isinstance(document, dict) or document.get("kind") != "Service":
+        if document.get("kind") != "Service":
             continue
         if metadata.get("name") != "tcp-proxy-service":
             continue

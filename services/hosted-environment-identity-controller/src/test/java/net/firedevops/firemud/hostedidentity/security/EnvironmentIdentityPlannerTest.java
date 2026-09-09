@@ -79,6 +79,7 @@ class EnvironmentIdentityPlannerTest {
 
   @Test
   void rejectsNamesOutsideTheFixedEnvironmentSet() {
+    assertThrows(IllegalArgumentException.class, () -> planner.plan(null));
     assertThrows(IllegalArgumentException.class, () -> planner.plan(""));
     assertThrows(IllegalArgumentException.class, () -> planner.plan(" \t"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-0"));

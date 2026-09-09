@@ -250,6 +250,9 @@ public class ServedEnvironmentProbe {
   }
 
   static SSLContext grpcSslContext(Secret material, String expectedTrustAnchor) throws Exception {
+    if (expectedTrustAnchor == null) {
+      throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
+    }
     if (material == null || material.getData() == null) {
       throw new IllegalArgumentException("gRPC probe material is absent");
     }

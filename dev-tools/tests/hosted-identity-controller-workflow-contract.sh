@@ -121,11 +121,12 @@ preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 triggers = workflow.get("on", workflow.get(True))
-assert list(triggers) == ["workflow_run"], triggers
+assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
     "workflows": ["PR Preview Environment"],
     "types": ["completed"],
 }
+assert triggers["pull_request_target"] == {"types": ["closed"]}
 assert workflow["permissions"] == {
     "actions": "read",
     "contents": "read",
@@ -144,6 +145,15 @@ for job_name, required_gate in expected_gates.items():
     assert required_gate in condition, (job_name, condition)
 
 validate_job = jobs["validate-target"]
+assert validate_job["if"] == (
+    "${{ (github.event_name == 'workflow_run' && "
+    "github.event.workflow_run.event == 'pull_request' && "
+    "github.event.workflow_run.conclusion == 'success' && "
+    "github.event.workflow_run.head_repository.full_name == github.repository && "
+    "github.event.workflow_run.name == 'PR Preview Environment') || "
+    "(github.event_name == 'pull_request_target' && "
+    "github.event.action == 'closed') }}"
+)
 assert validate_job["permissions"] == {
     "actions": "read",
     "contents": "read",
@@ -362,21 +372,15 @@ assert "firemud.dev/last-preview-head-sha=${head_sha}" not in preview_annotator
 projection_wait = next(
     step["run"]
     for step in deploy_steps
-    if step.get("name") == "Wait for exact WebSocket identity projections"
+    if step.get("name") == "Wait for all controller identity projections"
 )
-loop = (
-    'for secret_name in "${IDENTITY_NAME}-gateway-internal-ws" '
-    '"${IDENTITY_NAME}-tcp-proxy-bridge"; do'
-)
-assert projection_wait.count("deadline=$((SECONDS + 900))") == 1
-assert projection_wait.count("projection_ready=false") == 1
-assert projection_wait.count("projection_ready=true") == 1
-assert 'if [[ "$projection_ready" != true ]]' in projection_wait
-assert projection_wait.index(loop) < projection_wait.index("deadline=$((SECONDS + 900))")
-assert projection_wait.index("deadline=$((SECONDS + 900))") < projection_wait.index(
-    "while (( SECONDS < deadline )); do"
-)
-assert projection_wait.index("projection_ready=true") < projection_wait.index("break")
+projection_lines = [line.strip() for line in projection_wait.splitlines()]
+assert projection_lines == [
+    "bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \\",
+    '--projections "$IDENTITY_NAME" "$RUNTIME_NAMESPACE" 900',
+]
+assert "kubectl" not in projection_wait
+assert "deadline=" not in projection_wait
 
 credential_step = next(
     step["run"]
@@ -384,14 +388,42 @@ credential_step = next(
     if step.get("name") == "Create canonical non-identity runtime credentials"
 )
 for fragment in (
+    'read_secret_if_present firemud-secret',
+    'read_secret_if_present minio-credentials',
+    'read_secret_if_present jwt-signing-keys',
+    'read_configmap_if_present jwt-jwks',
+    'validate_secret_shape firemud-secret',
+    'validate_secret_shape minio-credentials',
+    'validate_secret_shape jwt-signing-keys',
+    'validate_configmap_shape jwt-jwks',
+    'validate_diagnostic_jwks "$signing_key_sha256"',
+    '[[ "$postgres_user" != firemud ]]',
+    'Recycle the disposable preview namespace before retrying',
+    'postgres_password="$(openssl rand -hex 32)"',
+    'asset_store_access_key="$(openssl rand -hex 16)"',
+    'asset_store_secret_key="$(openssl rand -hex 32)"',
+    '--from-literal="ASSET_STORE_ACCESS_KEY=${asset_store_access_key}"',
+    '--from-literal="ASSET_STORE_SECRET_KEY=${asset_store_secret_key}"',
+    '--from-literal="accessKey=${minio_access_key}"',
+    '--from-literal="secretKey=${minio_secret_key}"',
+    '--from-literal="current.key=${signing_key}"',
+    '--from-literal="jwks.json=${diagnostic_jwks}"',
     'signing_key_sha256="$(printf \'%s\' "$signing_key" | sha256sum',
-    'jq -n --arg fingerprint "$signing_key_sha256"',
+    'jq -nc --arg fingerprint "$signing_key_sha256"',
     'keys:[]',
     'purpose:"shared-hmac-secret-path-fingerprint"',
     'sha256:$fingerprint',
 ):
     assert fragment in credential_step, fragment
-for forbidden in ('openssl base64', 'kty:"oct"', 'k:$key', '--arg key'):
+for forbidden in (
+    '--from-literal=FIREMUD_POSTGRES_PASSWORD=firemud',
+    '--from-literal=accessKey=minio',
+    '--from-literal=secretKey=minio123',
+    'openssl base64',
+    'kty:"oct"',
+    'k:$key',
+    '--arg key "$signing_key"',
+):
     assert forbidden not in credential_step, forbidden
 PY
 
@@ -428,6 +460,501 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Execute the exact credential step with a stateful Kubernetes stub. The first
+# pass creates the application, MinIO, and JWT resources from random values;
+# the second pass must reuse every exact stored byte without regenerating them.
+credential_script="$TEMP_DIR/create-runtime-credentials.sh"
+python3 - "$trusted" "$credential_script" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+step = next(
+    step
+    for step in workflow["jobs"]["deploy-runtime"]["steps"]
+    if step.get("name") == "Create canonical non-identity runtime credentials"
+)
+Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
+PY
+
+credential_stub_dir="$TEMP_DIR/credential-stubs"
+credential_state_root="$TEMP_DIR/credential-state"
+mkdir -p "$credential_stub_dir" "$credential_state_root"
+cat >"$credential_stub_dir/openssl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 3 && "$1" == rand && "$2" == -hex ]]
+case "$3" in
+  16)
+    value=11111111111111111111111111111111
+    ;;
+  32)
+    count=0
+    if [[ -f "${CREDENTIAL_OPENSSL_COUNT:?}" ]]; then
+      count="$(<"$CREDENTIAL_OPENSSL_COUNT")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$CREDENTIAL_OPENSSL_COUNT"
+    case "$count" in
+      1) value=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+      2) value=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+      3) value=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc ;;
+      *) value=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ;;
+    esac
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+printf 'rand-hex-%s\n' "$3" >>"${CREDENTIAL_OPENSSL_LOG:?}"
+printf '%s\n' "$value"
+SH
+cat >"$credential_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == apply ]]; then
+  [[ "$2" == -f && "$3" == - ]]
+  cat >/dev/null
+  printf 'apply\n' >>"${CREDENTIAL_KUBECTL_LOG:?}"
+  exit 0
+fi
+
+[[ "$1" == -n && "$2" == "${RUNTIME_NAMESPACE:?}" ]]
+namespace="$2"
+shift 2
+if [[ "$1" == get && ( "$2" == secret || "$2" == configmap ) ]]; then
+  [[ $# -eq 6 && "$4" == --ignore-not-found && "$5" == -o && "$6" == json ]]
+  resource_name="$3"
+  printf 'get %s\n' "$resource_name" >>"${CREDENTIAL_KUBECTL_LOG:?}"
+  state_path="${CREDENTIAL_STATE_DIR:?}/${resource_name}.json"
+  if [[ -f "$state_path" ]]; then
+    cat "$state_path"
+  fi
+  exit 0
+fi
+if [[ "$1" == create && "$2" == serviceaccount ]]; then
+  printf 'apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: firemud-app\n  namespace: %s\n' "$namespace"
+  exit 0
+fi
+if [[ "$1" == create && "$2" == configmap ]]; then
+  configmap_name="$3"
+  shift 3
+  state_path="${CREDENTIAL_STATE_DIR:?}/${configmap_name}.json"
+  [[ ! -e "$state_path" ]]
+  python3 - "$state_path" "$namespace" "$configmap_name" "$@" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+namespace = sys.argv[2]
+name = sys.argv[3]
+data = {}
+for argument in sys.argv[4:]:
+    if not argument.startswith("--from-literal="):
+        raise SystemExit(f"unexpected create argument: {argument}")
+    key, value = argument.removeprefix("--from-literal=").split("=", 1)
+    data[key] = value
+state_path.write_text(
+    json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": name, "namespace": namespace},
+            "data": data,
+        },
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+PY
+  printf 'create %s\n' "$configmap_name" >>"${CREDENTIAL_KUBECTL_LOG:?}"
+  exit 0
+fi
+if [[ "$1" == create && "$2" == secret && "$3" == generic ]]; then
+  secret_name="$4"
+  shift 4
+  if [[ " $* " == *" --dry-run=client "* ]]; then
+    printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: %s\n  namespace: %s\ntype: Opaque\n' \
+      "$secret_name" "$namespace"
+    exit 0
+  fi
+  state_path="${CREDENTIAL_STATE_DIR:?}/${secret_name}.json"
+  [[ ! -e "$state_path" ]]
+  python3 - "$state_path" "$namespace" "$secret_name" "$@" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+namespace = sys.argv[2]
+name = sys.argv[3]
+data = {}
+for argument in sys.argv[4:]:
+    if not argument.startswith("--from-literal="):
+        raise SystemExit(f"unexpected create argument: {argument}")
+    key, value = argument.removeprefix("--from-literal=").split("=", 1)
+    data[key] = base64.b64encode(value.encode("utf-8")).decode("ascii")
+state_path.write_text(
+    json.dumps(
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": name, "namespace": namespace},
+            "type": "Opaque",
+            "data": data,
+        },
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+PY
+  printf 'create %s\n' "$secret_name" >>"${CREDENTIAL_KUBECTL_LOG:?}"
+  exit 0
+fi
+
+printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$credential_stub_dir/openssl" "$credential_stub_dir/kubectl"
+
+run_credential_step() {
+  local state_dir="$1"
+  local output="$2"
+  local error="$3"
+  env \
+    PATH="$credential_stub_dir:$PATH" \
+    RUNTIME_NAMESPACE=pr-42 \
+    CREDENTIAL_STATE_DIR="$state_dir" \
+    CREDENTIAL_OPENSSL_COUNT="$state_dir/openssl-count" \
+    CREDENTIAL_OPENSSL_LOG="$state_dir/openssl.log" \
+    CREDENTIAL_KUBECTL_LOG="$state_dir/kubectl.log" \
+    bash "$credential_script" >"$output" 2>"$error"
+}
+
+create_once_state="$credential_state_root/create-once"
+mkdir -p "$create_once_state"
+run_credential_step "$create_once_state" \
+  "$TEMP_DIR/create-once.output" "$TEMP_DIR/create-once.error"
+python3 - "$create_once_state" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+state = Path(sys.argv[1])
+firemud = json.loads((state / "firemud-secret.json").read_text(encoding="utf-8"))
+minio = json.loads((state / "minio-credentials.json").read_text(encoding="utf-8"))
+jwt_signing = json.loads((state / "jwt-signing-keys.json").read_text(encoding="utf-8"))
+jwt_jwks = json.loads((state / "jwt-jwks.json").read_text(encoding="utf-8"))
+decode = lambda value: base64.b64decode(value, validate=True).decode("utf-8")
+firemud_data = {key: decode(value) for key, value in firemud["data"].items()}
+minio_data = {key: decode(value) for key, value in minio["data"].items()}
+jwt_signing_data = {
+    key: decode(value) for key, value in jwt_signing["data"].items()
+}
+jwks = json.loads(jwt_jwks["data"]["jwks.json"])
+assert set(firemud_data) == {
+    "FIREMUD_POSTGRES_USER",
+    "FIREMUD_POSTGRES_PASSWORD",
+    "ASSET_STORE_ACCESS_KEY",
+    "ASSET_STORE_SECRET_KEY",
+}
+assert set(minio_data) == {"accessKey", "secretKey"}
+assert firemud_data["FIREMUD_POSTGRES_USER"] == "firemud"
+assert firemud_data["FIREMUD_POSTGRES_PASSWORD"] != "firemud"
+assert firemud_data["ASSET_STORE_ACCESS_KEY"] == minio_data["accessKey"]
+assert firemud_data["ASSET_STORE_SECRET_KEY"] == minio_data["secretKey"]
+assert minio_data["accessKey"] != "minio"
+assert minio_data["secretKey"] != "minio123"
+assert set(jwt_signing_data) == {"current.key"}
+assert len(jwt_signing_data["current.key"]) == 64
+assert set(jwt_signing_data["current.key"]) <= set("0123456789abcdef")
+assert jwks == {
+    "keys": [],
+    "firemudDiagnostic": {
+        "purpose": "shared-hmac-secret-path-fingerprint",
+        "sha256": hashlib.sha256(
+            jwt_signing_data["current.key"].encode("ascii")
+        ).hexdigest(),
+    },
+}
+PY
+firemud_before="$(sha256sum "$create_once_state/firemud-secret.json")"
+minio_before="$(sha256sum "$create_once_state/minio-credentials.json")"
+jwt_signing_before="$(sha256sum "$create_once_state/jwt-signing-keys.json")"
+jwt_jwks_before="$(sha256sum "$create_once_state/jwt-jwks.json")"
+openssl_lines_before="$(wc -l <"$create_once_state/openssl.log")"
+run_credential_step "$create_once_state" \
+  "$TEMP_DIR/reuse.output" "$TEMP_DIR/reuse.error"
+test "$(sha256sum "$create_once_state/firemud-secret.json")" = "$firemud_before"
+test "$(sha256sum "$create_once_state/minio-credentials.json")" = "$minio_before"
+test "$(sha256sum "$create_once_state/jwt-signing-keys.json")" = "$jwt_signing_before"
+test "$(sha256sum "$create_once_state/jwt-jwks.json")" = "$jwt_jwks_before"
+test "$(wc -l <"$create_once_state/openssl.log")" -eq "$openssl_lines_before"
+test "$(grep -c '^create firemud-secret$' "$create_once_state/kubectl.log")" -eq 1
+test "$(grep -c '^create minio-credentials$' "$create_once_state/kubectl.log")" -eq 1
+test "$(grep -c '^create jwt-signing-keys$' "$create_once_state/kubectl.log")" -eq 1
+test "$(grep -c '^create jwt-jwks$' "$create_once_state/kubectl.log")" -eq 1
+
+partial_root="$credential_state_root/valid-partials"
+firemud_only_state="$partial_root/firemud-only"
+mkdir -p "$firemud_only_state"
+cp \
+  "$create_once_state/firemud-secret.json" \
+  "$create_once_state/jwt-signing-keys.json" \
+  "$create_once_state/jwt-jwks.json" \
+  "$firemud_only_state/"
+firemud_only_before="$(sha256sum "$firemud_only_state/firemud-secret.json")"
+jwt_signing_before="$(sha256sum "$firemud_only_state/jwt-signing-keys.json")"
+jwt_jwks_before="$(sha256sum "$firemud_only_state/jwt-jwks.json")"
+run_credential_step "$firemud_only_state" \
+  "$TEMP_DIR/firemud-only.output" "$TEMP_DIR/firemud-only.error"
+test "$(sha256sum "$firemud_only_state/firemud-secret.json")" = "$firemud_only_before"
+test "$(sha256sum "$firemud_only_state/jwt-signing-keys.json")" = "$jwt_signing_before"
+test "$(sha256sum "$firemud_only_state/jwt-jwks.json")" = "$jwt_jwks_before"
+test ! -e "$firemud_only_state/openssl.log"
+test "$(grep -c '^create minio-credentials$' "$firemud_only_state/kubectl.log")" -eq 1
+test "$(grep -Ec '^create (firemud-secret|jwt-signing-keys|jwt-jwks)$' "$firemud_only_state/kubectl.log" || true)" -eq 0
+
+minio_only_state="$partial_root/minio-only"
+mkdir -p "$minio_only_state"
+cp \
+  "$create_once_state/minio-credentials.json" \
+  "$create_once_state/jwt-signing-keys.json" \
+  "$create_once_state/jwt-jwks.json" \
+  "$minio_only_state/"
+minio_only_before="$(sha256sum "$minio_only_state/minio-credentials.json")"
+jwt_signing_before="$(sha256sum "$minio_only_state/jwt-signing-keys.json")"
+jwt_jwks_before="$(sha256sum "$minio_only_state/jwt-jwks.json")"
+run_credential_step "$minio_only_state" \
+  "$TEMP_DIR/minio-only.output" "$TEMP_DIR/minio-only.error"
+test "$(sha256sum "$minio_only_state/minio-credentials.json")" = "$minio_only_before"
+test "$(sha256sum "$minio_only_state/jwt-signing-keys.json")" = "$jwt_signing_before"
+test "$(sha256sum "$minio_only_state/jwt-jwks.json")" = "$jwt_jwks_before"
+test "$(cat "$minio_only_state/openssl.log")" = 'rand-hex-32'
+test "$(grep -c '^create firemud-secret$' "$minio_only_state/kubectl.log")" -eq 1
+test "$(grep -Ec '^create (minio-credentials|jwt-signing-keys|jwt-jwks)$' "$minio_only_state/kubectl.log" || true)" -eq 0
+python3 - "$firemud_only_state" "$minio_only_state" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+
+def data(state, name):
+    document = json.loads((state / f"{name}.json").read_text(encoding="utf-8"))
+    return {
+        key: base64.b64decode(value, validate=True).decode("utf-8")
+        for key, value in document["data"].items()
+    }
+
+
+for state_name in sys.argv[1:]:
+    state = Path(state_name)
+    firemud = data(state, "firemud-secret")
+    minio = data(state, "minio-credentials")
+    assert firemud["FIREMUD_POSTGRES_USER"] == "firemud"
+    assert firemud["ASSET_STORE_ACCESS_KEY"] == minio["accessKey"]
+    assert firemud["ASSET_STORE_SECRET_KEY"] == minio["secretKey"]
+PY
+
+jwt_secret_only_state="$partial_root/jwt-secret-only"
+mkdir -p "$jwt_secret_only_state"
+cp \
+  "$create_once_state/firemud-secret.json" \
+  "$create_once_state/minio-credentials.json" \
+  "$create_once_state/jwt-signing-keys.json" \
+  "$jwt_secret_only_state/"
+jwt_signing_before="$(sha256sum "$jwt_secret_only_state/jwt-signing-keys.json")"
+run_credential_step "$jwt_secret_only_state" \
+  "$TEMP_DIR/jwt-secret-only.output" "$TEMP_DIR/jwt-secret-only.error"
+test "$(sha256sum "$jwt_secret_only_state/jwt-signing-keys.json")" = "$jwt_signing_before"
+test ! -e "$jwt_secret_only_state/openssl.log"
+test "$(grep -c '^create jwt-jwks$' "$jwt_secret_only_state/kubectl.log")" -eq 1
+test "$(sha256sum "$jwt_secret_only_state/jwt-jwks.json" | awk '{print $1}')" = \
+  "$(sha256sum "$create_once_state/jwt-jwks.json" | awk '{print $1}')"
+test "$(grep -Ec '^create (firemud-secret|minio-credentials|jwt-signing-keys)$' "$jwt_secret_only_state/kubectl.log" || true)" -eq 0
+for partial_state in \
+  "$firemud_only_state" "$minio_only_state" "$jwt_secret_only_state"; do
+  python3 - "$partial_state/kubectl.log" <<'PY'
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+first_mutation = min(
+    index
+    for index, line in enumerate(lines)
+    if line == "apply" or line.startswith("create ")
+)
+for resource in (
+    "firemud-secret",
+    "minio-credentials",
+    "jwt-signing-keys",
+    "jwt-jwks",
+):
+    assert lines.index(f"get {resource}") < first_mutation
+PY
+done
+
+rejection_root="$credential_state_root/rejections"
+python3 - "$rejection_root" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+
+
+def encoded(value):
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def write_secret(directory, name, data):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.json").write_text(
+        json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": name, "namespace": "pr-42"},
+                "type": "Opaque",
+                "data": data,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+valid_firemud = {
+    "FIREMUD_POSTGRES_USER": encoded("firemud"),
+    "FIREMUD_POSTGRES_PASSWORD": encoded("strong-postgres-password"),
+    "ASSET_STORE_ACCESS_KEY": encoded("strong-minio-access"),
+    "ASSET_STORE_SECRET_KEY": encoded("strong-minio-secret"),
+}
+valid_minio = {
+    "accessKey": encoded("strong-minio-access"),
+    "secretKey": encoded("strong-minio-secret"),
+}
+
+cases = {
+    "wrong-postgres-user": (
+        {**valid_firemud, "FIREMUD_POSTGRES_USER": encoded("other-user")},
+        valid_minio,
+    ),
+    "missing-key": (
+        {key: value for key, value in valid_firemud.items() if key != "ASSET_STORE_SECRET_KEY"},
+        valid_minio,
+    ),
+    "extra-key": (valid_firemud, {**valid_minio, "unexpected": encoded("value")}),
+    "empty-key": ({**valid_firemud, "FIREMUD_POSTGRES_PASSWORD": ""}, valid_minio),
+    "malformed-key": (valid_firemud, {**valid_minio, "accessKey": "%%%"}),
+    "legacy-default": (
+        {
+            **valid_firemud,
+            "FIREMUD_POSTGRES_PASSWORD": encoded("firemud"),
+            "ASSET_STORE_ACCESS_KEY": encoded("minio"),
+            "ASSET_STORE_SECRET_KEY": encoded("minio123"),
+        },
+        {"accessKey": encoded("minio"), "secretKey": encoded("minio123")},
+    ),
+    "mismatched-minio": (
+        valid_firemud,
+        {"accessKey": encoded("other-access"), "secretKey": encoded("other-secret")},
+    ),
+}
+for case_name, (firemud_data, minio_data) in cases.items():
+    directory = root / case_name
+    write_secret(directory, "firemud-secret", firemud_data)
+    write_secret(directory, "minio-credentials", minio_data)
+PY
+
+for scenario in \
+  wrong-postgres-user missing-key extra-key empty-key malformed-key \
+  legacy-default mismatched-minio; do
+  scenario_dir="$rejection_root/$scenario"
+  firemud_before="$(sha256sum "$scenario_dir/firemud-secret.json")"
+  minio_before="$(sha256sum "$scenario_dir/minio-credentials.json")"
+  if run_credential_step "$scenario_dir" \
+    "$TEMP_DIR/${scenario}.output" "$TEMP_DIR/${scenario}.error"; then
+    echo "credential step accepted ${scenario}" >&2
+    exit 1
+  fi
+  grep -Fq 'Recycle the disposable preview namespace before retrying; credentials were not changed.' \
+    "$TEMP_DIR/${scenario}.error"
+  test "$(sha256sum "$scenario_dir/firemud-secret.json")" = "$firemud_before"
+  test "$(sha256sum "$scenario_dir/minio-credentials.json")" = "$minio_before"
+  test ! -e "$scenario_dir/openssl.log"
+  if [[ -e "$scenario_dir/kubectl.log" ]]; then
+    if grep -Eq '^(apply|create (firemud-secret|minio-credentials|jwt-signing-keys|jwt-jwks))$' "$scenario_dir/kubectl.log"; then
+      echo "credential step mutated ${scenario}" >&2
+      exit 1
+    fi
+  fi
+done
+grep -Fq 'PostgreSQL user is not canonical' \
+  "$TEMP_DIR/wrong-postgres-user.error"
+
+jwt_rejection_root="$rejection_root/jwt"
+python3 - "$create_once_state" "$jwt_rejection_root" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+root = Path(sys.argv[2])
+for scenario in ("jwks-only", "mismatched-jwks"):
+    directory = root / scenario
+    directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source / "firemud-secret.json", directory)
+    shutil.copy2(source / "minio-credentials.json", directory)
+    shutil.copy2(source / "jwt-jwks.json", directory)
+    if scenario == "mismatched-jwks":
+        shutil.copy2(source / "jwt-signing-keys.json", directory)
+        path = directory / "jwt-jwks.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        jwks = json.loads(document["data"]["jwks.json"])
+        jwks["firemudDiagnostic"]["sha256"] = "0" * 64
+        document["data"]["jwks.json"] = json.dumps(jwks, sort_keys=True)
+        path.write_text(json.dumps(document, sort_keys=True), encoding="utf-8")
+PY
+
+for scenario in jwks-only mismatched-jwks; do
+  scenario_dir="$jwt_rejection_root/$scenario"
+  before="$(sha256sum "$scenario_dir"/*.json)"
+  if run_credential_step "$scenario_dir" \
+    "$TEMP_DIR/${scenario}.output" "$TEMP_DIR/${scenario}.error"; then
+    echo "credential step accepted ${scenario}" >&2
+    exit 1
+  fi
+  grep -Fq 'Recycle the disposable preview namespace before retrying; credentials were not changed.' \
+    "$TEMP_DIR/${scenario}.error"
+  test "$(sha256sum "$scenario_dir"/*.json)" = "$before"
+  test ! -e "$scenario_dir/openssl.log"
+  if grep -Eq '^(apply|create )' "$scenario_dir/kubectl.log"; then
+    echo "credential step mutated ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'signing Secret is absent and cannot be reconstructed' \
+  "$TEMP_DIR/jwks-only.error"
+grep -Fq 'diagnostic content does not match the signing Secret' \
+  "$TEMP_DIR/mismatched-jwks.error"
+if grep -Eq \
+  '(strong-postgres-password|strong-minio-(access|secret)|11111111111111111111111111111111|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)' \
+  "$TEMP_DIR"/*.output "$TEMP_DIR"/*.error; then
+  echo 'credential step exposed secret material in command output' >&2
+  exit 1
+fi
 
 # Exercise the real downstream Helm producer before checking mutations. This
 # proves that the closed metadata allowlist accepts exactly the top-level and
@@ -1157,7 +1684,12 @@ case "$resource" in
     fi
     ;;
   repos/example/FireMUD/pulls/900)
-    printf '%s' '{"state":"open","head":{"sha":"head-900","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop","sha":"base-900"},"merge_commit_sha":"merge-900","labels":[]}'
+    jq -nc \
+      --arg state "${TEST_PR_STATE:-open}" \
+      --arg head "${TEST_PR_HEAD_SHA:-head-900}" \
+      --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
+      --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:[]}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     printf '%s' '[{"artifacts":[]}]'
@@ -1187,5 +1719,70 @@ chmod +x "$TEMP_DIR/bin/gh"
     bash "$TEMP_DIR/target.sh"
 )
 test "$(cat "$TEMP_DIR/output")" = 'action=none'
+
+run_closed_target_fixture() {
+  local scenario="$1"
+  local state="$2"
+  local head_repository="$3"
+  local base_ref="$4"
+  local current_head_sha="$5"
+  local event_head_sha="$6"
+  local expected_status="$7"
+  local output="$TEMP_DIR/closed-target-${scenario}.output"
+  local error="$TEMP_DIR/closed-target-${scenario}.error"
+  local status
+
+  : >"$output"
+  set +e
+  (
+    cd "$ROOT_DIR"
+    env \
+      PATH="$TEMP_DIR/bin:$PATH" \
+      GH_TOKEN=fake \
+      GITHUB_REPOSITORY=example/FireMUD \
+      EVENT_NAME=pull_request_target \
+      EVENT_ACTION=closed \
+      WORKFLOW_RUN_ID='' \
+      WORKFLOW_RUN_HEAD_SHA='' \
+      EVENT_PR_NUMBER=900 \
+      EVENT_HEAD_SHA="$event_head_sha" \
+      INPUT_PR_NUMBER='' \
+      INPUT_HEAD_SHA='' \
+      INPUT_ACTION='' \
+      TEST_PR_STATE="$state" \
+      TEST_PR_HEAD_REPOSITORY="$head_repository" \
+      TEST_PR_BASE_REF="$base_ref" \
+      TEST_PR_HEAD_SHA="$current_head_sha" \
+      GITHUB_OUTPUT="$output" \
+      bash "$TEMP_DIR/target.sh"
+  ) >"$TEMP_DIR/closed-target-${scenario}.stdout" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq "$expected_status" ]]
+}
+
+closed_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+run_closed_target_fixture accepted closed example/FireMUD develop \
+  "$closed_head" "$closed_head" 0
+test "$(cat "$TEMP_DIR/closed-target-accepted.output")" = "$(cat <<EOF
+action=destroy
+pr_number=900
+base_sha=base-900
+head_sha=${closed_head}
+merge_sha=merge-900
+image_tag=${closed_head}
+namespace=pr-900
+hostname=pr-900.preview.firedevops.net
+EOF
+)"
+run_closed_target_fixture open-state open example/FireMUD develop \
+  "$closed_head" "$closed_head" 1
+run_closed_target_fixture fork closed attacker/Fork develop \
+  "$closed_head" "$closed_head" 1
+run_closed_target_fixture unsupported-base closed example/FireMUD feature \
+  "$closed_head" "$closed_head" 1
+run_closed_target_fixture stale-head closed example/FireMUD develop \
+  "$closed_head" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1
 
 echo 'hosted identity controller workflow contract passed'

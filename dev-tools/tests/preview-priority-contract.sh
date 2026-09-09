@@ -19,23 +19,54 @@ from pathlib import Path
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+matches = []
 for job in workflow["jobs"].values():
     for step in job.get("steps", []):
         if step.get("name") == sys.argv[2]:
-            body = (
-                step["run"]
-                if sys.argv[4] == "run"
-                else step.get("with", {}).get("script")
-            )
-            if not isinstance(body, str):
-                raise SystemExit(
-                    f"workflow step {sys.argv[2]} has no {sys.argv[4]} body"
-                )
-            Path(sys.argv[3]).write_text(body, encoding="utf-8")
-            raise SystemExit(0)
-raise SystemExit(f"workflow step not found: {sys.argv[2]}")
+            matches.append(step)
+if len(matches) != 1:
+    raise SystemExit(
+        f"workflow step {sys.argv[2]} matched {len(matches)} times; expected exactly one"
+    )
+body = (
+    matches[0].get("run")
+    if sys.argv[4] == "run"
+    else matches[0].get("with", {}).get("script")
+)
+if not isinstance(body, str):
+    raise SystemExit(f"workflow step {sys.argv[2]} has no {sys.argv[4]} body")
+Path(sys.argv[3]).write_text(body, encoding="utf-8")
 PY
 }
+
+cardinality_workflow="$TEMP_DIR/step-cardinality.yml"
+cat >"$cardinality_workflow" <<'YAML'
+jobs:
+  first:
+    steps:
+      - name: Duplicate step
+        run: echo first
+  second:
+    steps:
+      - name: Duplicate step
+        run: echo second
+YAML
+if extract_workflow_step_run \
+  "$cardinality_workflow" "Missing step" "$TEMP_DIR/missing-step.sh" \
+  2>"$TEMP_DIR/missing-step.err"; then
+  echo "workflow extraction accepted a missing step" >&2
+  exit 1
+fi
+grep -qx 'workflow step Missing step matched 0 times; expected exactly one' \
+  "$TEMP_DIR/missing-step.err"
+if extract_workflow_step_run \
+  "$cardinality_workflow" "Duplicate step" "$TEMP_DIR/duplicate-step.sh" \
+  2>"$TEMP_DIR/duplicate-step.err"; then
+  echo "workflow extraction accepted duplicate steps" >&2
+  exit 1
+fi
+grep -qx 'workflow step Duplicate step matched 2 times; expected exactly one' \
+  "$TEMP_DIR/duplicate-step.err"
 
 mkdir -p "$TEMP_DIR/bin"
 cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
@@ -1087,11 +1118,12 @@ workflow = yaml.safe_load(
     Path(os.environ["TRUSTED_WORKFLOW"]).read_text(encoding="utf-8")
 )
 triggers = workflow.get("on", workflow.get(True))
-assert list(triggers) == ["workflow_run"], triggers
+assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
     "workflows": ["PR Preview Environment"],
     "types": ["completed"],
 }
+assert triggers["pull_request_target"] == {"types": ["closed"]}
 
 jobs = workflow["jobs"]
 expected_gates = {

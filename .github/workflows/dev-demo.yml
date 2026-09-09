@@ -64,6 +64,12 @@ jobs:
 
       - name: Derive dev-demo target
         id: derive
+        env:
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          INPUT_HOSTNAME: ${{ inputs.hostname }}
+          INPUT_TELNET_PORT: ${{ inputs.telnet_port }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           RUNTIME_NAMESPACE="dev"
@@ -75,11 +81,11 @@ jobs:
             TELNET_PORT="32016"
             IMAGE_TAG=""
           else
-            ACTION="${{ inputs.action }}"
-            HEAD_SHA="${{ inputs.head_sha }}"
-            HOSTNAME="${{ inputs.hostname }}"
-            TELNET_PORT="${{ inputs.telnet_port }}"
-            IMAGE_TAG="${{ inputs.image_tag }}"
+            ACTION="$INPUT_ACTION"
+            HEAD_SHA="$INPUT_HEAD_SHA"
+            HOSTNAME="$INPUT_HOSTNAME"
+            TELNET_PORT="$INPUT_TELNET_PORT"
+            IMAGE_TAG="$INPUT_IMAGE_TAG"
           fi
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"
@@ -90,6 +96,7 @@ jobs:
           [[ "$ACTION" == "deploy" || "$ACTION" == "destroy" ]]
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ -n "$IMAGE_TAG" ]]
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
           [[ "$HOSTNAME" == "dev.preview.firedevops.net" ]]
           [[ "$RUNTIME_NAMESPACE" == "dev" ]]
           [[ "$RELEASE_NAME" == "dev" ]]

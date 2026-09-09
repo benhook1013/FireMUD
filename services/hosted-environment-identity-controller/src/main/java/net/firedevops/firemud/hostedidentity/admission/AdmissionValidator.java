@@ -30,7 +30,6 @@ public class AdmissionValidator {
     if (resource.getSpec() == null || resource.getSpec().getDesiredState() == null) {
       throw new IllegalArgumentException("spec.desiredState is required");
     }
-    planner.plan(resource.getMetadata().getName());
     if (resource.getStatus() != null
         && net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.Phase.Retired
             .equals(resource.getStatus().getPhase())
@@ -48,6 +47,7 @@ public class AdmissionValidator {
       throw new IllegalArgumentException(
           "HostedEnvironmentIdentity cannot claim reserved metadata");
     }
+    planner.plan(resource.getMetadata().getName());
   }
 
   private static boolean hasReservedMetadata(java.util.Map<String, String> values) {

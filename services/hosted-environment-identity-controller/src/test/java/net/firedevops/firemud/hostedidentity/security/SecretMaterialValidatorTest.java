@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -20,8 +19,6 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -37,11 +34,9 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
-import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
-import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import org.bouncycastle.asn1.DERPrintableString;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -488,23 +483,22 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
-  void servedProbeClosesSocketWhenSetupFailsBeforeOwnershipTransfer() throws Exception {
-    SSLSocket socket = mock(SSLSocket.class);
-    doThrow(new IOException("connect failed"))
-        .when(socket)
-        .connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
-    var method =
-        ServedEnvironmentProbe.class.getDeclaredMethod(
-            "openTlsSocket", String.class, int.class, String.class, SSLSocket.class);
-    method.setAccessible(true);
+  void productionGenerationRejectsRenewalWindowAtThirtyDays() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, Duration.ofDays(60));
 
-    InvocationTargetException failure =
+    IllegalStateException failure =
         assertThrows(
-            InvocationTargetException.class,
-            () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
-    assertEquals(IOException.class, failure.getCause().getClass());
-    assertEquals("connect failed", failure.getCause().getMessage());
-    verify(socket).close();
+            IllegalStateException.class,
+            () ->
+                new GrpcTransportBundleGenerator()
+                    .generate(plan, caSource, 2, Duration.ofDays(30), now));
+
+    assertEquals(
+        "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+        failure.getMessage());
   }
 
   @Test

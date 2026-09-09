@@ -232,7 +232,6 @@ public class CertificateMaterialService {
     if (readyCertificate == null) {
       return RoleMaterial.pending(role, "certificate-pending");
     }
-    batch.selectedRotationRole();
     RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
     if (pinned != null) {
       return pinned;

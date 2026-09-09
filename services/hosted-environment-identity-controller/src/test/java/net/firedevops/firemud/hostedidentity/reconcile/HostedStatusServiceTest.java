@@ -13,6 +13,8 @@ import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStat
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.RuntimeProfile;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class HostedStatusServiceTest {
   @Test
@@ -290,8 +292,9 @@ class HostedStatusServiceTest {
             .equals(resource.getStatus().getConditions().get(0).getLastTransitionTime()));
   }
 
-  @Test
-  void readyRequiresAllFiveIdentityRevisionsIncludingBothWebSocketRoles() {
+  @ParameterizedTest
+  @ValueSource(ints = {0, 1, 2, 3, 4})
+  void readyRequiresAllFiveIdentityRevisionsIncludingBothWebSocketRoles(int missingRole) {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(
         new ObjectMetaBuilder()
@@ -306,6 +309,8 @@ class HostedStatusServiceTest {
             "uid", "a".repeat(40), "a".repeat(40), 32001, true);
     var role = new HostedEnvironmentIdentityStatus.RoleStatus();
     role.setRevision("sha256:" + "b".repeat(64));
+    HostedEnvironmentIdentityStatus.RoleStatus[] roles = {role, role, role, role, role};
+    roles[missingRole] = null;
 
     resource.setStatus(
         service.status(
@@ -328,11 +333,11 @@ class HostedStatusServiceTest {
             "served",
             true,
             profile,
-            role,
-            role,
-            role,
-            null,
-            role));
+            roles[0],
+            roles[1],
+            roles[2],
+            roles[3],
+            roles[4]));
 
     assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, resource.getStatus().getPhase());
     assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());

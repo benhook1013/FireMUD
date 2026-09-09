@@ -7,8 +7,40 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.time.Duration;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.ClassPathResource;
 
 class HostedIdentityPropertiesTest {
+  @Test
+  void applicationYamlBindsAllPreviewAndDevDemoAnnotationKeys() throws Exception {
+    var environment = new StandardEnvironment();
+    MutablePropertySources sources = environment.getPropertySources();
+    for (var source :
+        new YamlPropertySourceLoader()
+            .load("application", new ClassPathResource("application.yml"))) {
+      sources.addLast(source);
+    }
+    var properties = new HostedIdentityProperties();
+
+    Binder.get(environment).bind("firemud.hosted-identity", Bindable.ofInstance(properties));
+
+    assertEquals(
+        "firemud.dev/requested-preview-head-sha", properties.getPreviewRequestedHeadAnnotation());
+    assertEquals(
+        "firemud.dev/last-preview-head-sha", properties.getPreviewDeployedHeadAnnotation());
+    assertEquals(
+        "firemud.dev/requested-dev-demo-head-sha", properties.getDevDemoRequestedHeadAnnotation());
+    assertEquals("firemud.dev/last-dev-demo-head-sha", properties.getDevDemoHeadAnnotation());
+    assertEquals(
+        "firemud.dev/last-preview-telnet-port", properties.getPreviewTelnetPortAnnotation());
+    assertEquals(
+        "firemud.dev/last-dev-demo-telnet-port", properties.getDevDemoTelnetPortAnnotation());
+  }
+
   @Test
   void usesAndRequiresCanonicalGrpcCaSecretName() {
     var properties = new HostedIdentityProperties();

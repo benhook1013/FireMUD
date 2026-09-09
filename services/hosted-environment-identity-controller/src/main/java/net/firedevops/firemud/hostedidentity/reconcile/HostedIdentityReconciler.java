@@ -344,20 +344,25 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               telnetProjection.revision(),
               grpcProjection.revision(),
               () -> assertRuntimeProfileCurrent(plan, expectedProfile));
-      ServedEnvironmentProbe.ProbeResult probes =
-          servedEnvironmentProbe.probe(
-              plan,
-              runtimeProfile.telnetPort(),
-              ingress.summary().certificateFingerprint(),
-              telnet.summary().certificateFingerprint(),
-              bridgeProbeMaterial(
-                  tcpProxyBridge,
-                  () ->
-                      runtimeProjection(
-                          plan, expectedProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
-              gatewayInternalWs.summary().certificateFingerprint(),
-              grpc.source(),
-              grpc.summary().certificateFingerprint());
+      ServedEnvironmentProbe.ProbeResult probes;
+      if (rollout.ready()) {
+        probes =
+            servedEnvironmentProbe.probe(
+                plan,
+                runtimeProfile.telnetPort(),
+                ingress.summary().certificateFingerprint(),
+                telnet.summary().certificateFingerprint(),
+                bridgeProbeMaterial(
+                    tcpProxyBridge,
+                    () ->
+                        runtimeProjection(
+                            plan, expectedProfile, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)),
+                gatewayInternalWs.summary().certificateFingerprint(),
+                grpc.source(),
+                grpc.summary().certificateFingerprint());
+      } else {
+        probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
+      }
       RuntimeProfileValidation beforeAcknowledgement =
           revalidateRuntimeProfile(plan, runtimeProfile, "the readiness boundary");
       if (!beforeAcknowledgement.valid()) {
@@ -1228,8 +1233,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       throw new IllegalStateException("certificate source object generation rolled back");
     }
     if (material.sourceGeneration() == priorGeneration
-        && (material.sourceObjectGeneration() != priorObjectGeneration
-            || !revision.equals(previous.getRevision())
+        && (!revision.equals(previous.getRevision())
             || !material.summary().spkiSha256().equals(previous.getSpkiSha256()))) {
       throw new IllegalStateException("certificate source changed without generation advancement");
     }
