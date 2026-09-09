@@ -139,6 +139,7 @@ jobs:
           PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
           DERIVED_PR_NUMBER: ${{ steps.derive.outputs.pr_number }}
         run: |
+          set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_AUTHOR="$PR_USER_LOGIN"
             BASE_REF="$PR_BASE_REF"

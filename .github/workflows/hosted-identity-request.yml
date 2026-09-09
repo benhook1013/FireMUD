@@ -376,6 +376,22 @@ jobs:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
+          umask 077
+          credential_files_dir=""
+          cleanup_credential_files() {
+            if [[ -n "$credential_files_dir" && -d "$credential_files_dir" ]]; then
+              rm -rf -- "$credential_files_dir"
+            fi
+          }
+          trap cleanup_credential_files EXIT
+          credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP:?}/firemud-runtime-credentials.XXXXXX")"
+          chmod 700 "$credential_files_dir"
+          write_credential_file() {
+            local file_name="$1"
+            local value="$2"
+            printf '%s' "$value" >"$credential_files_dir/$file_name"
+            chmod 600 "$credential_files_dir/$file_name"
+          }
           reject_existing_secret() {
             local secret_name="$1"
             local reason="$2"
@@ -553,26 +569,43 @@ jobs:
           fi
 
           if [[ "$firemud_secret_exists" != true ]]; then
-            kubectl -n "$RUNTIME_NAMESPACE" create secret generic firemud-secret \
-              --from-literal="FIREMUD_POSTGRES_USER=${postgres_user}" \
-              --from-literal="FIREMUD_POSTGRES_PASSWORD=${postgres_password}" \
-              --from-literal="ASSET_STORE_ACCESS_KEY=${asset_store_access_key}" \
-              --from-literal="ASSET_STORE_SECRET_KEY=${asset_store_secret_key}"
+            write_credential_file FIREMUD_POSTGRES_USER "$postgres_user"
+            write_credential_file FIREMUD_POSTGRES_PASSWORD "$postgres_password"
+            write_credential_file ASSET_STORE_ACCESS_KEY "$asset_store_access_key"
+            write_credential_file ASSET_STORE_SECRET_KEY "$asset_store_secret_key"
           fi
           if [[ "$minio_secret_exists" != true ]]; then
             minio_access_key="$asset_store_access_key"
             minio_secret_key="$asset_store_secret_key"
+            write_credential_file accessKey "$minio_access_key"
+            write_credential_file secretKey "$minio_secret_key"
+          fi
+          if [[ "$jwt_signing_secret_exists" != true ]]; then
+            write_credential_file current.key "$signing_key"
+          fi
+          if [[ "$jwt_jwks_exists" != true ]]; then
+            write_credential_file jwks.json "$diagnostic_jwks"
+          fi
+
+          if [[ "$firemud_secret_exists" != true ]]; then
+            kubectl -n "$RUNTIME_NAMESPACE" create secret generic firemud-secret \
+              --from-file="FIREMUD_POSTGRES_USER=${credential_files_dir}/FIREMUD_POSTGRES_USER" \
+              --from-file="FIREMUD_POSTGRES_PASSWORD=${credential_files_dir}/FIREMUD_POSTGRES_PASSWORD" \
+              --from-file="ASSET_STORE_ACCESS_KEY=${credential_files_dir}/ASSET_STORE_ACCESS_KEY" \
+              --from-file="ASSET_STORE_SECRET_KEY=${credential_files_dir}/ASSET_STORE_SECRET_KEY"
+          fi
+          if [[ "$minio_secret_exists" != true ]]; then
             kubectl -n "$RUNTIME_NAMESPACE" create secret generic minio-credentials \
-              --from-literal="accessKey=${minio_access_key}" \
-              --from-literal="secretKey=${minio_secret_key}"
+              --from-file="accessKey=${credential_files_dir}/accessKey" \
+              --from-file="secretKey=${credential_files_dir}/secretKey"
           fi
           if [[ "$jwt_signing_secret_exists" != true ]]; then
             kubectl -n "$RUNTIME_NAMESPACE" create secret generic jwt-signing-keys \
-              --from-literal="current.key=${signing_key}"
+              --from-file="current.key=${credential_files_dir}/current.key"
           fi
           if [[ "$jwt_jwks_exists" != true ]]; then
             kubectl -n "$RUNTIME_NAMESPACE" create configmap jwt-jwks \
-              --from-literal="jwks.json=${diagnostic_jwks}"
+              --from-file="jwks.json=${credential_files_dir}/jwks.json"
           fi
 
           kubectl -n "$RUNTIME_NAMESPACE" create serviceaccount firemud-app --dry-run=client -o yaml | kubectl apply -f -

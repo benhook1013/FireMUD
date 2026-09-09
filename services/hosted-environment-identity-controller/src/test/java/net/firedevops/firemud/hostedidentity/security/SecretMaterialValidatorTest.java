@@ -149,16 +149,22 @@ class SecretMaterialValidatorTest {
     when(certificate.getBasicConstraints()).thenReturn(-1);
     when(certificate.getKeyUsage())
         .thenReturn(new boolean[] {true, false, true, true, false, false, false, false, false});
-    assertThrows(
-        SecretMaterialValidator.MaterialValidationException.class,
-        () -> SecretMaterialValidator.validateLeafProfile(certificate));
+    var keyUsage =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () -> SecretMaterialValidator.validateLeafProfile(certificate));
+    assertEquals(
+        "certificate key usages do not exactly match digitalSignature/keyEncipherment",
+        keyUsage.getMessage());
 
     when(certificate.getBasicConstraints()).thenReturn(0);
     when(certificate.getKeyUsage())
         .thenReturn(new boolean[] {true, false, true, false, false, false, false, false, false});
-    assertThrows(
-        SecretMaterialValidator.MaterialValidationException.class,
-        () -> SecretMaterialValidator.validateLeafProfile(certificate));
+    var caAuthority =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () -> SecretMaterialValidator.validateLeafProfile(certificate));
+    assertEquals("certificate leaf must not be a CA", caAuthority.getMessage());
   }
 
   @Test

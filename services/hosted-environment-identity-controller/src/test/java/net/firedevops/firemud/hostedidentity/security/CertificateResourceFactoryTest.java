@@ -57,10 +57,8 @@ class CertificateResourceFactoryTest {
       assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
       assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
     }
-    assertEquals(
-        "pr-42.preview.firedevops.net", ((java.util.List<?>) ingressSpec.get("dnsNames")).get(0));
-    assertEquals(
-        "pr-42.preview.firedevops.net", ((java.util.List<?>) telnetSpec.get("dnsNames")).get(0));
+    assertEquals(java.util.List.of("pr-42.preview.firedevops.net"), ingressSpec.get("dnsNames"));
+    assertEquals(java.util.List.of("pr-42.preview.firedevops.net"), telnetSpec.get("dnsNames"));
     assertEquals("pr-42-gateway-internal-ws", gatewaySpec.get("secretName"));
     assertEquals("firemud-ca-issuer", ((Map<?, ?>) gatewaySpec.get("issuerRef")).get("name"));
     assertEquals("720h", gatewaySpec.get("duration"));

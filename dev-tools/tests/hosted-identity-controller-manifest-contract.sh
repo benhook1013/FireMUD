@@ -645,9 +645,16 @@ assert "request.namespace.substring(0, request.namespace.size() - 9) + '-gateway
 assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tcp-proxy-bridge'" in cert_manager_expression
 assert any("object.metadata.name != 'firemud-grpc-tls'" in expression for expression in secret_expressions)
 
+certificate_policy = policies["firemud-hosted-identity-certificate-boundary"]
+certificate_match = " ".join(
+    certificate_policy["spec"]["validations"][0]["expression"].split()
+)
+assert "((request.operation == 'DELETE' && request.name.matches(" in certificate_match
+assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
+
 certificate_expressions = [
     validation["expression"]
-    for validation in policies["firemud-hosted-identity-certificate-boundary"]["spec"]["validations"]
+    for validation in certificate_policy["spec"]["validations"]
 ]
 profile_expression = next(
     expression for expression in certificate_expressions if "gateway-internal-ws" in expression

@@ -51,9 +51,7 @@ for required in \
   contains "$kubeconfig_action" "$required"
 done
 contains "$trusted" 'uses: ./.github/actions/write-kubeconfig'
-if grep -Fq 'umask 077' "$trusted" || \
-  grep -Fq 'KUBECONFIG_PATH=' "$trusted" || \
-  grep -Fq 'chmod 600' "$trusted"; then
+if grep -Fq 'KUBECONFIG_PATH=' "$trusted"; then
   echo "$trusted must delegate protected kubeconfig writes to the shared composite action" >&2
   exit 1
 fi
@@ -402,12 +400,17 @@ for fragment in (
     'postgres_password="$(openssl rand -hex 32)"',
     'asset_store_access_key="$(openssl rand -hex 16)"',
     'asset_store_secret_key="$(openssl rand -hex 32)"',
-    '--from-literal="ASSET_STORE_ACCESS_KEY=${asset_store_access_key}"',
-    '--from-literal="ASSET_STORE_SECRET_KEY=${asset_store_secret_key}"',
-    '--from-literal="accessKey=${minio_access_key}"',
-    '--from-literal="secretKey=${minio_secret_key}"',
-    '--from-literal="current.key=${signing_key}"',
-    '--from-literal="jwks.json=${diagnostic_jwks}"',
+    'umask 077',
+    'credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP:?}/firemud-runtime-credentials.XXXXXX")"',
+    'trap cleanup_credential_files EXIT',
+    'chmod 700 "$credential_files_dir"',
+    'chmod 600 "$credential_files_dir/$file_name"',
+    '--from-file="ASSET_STORE_ACCESS_KEY=${credential_files_dir}/ASSET_STORE_ACCESS_KEY"',
+    '--from-file="ASSET_STORE_SECRET_KEY=${credential_files_dir}/ASSET_STORE_SECRET_KEY"',
+    '--from-file="accessKey=${credential_files_dir}/accessKey"',
+    '--from-file="secretKey=${credential_files_dir}/secretKey"',
+    '--from-file="current.key=${credential_files_dir}/current.key"',
+    '--from-file="jwks.json=${credential_files_dir}/jwks.json"',
     'signing_key_sha256="$(printf \'%s\' "$signing_key" | sha256sum',
     'jq -nc --arg fingerprint "$signing_key_sha256"',
     'keys:[]',
@@ -416,6 +419,7 @@ for fragment in (
 ):
     assert fragment in credential_step, fragment
 for forbidden in (
+    '--from-literal',
     '--from-literal=FIREMUD_POSTGRES_PASSWORD=firemud',
     '--from-literal=accessKey=minio',
     '--from-literal=secretKey=minio123',
@@ -526,6 +530,19 @@ fi
 [[ "$1" == -n && "$2" == "${RUNTIME_NAMESPACE:?}" ]]
 namespace="$2"
 shift 2
+validate_from_files() {
+  local argument specification key path
+  for argument in "$@"; do
+    [[ "$argument" == --from-file=*=* ]]
+    specification="${argument#--from-file=}"
+    key="${specification%%=*}"
+    path="${specification#*=}"
+    [[ -n "$key" && -f "$path" ]]
+    [[ "$(stat -c '%a' "$path")" == 600 ]]
+    [[ "$(stat -c '%a' "$(dirname "$path")")" == 700 ]]
+    printf '%s\n' "$path" >>"${CREDENTIAL_FILE_LOG:?}"
+  done
+}
 if [[ "$1" == get && ( "$2" == secret || "$2" == configmap ) ]]; then
   [[ $# -eq 6 && "$4" == --ignore-not-found && "$5" == -o && "$6" == json ]]
   resource_name="$3"
@@ -545,6 +562,7 @@ if [[ "$1" == create && "$2" == configmap ]]; then
   shift 3
   state_path="${CREDENTIAL_STATE_DIR:?}/${configmap_name}.json"
   [[ ! -e "$state_path" ]]
+  validate_from_files "$@"
   python3 - "$state_path" "$namespace" "$configmap_name" "$@" <<'PY'
 import json
 import sys
@@ -555,10 +573,10 @@ namespace = sys.argv[2]
 name = sys.argv[3]
 data = {}
 for argument in sys.argv[4:]:
-    if not argument.startswith("--from-literal="):
+    if not argument.startswith("--from-file="):
         raise SystemExit(f"unexpected create argument: {argument}")
-    key, value = argument.removeprefix("--from-literal=").split("=", 1)
-    data[key] = value
+    key, path = argument.removeprefix("--from-file=").split("=", 1)
+    data[key] = Path(path).read_text(encoding="utf-8")
 state_path.write_text(
     json.dumps(
         {
@@ -585,6 +603,10 @@ if [[ "$1" == create && "$2" == secret && "$3" == generic ]]; then
   fi
   state_path="${CREDENTIAL_STATE_DIR:?}/${secret_name}.json"
   [[ ! -e "$state_path" ]]
+  validate_from_files "$@"
+  if [[ "${CREDENTIAL_FAIL_CREATE:-}" == "$secret_name" ]]; then
+    exit 42
+  fi
   python3 - "$state_path" "$namespace" "$secret_name" "$@" <<'PY'
 import base64
 import json
@@ -596,10 +618,10 @@ namespace = sys.argv[2]
 name = sys.argv[3]
 data = {}
 for argument in sys.argv[4:]:
-    if not argument.startswith("--from-literal="):
+    if not argument.startswith("--from-file="):
         raise SystemExit(f"unexpected create argument: {argument}")
-    key, value = argument.removeprefix("--from-literal=").split("=", 1)
-    data[key] = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    key, path = argument.removeprefix("--from-file=").split("=", 1)
+    data[key] = base64.b64encode(Path(path).read_bytes()).decode("ascii")
 state_path.write_text(
     json.dumps(
         {
@@ -627,6 +649,7 @@ run_credential_step() {
   local state_dir="$1"
   local output="$2"
   local error="$3"
+  local fail_create="${4:-}"
   env \
     PATH="$credential_stub_dir:$PATH" \
     RUNTIME_NAMESPACE=pr-42 \
@@ -634,13 +657,29 @@ run_credential_step() {
     CREDENTIAL_OPENSSL_COUNT="$state_dir/openssl-count" \
     CREDENTIAL_OPENSSL_LOG="$state_dir/openssl.log" \
     CREDENTIAL_KUBECTL_LOG="$state_dir/kubectl.log" \
+    CREDENTIAL_FILE_LOG="$state_dir/credential-files.log" \
+    CREDENTIAL_FAIL_CREATE="$fail_create" \
+    RUNNER_TEMP="$state_dir" \
     bash "$credential_script" >"$output" 2>"$error"
+}
+
+assert_credential_files_removed() {
+  local state_dir="$1"
+  local path
+  if [[ ! -e "$state_dir/credential-files.log" ]]; then
+    return
+  fi
+  while IFS= read -r path; do
+    [[ ! -e "$path" ]]
+    [[ ! -e "$(dirname "$path")" ]]
+  done <"$state_dir/credential-files.log"
 }
 
 create_once_state="$credential_state_root/create-once"
 mkdir -p "$create_once_state"
 run_credential_step "$create_once_state" \
   "$TEMP_DIR/create-once.output" "$TEMP_DIR/create-once.error"
+assert_credential_files_removed "$create_once_state"
 python3 - "$create_once_state" <<'PY'
 import base64
 import hashlib
@@ -702,6 +741,28 @@ test "$(grep -c '^create firemud-secret$' "$create_once_state/kubectl.log")" -eq
 test "$(grep -c '^create minio-credentials$' "$create_once_state/kubectl.log")" -eq 1
 test "$(grep -c '^create jwt-signing-keys$' "$create_once_state/kubectl.log")" -eq 1
 test "$(grep -c '^create jwt-jwks$' "$create_once_state/kubectl.log")" -eq 1
+
+cleanup_failure_state="$credential_state_root/cleanup-failure"
+mkdir -p "$cleanup_failure_state"
+if run_credential_step "$cleanup_failure_state" \
+  "$TEMP_DIR/cleanup-failure.output" "$TEMP_DIR/cleanup-failure.error" \
+  minio-credentials; then
+  echo "credential step unexpectedly succeeded after forced create failure" >&2
+  exit 1
+fi
+assert_credential_files_removed "$cleanup_failure_state"
+test -e "$cleanup_failure_state/firemud-secret.json"
+test ! -e "$cleanup_failure_state/minio-credentials.json"
+test ! -e "$cleanup_failure_state/jwt-signing-keys.json"
+test ! -e "$cleanup_failure_state/jwt-jwks.json"
+firemud_after_failure="$(sha256sum "$cleanup_failure_state/firemud-secret.json")"
+run_credential_step "$cleanup_failure_state" \
+  "$TEMP_DIR/cleanup-retry.output" "$TEMP_DIR/cleanup-retry.error"
+assert_credential_files_removed "$cleanup_failure_state"
+test "$(sha256sum "$cleanup_failure_state/firemud-secret.json")" = "$firemud_after_failure"
+test -e "$cleanup_failure_state/minio-credentials.json"
+test -e "$cleanup_failure_state/jwt-signing-keys.json"
+test -e "$cleanup_failure_state/jwt-jwks.json"
 
 partial_root="$credential_state_root/valid-partials"
 firemud_only_state="$partial_root/firemud-only"

@@ -398,6 +398,34 @@ class HostedStatusServiceTest {
   }
 
   @Test
+  void statusPreservesRoleRevisionOrderAcrossAllFiveRoles() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder().withName("pr-42").withNamespace("firemud-system").build());
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    var status =
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Pending,
+            "Syncing",
+            "syncing",
+            false,
+            null,
+            role("sha256:" + "1".repeat(64)),
+            role("sha256:" + "2".repeat(64)),
+            role("sha256:" + "3".repeat(64)),
+            role("sha256:" + "4".repeat(64)),
+            role("sha256:" + "5".repeat(64)));
+
+    assertEquals("sha256:" + "1".repeat(64), status.getIngress().getRevision());
+    assertEquals("sha256:" + "2".repeat(64), status.getTelnet().getRevision());
+    assertEquals("sha256:" + "3".repeat(64), status.getGatewayInternalWs().getRevision());
+    assertEquals("sha256:" + "4".repeat(64), status.getTcpProxyBridge().getRevision());
+    assertEquals("sha256:" + "5".repeat(64), status.getGrpc().getRevision());
+  }
+
+  @Test
   void statusDtoDefensivelyCopiesNestedJacksonAndKubernetesState() {
     HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
     HostedCondition condition = new HostedCondition("Ready", "False", "Pending", "pending");
@@ -427,5 +455,11 @@ class HostedStatusServiceTest {
     assertEquals("sha256:" + "a".repeat(64), status.getGatewayInternalWs().getRevision());
     assertEquals("uid-before", status.getProfile().getRuntimeNamespaceUid());
     assertEquals("head-before", status.getProfile().getRequestedHeadSha());
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus role(String revision) {
+    var role = new HostedEnvironmentIdentityStatus.RoleStatus();
+    role.setRevision(revision);
+    return role;
   }
 }
