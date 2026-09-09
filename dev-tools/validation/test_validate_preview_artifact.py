@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -237,6 +238,23 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
     def setUpClass(cls):
         cls.validator = load_validator()
 
+    @staticmethod
+    def _metadata_fixture(manifest_path):
+        return {
+            "schemaVersion": 1,
+            "event": "pull_request",
+            "repository": "example/FireMUD",
+            "sourceWorkflow": ".github/workflows/preview.yml",
+            "sourceRunId": 42,
+            "prNumber": 42,
+            "baseSha": "base-42",
+            "headSha": "head-42",
+            "mergeSha": "merge-42",
+            "hostname": "pr-42.preview.example.test",
+            "imageTag": "pr-42-head-42",
+            "manifestSha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        }
+
     def test_non_object_metadata_is_rejected_cleanly(self):
         for metadata in ([], "metadata"):
             with self.subTest(metadata=metadata), tempfile.TemporaryDirectory() as directory:
@@ -268,6 +286,63 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     stderr.getvalue(),
                     "preview artifact rejected: metadata is not an object\n",
                 )
+
+    def test_unexpected_top_level_metadata_field_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "manifest.yaml"
+            metadata_path = Path(directory) / "metadata.json"
+            manifest_path.write_text("placeholder", encoding="utf-8")
+            metadata = self._metadata_fixture(manifest_path)
+            metadata["unexpected"] = "value"
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            with patch.object(self.validator, "validate_manifest") as validate_manifest:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"metadata contains unsupported fields: \['unexpected'\]",
+                ):
+                    self.validator.validate_metadata(
+                        metadata_path,
+                        manifest_path,
+                        "example/FireMUD",
+                        "42",
+                        "42",
+                        "base-42",
+                        "head-42",
+                        "merge-42",
+                        "pr-42-head-42",
+                        "pr-42.preview.example.test",
+                    )
+                validate_manifest.assert_not_called()
+
+    def test_metadata_uses_normalized_pr_number_for_manifest_namespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "manifest.yaml"
+            metadata_path = Path(directory) / "metadata.json"
+            manifest_path.write_text("placeholder", encoding="utf-8")
+            metadata = self._metadata_fixture(manifest_path)
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            with patch.object(self.validator, "validate_manifest") as validate_manifest:
+                self.validator.validate_metadata(
+                    metadata_path,
+                    manifest_path,
+                    "example/FireMUD",
+                    "42",
+                    "042",
+                    "base-42",
+                    "head-42",
+                    "merge-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+            validate_manifest.assert_called_once_with(
+                manifest_path,
+                "pr-42",
+                "pr-42-head-42",
+                "pr-42.preview.example.test",
+            )
 
 
 class PreviewArtifactTelnetInjectionTest(unittest.TestCase):

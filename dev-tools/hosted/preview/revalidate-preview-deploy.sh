@@ -11,8 +11,12 @@ expected_head_sha="$2"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
 
-if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] || [[ -z "$expected_head_sha" ]]; then
-  echo "PR number and expected head SHA must be non-empty and valid" >&2
+if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PR number must be a positive integer" >&2
+  exit 1
+fi
+if ! [[ "$expected_head_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "expected head SHA must be exactly 40 hexadecimal characters" >&2
   exit 1
 fi
 if [[ -z "${GITHUB_REPOSITORY:-}" || -z "${GH_TOKEN:-}" ]]; then

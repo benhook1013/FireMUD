@@ -959,6 +959,7 @@ for text_value in \
   'paused|observe|active' \
   --grpc-trust-anchor-sha256 \
   'GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$' \
+  'integer between 1 and 3600' \
   '@sha256:[0-9a-f]{64}'; do
   require_literal "$BOOTSTRAP" "$text_value"
 done
@@ -1190,6 +1191,22 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+for invalid_wait_seconds in 0 3601 invalid 99999999999999999999; do
+  if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+    bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" \
+    --wait-seconds "$invalid_wait_seconds" \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted invalid --wait-seconds ${invalid_wait_seconds}"
+  fi
+  require_literal "$bootstrap_error" "--wait-seconds must be an integer between 1 and 3600"
+done
+if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 3600 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected the maximum valid --wait-seconds boundary: $(cat "$bootstrap_error")"
+fi
 if FAKE_CRD_ESTABLISHED=False FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \

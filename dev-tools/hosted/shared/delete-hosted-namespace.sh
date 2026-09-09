@@ -47,11 +47,20 @@ if [[ "$namespace_lookup" != "namespace/${namespace}" ]]; then
   exit 1
 fi
 
+helm_status=0
 helm uninstall "$release_name" \
   --namespace "$namespace" \
-  --ignore-not-found
+  --ignore-not-found || helm_status=$?
+if ((helm_status != 0)); then
+  echo "Helm uninstall failed for hosted release ${release_name}; continuing namespace deletion." >&2
+fi
 
-kubectl delete namespace "$namespace" --ignore-not-found=true --wait=false >/dev/null
+delete_status=0
+kubectl delete namespace "$namespace" --ignore-not-found=true --wait=false >/dev/null || delete_status=$?
+if ((delete_status != 0)); then
+  echo "unable to request deletion of hosted namespace ${namespace}" >&2
+  exit "$delete_status"
+fi
 
 wait_status=0
 kubectl wait --for=delete "namespace/${namespace}" --timeout="${wait_seconds}s" || wait_status=$?

@@ -175,6 +175,7 @@ if (( ${#namespace_rows[@]} == 0 )); then
   exit 0
 fi
 
+runtime_deletion_failures=0
 retirement_failures=0
 for row in "${namespace_rows[@]}"; do
   namespace="${row%%$'\t'*}"
@@ -261,7 +262,11 @@ for row in "${namespace_rows[@]}"; do
 
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
-    bash "$delete_script" "$namespace" "$release_name"
+    if ! bash "$delete_script" "$namespace" "$release_name"; then
+      runtime_deletion_failures=$((runtime_deletion_failures + 1))
+      echo "Hosted runtime deletion failed for ${namespace}; skipping identity retirement and continuing stale cleanup." >&2
+      continue
+    fi
     if [[ "$retire_terminal_identities" == true ]]; then
       if ! retire_hosted_identity "$namespace"; then
         retirement_failures=$((retirement_failures + 1))
@@ -270,7 +275,7 @@ for row in "${namespace_rows[@]}"; do
   fi
 done
 
-if (( retirement_failures > 0 )); then
-  echo "${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
+if (( runtime_deletion_failures > 0 || retirement_failures > 0 )); then
+  echo "${runtime_deletion_failures} hosted runtime deletion(s) and ${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
   exit 1
 fi

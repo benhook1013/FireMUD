@@ -328,8 +328,10 @@ if reconcile_run.count("while (( page <= max_history_pages )); do") != 2:
     raise SystemExit("both runtime history scans must enforce max_history_pages")
 if reconcile_run.count('if (( page > max_history_pages )); then') != 2:
     raise SystemExit("both runtime history scans must fail closed after max_history_pages")
-if reconcile_run.count('failed_attempts="${bootstrap_failed_attempts:-0}"') != 1:
-    raise SystemExit("completed-history scan must carry over bootstrap retry usage")
+if sum(line.strip() == "failed_attempts=0" for line in reconcile_run.splitlines()) != 1:
+    raise SystemExit("completed-history scan must initialize its own retry count")
+if 'failed_attempts="${bootstrap_failed_attempts:-0}"' in reconcile_run:
+    raise SystemExit("completed-history scan must not double-count bootstrap retry usage")
 
 nonterminal_guard = '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]'
 for candidate_status in ("requested", "waiting", "pending"):
@@ -1166,6 +1168,10 @@ if [[ "$event" == push ]]; then
     exit 2
   fi
   printf 'anchor\n' >>"$TEST_GH_TRACE"
+  if [[ "$TEST_SCENARIO" == bootstrap-two-failures ]]; then
+    printf '%s\n' '{"workflow_runs":[]}'
+    exit 0
+  fi
   printf '%s\n' '{"workflow_runs":[{"created_at":"2026-09-09T05:00:00Z"}]}'
   exit 0
 fi
@@ -1218,6 +1224,16 @@ case "$TEST_SCENARIO:$page" in
       }]}'
     ;;
   one-failure:*)
+    empty_runs
+    ;;
+  bootstrap-two-failures:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[
+        {id:702,head_sha:$head,status:"completed",conclusion:"failure",created_at:"2026-09-09T05:00:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
+        {id:701,head_sha:$head,status:"completed",conclusion:"cancelled",created_at:"2026-09-09T04:59:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)}
+      ]}'
+    ;;
+  bootstrap-two-failures:*)
     empty_runs
     ;;
   three-failures:*)
@@ -1332,5 +1348,6 @@ run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" "$test_head_sha"
 run_reconcile_fixture three-failures 1 0 "Dev-demo retry budget exhausted"
 run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
+run_reconcile_fixture bootstrap-two-failures 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

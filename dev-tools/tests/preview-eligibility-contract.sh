@@ -36,7 +36,7 @@ revalidate_deploy() {
   printf '%s' "$pull_request_json" | python3 "$SCRIPT" \
     --revalidate-deploy \
     --expected-repository example/FireMUD \
-    --expected-head-sha head-123
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 }
 
 assert_revalidation_refused() {
@@ -54,12 +54,22 @@ assert_revalidation_refused() {
   fi
 }
 
-valid_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+valid_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
 revalidate_deploy "$valid_pull_request"
-valid_mixed_case_pull_request='{"state":"open","head":{"sha":"HEAD-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+valid_mixed_case_pull_request='{"state":"open","head":{"sha":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
 revalidate_deploy "$valid_mixed_case_pull_request"
-valid_automation_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
+valid_automation_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
 revalidate_deploy "$valid_automation_pull_request"
+if invalid_expected_output="$(
+  printf '%s' "$valid_pull_request" | python3 "$SCRIPT" \
+    --revalidate-deploy \
+    --expected-repository example/FireMUD \
+    --expected-head-sha head-123
+)"; then
+  echo "Revalidation unexpectedly accepted a noncanonical expected head SHA" >&2
+  exit 1
+fi
+test "$invalid_expected_output" = 'expected head SHA must be exactly 40 hexadecimal characters'
 
 assert_revalidation_refused \
   '{not-json' \
@@ -68,28 +78,28 @@ assert_revalidation_refused \
   '[]' \
   'current pull request metadata is malformed'
 assert_revalidation_refused \
-  '{"state":"closed","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'pull request is not open (state=closed)'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-stale","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
-  'head is stale (expected=head-123, current=head-stale)'
+  '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":null}' \
   'label metadata is malformed'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"feature/stack"},"user":{"login":"human"},"labels":[]}' \
   'target is not preview-eligible (reason=unsupported-base-branch)'
 assert_revalidation_refused \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"dependabot[bot]"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"dependabot[bot]"},"labels":[]}' \
   'target is not preview-eligible (reason=dependency-bot)'
 for malformed_author_pull_request in \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"labels":[]}' \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":null,"labels":[]}' \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":42},"labels":[]}' \
-  '{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":""},"labels":[]}'
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":null,"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":42},"labels":[]}' \
+  '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":""},"labels":[]}'
 do
   assert_revalidation_refused \
     "$malformed_author_pull_request" \
@@ -106,7 +116,7 @@ assert_conflicting_modes_refused() {
   if conflicting_output="$(python3 "$SCRIPT" "$@" \
     --labels-json '[]' \
     --expected-repository example/FireMUD \
-    --expected-head-sha head-123 \
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     </dev/null 2>&1)"; then
     echo "Conflicting preview eligibility modes were unexpectedly accepted: $*" >&2
     exit 1
@@ -162,6 +172,7 @@ event_eligibility_output="$TEMP_DIR/event-eligibility.out"
 run_workflow_eligibility "$event_labels_json" "$event_eligibility_output"
 grep -qx 'eligible=true' "$event_eligibility_output"
 grep -qx 'reason=eligible' "$event_eligibility_output"
+grep -qx 'priority=true' "$event_eligibility_output"
 
 malformed_event_metadata_output="$TEMP_DIR/malformed-event-metadata.out"
 (
@@ -183,6 +194,7 @@ run_workflow_eligibility \
   "$malformed_event_eligibility_output"
 grep -qx 'eligible=false' "$malformed_event_eligibility_output"
 grep -qx 'reason=malformed-label-metadata' "$malformed_event_eligibility_output"
+grep -qx 'priority=false' "$malformed_event_eligibility_output"
 
 mkdir -p "$TEMP_DIR/bin"
 cat > "$TEMP_DIR/bin/gh" <<'EOF'
@@ -192,6 +204,22 @@ printf '%s\n' "$*" >> "$FAKE_GH_LOG"
 printf '%s' "$FAKE_PULL_REQUEST_JSON"
 EOF
 chmod +x "$TEMP_DIR/bin/gh"
+
+revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+if GITHUB_REPOSITORY=example/FireMUD \
+  GH_TOKEN=test-token \
+  FAKE_GH_LOG="$TEMP_DIR/revalidate-gh.log" \
+  FAKE_PULL_REQUEST_JSON="$valid_pull_request" \
+  PATH="$TEMP_DIR/bin:$PATH" \
+  bash "$revalidation_helper" 42 head-123 \
+  >"$TEMP_DIR/invalid-shell-revalidation.out" \
+  2>"$TEMP_DIR/invalid-shell-revalidation.err"; then
+  echo "revalidate-preview-deploy accepted a noncanonical expected head SHA" >&2
+  exit 1
+fi
+grep -Fxq 'expected head SHA must be exactly 40 hexadecimal characters' \
+  "$TEMP_DIR/invalid-shell-revalidation.err"
+test ! -e "$TEMP_DIR/revalidate-gh.log"
 
 dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
 (
@@ -216,18 +244,22 @@ dispatch_eligibility_output="$TEMP_DIR/dispatch-eligibility.out"
 run_workflow_eligibility "$dispatch_labels_json" "$dispatch_eligibility_output"
 grep -qx 'eligible=true' "$dispatch_eligibility_output"
 grep -qx 'reason=eligible' "$dispatch_eligibility_output"
+grep -qx 'priority=true' "$dispatch_eligibility_output"
 
 deploy_open="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[]')"
 grep -q '^eligible=true$' <<<"$deploy_open"
 grep -q '^reason=eligible$' <<<"$deploy_open"
+grep -q '^priority=false$' <<<"$deploy_open"
 
 deploy_stacked="$(python3 "$SCRIPT" --operation deploy --state open --base-ref feature/design-and-mvp --author benhook1013 --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$deploy_stacked"
 grep -q '^reason=unsupported-base-branch$' <<<"$deploy_stacked"
+grep -q '^priority=false$' <<<"$deploy_stacked"
 
 deploy_dependency_bot="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author 'renovate[bot]' --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$deploy_dependency_bot"
 grep -q '^reason=dependency-bot$' <<<"$deploy_dependency_bot"
+grep -q '^priority=false$' <<<"$deploy_dependency_bot"
 
 retain_closed="$(python3 "$SCRIPT" --operation retain --state closed --base-ref develop --author benhook1013 --labels-json '[]')"
 grep -q '^eligible=false$' <<<"$retain_closed"
@@ -248,10 +280,12 @@ grep -q '^reason=dependency-bot$' <<<"$destroy_dependency_bot"
 unknown_label_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '[{"name":"custom:label"}]')"
 grep -q '^eligible=true$' <<<"$unknown_label_deploy"
 grep -q '^reason=eligible$' <<<"$unknown_label_deploy"
+grep -q '^priority=false$' <<<"$unknown_label_deploy"
 
 malformed_deploy="$(python3 "$SCRIPT" --operation deploy --state open --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=false$' <<<"$malformed_deploy"
 grep -q '^reason=malformed-label-metadata$' <<<"$malformed_deploy"
+grep -q '^priority=false$' <<<"$malformed_deploy"
 
 malformed_retain="$(python3 "$SCRIPT" --operation retain --state open --base-ref develop --author benhook1013 --labels-json '{"name":"custom:label"}')"
 grep -q '^eligible=false$' <<<"$malformed_retain"

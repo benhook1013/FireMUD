@@ -3939,9 +3939,6 @@ def validate_gateway_ws_values(
                 if isinstance(path, str) and path.startswith("/")
             }
 
-            def path_is_under(path: str, mount_path: str) -> bool:
-                return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
-
             grpc_mounts = [
                 mount
                 for mount in container.get("volumeMounts") or []
@@ -3949,7 +3946,9 @@ def validate_gateway_ws_values(
                 and mount.get("readOnly") is True
                 and volumes.get(mount.get("name"))
                 and isinstance(mount.get("mountPath"), str)
-                and any(path_is_under(path, mount["mountPath"]) for path in grpc_paths)
+                and any(
+                    path_is_under_mount(path, mount["mountPath"]) for path in grpc_paths
+                )
             ]
             if len(grpc_mounts) != 1:
                 issues.append(

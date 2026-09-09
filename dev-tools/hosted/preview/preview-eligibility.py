@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 
 DEPENDENCY_BOT_AUTHORS = {
@@ -18,6 +19,7 @@ DEPENDENCY_BOT_AUTHORS = {
     "renovate[bot]",
 }
 SUPPORTED_BASE_REFS = {"main", "develop"}
+GIT_COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def parse_labels(labels_json: str) -> tuple[bool, bool]:
@@ -43,17 +45,17 @@ def evaluate(
     base_ref: str,
     author: str,
     labels_json: str,
-) -> tuple[bool, str]:
-    labels_valid, _ = parse_labels(labels_json)
+) -> tuple[bool, str, bool]:
+    labels_valid, is_priority = parse_labels(labels_json)
     if operation in {"deploy", "retain"} and not labels_valid:
-        return False, "malformed-label-metadata"
+        return False, "malformed-label-metadata", is_priority
     if author in DEPENDENCY_BOT_AUTHORS:
-        return False, "dependency-bot"
+        return False, "dependency-bot", is_priority
     if base_ref not in SUPPORTED_BASE_REFS:
-        return False, "unsupported-base-branch"
+        return False, "unsupported-base-branch", is_priority
     if operation in {"deploy", "retain"} and state != "open":
-        return False, "pr-not-open"
-    return True, "eligible"
+        return False, "pr-not-open", is_priority
+    return True, "eligible", is_priority
 
 
 def _nested_value(payload: dict[str, object], *keys: str) -> object | None:
@@ -93,8 +95,14 @@ def revalidate_deploy(
     if state != "open":
         return f"pull request is not open (state={_display_value(state)})"
     if (
+        not isinstance(expected_head_sha, str)
+        or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha)
+    ):
+        return "expected head SHA must be exactly 40 hexadecimal characters"
+    if (
         not isinstance(head_sha, str)
         or not isinstance(expected_head_sha, str)
+        or not GIT_COMMIT_SHA_RE.fullmatch(head_sha)
         or head_sha.lower() != expected_head_sha.lower()
     ):
         return f"head is stale (expected={expected_head_sha}, current={_display_value(head_sha)})"
@@ -114,7 +122,7 @@ def revalidate_deploy(
     author = _nested_value(pull_request, "user", "login")
     if not isinstance(author, str) or not author:
         return "current pull request metadata is malformed (user.login must be a non-empty string)"
-    eligible, reason = evaluate(
+    eligible, reason, _ = evaluate(
         "deploy",
         _display_value(state),
         _display_value(base_ref),
@@ -183,7 +191,7 @@ def main() -> int:
     if missing:
         parser.error(f"the following arguments are required: {', '.join(missing)}")
 
-    eligible, reason = evaluate(
+    eligible, reason, is_priority = evaluate(
         args.operation,
         args.state,
         args.base_ref,
@@ -192,6 +200,8 @@ def main() -> int:
     )
     print(f"eligible={'true' if eligible else 'false'}")
     print(f"reason={reason}")
+    if args.operation == "deploy":
+        print(f"priority={'true' if is_priority else 'false'}")
     return 0
 
 

@@ -210,8 +210,10 @@ jobs:
 
           # Walk completed history newest-first until the exact target is found
           # and, for a failed latest candidate, its three-attempt budget is known.
+          # Bootstrap evidence is only an anchor; its failures are already part
+          # of this same retained history and must not be counted twice.
           # Irrelevant destroy and other-target runs cannot evict this evidence.
-          failed_attempts="${bootstrap_failed_attempts:-0}"
+          failed_attempts=0
           page=1
           while (( page <= max_history_pages )); do
             run_page="$(list_run_page "$page")"

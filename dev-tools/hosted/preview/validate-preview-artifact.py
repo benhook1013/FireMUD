@@ -1313,26 +1313,34 @@ def validate_metadata(
     metadata = _require_mapping(
         json.loads(path.read_text(encoding="utf-8")), "metadata"
     )
+    normalized_pr_number = int(pr_number)
     expected = {
         "schemaVersion": 1,
         "event": "pull_request",
         "repository": repository,
         "sourceWorkflow": ".github/workflows/preview.yml",
         "sourceRunId": int(source_run_id),
-        "prNumber": int(pr_number),
+        "prNumber": normalized_pr_number,
         "baseSha": base_sha,
         "headSha": head_sha,
         "mergeSha": merge_sha,
         "hostname": hostname,
         "imageTag": image_tag,
     }
+    allowed_fields = set(expected) | {"manifestSha256"}
+    unexpected_fields = set(metadata) - allowed_fields
+    if unexpected_fields:
+        fail(
+            "metadata contains unsupported fields: "
+            f"{sorted(unexpected_fields)}"
+        )
     for key, expected_value in expected.items():
         if metadata.get(key) != expected_value:
             fail(f"metadata {key} does not match trusted event data")
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
     if metadata.get("manifestSha256") != digest:
         fail("manifest checksum does not match metadata")
-    validate_manifest(manifest, f"pr-{pr_number}", image_tag, hostname)
+    validate_manifest(manifest, f"pr-{normalized_pr_number}", image_tag, hostname)
 
 
 def main() -> int:

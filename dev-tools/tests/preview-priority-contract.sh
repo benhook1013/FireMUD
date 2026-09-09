@@ -156,7 +156,9 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"requested-preview-head-sha"*
 fi
 if [[ "$1" == delete && "$2" == namespace ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
-  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]]; then
+  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]] ||
+    [[ -n "${FAKE_RUNTIME_DELETE_ERROR_NAMESPACE:-}" &&
+      "$3" == "$FAKE_RUNTIME_DELETE_ERROR_NAMESPACE" ]]; then
     exit 1
   fi
   exit 0
@@ -423,7 +425,8 @@ printf '%s %s\n' "$1" "$2" >> "$FAKE_DELETE_LOG"
 if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
   printf 'runtime-delete\n' >> "$FAKE_OPERATION_SEQUENCE"
 fi
-if [[ "${FAKE_DELETE_FAIL:-false}" == "true" ]]; then
+if [[ "${FAKE_DELETE_FAIL:-false}" == "true" ]] ||
+  [[ -n "${FAKE_DELETE_FAIL_NAMESPACE:-}" && "$1" == "$FAKE_DELETE_FAIL_NAMESPACE" ]]; then
   exit 1
 fi
 EOF
@@ -561,6 +564,7 @@ reset_case() {
   export FAKE_REQUESTED_HEAD_NOT_FOUND=false
   export FAKE_REQUESTED_HEAD_RECHECK_ERROR=false
   export FAKE_DELETE_FAIL=false
+  export FAKE_DELETE_FAIL_NAMESPACE=''
   export FAKE_COMMENT_DELETE_FAIL=false
   export FAKE_PUBLISH_FAIL_PHASE=''
   export FAKE_PUBLISH_FAIL_PHASES=''
@@ -576,6 +580,7 @@ reset_case() {
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
   export FAKE_RUNTIME_DELETE_ERROR=false
+  export FAKE_RUNTIME_DELETE_ERROR_NAMESPACE=''
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
@@ -952,6 +957,21 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_labels_base64}\n"
+bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n"
+if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
+  echo "ordinary allocation did not fail closed on malformed priority labels" >&2
+  exit 1
+fi
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
 export FAKE_PRIORITY_QUERY_FAIL=true
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when priority query failed" >&2
@@ -1042,7 +1062,7 @@ fi
 grep -Fqx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
-grep -Fqx '1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
+grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/multiple-retire.out"
 
 reset_case
@@ -1210,15 +1230,41 @@ test ! -e "$FAKE_HELM_LOG"
 
 reset_case
 export FAKE_HELM_UNINSTALL_ERROR=true
-if bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101; then
-  echo "hosted deletion suppressed a Helm uninstall failure" >&2
-  exit 1
-fi
+export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+helm_failure_output="$(bash "$DELETE_HOSTED_NAMESPACE" pr-101 pr-101 2>&1)"
+grep -Fq 'Helm uninstall failed for hosted release pr-101; continuing namespace deletion.' <<<"$helm_failure_output"
 grep -qx 'uninstall pr-101 --namespace pr-101 --ignore-not-found' "$FAKE_HELM_LOG"
-if grep -q '^delete namespace ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
-  echo "hosted deletion continued after a Helm uninstall failure" >&2
+grep -qx 'delete namespace pr-101 --ignore-not-found=true --wait=false' \
+  "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'wait --for=delete namespace/pr-101 --timeout=180s' \
+  "$FAKE_RUNTIME_KUBECTL_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS=$'pr-101\t101\npr-102\t102\n'
+export FAKE_PRUNE_METADATA=$'open\tfeature/stack\thuman\t'"${adversarial_labels_base64}"$'\n'
+export FAKE_PR_102_PRIORITY=false
+export FAKE_PRUNE_MULTI_TEST=true
+export FAKE_DELETE_FAIL_NAMESPACE=pr-101
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-102"}}'
+if bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/multiple-runtime-delete.out" 2>&1; then
+  echo "pruner suppressed an aggregate hosted runtime deletion failure" >&2
   exit 1
 fi
+grep -Fqx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
+test "$(wc -l < "$FAKE_DELETE_LOG")" -eq 2
+test "$(grep -Fc 'runtime-delete' "$FAKE_OPERATION_SEQUENCE")" -eq 2
+test "$(grep -Fc 'runtime-check' "$FAKE_OPERATION_SEQUENCE")" -eq 1
+grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+if grep -Fq 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"; then
+  echo "pruner retired an identity after runtime deletion failed" >&2
+  exit 1
+fi
+grep -Fqx '1 hosted runtime deletion(s) and 0 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
+  "$TEMP_DIR/multiple-runtime-delete.out"
 
 reset_case
 export FAKE_RUNTIME_DELETE_ERROR=true
@@ -1681,8 +1727,22 @@ grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
 grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
-grep -q -- '--inspect-labels --labels-json "$labels_json"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- '--operation deploy' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+# shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
+grep -q -- "s/^priority=//p" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" python3 - <<'PY'
+import os
+from pathlib import Path
+
+source = Path(os.environ["ALLOCATOR_PATH"]).read_text(encoding="utf-8")
+start = source.index("find_unsatisfied_priority_pr()")
+end = source.index("\n# Fail closed", start)
+body = source[start:end]
+assert "inspect_labels" not in body
+assert "--operation deploy" in body
+assert "s/^priority=//p" in body
+PY
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"

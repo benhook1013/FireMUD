@@ -103,11 +103,10 @@ find_unsatisfied_priority_pr() {
   local pr_state
   local eligibility_output
   local eligible
+  local reason
   local is_priority
-  local labels_valid
   local labels_base64
   local labels_json
-  local label_inspection
   local namespace
   local namespace_owner
   local namespace_head
@@ -139,18 +138,6 @@ find_unsatisfied_priority_pr() {
       echo "Unable to evaluate priority PR #${pr_number}: malformed label transport" >&2
       return 1
     fi
-    if ! label_inspection="$(inspect_labels "$labels_json")"; then
-      echo "Unable to inspect priority PR #${pr_number} label metadata" >&2
-      return 1
-    fi
-    IFS=$'\t' read -r labels_valid is_priority <<<"$label_inspection"
-    if [[ "$labels_valid" != true ]]; then
-      echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
-      return 1
-    fi
-    if [[ "$is_priority" != true ]]; then
-      continue
-    fi
     if ! eligibility_output="$(python3 "$eligibility_script" \
       --operation deploy \
       --state "$pr_state" \
@@ -161,9 +148,20 @@ find_unsatisfied_priority_pr() {
       return 1
     fi
     eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-    if [[ "$eligible" != "true" && "$eligible" != "false" ]]; then
+    reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
+    is_priority="$(sed -n 's/^priority=//p' <<<"$eligibility_output")"
+    if [[ "$eligible" != "true" && "$eligible" != "false" ]] ||
+      [[ -z "$reason" ]] ||
+      [[ "$is_priority" != "true" && "$is_priority" != "false" ]]; then
       echo "Invalid preview eligibility result for priority PR #${pr_number}" >&2
       return 1
+    fi
+    if [[ "$reason" == malformed-label-metadata ]]; then
+      echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
+      return 1
+    fi
+    if [[ "$is_priority" != true ]]; then
+      continue
     fi
     if [[ "$eligible" != "true" ]]; then
       continue

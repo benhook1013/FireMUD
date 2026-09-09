@@ -88,7 +88,11 @@ if [[ "$ACTIVATION_MODE" == "active" ]]; then
   # discovered and verified below.
   initial_activation_mode="paused"
 fi
-[[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || fail "--wait-seconds must be a positive integer"
+if ! [[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
+  ((${#WAIT_SECONDS} > 4)) ||
+  ((10#$WAIT_SECONDS > 3600)); then
+  fail "--wait-seconds must be an integer between 1 and 3600"
+fi
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
 

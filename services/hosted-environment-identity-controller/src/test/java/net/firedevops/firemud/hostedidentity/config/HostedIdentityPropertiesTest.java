@@ -36,6 +36,7 @@ class HostedIdentityPropertiesTest {
         Binder.get(environment).bind("firemud.hosted-identity", Bindable.ofInstance(properties));
 
     assertTrue(binding.isBound());
+    assertDoesNotThrow(properties::afterPropertiesSet);
     assertEquals(
         "firemud.dev/requested-preview-head-sha", properties.getPreviewRequestedHeadAnnotation());
     assertEquals(
