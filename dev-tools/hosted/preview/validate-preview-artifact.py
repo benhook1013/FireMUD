@@ -1306,7 +1306,9 @@ def validate_metadata(
     image_tag: str,
     hostname: str,
 ) -> None:
-    metadata = json.loads(path.read_text(encoding="utf-8"))
+    metadata = _require_mapping(
+        json.loads(path.read_text(encoding="utf-8")), "metadata"
+    )
     expected = {
         "schemaVersion": 1,
         "event": "pull_request",

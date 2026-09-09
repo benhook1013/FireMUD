@@ -197,35 +197,45 @@ class HostedIdentityPropertiesTest {
 
   @Test
   void activationDefaultsAndInvalidValuesFailClosedToPaused() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    properties.setActivationMode("observe");
-    assertEquals(HostedIdentityProperties.ActivationMode.OBSERVE, properties.activationMode());
-    properties.setActivationMode("unexpected");
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    properties.setActivationMode("active");
-    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
-    properties.setActivationMode("ACTIVE");
-    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
-    properties.setActivationMode(null);
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    properties.setActivationMode(" \t ");
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    properties.setActivationMode(" active ");
-    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
-    assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());
+    assertActivationMode(null, HostedIdentityProperties.ActivationMode.PAUSED);
+    assertActivationMode("observe", HostedIdentityProperties.ActivationMode.OBSERVE);
+    assertActivationMode("unexpected", HostedIdentityProperties.ActivationMode.PAUSED);
+    assertActivationMode("active", HostedIdentityProperties.ActivationMode.ACTIVE);
+    assertActivationMode("ACTIVE", HostedIdentityProperties.ActivationMode.ACTIVE);
+    assertActivationMode(" \t ", HostedIdentityProperties.ActivationMode.PAUSED);
+    assertActivationMode(" active ", HostedIdentityProperties.ActivationMode.ACTIVE);
   }
 
   @Test
   void invalidActivationModeLogsTheRejectedNonSecretSelector(CapturedOutput output) {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     properties.setActivationMode("unexpected-mode");
+    properties.afterPropertiesSet();
 
     assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    assertTrue(
-        output
-            .getOut()
-            .contains(
-                "Rejected hosted identity activation mode 'unexpected-mode'; defaulting to paused"));
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    String warning =
+        "Rejected hosted identity activation mode 'unexpected-mode'; defaulting to paused";
+    assertTrue(output.getOut().contains(warning));
+    assertEquals(1, countOccurrences(output.getOut(), warning));
+  }
+
+  private static void assertActivationMode(
+      String configured, HostedIdentityProperties.ActivationMode expected) {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode(configured);
+    properties.afterPropertiesSet();
+    assertEquals(expected, properties.activationMode());
+    assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());
+  }
+
+  private static int countOccurrences(String value, String needle) {
+    int count = 0;
+    int offset = 0;
+    while ((offset = value.indexOf(needle, offset)) >= 0) {
+      count++;
+      offset += needle.length();
+    }
+    return count;
   }
 }

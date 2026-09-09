@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -100,6 +101,7 @@ class EnvironmentIdentityPlannerTest {
 
     assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
     assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
+    assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
   }
 
   @Test

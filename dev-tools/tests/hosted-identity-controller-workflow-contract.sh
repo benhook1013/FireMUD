@@ -185,15 +185,21 @@ for fragment in (
     'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
     'select(.name == $name and .expired == false)',
     '[[ "$artifact_count" == 1 ]] || emit_no_action',
+    '[[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action',
+    'Ignoring closed pull request because its base branch is unsupported.',
+    '[[ "$state" == closed ]] || emit_no_action',
+    'Ignoring closed pull request because it has been reopened.',
+    '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action',
+    'Ignoring stale closed pull request for an earlier PR head.',
 ):
     assert fragment in target_script, fragment
 assert 'if [[ "$ACTION" == deploy ]]' not in target_script
 source_step = next(step for step in validate_job["steps"] if step.get("id") == "source")
 assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
 source_script = source_step["run"]
-assert 'jq -r --arg head_sha "$HEAD_SHA"' in source_script
-assert ".head_sha == $head_sha" in source_script
-assert '.head_sha == \\"${HEAD_SHA}\\"' not in source_script
+assert 'render_run_id="$SOURCE_RUN_ID"' in source_script
+assert 'if [[ -z "$render_run_id" ]]' not in source_script
+assert 'actions/workflows/preview.yml/runs?' not in source_script
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -1757,7 +1763,7 @@ if PATH="$missing_kubectl_bin" \
   KUBECONFIG_CONTENT="$valid_kubeconfig" \
   KUBECONFIG_PATH="$missing_kubectl_path" \
   GITHUB_ENV="$missing_kubectl_github_env" \
-  /usr/bin/bash "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
+  "$BASH" "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
   echo "shared kubeconfig action succeeded without kubectl" >&2
   exit 1
 fi
@@ -1795,7 +1801,10 @@ for argument in "$@"; do
 done
 case "$resource" in
   repos/example/FireMUD/actions/runs/42)
-    if [[ "$jq_expression" == .path ]]; then
+    if [[ -z "$jq_expression" ]]; then
+      printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
+      printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}'
+    elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
       printf '%s' 900
@@ -1837,6 +1846,38 @@ chmod +x "$TEMP_DIR/bin/gh"
     bash "$TEMP_DIR/target.sh"
 )
 test "$(cat "$TEMP_DIR/output")" = 'action=none'
+
+source_step="$TEMP_DIR/source.sh"
+python3 - "$trusted" "$source_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+step = next(step for step in workflow["jobs"]["validate-target"]["steps"] if step.get("id") == "source")
+Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
+PY
+source_output="$TEMP_DIR/source-output"
+source_gh_log="$TEMP_DIR/source-gh.log"
+(
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    SOURCE_RUN_ID=42 \
+    HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    PR_NUMBER=900 \
+    SOURCE_GH_LOG="$source_gh_log" \
+    GITHUB_OUTPUT="$source_output" \
+    bash "$source_step"
+)
+test "$(cat "$source_output")" = "$(cat <<'EOF'
+render_run_id=42
+artifact_name=preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc
+EOF
+)"
+test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
 run_closed_target_fixture() {
   local scenario="$1"
@@ -1895,7 +1936,10 @@ hostname=pr-900.preview.firedevops.net
 EOF
 )"
 run_closed_target_fixture open-state open example/FireMUD develop \
-  "$closed_head" "$closed_head" 1
+  "$closed_head" "$closed_head" 0
+test "$(cat "$TEMP_DIR/closed-target-open-state.output")" = 'action=none'
+grep -Fxq 'Ignoring closed pull request because it has been reopened.' \
+  "$TEMP_DIR/closed-target-open-state.stdout"
 run_closed_target_fixture fork closed attacker/Fork develop \
   "$closed_head" "$closed_head" 0
 test "$(cat "$TEMP_DIR/closed-target-fork.output")" = 'action=none'
@@ -1908,8 +1952,14 @@ run_closed_target_fixture invalid-head closed example/FireMUD develop \
   not-a-sha not-a-sha 0
 test "$(cat "$TEMP_DIR/closed-target-invalid-head.output")" = 'action=none'
 run_closed_target_fixture unsupported-base closed example/FireMUD feature \
-  "$closed_head" "$closed_head" 1
+  "$closed_head" "$closed_head" 0
+test "$(cat "$TEMP_DIR/closed-target-unsupported-base.output")" = 'action=none'
+grep -Fxq 'Ignoring closed pull request because its base branch is unsupported.' \
+  "$TEMP_DIR/closed-target-unsupported-base.stdout"
 run_closed_target_fixture stale-head closed example/FireMUD develop \
-  "$closed_head" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1
+  "$closed_head" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0
+test "$(cat "$TEMP_DIR/closed-target-stale-head.output")" = 'action=none'
+grep -Fxq 'Ignoring stale closed pull request for an earlier PR head.' \
+  "$TEMP_DIR/closed-target-stale-head.stdout"
 
 echo 'hosted identity controller workflow contract passed'

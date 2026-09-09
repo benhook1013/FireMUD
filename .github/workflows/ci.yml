@@ -251,6 +251,17 @@ jobs:
       - name: 📦 Install Python script dependencies
         run: python3 -m pip install --disable-pip-version-check PyYAML
 
+      - name: Set up Helm
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            sudo install /tmp/linux-amd64/helm /usr/local/bin/helm
+          fi
+          helm version
+
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
         run: |

@@ -93,7 +93,9 @@ spec:
         - protocol: TCP
           port: 6565
     # Ready also proves the TCP Proxy client identity against the exact
-    # Gateway-internal WebSocket server identity over TLS.
+    # Gateway-internal WebSocket server identity over TLS. The selector rule
+    # documents that intent but does not narrow TCP/443 beyond the public/API
+    # allowance above; the TCP/6565 Account rule remains genuinely narrower.
     - to:
         - namespaceSelector:
             matchLabels:

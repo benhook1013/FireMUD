@@ -27,6 +27,7 @@ public class HostedIdentityProperties implements InitializingBean {
 
   private String controlNamespace = "firemud-system";
   private String activationMode = "paused";
+  private ActivationMode resolvedActivationMode = ActivationMode.PAUSED;
   private String previewDomain = "preview.firedevops.net";
   private String devDemoHostname = "dev.preview.firedevops.net";
   private String ingressIssuer = "letsencrypt-prod";
@@ -74,6 +75,7 @@ public class HostedIdentityProperties implements InitializingBean {
     if (reconcileInterval == null || reconcileInterval.compareTo(Duration.ofSeconds(1)) < 0) {
       throw new IllegalStateException("reconcile interval must be at least 1 second");
     }
+    resolvedActivationMode = resolveActivationMode(true);
   }
 
   private static void requireValidOptionalSha256Pin(String propertyName, String value) {
@@ -125,18 +127,25 @@ public class HostedIdentityProperties implements InitializingBean {
 
   public void setActivationMode(String activationMode) {
     this.activationMode = activationMode;
+    this.resolvedActivationMode = resolveActivationMode(false);
   }
 
   /** Invalid or missing activation is deliberately treated as paused. */
   public ActivationMode activationMode() {
+    return resolvedActivationMode;
+  }
+
+  private ActivationMode resolveActivationMode(boolean warnIfInvalid) {
     if (activationMode == null) {
       return ActivationMode.PAUSED;
     }
     try {
       return ActivationMode.valueOf(activationMode.trim().toUpperCase(java.util.Locale.ROOT));
     } catch (IllegalArgumentException exception) {
-      LOGGER.warn(
-          "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
+      if (warnIfInvalid) {
+        LOGGER.warn(
+            "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
+      }
       return ActivationMode.PAUSED;
     }
   }

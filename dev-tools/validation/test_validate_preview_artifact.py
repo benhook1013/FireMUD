@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
+import json
 import re
 import tempfile
 import unittest
@@ -228,6 +230,44 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "nodePublishSecretRef": {"name": "untrusted-secret"},
         }
         self._validate_manifest(document)
+
+
+class PreviewArtifactMetadataTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+
+    def test_non_object_metadata_is_rejected_cleanly(self):
+        for metadata in ([], "metadata"):
+            with self.subTest(metadata=metadata), tempfile.TemporaryDirectory() as directory:
+                metadata_path = Path(directory) / "metadata.json"
+                manifest_path = Path(directory) / "manifest.yaml"
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                stderr = io.StringIO()
+                argv = [
+                    str(SCRIPT),
+                    str(metadata_path),
+                    str(manifest_path),
+                    "benhook1013/FireMUD",
+                    "1",
+                    "42",
+                    "a" * 40,
+                    "b" * 40,
+                    "c" * 40,
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                ]
+
+                with (
+                    patch.object(self.validator.sys, "argv", argv),
+                    patch.object(self.validator.sys, "stderr", stderr),
+                ):
+                    self.assertEqual(self.validator.main(), 1)
+
+                self.assertEqual(
+                    stderr.getvalue(),
+                    "preview artifact rejected: metadata is not an object\n",
+                )
 
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):

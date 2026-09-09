@@ -124,10 +124,13 @@ jobs:
           else
             [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
               "Ignoring closed pull request because its head repository is not trusted."
-            [[ "$base_ref" == main || "$base_ref" == develop ]]
-            [[ "$state" == closed ]]
+            [[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action \
+              "Ignoring closed pull request because its base branch is unsupported."
+            [[ "$state" == closed ]] || emit_no_action \
+              "Ignoring closed pull request because it has been reopened."
           fi
-          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]
+          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
+            "Ignoring stale closed pull request for an earlier PR head."
           {
             echo "action=${ACTION}"
             echo "pr_number=${PR_NUMBER}"
@@ -150,13 +153,6 @@ jobs:
         run: |
           set -euo pipefail
           render_run_id="$SOURCE_RUN_ID"
-          if [[ -z "$render_run_id" ]]; then
-            runs_json="$(gh api --paginate --slurp \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs?event=pull_request&status=success&per_page=100")"
-            render_run_id="$(jq -r --arg head_sha "$HEAD_SHA" \
-              'first(.[].workflow_runs[] | select(.head_sha == $head_sha and .event == "pull_request" and .path == ".github/workflows/preview.yml") | .id) // empty' \
-              <<<"$runs_json")"
-          fi
           test -n "$render_run_id"
           source_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}")"
           test "$(jq -r '.conclusion' <<<"$source_json")" = success
