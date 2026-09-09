@@ -83,6 +83,24 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
+  void missingRoleIsCreatedWithCanonicalSpecWithoutEdit() {
+    RoleClient fixture = roleClient();
+    Role desired = role("get");
+    when(fixture.operation().get()).thenReturn(null);
+
+    HostedIdentityScopeService.ensureRole(fixture.client(), "pr-42", desired);
+
+    ArgumentCaptor<Role> createdResource = ArgumentCaptor.forClass(Role.class);
+    verify(fixture.namespaceRoles()).resource(createdResource.capture());
+    verify(fixture.createOperation()).create();
+    verify(fixture.operation(), never())
+        .edit(org.mockito.ArgumentMatchers.<UnaryOperator<Role>>any());
+    Role created = createdResource.getValue();
+    assertEquals(ROLE_LABELS, created.getMetadata().getLabels());
+    assertEquals(desired.getRules(), created.getRules());
+  }
+
+  @Test
   void roleOwnershipDriftRemainsFailClosed() {
     Role desired = role("get");
     Role wrongOwner =
@@ -159,6 +177,31 @@ class HostedIdentityScopeServiceTest {
     HostedIdentityScopeService.ensureBinding(client, "pr-42", "scope", ROLE_LABELS, "scope", plan);
     verify(operation, times(1))
         .edit(org.mockito.ArgumentMatchers.<UnaryOperator<RoleBinding>>any());
+  }
+
+  @Test
+  void missingBindingIsCreatedWithCanonicalSpecWithoutEdit() {
+    EnvironmentIdentityPlan plan = plan();
+    BindingClient fixture = bindingClient();
+    when(fixture.operation().get()).thenReturn(null);
+
+    HostedIdentityScopeService.ensureBinding(
+        fixture.client(), "pr-42", "scope", ROLE_LABELS, "scope", plan);
+
+    ArgumentCaptor<RoleBinding> createdResource = ArgumentCaptor.forClass(RoleBinding.class);
+    verify(fixture.namespaceBindings()).resource(createdResource.capture());
+    verify(fixture.createOperation()).create();
+    verify(fixture.operation(), never())
+        .edit(org.mockito.ArgumentMatchers.<UnaryOperator<RoleBinding>>any());
+    RoleBinding created = createdResource.getValue();
+    assertEquals(BINDING_LABELS, created.getMetadata().getLabels());
+    assertEquals("rbac.authorization.k8s.io", created.getRoleRef().getApiGroup());
+    assertEquals("Role", created.getRoleRef().getKind());
+    assertEquals("scope", created.getRoleRef().getName());
+    assertEquals(1, created.getSubjects().size());
+    assertEquals("ServiceAccount", created.getSubjects().get(0).getKind());
+    assertEquals("firemud-hosted-identity-controller", created.getSubjects().get(0).getName());
+    assertEquals(plan.controlNamespace(), created.getSubjects().get(0).getNamespace());
   }
 
   @Test
@@ -280,11 +323,14 @@ class HostedIdentityScopeServiceTest {
     NonNamespaceOperation<Role, RoleList, Resource<Role>> namespaceRoles =
         mock(NonNamespaceOperation.class);
     Resource<Role> operation = mock(Resource.class);
+    Resource<Role> createOperation = mock(Resource.class);
     when(client.rbac()).thenReturn(rbac);
     when(rbac.roles()).thenReturn(roles);
     when(roles.inNamespace("pr-42")).thenReturn(namespaceRoles);
     when(namespaceRoles.withName("scope")).thenReturn(operation);
-    return new RoleClient(client, operation);
+    when(namespaceRoles.resource(org.mockito.ArgumentMatchers.any(Role.class)))
+        .thenReturn(createOperation);
+    return new RoleClient(client, namespaceRoles, operation, createOperation);
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -296,14 +342,25 @@ class HostedIdentityScopeServiceTest {
     NonNamespaceOperation<RoleBinding, RoleBindingList, Resource<RoleBinding>> namespaceBindings =
         mock(NonNamespaceOperation.class);
     Resource<RoleBinding> operation = mock(Resource.class);
+    Resource<RoleBinding> createOperation = mock(Resource.class);
     when(client.rbac()).thenReturn(rbac);
     when(rbac.roleBindings()).thenReturn(bindings);
     when(bindings.inNamespace("pr-42")).thenReturn(namespaceBindings);
     when(namespaceBindings.withName("scope")).thenReturn(operation);
-    return new BindingClient(client, operation);
+    when(namespaceBindings.resource(org.mockito.ArgumentMatchers.any(RoleBinding.class)))
+        .thenReturn(createOperation);
+    return new BindingClient(client, namespaceBindings, operation, createOperation);
   }
 
-  private record RoleClient(KubernetesClient client, Resource<Role> operation) {}
+  private record RoleClient(
+      KubernetesClient client,
+      NonNamespaceOperation<Role, RoleList, Resource<Role>> namespaceRoles,
+      Resource<Role> operation,
+      Resource<Role> createOperation) {}
 
-  private record BindingClient(KubernetesClient client, Resource<RoleBinding> operation) {}
+  private record BindingClient(
+      KubernetesClient client,
+      NonNamespaceOperation<RoleBinding, RoleBindingList, Resource<RoleBinding>> namespaceBindings,
+      Resource<RoleBinding> operation,
+      Resource<RoleBinding> createOperation) {}
 }

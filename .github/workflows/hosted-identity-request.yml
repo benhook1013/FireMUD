@@ -167,6 +167,7 @@ jobs:
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -194,20 +195,7 @@ jobs:
           version: v1.33.4
 
       - name: Set up Helm
-        run: |
-          set -euo pipefail
-          if ! command -v helm >/dev/null 2>&1; then
-            HELM_VERSION='v3.20.1'
-            HELM_SHA256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'
-            INSTALL_DIR="$RUNNER_TEMP/bin"
-            mkdir -p "$INSTALL_DIR"
-            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "$RUNNER_TEMP/helm.tgz"
-            printf '%s  %s\n' "$HELM_SHA256" "$RUNNER_TEMP/helm.tgz" | sha256sum --check --status
-            tar -xzf "$RUNNER_TEMP/helm.tgz" -C "$RUNNER_TEMP"
-            install "$RUNNER_TEMP/linux-amd64/helm" "$INSTALL_DIR/helm"
-            echo "$INSTALL_DIR" >> "$GITHUB_PATH"
-          fi
-          helm version
+        uses: ./.github/actions/setup-helm
 
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -312,16 +300,7 @@ jobs:
       - name: Apply canonical Active request
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
-        run: |
-          cat <<EOF | kubectl -n firemud-system apply -f -
-          apiVersion: platform.firemud.dev/v1alpha1
-          kind: HostedEnvironmentIdentity
-          metadata:
-            name: ${IDENTITY_NAME}
-            namespace: firemud-system
-          spec:
-            desiredState: Active
-          EOF
+        run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active
 
       - name: Restore preview runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
@@ -689,6 +668,7 @@ jobs:
 
   verify-runtime:
     name: Verify Hosted Preview Runtime
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -809,6 +789,7 @@ jobs:
 
   destroy-runtime:
     name: Delete Preview Runtime
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -888,6 +869,7 @@ jobs:
 
   retire-identity:
     name: Retire Hosted Identity After Runtime Deletion
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview
@@ -938,16 +920,7 @@ jobs:
       - name: Apply canonical Retired request
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
-        run: |
-          cat <<EOF | kubectl -n firemud-system apply -f -
-          apiVersion: platform.firemud.dev/v1alpha1
-          kind: HostedEnvironmentIdentity
-          metadata:
-            name: ${IDENTITY_NAME}
-            namespace: firemud-system
-          spec:
-            desiredState: Retired
-          EOF
+        run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Retired
       - name: Observe terminal retirement and delete request
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}

@@ -16,6 +16,7 @@ concurrency:
 jobs:
   reconcile-dev-demo:
     name: Reconcile Develop Dev Demo
+    timeout-minutes: 9
     runs-on:
       - self-hosted
       - preview

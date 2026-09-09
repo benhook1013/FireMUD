@@ -1475,6 +1475,57 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void equalRevisionSecretTypeDriftIsRepairedAndRemainsPending() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretProjectionService service = new SecretProjectionService();
+    SecretClient secretClient = secretClient(plan);
+    Map<String, String> desiredData =
+        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, desiredData);
+    String spki = "1".repeat(64);
+    Secret drifted =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            plan.ingressSecretName(),
+            desiredData,
+            acceptedAnnotations(revision, spki));
+    drifted.setType("Opaque");
+    drifted.getMetadata().setResourceVersion("7");
+    Resource<Secret> existingResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(drifted);
+    Secret source = new SecretBuilder().withType("kubernetes.io/tls").withData(desiredData).build();
+
+    var repair =
+        service.project(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            source,
+            1,
+            1,
+            spki,
+            "cert-manager",
+            ALWAYS_CURRENT);
+
+    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
+    verify(secretClient.runtimeSecrets()).resource(candidate.capture());
+    Secret repaired = candidate.getValue();
+    assertEquals("projected", repair.state());
+    assertEquals(desiredData, repaired.getData());
+    assertEquals(source.getType(), repaired.getType());
+    assertEquals(
+        "pending",
+        repaired
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION));
+  }
+
+  @Test
   void sameRevisionDriftRejectsAnIncompleteAcceptedSnapshotBeforeWriting() {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();

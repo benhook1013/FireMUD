@@ -121,6 +121,23 @@ class RuntimeProfileServiceTest {
   }
 
   @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  void runtimeProfileMapsAnAbsentRuntimeNamespaceToTheAbsentProfile() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get()).thenReturn(null);
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+
+    assertEquals(RuntimeProfileService.RuntimeProfile.absent(), profile);
+    assertFalse(profile.present());
+  }
+
+  @Test
   void exactComparisonIncludesEveryRuntimeIdentityField() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(

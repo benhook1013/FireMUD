@@ -8,6 +8,7 @@ dev_demo="$ROOT_DIR/.github/workflows/dev-demo.yml"
 runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 kubeconfig_action="$ROOT_DIR/.github/actions/write-kubeconfig/action.yml"
+helm_action="$ROOT_DIR/.github/actions/setup-helm/action.yml"
 build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
 controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller/Dockerfile"
@@ -51,6 +52,18 @@ for required in \
   'mv -fT -- "$temporary_path" "$KUBECONFIG_PATH"'; do
   contains "$kubeconfig_action" "$required"
 done
+# shellcheck disable=SC2016 # These assertions intentionally match literal action source.
+for required in \
+  'using: composite' \
+  "helm_version='v3.20.1'" \
+  "helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
+  'RUNNER_TEMP' \
+  'sha256sum --check --status' \
+  'echo "$install_dir" >> "$GITHUB_PATH"' \
+  'version --template' \
+  '[[ "$reported_version" == "$helm_version" ]]'; do
+  contains "$helm_action" "$required"
+done
 contains "$trusted" 'uses: ./.github/actions/write-kubeconfig'
 if grep -Fq 'KUBECONFIG_PATH=' "$trusted"; then
   echo "$trusted must delegate protected kubeconfig writes to the shared composite action" >&2
@@ -82,6 +95,9 @@ contains "$waiter" '.status.grpc.revision'
 contains "$waiter" '.status.gatewayInternalWs.revision'
 contains "$waiter" '.status.tcpProxyBridge.revision'
 contains "$waiter" '--projections'
+contains "$waiter" 'dev-demo identity requires the dev runtime namespace'
+# shellcheck disable=SC2016 # Match the literal namespace-mismatch diagnostic.
+contains "$waiter" 'PR identity ${identity_name} requires matching runtime namespace ${identity_name}'
 contains "$waiter" 'firemud.dev/managed-by'
 contains "$waiter" 'firemud.dev/requested-preview-head-sha'
 contains "$waiter" 'firemud.dev/last-preview-head-sha'
@@ -178,6 +194,8 @@ assert jobs["retire-identity"]["permissions"] == {
     "contents": "read",
     "pull-requests": "read",
 }
+for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
+    assert jobs[job_name]["timeout-minutes"] == 60, job_name
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 for fragment in (
@@ -205,10 +223,11 @@ deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
 }
-helm_setup = deploy_by_name["Set up Helm"]["run"]
-assert "HELM_VERSION='v3.20.1'" in helm_setup
-assert "HELM_SHA256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" in helm_setup
-assert 'sha256sum --check --status' in helm_setup
+active_request = deploy_by_name["Apply canonical Active request"]
+assert active_request["run"] == (
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
+)
+assert deploy_by_name["Set up Helm"]["uses"] == "./.github/actions/setup-helm"
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -356,6 +375,7 @@ assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
 assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
+assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 60
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_requested_index = next(
     index
@@ -401,6 +421,14 @@ retirement_wait = next(
     if step.get("name") == "Observe terminal retirement and delete request"
 )
 assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
+retired_request = next(
+    step
+    for step in jobs["retire-identity"]["steps"]
+    if step.get("name") == "Apply canonical Retired request"
+)
+assert retired_request["run"] == (
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Retired'
+)
 
 credential_step = next(
     step["run"]
@@ -1660,6 +1688,51 @@ run_retirement_waiter_fixture() {
 run_retirement_waiter_fixture not-found 1
 run_retirement_waiter_fixture forbidden 42
 run_retirement_waiter_fixture api-error 43
+
+# Projection namespace mismatches fail before any Secret read, including the
+# dev-demo-to-dev and PR-identity-to-identical-PR namespace boundaries.
+projection_mismatch_stub_dir="$TEMP_DIR/projection-mismatch-waiter-stubs"
+mkdir -p "$projection_mismatch_stub_dir"
+cat >"$projection_mismatch_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${PROJECTION_KUBECTL_LOG:?}"
+exit 99
+SH
+chmod +x "$projection_mismatch_stub_dir/kubectl"
+
+run_projection_namespace_mismatch_fixture() {
+  local identity_name="$1"
+  local runtime_namespace="$2"
+  local expected_message="$3"
+  local suffix="$4"
+  local kubectl_log="$TEMP_DIR/projection-mismatch-${suffix}.kubectl.log"
+  local error="$TEMP_DIR/projection-mismatch-${suffix}.error"
+  local status
+
+  : >"$kubectl_log"
+  set +e
+  env \
+    PATH="$projection_mismatch_stub_dir:$PATH" \
+    PROJECTION_KUBECTL_LOG="$kubectl_log" \
+    bash "$waiter" --projections "$identity_name" "$runtime_namespace" 1 \
+    >"$TEMP_DIR/projection-mismatch-${suffix}.output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq 2 ]]
+  grep -Fq -- "$expected_message" "$error"
+  [[ ! -s "$kubectl_log" ]]
+}
+
+run_projection_namespace_mismatch_fixture \
+  dev-demo pr-42 \
+  'dev-demo identity requires the dev runtime namespace' \
+  dev-demo-pr
+run_projection_namespace_mismatch_fixture \
+  pr-42 dev \
+  'PR identity pr-42 requires matching runtime namespace pr-42' \
+  pr-42-dev
 
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys

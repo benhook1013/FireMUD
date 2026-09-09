@@ -80,6 +80,8 @@ if workflow["concurrency"] != {
     raise SystemExit("dev-demo lifecycle must remain non-cancelling")
 if reconciler["concurrency"]["cancel-in-progress"] is not False:
     raise SystemExit("dev-demo reconciler must remain non-cancelling")
+if reconciler["jobs"]["reconcile-dev-demo"]["timeout-minutes"] != 9:
+    raise SystemExit("dev-demo reconciler timeout must remain shorter than its schedule cadence")
 
 plan_steps = workflow["jobs"]["dev-demo-plan"]["steps"]
 expected_run_name = (

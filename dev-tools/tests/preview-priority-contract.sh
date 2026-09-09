@@ -241,7 +241,7 @@ case "$resource" in
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
-    printf 'open\t%s\t%s\n' "$FAKE_TARGET_HEAD" "$(encode_fake_labels "$priority" "$labels_valid")"
+    printf '%s\t%s\t%s\n' "${FAKE_TARGET_STATE:-open}" "$FAKE_TARGET_HEAD" "$(encode_fake_labels "$priority" "$labels_valid")"
     ;;
   */pulls/101)
     if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then

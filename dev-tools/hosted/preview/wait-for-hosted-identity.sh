@@ -27,6 +27,14 @@ if [[ "${1:-}" == "--projections" ]]; then
     echo "timeout must be a positive integer" >&2
     exit 2
   fi
+  if [[ "$identity_name" == dev-demo && "$runtime_namespace" != dev ]]; then
+    echo "dev-demo identity requires the dev runtime namespace" >&2
+    exit 2
+  fi
+  if [[ "$identity_name" != dev-demo && "$runtime_namespace" != "$identity_name" ]]; then
+    echo "PR identity ${identity_name} requires matching runtime namespace ${identity_name}" >&2
+    exit 2
+  fi
 
   if [[ "$identity_name" == dev-demo ]]; then
     projection_prefix=dev

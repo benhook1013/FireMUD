@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -65,7 +66,8 @@ public class SecretProjectionService {
           throw new IllegalStateException(
               "source identity changed without a material revision change");
         }
-        if (data.equals(existing.getData())) {
+        if (data.equals(existing.getData())
+            && Objects.equals(source.getType(), existing.getType())) {
           return accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)
               ? ProjectionResult.synced(revision)
               : ProjectionResult.awaiting("awaiting-acceptance", revision);
