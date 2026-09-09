@@ -750,9 +750,26 @@ assert "request.namespace.substring(0, request.namespace.size() - 9) + '-tcp-pro
 assert any("object.metadata.name != 'firemud-grpc-tls'" in expression for expression in secret_expressions)
 
 certificate_policy = policies["firemud-hosted-identity-certificate-boundary"]
+certificate_namespace_match = " ".join(
+    certificate_policy["spec"]["matchConditions"][0]["expression"].split()
+)
+assert certificate_namespace_match.startswith(
+    "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
+)
+assert "request.namespace == 'dev-identity'" in certificate_namespace_match
+assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in certificate_namespace_match
 certificate_match = " ".join(
     certificate_policy["spec"]["validations"][0]["expression"].split()
 )
+controller_certificate_expression = certificate_match.split(
+    "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'",
+    1,
+)[1].split(
+    "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
+    1,
+)[0]
+assert "request.namespace == 'dev-identity'" in controller_certificate_expression
+assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in controller_certificate_expression
 assert "((request.operation == 'DELETE' && request.name.matches(" in certificate_match
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert (

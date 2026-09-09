@@ -266,7 +266,10 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: hosted-identity-certificate-namespace
-      expression: "request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')"
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        request.namespace == 'dev-identity' ||
+        request.namespace.matches('^pr-[1-9][0-9]*-identity$')
   validations:
     - expression: >-
         (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
@@ -276,6 +279,7 @@ spec:
          request.name.matches('^(firemud-grpc-tls|(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge))$')) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          request.subResource == '' &&
+         (request.namespace == 'dev-identity' || request.namespace.matches('^pr-[1-9][0-9]*-identity$')) &&
          ((request.operation == 'DELETE' &&
            request.name.matches('^(firemud-grpc-tls|(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge))$')) ||
           (request.operation != 'DELETE' &&
