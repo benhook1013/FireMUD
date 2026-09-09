@@ -273,6 +273,10 @@ class SecretMaterialValidatorTest {
     assertTrue(ca.getKeyUsage()[6]);
     assertFalse(ca.getKeyUsage()[0]);
     assertFalse(ca.getKeyUsage()[2]);
+    assertTrue(ca.getSubjectAlternativeNames() == null || ca.getSubjectAlternativeNames().isEmpty());
+    assertEquals(
+        GrpcTransportBundleGenerator.grpcDnsNames(plan).size(),
+        leaf.getSubjectAlternativeNames().size());
     assertTrue(leaf.getKeyUsage()[0]);
     assertTrue(leaf.getKeyUsage()[2]);
     assertFalse(leaf.getKeyUsage()[5]);

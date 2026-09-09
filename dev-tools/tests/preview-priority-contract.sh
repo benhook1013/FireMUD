@@ -74,6 +74,9 @@ cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *"get namespaces"* ]]; then
+  if [[ "${FAKE_NAMESPACE_LIST_ERROR:-false}" == true ]]; then
+    exit 1
+  fi
   printf '%b' "${FAKE_NAMESPACE_ROWS:-}"
   exit 0
 fi
@@ -98,6 +101,9 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"*
     exit 1
   fi
   if [[ "${FAKE_RUNTIME_NAMESPACE_PRESENT:-true}" == false ]]; then
+    if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" && "${FAKE_RECORD_RUNTIME_CHECK:-false}" == true ]]; then
+      printf 'runtime-check\n' >> "$FAKE_OPERATION_SEQUENCE"
+    fi
     exit 0
   fi
   printf 'namespace/%s\n' "${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
@@ -133,6 +139,18 @@ if [[ "$1" == wait && "$2" == --for=delete ]]; then
 fi
 if [[ "$1" == annotate && "$2" == namespace ]]; then
   printf '%s\n' "$*" >> "$FAKE_ANNOTATE_LOG"
+  exit 0
+fi
+if [[ "$*" == *"get hostedenvironmentidentity"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_IDENTITY_LOG"
+  printf '%s' "${FAKE_IDENTITY_JSON:-}"
+  exit 0
+fi
+if [[ "$*" == *"delete hostedenvironmentidentity"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_IDENTITY_LOG"
+  if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
+    printf 'identity-delete\n' >> "$FAKE_OPERATION_SEQUENCE"
+  fi
   exit 0
 fi
 namespace="${3:-}"
@@ -360,8 +378,29 @@ cat > "$TEMP_DIR/delete" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s %s\n' "$1" "$2" >> "$FAKE_DELETE_LOG"
+if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
+  printf 'runtime-delete\n' >> "$FAKE_OPERATION_SEQUENCE"
+fi
 if [[ "${FAKE_DELETE_FAIL:-false}" == "true" ]]; then
   exit 1
+fi
+EOF
+
+cat > "$TEMP_DIR/identity-request" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_IDENTITY_REQUEST_LOG"
+if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
+  printf 'identity-request\n' >> "$FAKE_OPERATION_SEQUENCE"
+fi
+EOF
+
+cat > "$TEMP_DIR/identity-wait" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$FAKE_IDENTITY_WAIT_LOG"
+if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
+  printf 'identity-wait\n' >> "$FAKE_OPERATION_SEQUENCE"
 fi
 EOF
 
@@ -402,6 +441,8 @@ chmod +x \
   "$TEMP_DIR/bin/gh" \
   "$TEMP_DIR/bin/helm" \
   "$TEMP_DIR/delete" \
+  "$TEMP_DIR/identity-request" \
+  "$TEMP_DIR/identity-wait" \
   "$TEMP_DIR/publish"
 
 export PATH="$TEMP_DIR/bin:$PATH"
@@ -427,6 +468,14 @@ export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_RUNTIME_KUBECTL_LOG="$TEMP_DIR/runtime-kubectl.log"
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
+export FAKE_IDENTITY_LOG="$TEMP_DIR/identity.log"
+export FAKE_IDENTITY_REQUEST_LOG="$TEMP_DIR/identity-request.log"
+export FAKE_IDENTITY_WAIT_LOG="$TEMP_DIR/identity-wait.log"
+export FAKE_OPERATION_SEQUENCE="$TEMP_DIR/operation-sequence.log"
+export HOSTED_IDENTITY_REQUEST_SCRIPT="$TEMP_DIR/identity-request"
+export HOSTED_IDENTITY_WAIT_SCRIPT="$TEMP_DIR/identity-wait"
+export HOSTED_IDENTITY_REQUESTER_KUBECONFIG="$TEMP_DIR/requester.kubeconfig"
+touch "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
 export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
@@ -435,7 +484,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -472,6 +521,7 @@ reset_case() {
   export FAKE_PRUNE_METADATA=''
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
+  export FAKE_NAMESPACE_LIST_ERROR=false
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
   export FAKE_RUNTIME_NAMESPACE_PRESENT=true
@@ -479,7 +529,10 @@ reset_case() {
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
+  export FAKE_RECORD_RUNTIME_CHECK=false
   export FAKE_HELM_UNINSTALL_ERROR=false
+  export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"}}'
+  export HOSTED_IDENTITY_MODE=standalone
   unset PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS PREVIEW_DELETE_TIMEOUT
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
@@ -904,6 +957,55 @@ export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_bas
 bash "$PRUNER" --apply
 grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 
+# Scheduled terminal cleanup may retire an existing identity only through the
+# explicit hosted-controller mode. Runtime deletion, retirement request, the
+# terminal status wait, and CR deletion remain one ordered sequence.
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+bash "$PRUNER" --apply --retire-terminal-identities
+test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
+grep -qx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+grep -qx -- '--retired pr-101 600' "$FAKE_IDENTITY_WAIT_LOG"
+grep -Fqx -- '-n firemud-system get hostedenvironmentidentity pr-101 --ignore-not-found -o json' \
+  "$FAKE_IDENTITY_LOG"
+grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --wait=true --timeout=180s' \
+  "$FAKE_IDENTITY_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_IDENTITY_JSON=''
+export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+export FAKE_RECORD_RUNTIME_CHECK=true
+bash "$PRUNER" --apply --retire-terminal-identities
+test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check'
+test ! -e "$FAKE_IDENTITY_REQUEST_LOG"
+test ! -e "$FAKE_IDENTITY_WAIT_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+if bash "$PRUNER" --apply --retire-terminal-identities 2>"$TEMP_DIR/retire-mode.error"; then
+  echo "terminal identity retirement was allowed outside hosted-controller mode" >&2
+  exit 1
+fi
+grep -Fq 'HOSTED_IDENTITY_MODE=hosted-controller' "$TEMP_DIR/retire-mode.error"
+test ! -e "$FAKE_DELETE_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+export HOSTED_IDENTITY_MODE=hosted-controller
+bash "$PRUNER" --apply
+test ! -e "$FAKE_IDENTITY_LOG"
+test ! -e "$FAKE_IDENTITY_REQUEST_LOG"
+test ! -e "$FAKE_IDENTITY_WAIT_LOG"
+
 for invalid_preview_row in \
   'production\t101' \
   'pr-101\t102' \
@@ -1108,6 +1210,16 @@ for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
     exit 1
   fi
 done
+
+reset_case
+export FAKE_NAMESPACE_LIST_ERROR=true
+if bash "$PRUNER" --apply >"$TEMP_DIR/prune-list-error.out" 2>&1; then
+  echo "prune treated a namespace-listing failure as an empty preview set" >&2
+  exit 1
+fi
+grep -Fqx 'Unable to list current preview namespaces; refusing stale cleanup' \
+  "$TEMP_DIR/prune-list-error.out"
+test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
@@ -1484,6 +1596,15 @@ test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq
 test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
 test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
+grep -q 'resolve-certificate-identity-mode.py' "$janitor_workflow"
+grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"
+grep -q 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG' "$janitor_workflow"
+# shellcheck disable=SC2016 # Assert the explicit hosted-controller retirement branch.
+grep -Fq -- '--retire-terminal-identities' "$janitor_workflow"
+# Ordinary runtime cleanup callers must not opt into retained-identity retirement.
+test "$(grep -Fc -- '--retire-terminal-identities' "$ROOT_DIR/.github/workflows/preview.yml")" -eq 0
+test "$(grep -Fc -- '--retire-terminal-identities' "$trusted_workflow")" -eq 0
+grep -q -- '--retire-terminal-identities' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert missing namespaces are tolerated while other get errors fail.

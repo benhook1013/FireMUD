@@ -8354,4 +8354,203 @@ if blocked_status != "fail" or "remains blocked until canonical recovery-control
     raise SystemExit(f"incomplete nested roll-forward validation did not fail closed: {blocked_message}")
 PY
 
+python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import importlib.util
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+import yaml
+
+root = pathlib.Path(sys.argv[1])
+tmp = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "preflight_hosted_bridge_contract", root / "dev-tools/deploy/preflight.py"
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+namespace = "pr-42"
+release = "pr-42"
+node_port = 32007
+render = """apiVersion: v1
+kind: Service
+metadata:
+  name: spring-cloud-gateway-mtls
+  namespace: __NAMESPACE__
+spec:
+  type: ClusterIP
+  ports:
+    - port: 443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-proxy-service
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+    firemud.dev/certificate-identity-mode: hosted-controller
+  annotations:
+    firemud.dev/allocated-telnet-port: "32007"
+spec:
+  type: NodePort
+  ports:
+    - name: tcp-2323
+      port: 2323
+      targetPort: 2323
+      protocol: TCP
+      nodePort: 32007
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-proxy-service
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+    firemud.dev/certificate-identity-mode: hosted-controller
+spec:
+  template:
+    spec:
+      containers:
+        - name: tcp-proxy-service
+          env:
+            - name: GATEWAY_WS_URL
+              value: wss://spring-cloud-gateway-mtls.__NAMESPACE__.svc.cluster.local/ws/game
+            - name: FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GATEWAY_WS_CA_CERT_PATH
+              value: /tls/ca.crt
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /grpc-tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /grpc-tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-tls/ca.crt
+            - name: TCP_PROXY_TLS_ENABLED
+              value: "true"
+            - name: TCP_PROXY_TELNET_MODE
+              value: DIRECT_TLS
+            - name: TCP_PROXY_TLS_CERT
+              value: /telnet-tls/tls.crt
+            - name: TCP_PROXY_TLS_KEY
+              value: /telnet-tls/tls.key
+          volumeMounts:
+            - name: bridge
+              mountPath: /tls
+              readOnly: true
+            - name: grpc
+              mountPath: /grpc-tls
+              readOnly: true
+            - name: telnet
+              mountPath: /telnet-tls
+              readOnly: true
+      volumes:
+        - name: bridge
+          secret:
+            secretName: __RELEASE__-tcp-proxy-bridge
+            items:
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
+              - key: ca.crt
+                path: ca.crt
+        - name: grpc
+          secret:
+            secretName: grpc-tls
+        - name: telnet
+          secret:
+            secretName: __RELEASE__-telnet-tls
+"""
+render = render.replace("__NAMESPACE__", namespace).replace("__RELEASE__", release)
+render_path = tmp / "hosted-bridge-contract.yaml"
+render_path.write_text(render, encoding="utf-8")
+
+
+def run_hosted(path, *extra_args):
+    return subprocess.run(
+        [
+            sys.executable,
+            str(root / "dev-tools/deploy/preflight.py"),
+            "hosted-bridge",
+            str(path),
+            namespace,
+            release,
+            *extra_args,
+        ],
+        env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "ci-static"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+valid = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if valid.returncode != 0:
+    raise SystemExit(f"hosted-bridge valid fixture failed: {valid.stderr}{valid.stdout}")
+valid_result = json.loads(valid.stdout)
+if valid_result != {
+    "category": "apply-blocking",
+    "message": "Gateway bridge and direct Telnet TLS alignment is valid",
+    "policyId": "PREFLIGHT-BRIDGE-001",
+    "required": True,
+    "status": "pass",
+}:
+    raise SystemExit(f"hosted-bridge did not emit its canonical pass result: {valid_result}")
+
+mismatched_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+next(
+    document
+    for document in mismatched_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"][0]["nodePort"] = node_port + 1
+mismatched_path = tmp / "hosted-bridge-contract-mismatch.yaml"
+mismatched_path.write_text(
+    yaml.safe_dump_all(mismatched_documents, sort_keys=False), encoding="utf-8"
+)
+mismatched = run_hosted(
+    mismatched_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if mismatched.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched expected Telnet nodePort")
+mismatch_result = json.loads(mismatched.stdout)
+if (
+    mismatch_result.get("status") != "fail"
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    not in mismatch_result.get("message", "")
+):
+    raise SystemExit(f"hosted-bridge mismatch result was not explicit: {mismatch_result}")
+
+invalid_port = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    "0",
+)
+if invalid_port.returncode == 0 or "must be a positive integer" not in invalid_port.stderr:
+    raise SystemExit(f"hosted-bridge accepted invalid expected port: {invalid_port.stderr}")
+
+for invalid_namespace, invalid_release in (("pr-0", "pr-0"), ("pr-42", "preview")):
+    try:
+        module.hosted_bridge_expected_bindings(invalid_namespace, invalid_release)
+    except ValueError:
+        continue
+    raise SystemExit(
+        f"hosted bridge accepted a non-canonical identity: {invalid_namespace}/{invalid_release}"
+    )
+PY
+
 echo "preflight contract checks passed"

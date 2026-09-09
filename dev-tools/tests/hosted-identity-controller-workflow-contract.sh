@@ -181,6 +181,15 @@ for job_name, required_gate in expected_gates.items():
     assert required_gate in condition, (job_name, condition)
 
 validate_job = jobs["validate-target"]
+assert validate_job["outputs"]["certificate_identity_mode"] == (
+    "${{ steps.certificate-identity.outputs.mode }}"
+)
+mode_step = next(
+    step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
+)
+assert mode_step["run"].count("resolve-certificate-identity-mode.py") == 1
+for job_name in ("deploy-runtime", "verify-runtime", "retire-identity"):
+    assert "certificate_identity_mode == 'hosted-controller'" in jobs[job_name]["if"], job_name
 assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
     "github.event.workflow_run.event == 'pull_request' && "
@@ -465,6 +474,20 @@ retirement_wait = next(
     if step.get("name") == "Observe terminal retirement and delete request"
 )
 assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
+identity_existence = next(
+    step
+    for step in jobs["retire-identity"]["steps"]
+    if step.get("name") == "Check HostedEnvironmentIdentity existence before retirement"
+)
+assert identity_existence["id"] == "identity-existence"
+assert '--ignore-not-found -o json' in identity_existence["run"]
+assert 'exists=false' in identity_existence["run"]
+assert 'exists=true' in identity_existence["run"]
+for step_name in ("Apply canonical Retired request", "Observe terminal retirement and delete request"):
+    gated_step = next(
+        step for step in jobs["retire-identity"]["steps"] if step.get("name") == step_name
+    )
+    assert gated_step["if"] == "${{ steps.identity-existence.outputs.exists == 'true' }}"
 retired_request = next(
     step
     for step in jobs["retire-identity"]["steps"]

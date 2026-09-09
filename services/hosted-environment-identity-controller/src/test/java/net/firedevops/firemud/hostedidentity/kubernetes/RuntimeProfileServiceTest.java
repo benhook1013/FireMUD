@@ -108,7 +108,7 @@ class RuntimeProfileServiceTest {
     when(client.namespaces()).thenReturn(namespaces);
     when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
     when(namespace.get())
-        .thenReturn(previewRuntimeNamespace("A".repeat(40), "a".repeat(40), "32002"));
+        .thenReturn(previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32002"));
 
     RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
 

@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,10 @@ from observability_contract import (
     QUERYABILITY_CAPABILITIES,
 )
 
-USAGE = """Usage: preflight.py <staging|production|hobby-self-hosted>
+USAGE = """Usage:
+  preflight.py <staging|production|hobby-self-hosted>
+  preflight.py hosted-bridge <render-path> <namespace> <release-name>
+      [--expected-hosted-telnet-node-port <port>]
 
 Environment variables:
   FIREMUD_PREFLIGHT_CONTEXT          Context for applicability (default: operator)
@@ -45,6 +49,12 @@ Environment variables:
   FIREMUD_PROMOTION_ATTESTATION      Required in operator production context; path to attestation JSON
   FIREMUD_BACKUP_READINESS_EVIDENCE  Required for production roll-forward-only promotions; path to backup-readiness JSON
   FIREMUD_TRAFFIC_OPEN_EVENT         Optional traffic-open gate: first-live or reopen
+
+The hosted-bridge form reuses PREFLIGHT-BRIDGE-001 before preview/dev-demo
+apply. The optional expected port adds an exact trusted post-render Telnet
+NodePort check. Set FIREMUD_PREFLIGHT_CONTEXT=ci-static to validate only the
+candidate manifest; operator context also verifies controller-projected TLS
+Secret keys.
 """
 
 
@@ -74,6 +84,8 @@ RECOVERY_JSON_READ_ERRORS = JSON_READ_ERRORS + (ValueError,)
 YAML_READ_ERRORS = (OSError, UnicodeError, yaml.YAMLError)
 TIMESTAMP_ERRORS = (TypeError, ValueError, AttributeError, OverflowError)
 SECRET_LOOKUP_TIMEOUT_SECONDS = 30
+HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 15
+HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
 JWT_CUSTODY_MODES = (
     "LEGACY_SECRET_DIAGNOSTIC",
     "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
@@ -91,6 +103,11 @@ BRIDGE_WS_SECRET_ITEM_PATHS = {
     "client.key": "client.key",
     "ca.crt": "ca.crt",
 }
+TCP_PROXY_TELNET_SERVICE_PORT = 2323
+TELNET_TLS_PATH_NAMES = (
+    "TCP_PROXY_TLS_CERT",
+    "TCP_PROXY_TLS_KEY",
+)
 GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_CERT_CHAIN_PATH",
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
@@ -4072,6 +4089,362 @@ def validate_gateway_ws_values(
     return values, issues
 
 
+def path_is_under_mount(path: str, mount_path: str) -> bool:
+    """Return whether a path is the mount itself or one of its descendants."""
+    return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+
+
+def validate_hosted_telnet_tls_values(
+    documents: list[dict[str, Any]],
+    required_identity_mode: str | None = None,
+    expected_hosted_telnet_node_port: int | None = None,
+    *,
+    target_namespace: str = "firemud",
+) -> list[str]:
+    """Validate the hosted NodePort Telnet direct-TLS binding.
+
+    Hosted-controller renders carry an allocator annotation and matching
+    explicit Telnet nodePort. A trusted caller may additionally supply the
+    exact expected post-render allocation and reject any other explicit
+    nodePorts.
+    """
+    if required_identity_mode is not None and required_identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        raise ValueError("required certificate identity mode is invalid")
+    if not isinstance(target_namespace, str) or not target_namespace:
+        raise ValueError("target namespace is required")
+
+    issues: list[str] = []
+    tcp_services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, target_namespace, default_namespace=target_namespace
+        )
+    ]
+    nodeport_services = [
+        document
+        for document in tcp_services
+        if (document.get("spec") or {}).get("type") == "NodePort"
+    ]
+    if not nodeport_services:
+        if (
+            required_identity_mode is not None
+            or expected_hosted_telnet_node_port is not None
+        ):
+            issues.append(
+                "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+            )
+        return issues
+    if len(nodeport_services) != 1:
+        issues.append(
+            "hosted TCP Proxy TLS requires exactly one tcp-proxy-service NodePort Service"
+        )
+        return issues
+    tcp_service = nodeport_services[0]
+    tcp_namespace = target_namespace
+
+    deployments = [
+        document
+        for document in documents
+        if document.get("kind") == "Deployment"
+        and metadata_name(document) == "tcp-proxy-service"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+    ]
+    if len(deployments) != 1:
+        issues.append("hosted TCP Proxy TLS requires exactly one tcp-proxy-service Deployment")
+        return issues
+    deployment = deployments[0]
+
+    identity_mode_label = "firemud.dev/certificate-identity-mode"
+
+    def labeled_identity_mode(document: dict[str, Any]) -> Any:
+        metadata = document.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        return labels.get(identity_mode_label) if isinstance(labels, dict) else None
+
+    service_mode = labeled_identity_mode(tcp_service)
+    deployment_mode = labeled_identity_mode(deployment)
+    if (service_mode is None) != (deployment_mode is None) or (
+        service_mode is not None and service_mode != deployment_mode
+    ):
+        issues.append(
+            "TCP Proxy Service and Deployment certificate identity mode labels must match"
+        )
+        return issues
+    if service_mode is None:
+
+        def helm_owned(document: dict[str, Any]) -> bool:
+            labels = (document.get("metadata") or {}).get("labels")
+            return isinstance(labels, dict) and (
+                labels.get("app.kubernetes.io/managed-by") == "Helm"
+                or "app.kubernetes.io/instance" in labels
+                or "helm.sh/chart" in labels
+            )
+
+        if (
+            tcp_namespace != "firemud"
+            or helm_owned(tcp_service)
+            or helm_owned(deployment)
+        ):
+            issues.append(
+                "Helm-rendered TCP Proxy Service and Deployment require explicit certificate identity mode labels"
+            )
+            return issues
+        identity_mode = "standalone"
+    else:
+        identity_mode = service_mode
+    if not isinstance(identity_mode, str) or identity_mode not in {
+        "standalone",
+        "hosted-controller",
+    }:
+        issues.append(
+            "TCP Proxy certificate identity mode must be standalone or hosted-controller"
+        )
+        return issues
+    if required_identity_mode is not None:
+        if identity_mode != required_identity_mode:
+            issues.append(
+                f"hosted TCP Proxy certificate identity mode must be {required_identity_mode}"
+            )
+        identity_mode = required_identity_mode
+
+    service_ports = (tcp_service.get("spec") or {}).get("ports") or []
+    telnet_ports = [
+        port
+        for port in service_ports
+        if isinstance(port, dict)
+        and port.get("port") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("targetPort") == TCP_PROXY_TELNET_SERVICE_PORT
+        and port.get("protocol", "TCP") == "TCP"
+    ]
+    if len(telnet_ports) != 1:
+        issues.append(
+            "TCP Proxy Service requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+        )
+    if identity_mode == "hosted-controller":
+        metadata = tcp_service.get("metadata") or {}
+        annotations = metadata.get("annotations") or {}
+        allocated_port = (
+            annotations.get("firemud.dev/allocated-telnet-port")
+            if isinstance(annotations, dict)
+            else None
+        )
+        if not isinstance(allocated_port, str) or not re.fullmatch(
+            r"[1-9][0-9]*", allocated_port
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
+            )
+        if len(telnet_ports) != 1 or "nodePort" not in telnet_ports[0]:
+            issues.append(
+                "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
+            )
+        elif (
+            isinstance(allocated_port, str)
+            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
+            and telnet_ports[0]["nodePort"] != int(allocated_port)
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
+            )
+        if expected_hosted_telnet_node_port is not None:
+            explicit_node_port_entries = [
+                port
+                for port in service_ports
+                if isinstance(port, dict) and "nodePort" in port
+            ]
+            if len(telnet_ports) != 1 or telnet_ports[0].get(
+                "nodePort"
+            ) != expected_hosted_telnet_node_port:
+                issues.append(
+                    "trusted hosted-controller TCP Proxy Telnet nodePort must equal "
+                    f"{expected_hosted_telnet_node_port}"
+                )
+            if len(explicit_node_port_entries) != 1 or (
+                len(telnet_ports) != 1
+                or explicit_node_port_entries[0] is not telnet_ports[0]
+            ):
+                issues.append(
+                    "trusted hosted-controller TCP Proxy Service must not declare any other explicit nodePorts"
+                )
+
+    certificates = {
+        metadata_name(document): document
+        for document in documents
+        if document.get("kind") == "Certificate"
+        and metadata_name(document)
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+    }
+    ingress_secrets = {
+        tls_entry.get("secretName")
+        for document in documents
+        if document.get("kind") == "Ingress"
+        and rendered_namespace_matches(
+            document, tcp_namespace, default_namespace="firemud"
+        )
+        for tls_entry in ((document.get("spec") or {}).get("tls") or [])
+        if isinstance(tls_entry, dict)
+    }
+    tcp_certificate_names = {
+        name for name in certificates if name and name.endswith("-telnet-tls")
+    }
+    if identity_mode == "standalone":
+        if len(tcp_certificate_names) != 1:
+            issues.append("hosted TCP Proxy TLS requires exactly one dedicated -telnet-tls Certificate")
+            return issues
+        telnet_secret = next(iter(tcp_certificate_names), None)
+        certificate = certificates[telnet_secret]
+        certificate_secret = (certificate.get("spec") or {}).get("secretName")
+        if certificate_secret != telnet_secret:
+            issues.append("TCP Proxy Telnet TLS Certificate secretName must match its dedicated Secret name")
+    else:
+        if tcp_certificate_names:
+            issues.append(
+                "hosted-controller TCP Proxy TLS must not render a chart-owned -telnet-tls Certificate"
+            )
+            return issues
+        service_labels = (tcp_service.get("metadata") or {}).get("labels") or {}
+        deployment_labels = (deployment.get("metadata") or {}).get("labels") or {}
+        service_release = (
+            service_labels.get("app.kubernetes.io/instance")
+            if isinstance(service_labels, dict)
+            else None
+        )
+        deployment_release = (
+            deployment_labels.get("app.kubernetes.io/instance")
+            if isinstance(deployment_labels, dict)
+            else None
+        )
+        if (
+            not isinstance(service_release, str)
+            or not service_release
+            or service_release != deployment_release
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy Service and Deployment must share one Helm release identity"
+            )
+            return issues
+        telnet_secret = f"{service_release}-telnet-tls"
+        certificate_secret = telnet_secret
+        if any(
+            (certificate.get("spec") or {}).get("secretName") == telnet_secret
+            for certificate in certificates.values()
+        ):
+            issues.append(
+                "hosted-controller TCP Proxy TLS must not render a Certificate for its projected Telnet Secret"
+            )
+            return issues
+    if certificate_secret in ingress_secrets or telnet_secret in ingress_secrets:
+        issues.append("TCP Proxy Telnet TLS Secret must not reuse the HTTP Ingress TLS Secret")
+
+    pod_spec = (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {})
+    containers = [
+        container for container in pod_spec.get("containers") or []
+        if isinstance(container, dict)
+    ]
+    if len(containers) != 1:
+        issues.append("hosted TCP Proxy TLS requires one primary tcp-proxy-service container")
+        return issues
+    container = containers[0]
+    env, env_issues = effective_container_env(
+        documents,
+        deployment,
+        container,
+        relevant_names={
+            "TCP_PROXY_TLS_ENABLED",
+            "TCP_PROXY_TLS_CERT",
+            "TCP_PROXY_TLS_KEY",
+            "TCP_PROXY_TELNET_MODE",
+            *GRPC_TLS_PATH_NAMES,
+        },
+    )
+    issues.extend(env_issues)
+    if env.get("TCP_PROXY_TLS_ENABLED") != "true":
+        issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TLS_ENABLED=true")
+    if env.get("TCP_PROXY_TELNET_MODE") != "DIRECT_TLS":
+        issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TELNET_MODE=DIRECT_TLS")
+    if env.get("TCP_PROXY_TLS_CERT") != "/telnet-tls/tls.crt":
+        issues.append("TCP_PROXY_TLS_CERT must be /telnet-tls/tls.crt")
+    if env.get("TCP_PROXY_TLS_KEY") != "/telnet-tls/tls.key":
+        issues.append("TCP_PROXY_TLS_KEY must be /telnet-tls/tls.key")
+    volumes = {
+        volume.get("name"): volume
+        for volume in pod_spec.get("volumes") or []
+        if isinstance(volume, dict) and volume.get("name")
+    }
+    mount = next(
+        (
+            mount
+            for mount in container.get("volumeMounts") or []
+            if isinstance(mount, dict) and mount.get("mountPath") == "/telnet-tls"
+        ),
+        None,
+    )
+    if not mount or mount.get("readOnly") is not True:
+        issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
+    else:
+        volume = volumes.get(mount.get("name")) or {}
+        secret_name = ((volume.get("secret") or {}).get("secretName"))
+        if secret_name != certificate_secret:
+            issues.append("/telnet-tls must reference the dedicated Telnet TLS Secret")
+    grpc_paths = {
+        path
+        for path in (env.get(name) for name in GRPC_TLS_PATH_NAMES)
+        if isinstance(path, str) and path.startswith("/")
+    }
+    grpc_secret_names: set[str] = set()
+    for mount in container.get("volumeMounts") or []:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("readOnly") is not True
+            or not isinstance(mount.get("mountPath"), str)
+            or not any(
+                path_is_under_mount(path, mount["mountPath"])
+                for path in grpc_paths
+            )
+        ):
+            continue
+        volume = volumes.get(mount.get("name"))
+        secret = volume.get("secret") if isinstance(volume, dict) else None
+        secret_name = secret.get("secretName") if isinstance(secret, dict) else None
+        if isinstance(secret_name, str) and secret_name:
+            grpc_secret_names.add(secret_name)
+    if certificate_secret == "firemud-grpc-tls" or certificate_secret in grpc_secret_names:
+        issues.append("TCP Proxy Telnet TLS Secret must not reuse the gRPC TLS Secret")
+    return issues
+
+
+def label_bridge_validation_issues(
+    gateway_issues: list[str], telnet_tls_issues: list[str]
+) -> list[str]:
+    """Keep the shared bridge policy while identifying each failing transport."""
+    return [
+        *(f"Gateway bridge: {issue}" for issue in gateway_issues),
+        *(f"Hosted Telnet TLS: {issue}" for issue in telnet_tls_issues),
+    ]
+
+
+def bridge_validation_failure_message(bridge_issues: list[str]) -> str:
+    """Describe either transport without making a Telnet-only failure look Gateway-only."""
+    return "Bridge and Telnet transport validation failed: " + "; ".join(bridge_issues)
+
+
+def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
+    """Build the canonical shared bridge policy result."""
+    if bridge_issues:
+        return "fail", bridge_validation_failure_message(bridge_issues)
+    return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
+
+
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
     if document.get("kind") not in {"Deployment", "StatefulSet", "DaemonSet"}:
         return []
@@ -5946,7 +6319,224 @@ def write_report(
         fail(f"Preflight report output already exists and will not be overwritten: {output_path}")
 
 
+def secret_keys_lookup_failure(
+    secret_name: str, namespace: str, required_keys: set[str]
+) -> tuple[str | None, bool]:
+    """Return a Secret-key issue and whether controller convergence may resolve it."""
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "secret",
+                "-n",
+                namespace,
+                secret_name,
+                "-o",
+                "json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=SECRET_LOOKUP_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+        return (
+            f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            False,
+        )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "(NotFound)" in stderr:
+            return (
+                f"Missing required Secret in cluster: {namespace}/{secret_name}",
+                True,
+            )
+        return (
+            (
+                f"Secret lookup could not be verified for {namespace}/{secret_name}: "
+                + (stderr or "kubectl returned a non-zero status without stderr")
+            ),
+            False,
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError):
+        return (
+            f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
+        )
+    if not isinstance(payload, dict):
+        return (
+            f"Secret lookup returned malformed JSON for {namespace}/{secret_name}",
+            False,
+        )
+    data = payload.get("data")
+    if data is not None and not isinstance(data, dict):
+        return (
+            f"Secret lookup returned malformed data for {namespace}/{secret_name}",
+            False,
+        )
+    actual_keys = set(data or {})
+    missing_keys = sorted(required_keys - actual_keys)
+    if missing_keys:
+        return (
+            (
+                f"Required Secret {namespace}/{secret_name} is missing keys: "
+                + ", ".join(missing_keys)
+            ),
+            True,
+        )
+    return None, False
+
+
+def wait_for_secret_key_requirements(
+    secret_requirements: list[tuple[str, set[str]]], namespace: str
+) -> list[str]:
+    """Bound one controller-projection wait across all required Secrets."""
+    pending = list(secret_requirements)
+    latest_issues: dict[str, str] = {}
+    for attempt in range(HOSTED_BRIDGE_SECRET_READY_ATTEMPTS):
+        retry_pending: list[tuple[str, set[str]]] = []
+        for secret_name, required_keys in pending:
+            issue, retryable = secret_keys_lookup_failure(
+                secret_name, namespace, required_keys
+            )
+            if issue is None:
+                continue
+            if not retryable:
+                return [issue]
+            latest_issues[secret_name] = issue
+            retry_pending.append((secret_name, required_keys))
+        if not retry_pending:
+            return []
+        pending = retry_pending
+        if attempt + 1 < HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
+            time.sleep(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS)
+    return [
+        (
+            f"{latest_issues[secret_name]} (still not ready after "
+            f"{HOSTED_BRIDGE_SECRET_READY_ATTEMPTS} attempts)"
+        )
+        for secret_name, _ in pending
+    ]
+
+
+def hosted_bridge_expected_bindings(
+    namespace: str, release_name: str
+) -> dict[str, Any]:
+    """Build the synthetic expected bindings for a hosted render target."""
+    if namespace == "dev" and release_name == "dev":
+        environment = "dev-demo-cluster"
+    elif (
+        release_name == namespace
+        and len(namespace) <= 63
+        and re.fullmatch(r"pr-[1-9][0-9]*", namespace)
+    ):
+        environment = "pr-preview"
+    else:
+        raise ValueError(
+            "hosted bridge identity must be exactly dev/dev or a matching "
+            "numeric pr-[1-9][0-9]* namespace/release"
+        )
+    return {
+        "environment": environment,
+        "internalBindings": {
+            "certificates": {
+                "gatewayInternalWsListenerRef": (
+                    f"cert-manager://{namespace}/{release_name}-gateway-internal-ws"
+                ),
+                "tcpProxyBridgeClientRef": (
+                    f"cert-manager://{namespace}/{release_name}-tcp-proxy-bridge"
+                ),
+            }
+        },
+    }
+
+
+def hosted_bridge_preflight(
+    render_path: Path,
+    namespace: str,
+    release_name: str,
+    context: str,
+    expected_hosted_telnet_node_port: int | None = None,
+) -> int:
+    """Validate a hosted controller render before Helm apply or smoke proof."""
+    try:
+        expected = hosted_bridge_expected_bindings(namespace, release_name)
+    except ValueError as exc:
+        fail(str(exc))
+    if context not in {"operator", "ci-static"}:
+        fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
+    if not render_path.is_file():
+        fail(f"Hosted bridge render does not exist: {render_path}")
+    try:
+        documents = parse_documents(render_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        fail(f"Hosted bridge render is unreadable: {exc}")
+    for document in documents:
+        metadata = document.get("metadata")
+        if isinstance(metadata, dict) and not metadata.get("namespace"):
+            metadata["namespace"] = namespace
+
+    _, gateway_issues = validate_gateway_ws_values(documents, expected)
+    telnet_issues = validate_hosted_telnet_tls_values(
+        documents,
+        required_identity_mode="hosted-controller",
+        expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
+        target_namespace=namespace,
+    )
+    issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
+    if context == "operator":
+        secret_requirements = [
+            (
+                f"{release_name}-gateway-internal-ws",
+                {"tls.crt", "tls.key", "ca.crt"},
+            ),
+            (
+                f"{release_name}-tcp-proxy-bridge",
+                {"tls.crt", "tls.key", "ca.crt"},
+            ),
+            (f"{release_name}-telnet-tls", {"tls.crt", "tls.key"}),
+        ]
+        issues.extend(
+            f"Controller projection: {issue}"
+            for issue in wait_for_secret_key_requirements(
+                secret_requirements, namespace
+            )
+        )
+    status, message = bridge_validation_result(issues)
+    print(
+        json.dumps(
+            {
+                "policyId": "PREFLIGHT-BRIDGE-001",
+                "category": PREFLIGHT_POLICY_CATALOG["PREFLIGHT-BRIDGE-001"],
+                "required": True,
+                "status": status,
+                "message": message,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0 if status == "pass" else 1
+
+
 def main() -> int:
+    if len(sys.argv) in {5, 7} and sys.argv[1] == "hosted-bridge":
+        expected_hosted_telnet_node_port = None
+        if len(sys.argv) == 7:
+            if sys.argv[5] != "--expected-hosted-telnet-node-port":
+                usage()
+            if not re.fullmatch(r"[1-9][0-9]*", sys.argv[6]):
+                fail("--expected-hosted-telnet-node-port must be a positive integer")
+            expected_hosted_telnet_node_port = int(sys.argv[6])
+        return hosted_bridge_preflight(
+            Path(sys.argv[2]),
+            sys.argv[3],
+            sys.argv[4],
+            os.environ.get("FIREMUD_PREFLIGHT_CONTEXT", "operator"),
+            expected_hosted_telnet_node_port,
+        )
     if len(sys.argv) != 2:
         usage()
     env_class = sys.argv[1]

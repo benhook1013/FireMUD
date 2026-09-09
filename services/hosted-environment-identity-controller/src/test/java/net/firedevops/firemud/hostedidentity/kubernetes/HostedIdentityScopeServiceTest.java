@@ -261,6 +261,7 @@ class HostedIdentityScopeServiceTest {
 
     verify(fixture.operation(), never())
         .edit(org.mockito.ArgumentMatchers.<UnaryOperator<Role>>any());
+    verify(fixture.createOperation(), never()).create();
     return failure;
   }
 
@@ -278,6 +279,7 @@ class HostedIdentityScopeServiceTest {
 
     verify(fixture.operation(), never())
         .edit(org.mockito.ArgumentMatchers.<UnaryOperator<RoleBinding>>any());
+    verify(fixture.createOperation(), never()).create();
     return failure;
   }
 

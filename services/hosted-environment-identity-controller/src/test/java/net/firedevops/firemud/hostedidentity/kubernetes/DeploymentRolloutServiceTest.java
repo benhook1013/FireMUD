@@ -145,6 +145,42 @@ class DeploymentRolloutServiceTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
+  void readinessRequiresTelnetEvenWhenGrpcConsumerIsReady() {
+    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    when(proxy.get()).thenReturn(null);
+    when(account.get())
+        .thenReturn(
+            readyDeployment(
+                "account-service",
+                Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "grpc-current"),
+                3L));
+
+    DeploymentRolloutService.RolloutResult result =
+        new DeploymentRolloutService()
+            .sync(client, plan, "telnet-current", "grpc-current", () -> true);
+
+    assertEquals(false, result.ready());
+    assertEquals(false, result.telnetReady());
+    assertEquals(false, result.grpcReady());
+    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
   void runtimeProfileFenceStopsSyncBeforeEditAndLaterDeploymentReads() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
     KubernetesClient client = mock(KubernetesClient.class);

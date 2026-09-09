@@ -30,6 +30,7 @@ jobs:
       image_tag: ${{ steps.target.outputs.image_tag }}
       namespace: ${{ steps.target.outputs.namespace }}
       hostname: ${{ steps.target.outputs.hostname }}
+      certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
       render_run_id: ${{ steps.source.outputs.render_run_id }}
       artifact_name: ${{ steps.source.outputs.artifact_name }}
     steps:
@@ -42,6 +43,14 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Resolve certificate identity mode
+        id: certificate-identity
+        run: |
+          set -euo pipefail
+          mode="$(python3 ./dev-tools/hosted/shared/resolve-certificate-identity-mode.py \
+            k8s/helm/firemud/values-hosted-shared.example.yaml)"
+          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
 
       - name: Set up GitHub CLI
         run: gh --version
@@ -173,7 +182,7 @@ jobs:
       - self-hosted
       - preview
     needs: validate-target
-    if: ${{ needs.validate-target.outputs.action == 'deploy' }}
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -668,7 +677,7 @@ jobs:
       - self-hosted
       - preview
     needs: [validate-target, deploy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.deploy-runtime.result == 'success' }}
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.deploy-runtime.result == 'success' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -863,7 +872,7 @@ jobs:
       - self-hosted
       - preview
     needs: [validate-target, destroy-runtime]
-    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.destroy-runtime.result == 'success' }}
+    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.destroy-runtime.result == 'success' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -906,11 +915,39 @@ jobs:
           [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_cleanup "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_cleanup "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
           [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
+
+      - name: Check HostedEnvironmentIdentity existence before retirement
+        id: identity-existence
+        env:
+          IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$IDENTITY_NAME" \
+            --ignore-not-found -o json)"
+          if [[ -z "$identity_json" ]]; then
+            echo "HostedEnvironmentIdentity/${IDENTITY_NAME} is absent; no retirement is required."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          jq -e \
+            --arg identity_name "$IDENTITY_NAME" \
+            '(.apiVersion == "platform.firemud.dev/v1alpha1") and
+             (.kind == "HostedEnvironmentIdentity") and
+             (.metadata.namespace == "firemud-system") and
+             (.metadata.name == $identity_name)' \
+            <<<"$identity_json" >/dev/null || {
+              echo "HostedEnvironmentIdentity/${IDENTITY_NAME} lookup returned an unexpected object; refusing retirement." >&2
+              exit 1
+            }
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+
       - name: Apply canonical Retired request
+        if: ${{ steps.identity-existence.outputs.exists == 'true' }}
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Retired
       - name: Observe terminal retirement and delete request
+        if: ${{ steps.identity-existence.outputs.exists == 'true' }}
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
         run: |

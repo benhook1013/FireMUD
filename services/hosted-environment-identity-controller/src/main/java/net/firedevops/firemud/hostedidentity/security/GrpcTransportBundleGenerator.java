@@ -152,7 +152,7 @@ public class GrpcTransportBundleGenerator {
               new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
               root,
               root,
-              grpcDnsNames(plan),
+              List.of(),
               true,
               now,
               null);

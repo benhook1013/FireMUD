@@ -84,6 +84,44 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
+  void injectedReadinessProbeBoundsMissingFixedGrpcConsumerConfiguration() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    EnvironmentIdentityPlan missingProbeConsumer =
+        new EnvironmentIdentityPlan(
+            plan.name(),
+            plan.controlNamespace(),
+            plan.identityNamespace(),
+            plan.runtimeNamespace(),
+            plan.hostname(),
+            plan.ingressCertificateName(),
+            plan.ingressSecretName(),
+            plan.telnetCertificateName(),
+            plan.telnetSecretName(),
+            plan.gatewayInternalWsCertificateName(),
+            plan.gatewayInternalWsSecretName(),
+            plan.gatewayInternalWsDnsName(),
+            plan.tcpProxyBridgeCertificateName(),
+            plan.tcpProxyBridgeSecretName(),
+            plan.tcpProxyBridgeUriSan(),
+            plan.grpcCertificateName(),
+            plan.grpcSecretName(),
+            plan.ingressIssuer(),
+            plan.telnetIssuer(),
+            plan.grpcIssuer(),
+            plan.caSecretName(),
+            List.of("tcp-proxy-service"));
+    ServedEnvironmentProbe.EndpointProbe ready =
+        (hostname, port) -> new ServedEnvironmentProbe.ProbeResult(true, "ready");
+
+    assertEquals(
+        "grpc-material-or-configuration-invalid",
+        new ServedEnvironmentProbe(properties)
+            .probe(missingProbeConsumer, 32001, ready, ready, ready, ready)
+            .reason());
+  }
+
+  @Test
   void internalTlsProbeDistinguishesMaterialErrorsFromConnectionFailures() {
     assertEquals(
         "material-or-configuration-invalid",

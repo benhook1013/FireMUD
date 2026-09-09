@@ -100,7 +100,12 @@ public class ServedEnvironmentProbe {
     if (!bridge.ready()) {
       return new ProbeResult(false, "bridge-" + bridge.reason());
     }
-    ProbeResult grpc = grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+    ProbeResult grpc;
+    try {
+      grpc = grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+    } catch (IllegalArgumentException exception) {
+      return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+    }
     return grpc.ready()
         ? new ProbeResult(true, "served-bridge-and-grpc-accepted")
         : new ProbeResult(false, "grpc-" + grpc.reason());

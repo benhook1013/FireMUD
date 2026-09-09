@@ -58,17 +58,38 @@ if [[ "${1:-}" == "--delete-runtime" ]]; then
 fi
 
 apply=false
+retire_terminal_identities=false
 for arg in "$@"; do
   case "$arg" in
     --apply)
       apply=true
       ;;
+    --retire-terminal-identities)
+      retire_terminal_identities=true
+      ;;
     *)
-      echo "usage: $0 [--apply]" >&2
+      echo "usage: $0 [--apply] [--retire-terminal-identities]" >&2
       exit 1
       ;;
   esac
 done
+
+if [[ "$retire_terminal_identities" == true ]]; then
+  if [[ "$apply" != true ]]; then
+    echo "--retire-terminal-identities requires --apply" >&2
+    exit 2
+  fi
+  if [[ "${HOSTED_IDENTITY_MODE:-}" != hosted-controller ]]; then
+    echo "refusing terminal identity retirement unless HOSTED_IDENTITY_MODE=hosted-controller" >&2
+    exit 2
+  fi
+  hosted_identity_requester_kubeconfig="${HOSTED_IDENTITY_REQUESTER_KUBECONFIG:-}"
+  if [[ -z "$hosted_identity_requester_kubeconfig" ]] ||
+    [[ ! -r "$hosted_identity_requester_kubeconfig" ]]; then
+    echo "HOSTED_IDENTITY_REQUESTER_KUBECONFIG must name a readable requester kubeconfig" >&2
+    exit 2
+  fi
+fi
 
 if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
   echo "GITHUB_REPOSITORY is required" >&2
@@ -83,12 +104,71 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
 delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
+identity_request_script="${HOSTED_IDENTITY_REQUEST_SCRIPT:-${script_dir}/../shared/request-hosted-identity.sh}"
+identity_wait_script="${HOSTED_IDENTITY_WAIT_SCRIPT:-${script_dir}/wait-for-hosted-identity.sh}"
 
-mapfile -t namespace_rows < <(
+retire_hosted_identity() {
+  local identity_name="$1"
+  local identity_json runtime_lookup
+
+  # Runtime deletion above must complete first. The requester credential is
+  # deliberately used only for the retained identity API and never for runtime
+  # namespace cleanup.
+  if ! runtime_lookup="$(
+    kubectl get namespace "$identity_name" --ignore-not-found -o name
+  )"; then
+    echo "Unable to verify that runtime namespace ${identity_name} is absent; refusing identity retirement." >&2
+    return 1
+  fi
+  if [[ -n "$runtime_lookup" ]]; then
+    if [[ "$runtime_lookup" != "namespace/${identity_name}" ]]; then
+      echo "Runtime namespace ${identity_name} absence check returned an unexpected identity; refusing retirement." >&2
+    else
+      echo "Runtime namespace ${identity_name} still exists; refusing identity retirement." >&2
+    fi
+    return 1
+  fi
+
+  if ! identity_json="$(
+    KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+      kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" \
+        --ignore-not-found -o json
+  )"; then
+    echo "Unable to determine whether HostedEnvironmentIdentity/${identity_name} exists; refusing retirement." >&2
+    return 1
+  fi
+  if [[ -z "$identity_json" ]]; then
+    echo "HostedEnvironmentIdentity/${identity_name} is already absent; no retirement required."
+    return 0
+  fi
+  if ! jq -e \
+      --arg identity_name "$identity_name" \
+      '(.apiVersion == "platform.firemud.dev/v1alpha1") and
+       (.kind == "HostedEnvironmentIdentity") and
+       (.metadata.namespace == "firemud-system") and
+       (.metadata.name == $identity_name)' \
+      <<<"$identity_json" >/dev/null; then
+    echo "HostedEnvironmentIdentity/${identity_name} lookup returned an unexpected object; refusing retirement." >&2
+    return 1
+  fi
+
+  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+    bash "$identity_request_script" "$identity_name" Retired
+  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+    bash "$identity_wait_script" --retired "$identity_name" 600
+  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+    kubectl -n firemud-system delete hostedenvironmentidentity "$identity_name" \
+      --wait=true --timeout=180s
+}
+
+if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.firemud\.dev/pr-number}{"\n"}{end}' \
-    | sed '/^$/d'
-)
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.firemud\.dev/pr-number}{"\n"}{end}'
+)"; then
+  echo "Unable to list current preview namespaces; refusing stale cleanup" >&2
+  exit 1
+fi
+mapfile -t namespace_rows < <(printf '%s\n' "$namespace_rows_output" | sed '/^$/d')
 
 if (( ${#namespace_rows[@]} == 0 )); then
   echo "No preview namespaces found."
@@ -181,5 +261,8 @@ for row in "${namespace_rows[@]}"; do
   echo "Pruning ${namespace}: PR #${pr_number} is not preview-eligible (reason=${reason})"
   if [[ "$apply" == true ]]; then
     bash "$delete_script" "$namespace" "$release_name"
+    if [[ "$retire_terminal_identities" == true ]]; then
+      retire_hosted_identity "$namespace"
+    fi
   fi
 done
