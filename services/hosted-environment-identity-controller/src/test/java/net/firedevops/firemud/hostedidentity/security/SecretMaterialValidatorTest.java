@@ -198,6 +198,52 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void grpcBundleRenewalReportsMissingLeafMaterialAgainstTheLeafSecret() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    source.getData().remove("tls.crt");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                GrpcTransportBundleGenerator.renewalRequired(
+                    source, Duration.ofDays(7), Instant.now()));
+
+    assertEquals("gRPC source has invalid leaf certificate", failure.getMessage());
+    assertEquals(
+        "gRPC source leaf Secret is missing required material", failure.getCause().getMessage());
+  }
+
+  @Test
+  void grpcBundleRenewalReportsInvalidLeafPemAgainstTheLeafSecret() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source =
+        new SecretBuilder()
+            .withType("Opaque")
+            .withMetadata(generated.getMetadata())
+            .withData(
+                Map.of(
+                    "tls.crt",
+                    Base64.getEncoder()
+                        .encodeToString("not a certificate".getBytes(StandardCharsets.US_ASCII))))
+            .build();
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                GrpcTransportBundleGenerator.renewalRequired(
+                    source, Duration.ofDays(7), Instant.now()));
+
+    assertEquals("gRPC source has invalid leaf certificate", failure.getMessage());
+    assertTrue(failure.getCause().getMessage().contains("gRPC source leaf Secret"));
+  }
+
+  @Test
   void conflictRereadMustFindTheWinningSecret() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");

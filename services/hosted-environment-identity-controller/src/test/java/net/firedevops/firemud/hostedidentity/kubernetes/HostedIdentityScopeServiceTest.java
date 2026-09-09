@@ -43,10 +43,7 @@ class HostedIdentityScopeServiceTest {
 
     assertEquals(
         java.util.List.of(
-            "pr-42-tls",
-            "pr-42-telnet-tls",
-            "pr-42-gateway-internal-ws",
-            "pr-42-tcp-proxy-bridge"),
+            "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 
@@ -68,8 +65,7 @@ class HostedIdentityScopeServiceTest {
             "social-groups-service",
             "world-management-service"),
         new java.util.HashSet<>(HostedIdentityScopeService.requiredDeploymentNames(plan)));
-    assertEquals(
-        plan.grpcConsumers(), HostedIdentityScopeService.requiredDeploymentNames(plan));
+    assertEquals(plan.grpcConsumers(), HostedIdentityScopeService.requiredDeploymentNames(plan));
   }
 
   private static final Map<String, String> ROLE_LABELS =

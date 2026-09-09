@@ -1239,6 +1239,7 @@ fi
 # pod-template labels emitted by the chart.
 rendered_values="$TEMP_DIR/preview-values.yaml"
 rendered_manifest="$TEMP_DIR/preview-rendered.yaml"
+rendered_full_manifest="$TEMP_DIR/preview-rendered-full.yaml"
 python3 "$render_preview_values" \
   "$ROOT_DIR/k8s/helm/firemud/values-hosted-shared.example.yaml" \
   "$rendered_values" 42 pr-42 pr-42 pr-42.preview.example.test \
@@ -1246,6 +1247,36 @@ python3 "$render_preview_values" \
 helm template pr-42 "$ROOT_DIR/k8s/helm/firemud" \
   -f "$rendered_values" --namespace pr-42 \
   --show-only templates/apps.yaml >"$rendered_manifest"
+helm template pr-42 "$ROOT_DIR/k8s/helm/firemud" \
+  -f "$rendered_values" --namespace pr-42 >"$rendered_full_manifest"
+
+python3 - "$runtime_rollout_waiter" "$rendered_full_manifest" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+waiter = Path(sys.argv[1]).read_text(encoding="utf-8")
+inventory_match = re.search(
+    r"readonly runtime_deployments=\(\s*(.*?)\s*\)", waiter, re.DOTALL
+)
+assert inventory_match, "rollout waiter inventory is missing"
+inventory = inventory_match.group(1).split()
+assert inventory and len(inventory) == len(set(inventory)), inventory
+rendered_deployments = {
+    document["metadata"]["name"]
+    for document in yaml.safe_load_all(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    if document
+    and document.get("kind") == "Deployment"
+    and isinstance(document.get("metadata"), dict)
+    and document["metadata"].get("name")
+}
+assert set(inventory) == rendered_deployments, (
+    f"rollout inventory {inventory} does not match rendered Deployments "
+    f"{sorted(rendered_deployments)}"
+)
+PY
 
 python3 - "$artifact_validator" "$rendered_manifest" <<'PY'
 import runpy
@@ -1291,7 +1322,7 @@ if python3 "$artifact_validator" sanitize "$null_template_manifest" \
   exit 1
 fi
 grep -Fxq \
-  'preview artifact rejected: Deployment/account-service.spec.template.spec is not a pod specification' \
+  'preview artifact rejected: Deployment/account-service.spec.template is not an object' \
   "$null_template_error"
 test ! -e "$null_template_output"
 
@@ -1328,7 +1359,7 @@ if python3 "$artifact_validator" \
   exit 1
 fi
 grep -Fxq \
-  'preview artifact rejected: Deployment/account-service.spec.template.spec is not a pod specification' \
+  'preview artifact rejected: Deployment/account-service.spec.template is not an object' \
   "$null_template_error"
 
 # Fixed-image infrastructure pods are accepted only in the exact shape emitted

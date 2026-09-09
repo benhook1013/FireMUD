@@ -142,16 +142,17 @@ class HostedStatusServiceTest {
         new RuntimeProfileService.RuntimeProfile(
             "uid-observed", "head-observed", "head-observed", 32002, true);
 
-    HostedEnvironmentIdentityStatus status = service.status(
-        resource,
-        HostedEnvironmentIdentityStatus.Phase.Ready,
-        "Reconciled",
-        "served",
-        true,
-        observed,
-        null,
-        null,
-        null);
+    HostedEnvironmentIdentityStatus status =
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Ready,
+            "Reconciled",
+            "served",
+            true,
+            observed,
+            null,
+            null,
+            null);
 
     HostedCondition condition = status.getConditions().get(0);
     assertEquals("False", condition.getStatus());

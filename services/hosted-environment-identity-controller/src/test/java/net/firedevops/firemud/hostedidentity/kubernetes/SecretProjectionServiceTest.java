@@ -524,7 +524,8 @@ class SecretProjectionServiceTest {
         assertThrows(
             KubernetesClientException.class,
             () ->
-                CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+                CertificateMaterialService.applyCertificate(
+                    client, plan.identityNamespace(), desired));
 
     assertSame(failure, thrown);
   }
@@ -1407,8 +1408,7 @@ class SecretProjectionServiceTest {
     GenericKubernetesResource request =
         certificateRequest(
             plan, plan.ingressCertificateName(), 1, "ingress-request-incomplete", sourceData, true);
-    Map<String, Object> requestProperties =
-        new LinkedHashMap<>(request.getAdditionalProperties());
+    Map<String, Object> requestProperties = new LinkedHashMap<>(request.getAdditionalProperties());
     requestProperties.put(
         "spec", Map.of("issuerRef", Map.of("name", plan.ingressIssuer(), "kind", "ClusterIssuer")));
     request.setAdditionalProperties(requestProperties);
@@ -1429,9 +1429,13 @@ class SecretProjectionServiceTest {
         fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
     GenericKubernetesResource request =
         certificateRequest(
-            plan, plan.ingressCertificateName(), 1, "ingress-request-wrong-issuer", sourceData, true);
-    Map<String, Object> requestProperties =
-        new LinkedHashMap<>(request.getAdditionalProperties());
+            plan,
+            plan.ingressCertificateName(),
+            1,
+            "ingress-request-wrong-issuer",
+            sourceData,
+            true);
+    Map<String, Object> requestProperties = new LinkedHashMap<>(request.getAdditionalProperties());
     requestProperties.put(
         "spec",
         Map.of(

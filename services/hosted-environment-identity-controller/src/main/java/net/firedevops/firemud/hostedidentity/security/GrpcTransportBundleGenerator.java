@@ -295,7 +295,10 @@ public class GrpcTransportBundleGenerator {
 
   private static Instant leafNotAfter(Secret secret) {
     try {
-      return parseCertificate(requiredData(secret, "tls.crt")).getNotAfter().toInstant();
+      return parseCertificate(
+              requiredData(secret, "tls.crt", "gRPC source leaf Secret"), "gRPC source leaf Secret")
+          .getNotAfter()
+          .toInstant();
     } catch (Exception exception) {
       throw new IllegalStateException("gRPC source has invalid leaf certificate", exception);
     }
@@ -485,15 +488,23 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static String requiredData(Secret source, String key) {
+    return requiredData(source, key, "configured gRPC CA Secret");
+  }
+
+  private static String requiredData(Secret source, String key, String subject) {
     String value = source.getData() == null ? null : source.getData().get(key);
     if (value == null) {
-      throw new IllegalStateException("configured gRPC CA Secret is missing required material");
+      throw new IllegalStateException(subject + " is missing required material");
     }
     return value;
   }
 
   private static X509Certificate parseCertificate(String encoded) throws Exception {
-    byte[] der = pemBytes(encoded, CERTIFICATE_PEM, "CERTIFICATE");
+    return parseCertificate(encoded, "configured gRPC CA Secret");
+  }
+
+  private static X509Certificate parseCertificate(String encoded, String subject) throws Exception {
+    byte[] der = pemBytes(encoded, CERTIFICATE_PEM, "CERTIFICATE", subject);
     return (X509Certificate)
         java.security.cert.CertificateFactory.getInstance("X.509")
             .generateCertificate(new java.io.ByteArrayInputStream(der));
@@ -506,11 +517,15 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static byte[] pemBytes(String encoded, Pattern expected, String label) {
+    return pemBytes(encoded, expected, label, "configured gRPC CA Secret");
+  }
+
+  private static byte[] pemBytes(String encoded, Pattern expected, String label, String subject) {
     String content =
         new String(Base64.getDecoder().decode(encoded), java.nio.charset.StandardCharsets.US_ASCII);
     Matcher matcher = expected.matcher(content);
     if (!matcher.matches()) {
-      throw new IllegalStateException("configured gRPC CA material must use " + label + " PEM");
+      throw new IllegalStateException(subject + " must use " + label + " PEM");
     }
     return Base64.getDecoder().decode(matcher.group(1).replaceAll("\\s", ""));
   }

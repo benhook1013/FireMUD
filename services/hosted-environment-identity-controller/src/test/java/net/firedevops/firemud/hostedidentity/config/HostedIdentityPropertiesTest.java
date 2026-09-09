@@ -88,6 +88,7 @@ class HostedIdentityPropertiesTest {
           "preview.-firedevops.net",
           "preview-.firedevops.net",
           "a".repeat(64) + ".firedevops.net",
+          "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(63) + "." + "b".repeat(62),
           "a".repeat(254)
         }) {
       HostedIdentityProperties previewProperties = new HostedIdentityProperties();
