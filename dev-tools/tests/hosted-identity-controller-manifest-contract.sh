@@ -771,6 +771,12 @@ controller_certificate_expression = certificate_match.split(
 assert "request.namespace == 'dev-identity'" in controller_certificate_expression
 assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in controller_certificate_expression
 assert "((request.operation == 'DELETE' && request.name.matches(" in certificate_match
+controller_delete_expression = controller_certificate_expression.split(
+    "(request.operation == 'DELETE' &&", 1
+)[1].split(
+    "(request.operation != 'DELETE' &&", 1
+)[0]
+assert "firemud-grpc-tls" not in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert (
     "object.metadata.labels['firemud.dev/role'] in "
@@ -796,6 +802,14 @@ cert_manager_status_expression = certificate_expressions[0].split(
     1,
 )[1]
 assert "firemud-grpc-tls" not in cert_manager_status_expression
+namespace_controller_expression = certificate_match.split(
+    "(request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'",
+    1,
+)[1].split(
+    "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'",
+    1,
+)[0]
+assert "firemud-grpc-tls" in namespace_controller_expression
 profile_expression = next(
     expression for expression in certificate_expressions if "gateway-internal-ws" in expression
 )
@@ -1071,6 +1085,12 @@ for forbidden_command in 'kubectl delete' 'kubectl apply --all'; do
 done
 require_literal "$ADMISSION" "'firemud-grpc-tls-previous', 'firemud-grpc-ca'"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
+require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
+require_literal "$BOOTSTRAP" 'while :; do'
+# shellcheck disable=SC2016 # Match the literal bootstrap expression.
+require_literal "$BOOTSTRAP" '[[ "$crd_established" == "True" ]]'
+require_literal "$BOOTSTRAP" 'if ((SECONDS >= crd_deadline)); then'
+require_literal "$BOOTSTRAP" 'sleep 1'
 for ca_proof in \
   'get secret firemud-grpc-ca' \
   "ca.crt\\nca.key" \

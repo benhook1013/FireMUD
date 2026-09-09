@@ -133,10 +133,18 @@ kubectl -n "$CONTROL_NAMESPACE" rollout status \
   --timeout="${WAIT_SECONDS}s"
 kubectl -n "$CONTROL_NAMESPACE" get deployment "$DEPLOYMENT_NAME" \
   -o jsonpath='{.status.availableReplicas}/{.spec.replicas}{"\n"}'
-crd_established="$(kubectl get crd hostedenvironmentidentities.platform.firemud.dev \
-  -o jsonpath='{.status.conditions[?(@.type=="Established")].status}')"
-[[ "$crd_established" == "True" ]] || \
-  fail "HostedEnvironmentIdentity CRD is not Established=True"
+crd_deadline=$((SECONDS + WAIT_SECONDS))
+while :; do
+  if crd_established="$(kubectl get crd hostedenvironmentidentities.platform.firemud.dev \
+    -o jsonpath='{.status.conditions[?(@.type=="Established")].status}')" &&
+    [[ "$crd_established" == "True" ]]; then
+    break
+  fi
+  if ((SECONDS >= crd_deadline)); then
+    fail "HostedEnvironmentIdentity CRD is not Established=True"
+  fi
+  sleep 1
+done
 
 # Active mode is fail-closed until every policy and binding in the install
 # boundary exists. Checking one representative policy is insufficient: a
