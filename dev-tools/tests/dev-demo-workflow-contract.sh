@@ -251,6 +251,10 @@ for required in (
     ".created_at >= $not_before",
     "oldest_page_created_at",
     "page_failed_attempts",
+    "while (( page <= max_history_pages )); do",
+    "Dev-demo nonterminal history exhausted",
+    "Dev-demo completed history exhausted",
+    'if (( page > max_history_pages )); then',
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
@@ -264,6 +268,10 @@ if "while true" in reconcile_run.split("bootstrap_complete=false", 1)[1].split(
     'if [[ "$bootstrap_complete" != true ]]', 1
 )[0]:
     raise SystemExit("dev-demo missing-anchor bootstrap must remain bounded")
+if reconcile_run.count("while (( page <= max_history_pages )); do") != 2:
+    raise SystemExit("both runtime history scans must enforce max_history_pages")
+if reconcile_run.count('if (( page > max_history_pages )); then') != 2:
+    raise SystemExit("both runtime history scans must fail closed after max_history_pages")
 
 nonterminal_guard = '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]'
 for candidate_status in ("requested", "waiting", "pending"):

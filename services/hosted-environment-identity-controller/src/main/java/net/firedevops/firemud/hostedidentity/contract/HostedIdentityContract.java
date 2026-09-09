@@ -11,6 +11,7 @@ public final class HostedIdentityContract {
   public static final String PLURAL = "hostedenvironmentidentities";
   public static final String FINALIZER = API_GROUP + "/hosted-environment-identity";
   public static final String CONTROL_NAMESPACE = "firemud-system";
+  public static final String GRPC_CA_SECRET_NAME = "firemud-grpc-ca";
 
   public static final String MANAGED_BY_LABEL = "firemud.dev/managed-by";
   public static final String ENVIRONMENT_LABEL = "firemud.dev/identity-name";

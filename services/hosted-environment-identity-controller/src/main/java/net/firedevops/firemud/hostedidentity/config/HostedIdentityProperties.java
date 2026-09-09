@@ -25,7 +25,7 @@ public class HostedIdentityProperties implements InitializingBean {
   private String ingressIssuer = "letsencrypt-prod";
   private String telnetIssuer = "letsencrypt-prod";
   private String grpcIssuer = "firemud-ca-issuer";
-  private String caSecretName = "firemud-grpc-ca";
+  private String caSecretName = HostedIdentityContract.GRPC_CA_SECRET_NAME;
   private String ingressTrustAnchorSha256 = "";
   private String telnetTrustAnchorSha256 = "";
   private String grpcTrustAnchorSha256 = "";
@@ -47,6 +47,10 @@ public class HostedIdentityProperties implements InitializingBean {
     if (!HostedIdentityContract.CONTROL_NAMESPACE.equals(controlNamespace)) {
       throw new IllegalStateException(
           "hosted identity control namespace must be " + HostedIdentityContract.CONTROL_NAMESPACE);
+    }
+    if (!HostedIdentityContract.GRPC_CA_SECRET_NAME.equals(caSecretName)) {
+      throw new IllegalStateException(
+          "gRPC CA secret name must be " + HostedIdentityContract.GRPC_CA_SECRET_NAME);
     }
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);

@@ -108,18 +108,29 @@ public class HostedStatusService {
     status.setTcpProxyBridge(tcpProxyBridge);
     status.setGrpc(grpc);
     RuntimeProfile profile = new RuntimeProfile();
-    var plan = planner.plan(resource.getMetadata().getName());
-    profile.setName(plan.name());
-    profile.setEnvironmentClass("dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
-    profile.setIdentityNamespace(plan.identityNamespace());
-    profile.setRuntimeNamespace(plan.runtimeNamespace());
-    profile.setHostname(plan.hostname());
+    try {
+      var plan = planner.plan(resource.getMetadata().getName());
+      profile.setName(plan.name());
+      profile.setEnvironmentClass(
+          "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
+      profile.setIdentityNamespace(plan.identityNamespace());
+      profile.setRuntimeNamespace(plan.runtimeNamespace());
+      profile.setHostname(plan.hostname());
+    } catch (IllegalArgumentException exception) {
+      if (previousProfile != null) {
+        profile.setName(previousProfile.getName());
+        profile.setEnvironmentClass(previousProfile.getEnvironmentClass());
+        profile.setIdentityNamespace(previousProfile.getIdentityNamespace());
+        profile.setRuntimeNamespace(previousProfile.getRuntimeNamespace());
+        profile.setHostname(previousProfile.getHostname());
+      }
+    }
     if (runtimeProfile != null && runtimeProfile.present()) {
       profile.setTelnetPort(runtimeProfile.telnetPort());
       profile.setRuntimeNamespaceUid(runtimeProfile.runtimeNamespaceUid());
       profile.setRequestedHeadSha(runtimeProfile.requestedHeadSha());
       profile.setDeployedHeadSha(runtimeProfile.deployedHeadSha());
-    } else if (runtimeProfile == null && previousProfile != null) {
+    } else if (previousProfile != null) {
       profile.setTelnetPort(previousProfile.getTelnetPort());
       profile.setRuntimeNamespaceUid(previousProfile.getRuntimeNamespaceUid());
       profile.setRequestedHeadSha(previousProfile.getRequestedHeadSha());

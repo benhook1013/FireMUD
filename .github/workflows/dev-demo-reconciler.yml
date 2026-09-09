@@ -181,7 +181,7 @@ jobs:
           candidate_run=""
           for nonterminal_status in requested waiting pending queued in_progress; do
             page=1
-            while true; do
+            while (( page <= max_history_pages )); do
               run_page="$(list_run_page "$page" "$nonterminal_status")"
               candidate_run="$(
                 jq -r --arg head "${desired_head_sha}" --arg title "${expected_deploy_title}" \
@@ -197,6 +197,10 @@ jobs:
               fi
               ((page += 1))
             done
+            if (( page > max_history_pages )); then
+              echo "::error title=Dev-demo nonterminal history exhausted::Refusing an unbounded nonterminal history scan."
+              exit 1
+            fi
           done
 
           IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
@@ -211,7 +215,7 @@ jobs:
           # Irrelevant destroy and other-target runs cannot evict this evidence.
           failed_attempts=0
           page=1
-          while true; do
+          while (( page <= max_history_pages )); do
             run_page="$(list_run_page "$page")"
             exact_page_runs="$(
               jq -c \
@@ -254,6 +258,10 @@ jobs:
             fi
             ((page += 1))
           done
+          if (( page > max_history_pages )); then
+            echo "::error title=Dev-demo completed history exhausted::Refusing an unbounded completed-history scan."
+            exit 1
+          fi
 
           if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
             echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."

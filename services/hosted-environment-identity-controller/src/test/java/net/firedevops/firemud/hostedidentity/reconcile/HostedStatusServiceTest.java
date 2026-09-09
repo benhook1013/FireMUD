@@ -120,7 +120,7 @@ class HostedStatusServiceTest {
   }
 
   @Test
-  void missingObservationPreservesRuntimeTupleButExplicitAbsenceClearsIt() {
+  void missingOrExplicitAbsencePreservesRuntimeTuple() {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(
         new ObjectMetaBuilder()
@@ -164,10 +164,51 @@ class HostedStatusServiceTest {
         null,
         null,
         null);
-    assertEquals(null, resource.getStatus().getProfile().getRuntimeNamespaceUid());
-    assertEquals(null, resource.getStatus().getProfile().getRequestedHeadSha());
-    assertEquals(null, resource.getStatus().getProfile().getDeployedHeadSha());
-    assertEquals(null, resource.getStatus().getProfile().getTelnetPort());
+    assertEquals("uid-recorded", resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
+    assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
+  }
+
+  @Test
+  void unplannableResourceStillPublishesBlockedStatus() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("not-a-valid-hosted-identity-name")
+            .withNamespace("firemud-system")
+            .withGeneration(8L)
+            .build());
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    RuntimeProfile oldProfile = new RuntimeProfile();
+    oldProfile.setRuntimeNamespaceUid("uid-recorded");
+    oldProfile.setRequestedHeadSha("head-recorded");
+    oldProfile.setDeployedHeadSha("head-recorded");
+    oldProfile.setTelnetPort(32007);
+    oldStatus.setProfile(oldProfile);
+    resource.setStatus(oldStatus);
+
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        "ReconciliationBlocked",
+        "invalid resource name",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, resource.getStatus().getPhase());
+    assertEquals("uid-recorded", resource.getStatus().getProfile().getRuntimeNamespaceUid());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
+    assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
+    assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
   }
 
   @Test

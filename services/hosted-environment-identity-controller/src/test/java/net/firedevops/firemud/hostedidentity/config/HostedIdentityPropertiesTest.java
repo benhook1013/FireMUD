@@ -5,9 +5,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Duration;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
 
 class HostedIdentityPropertiesTest {
+  @Test
+  void usesAndRequiresCanonicalGrpcCaSecretName() {
+    var properties = new HostedIdentityProperties();
+    assertEquals(HostedIdentityContract.GRPC_CA_SECRET_NAME, properties.getCaSecretName());
+    properties.afterPropertiesSet();
+    properties.setCaSecretName("other-ca");
+    assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+  }
+
   @Test
   void validatesCanonicalControlNamespaceBeforeTelnetPortAllocations() {
     HostedIdentityProperties properties = new HostedIdentityProperties();

@@ -361,6 +361,14 @@ EXPECTED_INTERNAL_NETWORK_POLICY_SPECS = {
     },
 }
 NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+PROJECTED_SECRET_SOURCE_PATH = re.compile(r"\.projected\.sources\[\d+\]$")
+CSI_VOLUME_PATH = re.compile(r"\.csi$")
+PROJECTED_SECRET_NAME_LOCATION = re.compile(
+    r"\.projected\.sources\[\d+\]\.secret\.name$"
+)
+CSI_NODE_PUBLISH_SECRET_NAME_LOCATION = re.compile(
+    r"\.csi\.nodePublishSecretRef\.name$"
+)
 SANITIZER_FORBIDDEN_KINDS = {
     "Certificate",
     "CertificateRequest",
@@ -532,6 +540,23 @@ def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None
             if key == "secretName" and not _is_sanitized_secret_reference(child):
                 fail(f"{path}.{key} contains an unapproved Secret reference")
             if key in {"secretRef", "secretKeyRef"} and isinstance(child, dict):
+                name = child.get("name")
+                if not _is_sanitized_secret_reference(name):
+                    fail(f"{path}.{key}.name contains an unapproved Secret reference")
+            if (
+                key == "secret"
+                and isinstance(child, dict)
+                and "name" in child
+                and PROJECTED_SECRET_SOURCE_PATH.search(path)
+            ):
+                name = child["name"]
+                if not _is_sanitized_secret_reference(name):
+                    fail(f"{path}.{key}.name contains an unapproved Secret reference")
+            if (
+                key == "nodePublishSecretRef"
+                and isinstance(child, dict)
+                and CSI_VOLUME_PATH.search(path)
+            ):
                 name = child.get("name")
                 if not _is_sanitized_secret_reference(name):
                     fail(f"{path}.{key}.name contains an unapproved Secret reference")
@@ -1227,6 +1252,11 @@ def validate_manifest(
             if location.endswith(
                 (".secretRef.name", ".secretKeyRef.name")
             ) and not _is_expected_secret_reference(value):
+                fail(f"{location} contains an unapproved Secret reference")
+            if (
+                PROJECTED_SECRET_NAME_LOCATION.search(location)
+                or CSI_NODE_PUBLISH_SECRET_NAME_LOCATION.search(location)
+            ) and not _is_manifest_secret_reference(value, expected_namespace):
                 fail(f"{location} contains an unapproved Secret reference")
         for location, value in walk(document):
             if location.endswith(".image") and isinstance(value, str):
