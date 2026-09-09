@@ -499,7 +499,10 @@ assert "steps.certificate-identity.outputs.mode == 'standalone'" in preview_ensu
 preview_namespace_step = next(
     step for step in preview_steps if step.get("name") == "Show namespace state"
 )
-assert 'steps.certificate-identity.outputs.mode' in preview_namespace_step["run"]
+assert preview_namespace_step["env"] == {
+    "CERTIFICATE_IDENTITY_MODE": "${{ steps.certificate-identity.outputs.mode }}",
+}
+assert 'CERTIFICATE_IDENTITY_MODE' in preview_namespace_step["run"]
 assert '== "standalone"' in preview_namespace_step["run"]
 preview_requested_index = next(
     index
