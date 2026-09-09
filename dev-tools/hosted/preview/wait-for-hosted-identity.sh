@@ -15,6 +15,16 @@ validate_identity_runtime_pairing() {
   fi
 }
 
+validate_timeout_seconds() {
+  local timeout_seconds="$1"
+  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
+    ((${#timeout_seconds} > 4)) ||
+    ((10#$timeout_seconds > 3600)); then
+    echo "timeout must be a positive integer" >&2
+    exit 2
+  fi
+}
+
 if [[ "${1:-}" == "--projections" ]]; then
   if [[ $# -lt 2 || $# -gt 4 ]]; then
     echo "usage: $0 --projections <identity_name> [runtime_namespace] [timeout_seconds]" >&2
@@ -37,10 +47,7 @@ if [[ "${1:-}" == "--projections" ]]; then
     echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
     exit 2
   fi
-  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
-    echo "timeout must be a positive integer" >&2
-    exit 2
-  fi
+  validate_timeout_seconds "$timeout_seconds"
   validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
   if [[ "$identity_name" == dev-demo ]]; then
@@ -115,10 +122,7 @@ if [[ "${1:-}" == "--retired" ]]; then
     echo "identity name is not canonical: ${identity_name}" >&2
     exit 2
   fi
-  if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
-    echo "timeout must be a positive integer" >&2
-    exit 2
-  fi
+  validate_timeout_seconds "$timeout_seconds"
 
   deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS < deadline )); do
@@ -184,10 +188,7 @@ if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
   echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
   exit 2
 fi
-if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
-  echo "timeout must be a positive integer" >&2
-  exit 2
-fi
+validate_timeout_seconds "$timeout_seconds"
 validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
 deadline=$((SECONDS + timeout_seconds))

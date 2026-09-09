@@ -8696,6 +8696,27 @@ if valid_result != {
 }:
     raise SystemExit(f"hosted-bridge did not emit its canonical pass result: {valid_result}")
 
+maximum_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+maximum_service = next(
+    document
+    for document in maximum_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+maximum_service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] = "65535"
+maximum_service["spec"]["ports"][0]["nodePort"] = 65535
+maximum_path = tmp / "hosted-bridge-contract-maximum-port.yaml"
+maximum_path.write_text(
+    yaml.safe_dump_all(maximum_documents, sort_keys=False), encoding="utf-8"
+)
+maximum = run_hosted(
+    maximum_path,
+    "--expected-hosted-telnet-node-port",
+    "65535",
+)
+if maximum.returncode != 0:
+    raise SystemExit(f"hosted-bridge rejected maximum valid expected port: {maximum.stderr}{maximum.stdout}")
+
 mismatched_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 next(
     document
@@ -8848,6 +8869,19 @@ invalid_port = run_hosted(
 )
 if invalid_port.returncode == 0 or "must be a positive integer" not in invalid_port.stderr:
     raise SystemExit(f"hosted-bridge accepted invalid expected port: {invalid_port.stderr}")
+
+invalid_maximum_port = run_hosted(
+    render_path,
+    "--expected-hosted-telnet-node-port",
+    "65536",
+)
+if (
+    invalid_maximum_port.returncode == 0
+    or "must be a positive integer" not in invalid_maximum_port.stderr
+):
+    raise SystemExit(
+        f"hosted-bridge accepted expected port above the valid range: {invalid_maximum_port.stderr}"
+    )
 
 for invalid_namespace, invalid_release in (("pr-0", "pr-0"), ("pr-42", "preview")):
     try:

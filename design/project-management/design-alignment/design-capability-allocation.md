@@ -242,7 +242,7 @@ This file intentionally owns the detailed allocation-validation history; the des
 | `design/architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md` | `AA-1` | `PO-1`, `EA-3` | Accepted |
 | `design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md` | `AA-1` | `AR-1`, `EA-3`, `PO-1`, `SF-2` | Accepted |
 | `design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md` | `PO-1` | `AA-1`, `AR-1`, `EA-3`, `SF-2` | Accepted |
-| `design/architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md` | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Accepted; review disposition Revised |
+| `design/architecture/decisions/adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md` | `PO-3` | `PO-1`, `PO-4`, `SF-1` | Accepted |
 
 ADR 0121 is superseded by [ADR 0114](../../architecture/decisions/adr-0114-command-plan-preview-dry-run-isolation.md); its historical capability allocation remains recorded above.
 

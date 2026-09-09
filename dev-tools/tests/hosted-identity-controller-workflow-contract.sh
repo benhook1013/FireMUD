@@ -2198,6 +2198,62 @@ run_active_waiter_fixture identity-absence 0 4 1
 run_active_waiter_fixture namespace-command-failure 43 1 0
 run_active_waiter_fixture identity-command-failure 44 2 0
 
+# Every waiter mode keeps the existing positive-integer diagnostic while
+# enforcing the shared bounded timeout ceiling.
+run_waiter_rejects_timeout() {
+  local suffix="$1"
+  shift
+  local kubectl_log="$TEMP_DIR/timeout-${suffix}.kubectl.log"
+  local error="$TEMP_DIR/timeout-${suffix}.error"
+  local output="$TEMP_DIR/timeout-${suffix}.output"
+  local status
+
+  : >"$kubectl_log"
+  set +e
+  env \
+    PATH="$waiter_stub_dir:$PATH" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    bash "$waiter" "$@" >"$output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq 2 ]]
+  grep -Fxq 'timeout must be a positive integer' "$error"
+  [[ ! -s "$kubectl_log" ]]
+}
+
+run_waiter_rejects_timeout projections --projections pr-42 pr-42 3601
+run_waiter_rejects_timeout retired --retired pr-42 3601
+run_waiter_rejects_timeout active pr-42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-42 3601
+
+run_waiter_accepts_timeout() {
+  local scenario="$1"
+  local suffix="$2"
+  shift 2
+  local count_root="$TEMP_DIR/timeout-${suffix}.counts"
+  local kubectl_log="$TEMP_DIR/timeout-${suffix}.accepted.kubectl.log"
+  local sleep_log="$TEMP_DIR/timeout-${suffix}.accepted.sleep.log"
+  local output="$TEMP_DIR/timeout-${suffix}.accepted.output"
+  local error="$TEMP_DIR/timeout-${suffix}.accepted.error"
+
+  mkdir -p "$count_root"
+  : >"$kubectl_log"
+  : >"$sleep_log"
+  env \
+    PATH="$waiter_stub_dir:$PATH" \
+    WAITER_SCENARIO="$scenario" \
+    WAITER_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    WAITER_COUNT_ROOT="$count_root" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    WAITER_SLEEP_LOG="$sleep_log" \
+    bash "$waiter" "$@" >"$output" 2>"$error"
+  grep -Fq 'identity=pr-42' "$output"
+}
+
+run_waiter_accepts_timeout projection-absence projections --projections pr-42 pr-42 3600
+run_waiter_accepts_timeout identity-absence retired --retired pr-42 3600
+run_waiter_accepts_timeout namespace-absence active pr-42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-42 3600
+
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys
 from pathlib import Path

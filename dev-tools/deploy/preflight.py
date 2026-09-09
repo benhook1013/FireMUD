@@ -6666,7 +6666,11 @@ def main() -> int:
         if len(sys.argv) == 7:
             if sys.argv[5] != "--expected-hosted-telnet-node-port":
                 usage()
-            if not re.fullmatch(r"[1-9][0-9]*", sys.argv[6]):
+            if (
+                not re.fullmatch(r"[1-9][0-9]*", sys.argv[6])
+                or len(sys.argv[6]) > 5
+                or int(sys.argv[6]) > 65535
+            ):
                 fail("--expected-hosted-telnet-node-port must be a positive integer")
             expected_hosted_telnet_node_port = int(sys.argv[6])
         return hosted_bridge_preflight(
