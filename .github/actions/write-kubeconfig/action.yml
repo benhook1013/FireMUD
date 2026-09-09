@@ -18,9 +18,18 @@ runs:
       run: |
         set -euo pipefail
         umask 077
-        test -n "$KUBECONFIG_CONTENT"
-        test -n "$KUBECONFIG_PATH"
-        command -v kubectl >/dev/null 2>&1
+        [[ -n "$KUBECONFIG_CONTENT" ]] || {
+          echo "::error title=Missing kubeconfig content::A kubeconfig document is required." >&2
+          exit 1
+        }
+        [[ -n "$KUBECONFIG_PATH" ]] || {
+          echo "::error title=Missing kubeconfig path::A destination path is required." >&2
+          exit 1
+        }
+        command -v kubectl >/dev/null 2>&1 || {
+          echo "::error title=kubectl unavailable::kubectl is required to validate the kubeconfig." >&2
+          exit 1
+        }
         destination_directory="$(dirname -- "$KUBECONFIG_PATH")"
         destination_name="$(basename -- "$KUBECONFIG_PATH")"
         mkdir -p -- "$destination_directory"

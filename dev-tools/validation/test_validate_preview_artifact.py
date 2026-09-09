@@ -419,6 +419,20 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
+    def test_injection_rejects_missing_object_metadata_after_namespace_validation(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "spec": {"ports": [{"name": "tcp-2323", "port": 2323}]},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            destination = Path(directory) / "destination.yaml"
+            source.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Service.metadata is not an object"):
+                self.validator.inject_telnet_port(source, destination, 32000, "pr-42")
+            self.assertFalse(destination.exists())
+
     def test_injection_rejects_non_object_service_spec_or_ports(self):
         for spec, message in (
             ([], "Service/tcp-proxy-service.spec is not an object"),

@@ -1522,71 +1522,6 @@ class SecretProjectionServiceTest {
     return source;
   }
 
-  private static IssuanceObservation materializeIngress(
-      long revision, Map<String, String> requestData, Map<String, String> sourceData) {
-    return materializeIngress(revision, requestData, sourceData, revision);
-  }
-
-  private static IssuanceObservation materializeIngress(
-      long revision,
-      Map<String, String> requestData,
-      Map<String, String> sourceData,
-      long finalCertificateRevision) {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    SecretClient secretClient = secretClient(plan);
-    Resource<Secret> absentRuntimeSecret = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(absentRuntimeSecret);
-    when(absentRuntimeSecret.get()).thenReturn(null);
-    Resource<GenericKubernetesResource> certificate =
-        stubCertificate(
-            secretClient.client(),
-            plan,
-            plan.ingressCertificateName(),
-            true,
-            revision,
-            requestData);
-    when(certificate.get())
-        .thenReturn(
-            null,
-            readyCertificate(plan, plan.ingressCertificateName(), revision),
-            readyCertificate(plan, plan.ingressCertificateName(), finalCertificateRevision));
-    Resource<Secret> sourceResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(plan.ingressSecretName()))
-        .thenReturn(sourceResource);
-    when(sourceResource.get())
-        .thenReturn(
-            certManagerSource(
-                plan, HostedIdentityContract.INGRESS_ROLE, plan.ingressSecretName(), sourceData));
-    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
-    when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(
-            new SecretMaterialValidator.MaterialSummary(
-                "1".repeat(64),
-                "2".repeat(64),
-                java.time.Instant.EPOCH,
-                java.time.Instant.MAX,
-                "3".repeat(64)));
-    CertificateMaterialService service =
-        new CertificateMaterialService(
-            new CertificateResourceFactory(),
-            validator,
-            mock(GrpcTransportBundleGenerator.class),
-            properties);
-    return new IssuanceObservation(
-        service.beginMaterialization(secretClient.client(), plan).ingress(),
-        validator,
-        secretClient.runtimeSecrets());
-  }
-
   @SuppressWarnings("unchecked")
   private static Resource<GenericKubernetesResource> stubCertificate(
       KubernetesClient client,
@@ -1700,29 +1635,6 @@ class SecretProjectionServiceTest {
             GenericKubernetesResourceList,
             Resource<GenericKubernetesResource>>
         identityRequests = mock(NonNamespaceOperation.class);
-    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS))
-        .thenReturn(requests);
-    when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
-    when(identityRequests.list()).thenReturn(requestList);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static void stubCertificateRequests(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      List<GenericKubernetesResource> requestsToReturn) {
-    MixedOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        requests = mock(MixedOperation.class);
-    NonNamespaceOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        identityRequests = mock(NonNamespaceOperation.class);
-    GenericKubernetesResourceList requestList = new GenericKubernetesResourceList();
-    requestList.setItems(requestsToReturn);
     when(client.genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS))
         .thenReturn(requests);
     when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
@@ -1989,88 +1901,6 @@ class SecretProjectionServiceTest {
       SecretMaterialValidator validator,
       GrpcTransportBundleGenerator grpcGenerator,
       CertificateMaterialService.MaterializationBatch batch) {}
-
-  private record IssuanceObservation(
-      CertificateMaterialService.RoleMaterial material,
-      SecretMaterialValidator validator,
-      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets) {}
-
-  private enum CertManagerSourceMutation {
-    MANAGED_BY,
-    ENVIRONMENT,
-    ROLE,
-    RETENTION,
-    PROVENANCE,
-    CONVERGENCE_STATE,
-    CERTIFICATE_NAME,
-    ISSUER_NAME,
-    ISSUER_KIND,
-    ISSUER_GROUP,
-    OWNER_API_VERSION,
-    OWNER_KIND,
-    OWNER_NAME,
-    OWNER_UID;
-
-    void apply(Secret source) {
-      switch (this) {
-        case MANAGED_BY ->
-            source
-                .getMetadata()
-                .getLabels()
-                .put(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller");
-        case ENVIRONMENT ->
-            source.getMetadata().getLabels().put(HostedIdentityContract.ENVIRONMENT_LABEL, "pr-99");
-        case ROLE ->
-            source
-                .getMetadata()
-                .getLabels()
-                .put(HostedIdentityContract.ROLE_LABEL, HostedIdentityContract.TELNET_ROLE);
-        case RETENTION ->
-            source
-                .getMetadata()
-                .getLabels()
-                .put(HostedIdentityContract.RETENTION_LABEL, "disposable");
-        case PROVENANCE ->
-            source
-                .getMetadata()
-                .getAnnotations()
-                .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "manual");
-        case CONVERGENCE_STATE ->
-            source
-                .getMetadata()
-                .getAnnotations()
-                .put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
-        case CERTIFICATE_NAME ->
-            source
-                .getMetadata()
-                .getAnnotations()
-                .put("cert-manager.io/certificate-name", "other-certificate");
-        case ISSUER_NAME ->
-            source
-                .getMetadata()
-                .getAnnotations()
-                .put("cert-manager.io/issuer-name", "other-issuer");
-        case ISSUER_KIND ->
-            source.getMetadata().getAnnotations().put("cert-manager.io/issuer-kind", "Issuer");
-        case ISSUER_GROUP ->
-            source
-                .getMetadata()
-                .getAnnotations()
-                .put("cert-manager.io/issuer-group", "other.example");
-        case OWNER_API_VERSION ->
-            source
-                .getMetadata()
-                .getOwnerReferences()
-                .get(0)
-                .setApiVersion("cert-manager.io/v1beta1");
-        case OWNER_KIND ->
-            source.getMetadata().getOwnerReferences().get(0).setKind("CertificateRequest");
-        case OWNER_NAME ->
-            source.getMetadata().getOwnerReferences().get(0).setName("other-certificate");
-        case OWNER_UID -> source.getMetadata().getOwnerReferences().get(0).setUid("stale-uid");
-      }
-    }
-  }
 
   private static EnvironmentIdentityPlan plan() {
     return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");

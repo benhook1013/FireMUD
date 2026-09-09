@@ -165,12 +165,16 @@ required_admission_policies=(
   firemud-hosted-system-namespace-guard
 )
 for admission_name in "${required_admission_policies[@]}"; do
-  policy_failure_policy="$(kubectl get validatingadmissionpolicy "$admission_name" \
-    -o jsonpath='{.spec.failurePolicy}{"\n"}')"
+  if ! policy_failure_policy="$(kubectl get validatingadmissionpolicy "$admission_name" \
+    -o jsonpath='{.spec.failurePolicy}{"\n"}')"; then
+    fail "$admission_name admission policy lookup failed; refusing activation"
+  fi
   [[ "$policy_failure_policy" == "Fail" ]] || \
     fail "$admission_name admission policy is missing failurePolicy=Fail"
-  binding_actions="$(kubectl get validatingadmissionpolicybinding "$admission_name" \
-    -o jsonpath='{.spec.validationActions[*]}{"\n"}')"
+  if ! binding_actions="$(kubectl get validatingadmissionpolicybinding "$admission_name" \
+    -o jsonpath='{.spec.validationActions[*]}{"\n"}')"; then
+    fail "$admission_name admission policy binding lookup failed; refusing activation"
+  fi
   [[ " $binding_actions " == *" Deny "* ]] || \
     fail "$admission_name admission policy binding is missing validationActions Deny"
 done

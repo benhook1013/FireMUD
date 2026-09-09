@@ -84,6 +84,9 @@ assert_revalidation_refused \
   '{"state":"open","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)'
 assert_revalidation_refused \
+  '{"state":"open","head":{"sha":"not-a-sha","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
+  'head is stale (expected=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, current=not-a-sha)'
+assert_revalidation_refused \
   '{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}' \
   'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 assert_revalidation_refused \

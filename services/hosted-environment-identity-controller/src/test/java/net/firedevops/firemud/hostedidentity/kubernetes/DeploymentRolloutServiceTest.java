@@ -74,6 +74,23 @@ class DeploymentRolloutServiceTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
+  void replaceWithCasUsesMutationResultRatherThanOnlyInPlaceEdits() {
+    RollableScalableResource<Deployment> operation = mock(RollableScalableResource.class);
+    ReplaceDeletable<Deployment> locked = mock(ReplaceDeletable.class);
+    when(operation.lockResourceVersion("rv-3")).thenReturn(locked);
+    Deployment observed = readyDeployment("observed", Map.of(), 3L);
+    Deployment returned = readyDeployment("returned", Map.of(), 4L);
+
+    DeploymentRolloutService.replaceWithCas(operation, observed, ignored -> returned);
+
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    verify(locked).replace(replacement.capture());
+    assertEquals("returned", replacement.getValue().getMetadata().getName());
+    assertEquals("rv-3", replacement.getValue().getMetadata().getResourceVersion());
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
   void tcpProxyTelnetAndGrpcChangesUseOneCasReplaceAndConvergeTogether() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
     KubernetesClient client = mock(KubernetesClient.class);

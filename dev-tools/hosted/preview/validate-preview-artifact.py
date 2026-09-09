@@ -811,21 +811,13 @@ def inject_telnet_port(
     for document in documents:
         if not isinstance(document, dict):
             fail("validated preview render contains a non-object document")
-        metadata = (
-            _validate_object_metadata(document, expected_namespace)
-            if expected_namespace is not None
-            else _require_mapping(
-                document.get("metadata"),
-                f"{document.get('kind', 'object')}.metadata",
+        metadata = _validate_object_metadata(document, expected_namespace)
+        namespace = metadata.get("namespace")
+        if namespace not in (None, expected_namespace):
+            fail(
+                f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
             )
-        )
-        if expected_namespace is not None:
-            namespace = metadata.get("namespace")
-            if namespace not in (None, expected_namespace):
-                fail(
-                    f"{document.get('kind')}/{metadata.get('name')} targets namespace {namespace!r}"
-                )
-            metadata["namespace"] = expected_namespace
+        metadata["namespace"] = expected_namespace
         if document.get("kind") != "Service":
             continue
         if metadata.get("name") != "tcp-proxy-service":

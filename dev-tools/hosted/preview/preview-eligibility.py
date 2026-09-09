@@ -101,7 +101,6 @@ def revalidate_deploy(
         return "expected head SHA must be exactly 40 hexadecimal characters"
     if (
         not isinstance(head_sha, str)
-        or not isinstance(expected_head_sha, str)
         or not GIT_COMMIT_SHA_RE.fullmatch(head_sha)
         or head_sha.lower() != expected_head_sha.lower()
     ):

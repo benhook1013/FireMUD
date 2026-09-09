@@ -63,8 +63,8 @@ fi
 for required in \
   'using: composite' \
   'umask 077' \
-  'test -n "$KUBECONFIG_CONTENT"' \
-  'command -v kubectl >/dev/null 2>&1' \
+  '[[ -n "$KUBECONFIG_CONTENT" ]]' \
+  'command -v kubectl >/dev/null 2>&1 || {' \
   'mkdir -p -- "$destination_directory"' \
   'temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"' \
   'trap cleanup EXIT' \
@@ -84,6 +84,10 @@ for required in \
   'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
+  'if command -v helm' \
+  'installed_helm="$(command -v helm)"' \
+  'if installed_version="$(helm version --template' \
+  '&& [[ "$installed_version" == "$helm_version" ]]; then' \
   'Helm version mismatch' \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
@@ -286,7 +290,10 @@ assert publisher_script.count(
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 for fragment in (
-    'test "$source_path" = ',
+    '[[ -n "$WORKFLOW_RUN_ID" ]] || {',
+    '[[ "$source_path" == ',
+    'Missing workflow run id',
+    'Unexpected source workflow',
     'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
     'select(.name == $name and .expired == false)',
     '[[ "$artifact_count" == 1 ]] || emit_no_action',
@@ -764,7 +771,8 @@ for invalid_runtime_rollout_namespace in "" dev-identity pr-0 pr-01 pr-abc pr-42
   if bash "$runtime_rollout_waiter" "$invalid_runtime_rollout_namespace" 120 \
     >"$TEMP_DIR/invalid-runtime-rollout-namespace.output" \
     2>"$TEMP_DIR/invalid-runtime-rollout-namespace.error"; then
-    fail "runtime rollout waiter accepted invalid namespace: $invalid_runtime_rollout_namespace"
+    echo "runtime rollout waiter accepted invalid namespace: $invalid_runtime_rollout_namespace" >&2
+    exit 1
   fi
   expected_runtime_rollout_namespace_error='runtime namespace must match dev or pr-[1-9][0-9]*'
   if [[ -z "$invalid_runtime_rollout_namespace" ]]; then
@@ -777,7 +785,8 @@ for invalid_runtime_rollout_timeout in 0 invalid 3601 99999999999999999999; do
   if bash "$runtime_rollout_waiter" pr-42 "$invalid_runtime_rollout_timeout" \
     >"$TEMP_DIR/invalid-runtime-rollout-timeout.output" \
     2>"$TEMP_DIR/invalid-runtime-rollout-timeout.error"; then
-    fail "runtime rollout waiter accepted invalid timeout: $invalid_runtime_rollout_timeout"
+    echo "runtime rollout waiter accepted invalid timeout: $invalid_runtime_rollout_timeout" >&2
+    exit 1
   fi
   grep -Fxq 'per_deployment_timeout_seconds must be an integer between 1 and 3600' \
     "$TEMP_DIR/invalid-runtime-rollout-timeout.error"

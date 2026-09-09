@@ -1229,10 +1229,18 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicy" ]]; then
+  if [[ "${FAKE_MISSING_POLICY:-0}" == 1 ]]; then
+    echo "not found" >&2
+    exit 1
+  fi
   printf 'Fail\n'
   exit 0
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicybinding" ]]; then
+  if [[ "${FAKE_MISSING_BINDING:-0}" == 1 ]]; then
+    echo "not found" >&2
+    exit 1
+  fi
   printf 'Deny\n'
   exit 0
 fi
@@ -1307,6 +1315,20 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+if FAKE_MISSING_POLICY=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a missing admission policy"
+fi
+require_literal "$bootstrap_error" "admission policy lookup failed"
+if FAKE_MISSING_BINDING=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a missing admission policy binding"
+fi
+require_literal "$bootstrap_error" "admission policy binding lookup failed"
 for invalid_wait_seconds in 0 3601 invalid 99999999999999999999; do
   if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
     bash "$BOOTSTRAP" --image "$bootstrap_image" \

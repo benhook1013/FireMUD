@@ -428,8 +428,6 @@ class SecretMaterialValidatorTest {
         mock(NonNamespaceOperation.class);
     Resource<Secret> existingResource = mock(Resource.class);
     Resource<Secret> caResource = mock(Resource.class);
-    Resource<Secret> replacementResource = mock(Resource.class);
-    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
     when(client.secrets()).thenReturn(secrets);
     when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
     when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
@@ -437,8 +435,6 @@ class SecretMaterialValidatorTest {
     when(existingResource.get()).thenReturn(existing);
     when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
     when(caResource.get()).thenReturn(rotatedCa);
-    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenReturn(replacementResource);
 
     IllegalStateException stalePin =
         assertThrows(

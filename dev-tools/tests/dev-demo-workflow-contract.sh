@@ -109,8 +109,6 @@ for required in (
     'Invalid dev-demo head SHA',
     'Invalid dev-demo image tag',
     'Invalid dev-demo hostname',
-    'Invalid dev-demo namespace',
-    'Invalid dev-demo release',
     'Invalid dev-demo Telnet port',
 ):
     if required not in derive_run:

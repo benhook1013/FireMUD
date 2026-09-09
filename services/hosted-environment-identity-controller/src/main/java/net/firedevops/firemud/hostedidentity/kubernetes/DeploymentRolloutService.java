@@ -218,13 +218,12 @@ public class DeploymentRolloutService {
   }
 
   /** Replaces an observed Deployment with its resourceVersion as the Kubernetes CAS fence. */
-  private static void replaceWithCas(
+  static void replaceWithCas(
       RollableScalableResource<Deployment> operation,
       Deployment observed,
       UnaryOperator<Deployment> mutation) {
     requireResourceVersion(observed);
-    Deployment replacement = new DeploymentBuilder(observed).build();
-    mutation.apply(replacement);
+    Deployment replacement = mutation.apply(new DeploymentBuilder(observed).build());
     replacement.getMetadata().setResourceVersion(observed.getMetadata().getResourceVersion());
     try {
       operation

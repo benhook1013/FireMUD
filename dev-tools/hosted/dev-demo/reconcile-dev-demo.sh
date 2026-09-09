@@ -11,9 +11,14 @@ max_failed_attempts=3
 max_history_pages=10
 expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
 workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
+declare -A run_page_cache=()
 
 list_run_page() {
   local page="$1"
+  if [[ -v "run_page_cache[$page]" ]]; then
+    printf '%s' "${run_page_cache[$page]}"
+    return
+  fi
   local api_args=(
     --method GET
     "${workflow_runs_api}"
@@ -21,7 +26,8 @@ list_run_page() {
     -F per_page=100
     -F "page=${page}"
   )
-  gh api "${api_args[@]}"
+  run_page_cache[$page]="$(gh api "${api_args[@]}")"
+  printf '%s' "${run_page_cache[$page]}"
 }
 
 develop_push_run="$(
@@ -258,4 +264,3 @@ gh api \
   -f "inputs[head_sha]=${desired_head_sha}" \
   -f 'inputs[hostname]=dev.preview.firedevops.net' \
   -f 'inputs[telnet_port]=32016'
-
