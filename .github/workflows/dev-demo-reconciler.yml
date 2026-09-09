@@ -81,6 +81,8 @@ jobs:
             local api_args=(
               --method GET
               "${workflow_runs_api}"
+              -F branch=develop
+              -F event=workflow_dispatch
               -F per_page=100
               -F "page=${page}"
             )

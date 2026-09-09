@@ -122,6 +122,28 @@ class RuntimeProfileServiceTest {
 
   @Test
   @SuppressWarnings({"rawtypes", "unchecked"})
+  void runtimeProfileReadNormalizesUppercaseRequestedHeadPreservingIdentityAndPort() {
+    var plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
+    Resource<Namespace> namespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(namespace);
+    when(namespace.get())
+        .thenReturn(previewRuntimeNamespace("A".repeat(40), "a".repeat(40), "32002"));
+
+    RuntimeProfileService.RuntimeProfile profile = service.read(client, plan);
+
+    assertEquals("runtime-uid", profile.runtimeNamespaceUid());
+    assertEquals("a".repeat(40), profile.requestedHeadSha());
+    assertEquals("a".repeat(40), profile.deployedHeadSha());
+    assertEquals(32002, profile.telnetPort());
+    assertTrue(profile.present());
+    assertTrue(profile.deployedHeadMatchesRequest());
+  }
+
+  @Test
+  @SuppressWarnings({"rawtypes", "unchecked"})
   void runtimeProfileMapsAnAbsentRuntimeNamespaceToTheAbsentProfile() {
     var plan = planner.plan("pr-42");
     KubernetesClient client = mock(KubernetesClient.class);

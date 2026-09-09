@@ -285,6 +285,8 @@ for required in (
     "No decisive exact deploy history",
     "refusing a history-blind dispatch",
     "-f event=push",
+    "-F branch=develop",
+    "-F event=workflow_dispatch",
     "-F per_page=100",
     '.status != "completed"',
     ".head_sha == $head",
@@ -309,6 +311,10 @@ if reconcile_run.count('-f "head_sha=${desired_head_sha}"') != 1:
     raise SystemExit("only the one-result develop push anchor may use head_sha search")
 if reconcile_run.count("-f branch=develop") != 1:
     raise SystemExit("only the develop push anchor may use branch search")
+if reconcile_run.count("-F branch=develop") != 1:
+    raise SystemExit("all paginated history must remain scoped to develop")
+if reconcile_run.count("-F event=workflow_dispatch") != 1:
+    raise SystemExit("all paginated history must remain scoped to workflow dispatch")
 if "while true" in reconcile_run.split("bootstrap_complete=false", 1)[1].split(
     'if [[ "$bootstrap_complete" != true ]]', 1
 )[0]:
@@ -1071,6 +1077,8 @@ while (($# > 0)); do
       typed_fields+=("$2")
       case "$2" in
         page=*) page="${2#page=}" ;;
+        branch=*) branch="${2#branch=}" ;;
+        event=*) event="${2#event=}" ;;
       esac
       shift 2
       ;;
@@ -1156,16 +1164,18 @@ if [[ "$event" == push ]]; then
 fi
 
 if [[ "$method" != GET || "$method_explicit" != true || -n "$jq_filter" \
-  || ${#typed_fields[@]} -ne 2 ]] \
+  || ${#typed_fields[@]} -ne 4 ]] \
+  || ! has_typed_field 'branch=develop' \
+  || ! has_typed_field 'event=workflow_dispatch' \
   || ! has_typed_field 'per_page=100' \
   || ! has_typed_field "page=${page}"; then
   echo "unexpected gh workflow-run page lookup" >&2
   exit 2
 fi
-if [[ ${#raw_fields[@]} -ne 0 ]]; then
-  echo "unexpected gh unfiltered workflow-run lookup" >&2
+[[ ${#raw_fields[@]} -eq 0 ]] || {
+  echo "unexpected gh raw-field workflow-run lookup" >&2
   exit 2
-fi
+}
 
 empty_runs() {
   printf '%s\n' '{"workflow_runs":[]}'
