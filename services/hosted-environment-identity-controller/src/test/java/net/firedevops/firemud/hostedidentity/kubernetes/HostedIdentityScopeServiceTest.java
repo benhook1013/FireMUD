@@ -83,7 +83,7 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void roleOwnershipAndUnknownMetadataDriftRemainFailClosed() {
+  void roleOwnershipDriftRemainsFailClosed() {
     Role desired = role("get");
     Role wrongOwner =
         new RoleBuilder(desired)
@@ -91,19 +91,37 @@ class HostedIdentityScopeServiceTest {
             .addToLabels("firemud.dev/managed-by", "other")
             .endMetadata()
             .build();
-    Role unknownMetadata =
+
+    IllegalStateException failure = assertRoleDriftFailsClosed(wrongOwner, desired);
+    assertEquals("hosted identity scope Role drifted", failure.getMessage());
+  }
+
+  @Test
+  void roleUnexpectedAnnotationDriftRemainsFailClosed() {
+    Role desired = role("get");
+    Role unexpectedAnnotation =
         new RoleBuilder(desired)
             .editMetadata()
             .addToAnnotations("other.example/claim", "unexpected")
+            .endMetadata()
+            .build();
+
+    IllegalStateException failure = assertRoleDriftFailsClosed(unexpectedAnnotation, desired);
+    assertEquals("hosted identity scope Role drifted", failure.getMessage());
+  }
+
+  @Test
+  void roleUnexpectedOwnerReferenceDriftRemainsFailClosed() {
+    Role desired = role("get");
+    Role unexpectedOwnerReference =
+        new RoleBuilder(desired)
+            .editMetadata()
             .withOwnerReferences(new OwnerReferenceBuilder().withName("attacker").build())
             .endMetadata()
             .build();
 
-    IllegalStateException ownershipFailure = assertRoleDriftFailsClosed(wrongOwner, desired);
-    assertEquals("hosted identity scope Role drifted", ownershipFailure.getMessage());
-    IllegalStateException unknownMetadataFailure =
-        assertRoleDriftFailsClosed(unknownMetadata, desired);
-    assertEquals("hosted identity scope Role drifted", unknownMetadataFailure.getMessage());
+    IllegalStateException failure = assertRoleDriftFailsClosed(unexpectedOwnerReference, desired);
+    assertEquals("hosted identity scope Role drifted", failure.getMessage());
   }
 
   @Test

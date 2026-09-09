@@ -19,12 +19,13 @@ class UniqueKeyLoader(yaml.SafeLoader):
 def _construct_unique_mapping(
     loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
 ) -> dict[Any, Any]:
-    loader.flatten_mapping(node)
-    result: dict[Any, Any] = {}
-    for key_node, value_node in node.value:
+    explicit_keys: set[Any] = set()
+    for key_node, _ in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
         key = loader.construct_object(key_node, deep=deep)
         try:
-            duplicate = key in result
+            duplicate = key in explicit_keys
         except TypeError as exc:
             raise yaml.constructor.ConstructorError(
                 "while constructing a mapping",
@@ -39,8 +40,9 @@ def _construct_unique_mapping(
                 f"found duplicate key {key!r}",
                 key_node.start_mark,
             )
-        result[key] = loader.construct_object(value_node, deep=deep)
-    return result
+        explicit_keys.add(key)
+    loader.flatten_mapping(node)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
 
 
 UniqueKeyLoader.add_constructor(
@@ -58,12 +60,16 @@ def resolve_mode(document: object) -> str:
     if "previewStack" not in document:
         return "standalone"
     preview_stack = document["previewStack"]
+    if preview_stack is None:
+        return "standalone"
     if not isinstance(preview_stack, dict):
         raise TypeError("previewStack must be a mapping")
 
     if "certificateIdentity" not in preview_stack:
         return "standalone"
     certificate_identity = preview_stack["certificateIdentity"]
+    if certificate_identity is None:
+        return "standalone"
     if not isinstance(certificate_identity, dict):
         raise TypeError("previewStack.certificateIdentity must be a mapping")
 

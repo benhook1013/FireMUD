@@ -3,18 +3,23 @@ package net.firedevops.firemud.hostedidentity.config;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.function.BiConsumer;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
 
+@ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityPropertiesTest {
   @Test
   void applicationYamlBindsAllPreviewAndDevDemoAnnotationKeys() throws Exception {
@@ -63,6 +68,41 @@ class HostedIdentityPropertiesTest {
         assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
     assertEquals(
         "hosted identity control namespace must be firemud-system", exception.getMessage());
+  }
+
+  @Test
+  void validatesConfiguredHostnamesAgainstTheCrdStatusContract() {
+    for (String invalidHostname :
+        new String[] {
+          null,
+          "",
+          "Preview.firedevops.net",
+          "preview_firedevops_net",
+          "-preview.firedevops.net",
+          "preview.firedevops.net-",
+          "a".repeat(254)
+        }) {
+      HostedIdentityProperties previewProperties = new HostedIdentityProperties();
+      previewProperties.setPreviewDomain(invalidHostname);
+      IllegalStateException previewFailure =
+          assertThrows(IllegalStateException.class, previewProperties::afterPropertiesSet);
+      assertEquals(
+          "preview domain must match the lowercase hostname contract and contain at most 253 characters",
+          previewFailure.getMessage());
+
+      HostedIdentityProperties devDemoProperties = new HostedIdentityProperties();
+      devDemoProperties.setDevDemoHostname(invalidHostname);
+      IllegalStateException devDemoFailure =
+          assertThrows(IllegalStateException.class, devDemoProperties::afterPropertiesSet);
+      assertEquals(
+          "dev-demo hostname must match the lowercase hostname contract and contain at most 253 characters",
+          devDemoFailure.getMessage());
+    }
+
+    HostedIdentityProperties maximum = new HostedIdentityProperties();
+    maximum.setPreviewDomain("a".repeat(253));
+    maximum.setDevDemoHostname("b".repeat(253));
+    assertDoesNotThrow(maximum::afterPropertiesSet);
   }
 
   @Test
@@ -174,5 +214,18 @@ class HostedIdentityPropertiesTest {
     properties.setActivationMode(" active ");
     assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
     assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());
+  }
+
+  @Test
+  void invalidActivationModeLogsTheRejectedNonSecretSelector(CapturedOutput output) {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("unexpected-mode");
+
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    assertTrue(
+        output
+            .getOut()
+            .contains(
+                "Rejected hosted identity activation mode 'unexpected-mode'; defaulting to paused"));
   }
 }

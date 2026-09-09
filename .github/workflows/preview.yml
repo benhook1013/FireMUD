@@ -528,9 +528,10 @@ jobs:
           set -euo pipefail
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]
+          head_sha="${HEAD_SHA,,}"
           kubectl annotate namespace "$RUNTIME_NAMESPACE" \
-            "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
+            "firemud.dev/last-preview-head-sha=${head_sha}" \
             --overwrite >/dev/null
 
       - name: Show deployed preview services

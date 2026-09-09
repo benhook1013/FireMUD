@@ -249,6 +249,35 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
             self.validator.sanitize(source, destination)
             return yaml.safe_load(destination.read_text(encoding="utf-8"))["data"]
 
+    def _validate_config_map_manifest(self, document):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with (
+                patch.object(
+                    self.validator,
+                    "EXPECTED_NAMES",
+                    {"ConfigMap": {"firemud-config"}},
+                ),
+                patch.object(
+                    self.validator,
+                    "EXPECTED_OBJECTS",
+                    {("ConfigMap", "firemud-config")},
+                ),
+                patch.object(self.validator, "validate_services"),
+                patch.object(self.validator, "validate_network_policies"),
+                patch.object(
+                    self.validator, "validate_infrastructure_deployments"
+                ),
+                patch.object(self.validator, "validate_service_consumers"),
+            ):
+                self.validator.validate_manifest(
+                    path,
+                    "pr-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
     def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
         sanitized = self._sanitize_config_map_data(
             {
@@ -272,6 +301,58 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
         }
 
         self.assertEqual(self._sanitize_config_map_data(expected), expected)
+
+    def test_final_validation_accepts_ordinary_data(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "firemud-config",
+                "labels": {
+                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
+            "data": {"FIREMUD_AUTH_MODE": "preview"},
+        }
+
+        self._validate_config_map_manifest(document)
+
+    def test_sanitize_rejects_binary_data(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "firemud-config"},
+            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "binaryData": {"database_credential_file": "c2VjcmV0"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            destination = Path(directory) / "sanitized.yaml"
+            source.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "extra=\\['binaryData'\\]"):
+                self.validator.sanitize(source, destination)
+
+            self.assertFalse(destination.exists())
+
+    def test_final_validation_rejects_binary_data(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "firemud-config",
+                "labels": {
+                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
+            "data": {"FIREMUD_AUTH_MODE": "preview"},
+            "binaryData": {"database_credential_file": "c2VjcmV0"},
+        }
+
+        with self.assertRaisesRegex(ValueError, "extra=\\['binaryData'\\]"):
+            self._validate_config_map_manifest(document)
 
 
 if __name__ == "__main__":

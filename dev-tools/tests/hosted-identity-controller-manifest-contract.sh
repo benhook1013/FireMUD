@@ -671,6 +671,12 @@ assert (
 ) in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']" in profile_expression
+for private_key_profile in (
+    "object.spec.privateKey.algorithm == 'RSA'",
+    "object.spec.privateKey.size == 2048",
+    "object.spec.privateKey.encoding == 'PKCS8'",
+):
+    assert private_key_profile in certificate_match
 PY
 for phase in Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying Ready Degraded Blocked Retiring Retired; do
   require_literal "$CRD" "- $phase"
@@ -913,7 +919,13 @@ for ca_proof in \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
   "openssl x509 -pubkey -noout" \
+  "openssl rsa -pubin -noout" \
+  "openssl pkcs8 -nocrypt -out /dev/null" \
+  "openssl rsa -check -noout" \
   "openssl pkey -pubout -outform DER" \
+  'ca.crt public key must be RSA' \
+  'ca.key must be an unencrypted PKCS8 private key' \
+  'ca.key must be RSA' \
   'does not match the configured fingerprint' \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
@@ -1052,6 +1064,9 @@ chmod +x "$bootstrap_test_dir/kubectl"
 bootstrap_ca_cert="$bootstrap_test_dir/ca.crt"
 bootstrap_ca_key="$bootstrap_test_dir/ca.key"
 bootstrap_mismatched_ca_key="$bootstrap_test_dir/mismatched-ca.key"
+bootstrap_ec_ca_cert="$bootstrap_test_dir/ec-ca.crt"
+bootstrap_ec_ca_key="$bootstrap_test_dir/ec-ca.key"
+bootstrap_pkcs1_ca_key="$bootstrap_test_dir/pkcs1-ca.key"
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_ca_key" \
   -out "$bootstrap_ca_cert" \
@@ -1060,6 +1075,14 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   >/dev/null 2>&1
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
   -out "$bootstrap_mismatched_ca_key" >/dev/null 2>&1
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout "$bootstrap_ec_ca_key" \
+  -out "$bootstrap_ec_ca_cert" \
+  -days 1 \
+  -subj '/CN=firemud-grpc-ca' \
+  >/dev/null 2>&1
+openssl rsa -in "$bootstrap_ca_key" -traditional \
+  -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1
 bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 bootstrap_fingerprint="$(
   openssl x509 -in "$bootstrap_ca_cert" -outform DER |
@@ -1148,6 +1171,50 @@ fi
 require_literal "$bootstrap_error" "ca.crt and ca.key do not match"
 if grep -Fxq -- "apply:active" "$key_mismatch_event_log"; then
   fail "bootstrap applied active mode after a gRPC CA certificate/key mismatch"
+fi
+ec_fingerprint="$(
+  openssl x509 -in "$bootstrap_ec_ca_cert" -outform DER |
+    sha256sum |
+    awk '{print $1}'
+)"
+ec_event_log="$bootstrap_test_dir/ec-events"
+if FAKE_EVENT_LOG="$ec_event_log" \
+  FAKE_CA_CERT="$bootstrap_ec_ca_cert" FAKE_CA_KEY="$bootstrap_ec_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$ec_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an EC gRPC CA"
+fi
+require_literal "$bootstrap_error" "ca.crt public key must be RSA"
+if grep -Fxq -- "apply:active" "$ec_event_log"; then
+  fail "bootstrap applied active mode after an EC gRPC CA"
+fi
+ec_key_event_log="$bootstrap_test_dir/ec-key-events"
+if FAKE_EVENT_LOG="$ec_key_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ec_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an EC gRPC CA private key"
+fi
+require_literal "$bootstrap_error" "ca.key must be RSA"
+if grep -Fxq -- "apply:active" "$ec_key_event_log"; then
+  fail "bootstrap applied active mode after an EC gRPC CA private key"
+fi
+pkcs1_event_log="$bootstrap_test_dir/pkcs1-events"
+if FAKE_EVENT_LOG="$pkcs1_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_pkcs1_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a non-PKCS8 gRPC CA private key"
+fi
+require_literal "$bootstrap_error" "ca.key must be an unencrypted PKCS8 private key"
+if grep -Fxq -- "apply:active" "$pkcs1_event_log"; then
+  fail "bootstrap applied active mode after a non-PKCS8 gRPC CA private key"
 fi
 if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \

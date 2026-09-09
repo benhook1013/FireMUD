@@ -43,6 +43,7 @@ for required in \
   'using: composite' \
   'umask 077' \
   'test -n "$KUBECONFIG_CONTENT"' \
+  'command -v kubectl >/dev/null 2>&1' \
   'mkdir -p -- "$destination_directory"' \
   'temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"' \
   'trap cleanup EXIT' \
@@ -186,8 +187,13 @@ for fragment in (
     '[[ "$artifact_count" == 1 ]] || emit_no_action',
 ):
     assert fragment in target_script, fragment
+assert 'if [[ "$ACTION" == deploy ]]' not in target_script
 source_step = next(step for step in validate_job["steps"] if step.get("id") == "source")
 assert "steps.target.outputs.action == 'deploy'" in source_step["if"]
+source_script = source_step["run"]
+assert 'jq -r --arg head_sha "$HEAD_SHA"' in source_script
+assert ".head_sha == $head_sha" in source_script
+assert '.head_sha == \\"${HEAD_SHA}\\"' not in source_script
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -363,7 +369,10 @@ preview_deployed_index = next(
 assert preview_requested_index < preview_deploy_index < preview_deployed_index
 preview_deployed_step = preview_steps[preview_deployed_index]
 assert "steps.deploy-release.outcome == 'success'" in preview_deployed_step["if"]
-assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in preview_deployed_step["run"]
+assert '[[ "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_deployed_step["run"]
+assert 'head_sha="${HEAD_SHA,,}"' in preview_deployed_step["run"]
+assert "firemud.dev/last-preview-head-sha=${head_sha}" in preview_deployed_step["run"]
+assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" not in preview_deployed_step["run"]
 assert "firemud.dev/requested-preview-head-sha=${head_sha}" in preview_annotator
 assert "firemud.dev/last-preview-head-sha=${head_sha}" not in preview_annotator
 
@@ -379,6 +388,13 @@ assert projection_lines == [
 ]
 assert "kubectl" not in projection_wait
 assert "deadline=" not in projection_wait
+
+retirement_wait = next(
+    step["run"]
+    for step in jobs["retire-identity"]["steps"]
+    if step.get("name") == "Observe terminal retirement and delete request"
+)
+assert '--retired "$IDENTITY_NAME" 600' in retirement_wait
 
 credential_step = next(
     step["run"]
@@ -1373,14 +1389,17 @@ PY
 # and therefore cannot publish deployed-head evidence.
 apply_runtime_step="$TEMP_DIR/apply-runtime-step.sh"
 record_preview_head_step="$TEMP_DIR/record-preview-head-step.sh"
+record_source_preview_head_step="$TEMP_DIR/record-source-preview-head-step.sh"
 prepared_render="$TEMP_DIR/runtime-target-prepared.yaml"
-python3 - "$trusted" "$apply_runtime_step" "$record_preview_head_step" <<'PY'
+python3 - "$trusted" "$preview" "$apply_runtime_step" "$record_preview_head_step" \
+  "$record_source_preview_head_step" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 steps = workflow["jobs"]["deploy-runtime"]["steps"]
 apply_step = next(
     step for step in steps if step.get("name") == "Apply validated PR runtime artifact"
@@ -1388,8 +1407,14 @@ apply_step = next(
 record_step = next(
     step for step in steps if step.get("name") == "Record exact deployed preview head"
 )
-Path(sys.argv[2]).write_text(apply_step["run"], encoding="utf-8")
-Path(sys.argv[3]).write_text(record_step["run"], encoding="utf-8")
+source_record_step = next(
+    step
+    for step in preview_workflow["jobs"]["preview-deploy"]["steps"]
+    if step.get("name") == "Record exact deployed preview head"
+)
+Path(sys.argv[3]).write_text(apply_step["run"], encoding="utf-8")
+Path(sys.argv[4]).write_text(record_step["run"], encoding="utf-8")
+Path(sys.argv[5]).write_text(source_record_step["run"], encoding="utf-8")
 PY
 
 apply_stub_dir="$TEMP_DIR/apply-stubs"
@@ -1530,6 +1555,20 @@ run_apply_fixture stale-second \
   "head is stale"
 run_apply_fixture success \
   "gh-1 dry-run gh-2 apply deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+mixed_case_head=AaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa
+source_preview_log="$TEMP_DIR/source-preview-head.log"
+: >"$source_preview_log"
+env \
+  PATH="$apply_stub_dir:$PATH" \
+  RUNTIME_NAMESPACE=pr-42 \
+  PR_NUMBER=42 \
+  HEAD_SHA="$mixed_case_head" \
+  TEST_EXPECTED_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  TEST_APPLY_LOG="$source_preview_log" \
+  bash "$record_source_preview_head_step"
+[[ "$(<"$source_preview_log")" == \
+  "deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
 
 # The retired waiter treats kubectl's structured NotFound result as an empty,
 # retryable lookup, while permission/API failures remain immediately fatal.
@@ -1708,6 +1747,24 @@ test "$(stat -c '%a' "$malformed_kubeconfig_path")" = 644
 test ! -s "$malformed_github_env"
 test -z "$(find "$TEMP_DIR" -maxdepth 1 -name '.*.kubeconfig.*' -print -quit)"
 
+missing_kubectl_bin="$TEMP_DIR/missing-kubectl-bin"
+missing_kubectl_path="$TEMP_DIR/missing-kubectl.kubeconfig"
+missing_kubectl_github_env="$TEMP_DIR/missing-kubectl-github-env"
+mkdir -p "$missing_kubectl_bin"
+printf 'prior destination without kubectl\n' >"$missing_kubectl_path"
+: >"$missing_kubectl_github_env"
+if PATH="$missing_kubectl_bin" \
+  KUBECONFIG_CONTENT="$valid_kubeconfig" \
+  KUBECONFIG_PATH="$missing_kubectl_path" \
+  GITHUB_ENV="$missing_kubectl_github_env" \
+  /usr/bin/bash "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
+  echo "shared kubeconfig action succeeded without kubectl" >&2
+  exit 1
+fi
+test "$(cat "$missing_kubectl_path")" = 'prior destination without kubectl'
+test ! -s "$missing_kubectl_github_env"
+test -z "$(find "$TEMP_DIR" -maxdepth 1 -name '.*.kubeconfig.*' -print -quit)"
+
 python3 - "$trusted" "$TEMP_DIR/target.sh" <<'PY'
 import sys
 from pathlib import Path
@@ -1747,7 +1804,7 @@ case "$resource" in
   repos/example/FireMUD/pulls/900)
     jq -nc \
       --arg state "${TEST_PR_STATE:-open}" \
-      --arg head "${TEST_PR_HEAD_SHA:-head-900}" \
+      --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
       '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:[]}'
@@ -1770,7 +1827,7 @@ chmod +x "$TEMP_DIR/bin/gh"
     EVENT_NAME=workflow_run \
     EVENT_ACTION=completed \
     WORKFLOW_RUN_ID=42 \
-    WORKFLOW_RUN_HEAD_SHA=head-900 \
+    WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
     EVENT_PR_NUMBER='' \
     EVENT_HEAD_SHA='' \
     INPUT_PR_NUMBER='' \
@@ -1840,7 +1897,16 @@ EOF
 run_closed_target_fixture open-state open example/FireMUD develop \
   "$closed_head" "$closed_head" 1
 run_closed_target_fixture fork closed attacker/Fork develop \
-  "$closed_head" "$closed_head" 1
+  "$closed_head" "$closed_head" 0
+test "$(cat "$TEMP_DIR/closed-target-fork.output")" = 'action=none'
+uppercase_head=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+run_closed_target_fixture uppercase-head closed example/FireMUD develop \
+  "$uppercase_head" "$uppercase_head" 0
+grep -Fxq "head_sha=${closed_head}" "$TEMP_DIR/closed-target-uppercase-head.output"
+grep -Fxq "image_tag=${closed_head}" "$TEMP_DIR/closed-target-uppercase-head.output"
+run_closed_target_fixture invalid-head closed example/FireMUD develop \
+  not-a-sha not-a-sha 0
+test "$(cat "$TEMP_DIR/closed-target-invalid-head.output")" = 'action=none'
 run_closed_target_fixture unsupported-base closed example/FireMUD feature \
   "$closed_head" "$closed_head" 1
 run_closed_target_fixture stale-head closed example/FireMUD develop \

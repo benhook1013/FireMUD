@@ -1,12 +1,19 @@
 package net.firedevops.firemud.hostedidentity.config;
 
 import java.time.Duration;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "firemud.hosted-identity")
 public class HostedIdentityProperties implements InitializingBean {
+  private static final Logger LOGGER = LoggerFactory.getLogger(HostedIdentityProperties.class);
+  private static final int MAX_HOSTNAME_LENGTH = 253;
+  private static final Pattern HOSTNAME_PATTERN =
+      Pattern.compile("^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$");
   public static final Duration INTERNAL_CERTIFICATE_DURATION = Duration.ofDays(30);
   public static final Duration MINIMUM_GRPC_RENEW_BEFORE = Duration.ofMinutes(5);
   private static final int CANONICAL_PREVIEW_TELNET_PORT_BASE = 32000;
@@ -52,6 +59,8 @@ public class HostedIdentityProperties implements InitializingBean {
       throw new IllegalStateException(
           "gRPC CA secret name must be " + HostedIdentityContract.GRPC_CA_SECRET_NAME);
     }
+    requireValidHostname("preview domain", previewDomain);
+    requireValidHostname("dev-demo hostname", devDemoHostname);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(
@@ -71,6 +80,18 @@ public class HostedIdentityProperties implements InitializingBean {
     if (value != null && !value.isEmpty() && !value.matches("[0-9a-f]{64}")) {
       throw new IllegalStateException(
           propertyName + " must be empty or 64 lowercase hexadecimal characters");
+    }
+  }
+
+  private static void requireValidHostname(String propertyName, String value) {
+    if (value == null
+        || value.length() > MAX_HOSTNAME_LENGTH
+        || !HOSTNAME_PATTERN.matcher(value).matches()) {
+      throw new IllegalStateException(
+          propertyName
+              + " must match the lowercase hostname contract and contain at most "
+              + MAX_HOSTNAME_LENGTH
+              + " characters");
     }
   }
 
@@ -114,6 +135,8 @@ public class HostedIdentityProperties implements InitializingBean {
     try {
       return ActivationMode.valueOf(activationMode.trim().toUpperCase(java.util.Locale.ROOT));
     } catch (IllegalArgumentException exception) {
+      LOGGER.warn(
+          "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
       return ActivationMode.PAUSED;
     }
   }

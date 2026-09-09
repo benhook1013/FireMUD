@@ -88,6 +88,17 @@ jobs:
             echo 'action=none' >> "$GITHUB_OUTPUT"
             exit 0
           }
+          normalize_head_sha() {
+            local head_sha="$1"
+            [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+            printf '%s' "${head_sha,,}"
+          }
+          if ! EXPECTED_HEAD_SHA="$(normalize_head_sha "$EXPECTED_HEAD_SHA")"; then
+            emit_no_action "Ignoring lifecycle event with an invalid expected head SHA."
+          fi
+          if ! current_head_sha="$(normalize_head_sha "$current_head_sha")"; then
+            emit_no_action "Ignoring pull request metadata with an invalid current head SHA."
+          fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             [[ "$state" == open ]] || emit_no_action \
               "Source render completed after PR closure; no preview activation is required."
@@ -111,26 +122,12 @@ jobs:
               "Ignoring source render without exactly one current ${expected_artifact_name} artifact."
             ACTION=deploy
           else
-            [[ "$repository" == "$GITHUB_REPOSITORY" ]]
+            [[ "$repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
+              "Ignoring closed pull request because its head repository is not trusted."
             [[ "$base_ref" == main || "$base_ref" == develop ]]
-            if [[ "$ACTION" == deploy ]]; then
-              [[ "$state" == open ]]
-              if [[ "$labels_valid" != true ]]; then
-                emit_no_action \
-                  "Refusing hosted preview activation: PR label metadata is missing or malformed."
-              fi
-            else
-              [[ "$state" == closed ]]
-            fi
+            [[ "$state" == closed ]]
           fi
-          if [[ -n "$EXPECTED_HEAD_SHA" ]]; then
-            [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]
-          else
-            EXPECTED_HEAD_SHA="$current_head_sha"
-          fi
-          if [[ "$ACTION" == deploy ]]; then
-            test "$EXPECTED_HEAD_SHA" = "$current_head_sha"
-          fi
+          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]
           {
             echo "action=${ACTION}"
             echo "pr_number=${PR_NUMBER}"
@@ -154,8 +151,11 @@ jobs:
           set -euo pipefail
           render_run_id="$SOURCE_RUN_ID"
           if [[ -z "$render_run_id" ]]; then
-            render_run_id="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs?event=pull_request&status=success&per_page=100" \
-              --jq "first(.[].workflow_runs[] | select(.head_sha == \"${HEAD_SHA}\" and .event == \"pull_request\" and .path == \".github/workflows/preview.yml\") | .id) // empty")"
+            runs_json="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/runs?event=pull_request&status=success&per_page=100")"
+            render_run_id="$(jq -r --arg head_sha "$HEAD_SHA" \
+              'first(.[].workflow_runs[] | select(.head_sha == $head_sha and .event == "pull_request" and .path == ".github/workflows/preview.yml") | .id) // empty' \
+              <<<"$runs_json")"
           fi
           test -n "$render_run_id"
           source_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}")"
@@ -957,6 +957,6 @@ jobs:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-            --retired "$IDENTITY_NAME"
+            --retired "$IDENTITY_NAME" 600
           kubectl -n firemud-system delete hostedenvironmentidentity "$IDENTITY_NAME" \
             --wait=true --timeout=180s

@@ -2,12 +2,27 @@ package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import org.junit.jupiter.api.Test;
 
 class EnvironmentIdentityPlannerTest {
+  private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
+      Pattern.compile(
+          "r\\.apiGroups == \\['apps'\\] &&\\s+"
+              + "r\\.resources == \\['deployments'\\] &&\\s+"
+              + "r\\.resourceNames == \\[([^\\]]+)] &&\\s+"
+              + "r\\.verbs == \\['get', 'update', 'patch'\\]",
+          Pattern.DOTALL);
+  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
 
@@ -62,6 +77,32 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
+    Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
+    String admission = Files.readString(admissionPath);
+    int policyStart = admission.indexOf("name: firemud-hosted-identity-scope-roles");
+    assertTrue(policyStart >= 0, "scope-role admission policy must exist");
+    int policyEnd = admission.indexOf("\n---", policyStart);
+    String scopeRolePolicy =
+        admission.substring(policyStart, policyEnd < 0 ? admission.length() : policyEnd);
+    int runtimeScopeStart =
+        scopeRolePolicy.lastIndexOf("(object.metadata.name == 'firemud-hosted-runtime-scope'");
+    assertTrue(runtimeScopeStart >= 0, "runtime-scope admission branch must exist");
+    String runtimeScopePolicy = scopeRolePolicy.substring(runtimeScopeStart);
+
+    Matcher resourceNames = RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(runtimeScopePolicy);
+    assertTrue(resourceNames.find(), "runtime deployment resourceNames rule must exist");
+    Matcher literal = CEL_STRING_LITERAL.matcher(resourceNames.group(1));
+    List<String> admittedConsumers = new ArrayList<>();
+    while (literal.find()) {
+      admittedConsumers.add(literal.group(1));
+    }
+
+    assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
+    assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
+  }
+
+  @Test
   void mapsEachConfiguredIssuerAndCaSecretToItsNamedPlanAccessor() {
     var properties = new HostedIdentityProperties();
     properties.setIngressIssuer("sentinel-ingress-issuer");
@@ -87,5 +128,17 @@ class EnvironmentIdentityPlannerTest {
     assertThrows(IllegalArgumentException.class, () -> planner.plan("preview-pr-42"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42x"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42-other"));
+  }
+
+  private static Path findRepositoryFile(String relativePath) {
+    Path directory = Path.of("").toAbsolutePath();
+    while (directory != null) {
+      Path candidate = directory.resolve(relativePath);
+      if (Files.isRegularFile(candidate)) {
+        return candidate;
+      }
+      directory = directory.getParent();
+    }
+    throw new AssertionError("could not locate repository file " + relativePath);
   }
 }

@@ -391,6 +391,7 @@ SANITIZER_SECRET_REFERENCE_SUFFIXES = (
 SANITIZER_SENSITIVE_KEY = re.compile(
     r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY|CREDENTIAL)", re.IGNORECASE
 )
+FIREMUD_CONFIG_FIELDS = frozenset({"apiVersion", "kind", "metadata", "data"})
 MIN_PREVIEW_TELNET_PORT = 32000
 MAX_PREVIEW_TELNET_PORT = 32015
 RESTRICTED_VOLUME_KEYS = {
@@ -524,6 +525,7 @@ def _clean_config_map(document: dict) -> dict | None:
         return None
     if metadata.get("name") != "firemud-config":
         return document
+    _validate_firemud_config_shape(document)
     data = _require_mapping(
         document.get("data"),
         "ConfigMap/firemud-config.data",
@@ -534,6 +536,22 @@ def _clean_config_map(document: dict) -> dict | None:
         if not SANITIZER_SENSITIVE_KEY.search(key)
     }
     return document
+
+
+def _validate_firemud_config_shape(document: dict) -> None:
+    if document.get("kind") != "ConfigMap":
+        return
+    metadata = document.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("name") != "firemud-config":
+        return
+    actual_fields = set(document)
+    if actual_fields != FIREMUD_CONFIG_FIELDS:
+        fail(
+            "ConfigMap/firemud-config has unsafe top-level fields "
+            f"(missing={sorted(FIREMUD_CONFIG_FIELDS - actual_fields)}, "
+            f"extra={sorted(actual_fields - FIREMUD_CONFIG_FIELDS)})"
+        )
+    _require_mapping(document.get("data"), "ConfigMap/firemud-config.data")
 
 
 def _validate_sanitized_secret_refs(value: object, path: str = "object") -> None:
@@ -1230,6 +1248,7 @@ def validate_manifest(
             fail(f"manifest object has unsafe name: {name!r}")
         if name not in EXPECTED_NAMES[document["kind"]]:
             fail(f"manifest contains unexpected {document['kind']}/{name}")
+        _validate_firemud_config_shape(document)
         if document["kind"] in {"Deployment", "Job"}:
             pod = ((document.get("spec") or {}).get("template") or {}).get("spec")
             _validate_restricted_pod_security(

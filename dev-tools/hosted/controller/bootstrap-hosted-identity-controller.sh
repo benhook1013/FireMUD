@@ -187,6 +187,22 @@ verify_grpc_ca_prerequisite() {
   )" || fail "firemud-grpc-ca ca.crt is not a valid certificate"
   [[ "$actual_fingerprint" == "${GRPC_TRUST_ANCHOR_SHA256,,}" ]] || \
     fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
+  if ! printf '%s' "$encoded_certificate" |
+    base64 --decode |
+    openssl x509 -pubkey -noout 2>/dev/null |
+    openssl rsa -pubin -noout >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.crt public key must be RSA"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
+    openssl pkcs8 -nocrypt -out /dev/null >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
+    openssl rsa -check -noout >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.key must be RSA"
+  fi
   certificate_public_key_sha256="$(
     printf '%s' "$encoded_certificate" |
       base64 --decode |

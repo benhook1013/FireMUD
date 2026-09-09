@@ -20,6 +20,7 @@ runs:
         umask 077
         test -n "$KUBECONFIG_CONTENT"
         test -n "$KUBECONFIG_PATH"
+        command -v kubectl >/dev/null 2>&1
         destination_directory="$(dirname -- "$KUBECONFIG_PATH")"
         destination_name="$(basename -- "$KUBECONFIG_PATH")"
         mkdir -p -- "$destination_directory"

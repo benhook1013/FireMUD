@@ -288,6 +288,9 @@ spec:
            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
             object.metadata.name == 'firemud-grpc-tls') &&
            object.spec.secretName == object.metadata.name &&
+           object.spec.privateKey.algorithm == 'RSA' &&
+           object.spec.privateKey.size == 2048 &&
+           object.spec.privateKey.encoding == 'PKCS8' &&
            object.spec.privateKey.rotationPolicy == 'Always' &&
            has(object.spec.encodeUsagesInRequest) &&
            object.spec.encodeUsagesInRequest == true &&
