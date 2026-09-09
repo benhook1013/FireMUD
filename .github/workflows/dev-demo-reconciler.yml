@@ -168,7 +168,10 @@ jobs:
               history_not_before="1970-01-01T00:00:00Z"
               echo "No develop push anchor or exact-target dev-demo attempt exists for ${desired_head_sha}; retained history is complete and dispatch may proceed."
             else
-              [[ -n "$bootstrap_oldest" ]]
+              if [[ -z "$bootstrap_oldest" ]]; then
+                echo "::error title=Dev-demo history bootstrap invalid::Exact-target history for ${desired_head_sha} has no usable creation timestamp; refusing a history-blind dispatch."
+                exit 1
+              fi
               history_not_before="$bootstrap_oldest"
               echo "No develop push anchor exists for ${desired_head_sha}; using bounded exact-target dev-demo history from ${history_not_before}."
             fi
@@ -208,11 +211,12 @@ jobs:
           fi
 
           # Walk completed history newest-first until the exact target is found
-          # and, for a failed latest candidate, its three-attempt budget is known.
-          # Bootstrap evidence is only an anchor; its failures are already part
-          # of this same retained history and must not be counted twice.
+          # and, for an unaligned successful candidate, its bounded repair budget
+          # is known. Bootstrap evidence is only an anchor; its failures are
+          # already part of this same retained history and must not be counted twice.
           # Irrelevant destroy and other-target runs cannot evict this evidence.
           failed_attempts=0
+          unaligned_completed_attempts=0
           page=1
           while (( page <= max_history_pages )); do
             run_page="$(list_run_page "$page")"
@@ -235,7 +239,8 @@ jobs:
             if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
               break
             fi
-            if [[ "${candidate_status}" == completed && "${candidate_conclusion}" == success ]]; then
+            if [[ "${candidate_status}" == completed && "${candidate_conclusion}" == success \
+              && "${current_head_sha}" == "${desired_head_sha}" ]]; then
               break
             fi
             page_failed_attempts="$(
@@ -244,6 +249,16 @@ jobs:
                 <<<"${exact_page_runs}"
             )"
             failed_attempts=$((failed_attempts + page_failed_attempts))
+            if [[ "${current_head_sha}" != "${desired_head_sha}" ]]; then
+              page_completed_attempts="$(
+                jq -r '[.[] | select(.status == "completed")] | length' \
+                  <<<"${exact_page_runs}"
+              )"
+              unaligned_completed_attempts=$((unaligned_completed_attempts + page_completed_attempts))
+              if (( unaligned_completed_attempts >= max_failed_attempts )); then
+                break
+              fi
+            fi
             if (( failed_attempts >= max_failed_attempts )); then
               break
             fi
@@ -278,6 +293,16 @@ jobs:
             && "${candidate_conclusion}" == success ]]; then
             echo "Dev demo already aligned to successful develop head ${desired_head_sha}"
             exit 0
+          fi
+
+          if [[ "${current_head_sha}" != "${desired_head_sha}" \
+            && "${candidate_status}" == completed \
+            && "${candidate_conclusion}" == success ]]; then
+            if (( unaligned_completed_attempts >= max_failed_attempts )); then
+              echo "::error title=Dev-demo alignment retry budget exhausted::Develop head ${desired_head_sha} has ${unaligned_completed_attempts} completed attempts without namespace alignment; automatic redispatch is stopped until develop advances or an operator intervenes."
+              exit 1
+            fi
+            echo "Redispatching successful dev-demo candidate ${candidate_run_id} because the runtime namespace remains unaligned to develop head ${desired_head_sha}."
           fi
 
           if [[ "${candidate_status}" == completed && "${candidate_conclusion}" != success ]]; then

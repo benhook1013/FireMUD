@@ -13,6 +13,7 @@ import io.fabric8.kubernetes.api.model.rbac.RoleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.RoleRefBuilder;
 import io.fabric8.kubernetes.api.model.rbac.SubjectBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -183,7 +184,7 @@ public class HostedIdentityScopeService {
                 rule(
                     List.of("apps"),
                     List.of("deployments"),
-                    plan.grpcConsumers(),
+                    requiredDeploymentNames(plan),
                     List.of("get", "update", "patch")),
                 rule(
                     List.of(""),
@@ -198,6 +199,12 @@ public class HostedIdentityScopeService {
     ensureRole(client, plan.runtimeNamespace(), desired);
     ensureBinding(
         client, plan.runtimeNamespace(), RUNTIME_ROLE_NAME, labels(plan), RUNTIME_ROLE_NAME, plan);
+  }
+
+  static List<String> requiredDeploymentNames(EnvironmentIdentityPlan plan) {
+    LinkedHashSet<String> names = new LinkedHashSet<>(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
+    names.addAll(plan.grpcConsumers());
+    return List.copyOf(names);
   }
 
   private static Role role(

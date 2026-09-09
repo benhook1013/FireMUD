@@ -72,9 +72,7 @@ class AdmissionValidatorTest {
   void retiredIdentityWithRetiredDesiredStateProceedsToPlanning() {
     EnvironmentIdentityPlanner planner = planner();
     HostedEnvironmentIdentity resource = validResource();
-    resource
-        .getSpec()
-        .setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
     HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
     status.setPhase(HostedEnvironmentIdentityStatus.Phase.Retired);
     resource.setStatus(status);

@@ -124,7 +124,8 @@ if [[ "${1:-}" == "--retired" ]]; then
   while (( SECONDS < deadline )); do
     if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
       if [[ -z "$identity_json" ]]; then
-        echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear before retirement."
+        printf 'identity=%s\nphase=Retired\n' "$identity_name"
+        exit 0
       else
         generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"
         observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"

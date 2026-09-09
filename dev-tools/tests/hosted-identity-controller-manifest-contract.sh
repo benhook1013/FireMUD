@@ -742,6 +742,11 @@ assert "spiffe://firemud/ns/" in profile_expression
 assert "/sa/tcp-proxy-service" in profile_expression
 assert "has(object.spec.encodeUsagesInRequest)" in profile_expression
 assert "object.spec.encodeUsagesInRequest == true" in profile_expression
+assert "object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net']" in profile_expression
+assert "object.spec.issuerRef.name == 'letsencrypt-prod'" in profile_expression
+assert "object.spec.issuerRef.name == 'firemud-ca-issuer'" in profile_expression
+assert "object.spec.issuerRef.kind == 'ClusterIssuer'" in profile_expression
+assert "object.spec.issuerRef.group == 'cert-manager.io'" in profile_expression
 assert (
     "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||\n"
     "    ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"

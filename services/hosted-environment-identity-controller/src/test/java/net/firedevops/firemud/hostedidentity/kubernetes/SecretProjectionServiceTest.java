@@ -1315,23 +1315,13 @@ class SecretProjectionServiceTest {
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
     stubCertificate(
-        fixture.secretClient().client(),
-        plan,
-        plan.ingressCertificateName(),
-        true,
-        1,
-        sourceData);
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
     stubCertificateRequests(
         fixture.secretClient().client(),
         plan,
         List.of(
             certificateRequest(
-                plan,
-                plan.ingressCertificateName(),
-                1,
-                "ingress-request-valid",
-                sourceData,
-                true),
+                plan, plan.ingressCertificateName(), 1, "ingress-request-valid", sourceData, true),
             certificateRequest(
                 plan,
                 plan.ingressCertificateName(),
@@ -1386,12 +1376,7 @@ class SecretProjectionServiceTest {
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
     stubCertificate(
-        fixture.secretClient().client(),
-        plan,
-        plan.ingressCertificateName(),
-        true,
-        1,
-        sourceData);
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
     stubCertificateRequests(
         fixture.secretClient().client(),
         plan,
@@ -1422,12 +1407,7 @@ class SecretProjectionServiceTest {
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
     stubCertificate(
-        fixture.secretClient().client(),
-        plan,
-        plan.ingressCertificateName(),
-        true,
-        1,
-        sourceData);
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
     stubCertificateRequests(
         fixture.secretClient().client(),
         plan,
@@ -1753,8 +1733,7 @@ class SecretProjectionServiceTest {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
-    Map<String, String> data =
-        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    Map<String, String> data = Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
     String revision =
         SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, data);
     Map<String, String> pendingAnnotations = acceptedAnnotations(revision, "1".repeat(64));
@@ -2883,8 +2862,7 @@ class SecretProjectionServiceTest {
       status.put("ca", sourceData.get("ca.crt"));
     }
     status.put(
-        "conditions",
-        ready ? List.of(Map.of("type", "Ready", "status", "True")) : List.of());
+        "conditions", ready ? List.of(Map.of("type", "Ready", "status", "True")) : List.of());
     request.setAdditionalProperties(
         Map.of(
             "spec",
@@ -2909,13 +2887,11 @@ class SecretProjectionServiceTest {
     when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
     Resource<Secret> runtimeReplacementResource = mock(Resource.class);
     ReplaceDeletable<Secret> runtimeLockedResource = mock(ReplaceDeletable.class);
-    when(runtimeReplacementResource.lockResourceVersion(
-            org.mockito.ArgumentMatchers.anyString()))
+    when(runtimeReplacementResource.lockResourceVersion(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(runtimeLockedResource);
     Resource<Secret> identityReplacementResource = mock(Resource.class);
     ReplaceDeletable<Secret> identityLockedResource = mock(ReplaceDeletable.class);
-    when(identityReplacementResource.lockResourceVersion(
-            org.mockito.ArgumentMatchers.anyString()))
+    when(identityReplacementResource.lockResourceVersion(org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(identityLockedResource);
     when(runtimeSecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
         .thenReturn(runtimeReplacementResource);

@@ -286,8 +286,15 @@ spec:
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] &&
            (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
-            object.metadata.name == 'firemud-grpc-tls') &&
+           object.metadata.name == 'firemud-grpc-tls') &&
            object.spec.secretName == object.metadata.name &&
+           ((object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] &&
+             object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net'] &&
+             object.spec.issuerRef.name == 'letsencrypt-prod') ||
+            (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] &&
+             object.spec.issuerRef.name == 'firemud-ca-issuer')) &&
+           object.spec.issuerRef.kind == 'ClusterIssuer' &&
+           object.spec.issuerRef.group == 'cert-manager.io' &&
            object.spec.privateKey.algorithm == 'RSA' &&
            object.spec.privateKey.size == 2048 &&
            object.spec.privateKey.encoding == 'PKCS8' &&

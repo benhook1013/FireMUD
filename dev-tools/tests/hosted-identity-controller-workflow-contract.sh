@@ -58,6 +58,8 @@ for required in \
   'using: composite' \
   "helm_version='v3.20.1'" \
   "helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
+  'RUNNER_OS' \
+  'RUNNER_ARCH' \
   'RUNNER_TEMP' \
   'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
   'sha256sum --check --status' \
@@ -213,7 +215,6 @@ assert jobs["deploy-runtime"]["permissions"] == {
     "actions": "read",
     "contents": "read",
     "issues": "write",
-    "packages": "read",
     "pull-requests": "read",
 }
 assert jobs["verify-runtime"]["permissions"] == {
@@ -492,6 +493,11 @@ preview_ensure_step = next(
     if step.get("name") == "Ensure preview gRPC TLS secret exists"
 )
 assert "steps.certificate-identity.outputs.mode == 'standalone'" in preview_ensure_step["if"]
+preview_namespace_step = next(
+    step for step in preview_steps if step.get("name") == "Show namespace state"
+)
+assert 'steps.certificate-identity.outputs.mode' in preview_namespace_step["run"]
+assert '== "standalone"' in preview_namespace_step["run"]
 preview_requested_index = next(
     index
     for index, step in enumerate(preview_steps)
@@ -1762,8 +1768,8 @@ env \
 [[ "$(<"$source_preview_log")" == \
   "deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
 
-# The retired waiter treats kubectl's structured NotFound result as an empty,
-# retryable lookup, while permission/API failures remain immediately fatal.
+# The retired waiter treats kubectl's structured NotFound result as successful
+# terminal absence, while permission/API failures remain immediately fatal.
 retirement_stub_dir="$TEMP_DIR/retirement-waiter-stubs"
 mkdir -p "$retirement_stub_dir"
 real_sleep_path="$(command -v sleep)"
@@ -1824,10 +1830,10 @@ run_retirement_waiter_fixture() {
   [[ "$status" -eq "$expected_status" ]]
   [[ "$(head -n 1 "$kubectl_log")" == "-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" ]]
   if [[ "$scenario" == not-found ]]; then
-    [[ "$(wc -l <"$kubectl_log")" -ge 2 ]]
-    [[ "$(wc -l <"$sleep_log")" -ge 1 ]]
-    grep -Fq 'to appear before retirement' "$output"
-    grep -Fq 'Timed out waiting for HostedEnvironmentIdentity/pr-42 to retire.' "$error"
+    [[ "$(wc -l <"$kubectl_log")" -eq 1 ]]
+    [[ ! -s "$sleep_log" ]]
+    grep -Fq 'phase=Retired' "$output"
+    [[ ! -s "$error" ]]
   else
     [[ "$(wc -l <"$kubectl_log")" -eq 1 ]]
     [[ ! -s "$sleep_log" ]]
@@ -1843,7 +1849,7 @@ run_retirement_waiter_fixture() {
   fi
 }
 
-run_retirement_waiter_fixture not-found 1
+run_retirement_waiter_fixture not-found 0
 run_retirement_waiter_fixture forbidden 42
 run_retirement_waiter_fixture api-error 43
 
@@ -2300,7 +2306,7 @@ case "$resource" in
   repos/example/FireMUD/actions/runs/42)
     if [[ -z "$jq_expression" ]]; then
       printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
-      printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}'
+      printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
     elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
@@ -2325,6 +2331,7 @@ case "$resource" in
 esac
 SH
 chmod +x "$TEMP_DIR/bin/gh"
+target_gh_log="$TEMP_DIR/target-gh.log"
 (
   cd "$ROOT_DIR"
   PATH="$TEMP_DIR/bin:$PATH" \
@@ -2339,10 +2346,12 @@ chmod +x "$TEMP_DIR/bin/gh"
     INPUT_PR_NUMBER='' \
     INPUT_HEAD_SHA='' \
     INPUT_ACTION='' \
+    SOURCE_GH_LOG="$target_gh_log" \
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
 )
 test "$(cat "$TEMP_DIR/output")" = 'action=none'
+test "$(cat "$target_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
 source_step="$TEMP_DIR/source.sh"
 python3 - "$trusted" "$source_step" <<'PY'

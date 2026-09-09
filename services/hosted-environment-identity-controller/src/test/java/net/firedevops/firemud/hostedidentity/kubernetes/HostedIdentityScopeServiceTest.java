@@ -37,6 +37,26 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class HostedIdentityScopeServiceTest {
+  @Test
+  void runtimeRoleCoversBothBridgeDeploymentsAndEveryGrpcConsumer() {
+    EnvironmentIdentityPlan plan = plan();
+
+    assertEquals(
+        java.util.Set.of(
+            "spring-cloud-gateway",
+            "tcp-proxy-service",
+            "account-service",
+            "automation-scripting-service",
+            "entity-management-service",
+            "game-design-service",
+            "game-logic-service",
+            "game-session-service",
+            "logging-admin-service",
+            "social-groups-service",
+            "world-management-service"),
+        new java.util.HashSet<>(HostedIdentityScopeService.requiredDeploymentNames(plan)));
+  }
+
   private static final Map<String, String> ROLE_LABELS =
       Map.of(
           "app.kubernetes.io/name",

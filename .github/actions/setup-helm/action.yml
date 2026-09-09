@@ -10,6 +10,10 @@ runs:
 
         helm_version='v3.20.1'
         helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned Helm installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
         helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"
         archive_path="${helm_root}/helm.tar.gz"
         extraction_dir="${helm_root}/extracted"

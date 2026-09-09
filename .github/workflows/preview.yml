@@ -430,7 +430,9 @@ jobs:
         run: |
           kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
-          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
+          if [[ "${{ steps.certificate-identity.outputs.mode }}" == "standalone" ]]; then
+            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
+          fi
 
       - name: Render preview values
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}

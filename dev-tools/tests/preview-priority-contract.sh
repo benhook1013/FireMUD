@@ -286,7 +286,9 @@ if [[ "$*" == *"actions/workflows/preview.yml/dispatches"* ]]; then
 fi
 case "$resource" in
   */actions/runs/42)
-    if [[ "$*" == *".path"* ]]; then
+    if [[ "$has_jq" != true ]]; then
+      printf '%s' '{"conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+    elif [[ "$*" == *".path"* ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
       printf '%s' 900
@@ -1788,6 +1790,17 @@ PY
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+PRUNER_PATH="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh" python3 - <<'PY'
+import os
+from pathlib import Path
+
+source = Path(os.environ["PRUNER_PATH"]).read_text(encoding="utf-8")
+assert source.index('if [[ "${1:-}" == "--delete-runtime" ]]') < source.index(
+    'PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600'
+)
+PY
+grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
+  "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 # shellcheck disable=SC2016 # Assert literal default helper selection.
 grep -Fq 'delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"

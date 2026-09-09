@@ -276,6 +276,7 @@ for required in (
     "bootstrap_complete=false",
     'bootstrap_complete=true',
     '[[ "$bootstrap_complete" != true ]]',
+    "Dev-demo history bootstrap invalid",
     "bootstrap_failed_attempts",
     "bootstrap_exact_run_count",
     'if (( bootstrap_page_size < 100 )); then',
@@ -296,6 +297,9 @@ for required in (
     ".created_at >= $not_before",
     "oldest_page_created_at",
     "page_failed_attempts",
+    "unaligned_completed_attempts",
+    "Dev-demo alignment retry budget exhausted",
+    "runtime namespace remains unaligned",
     "while (( page <= max_history_pages )); do",
     "Dev-demo nonterminal history exhausted",
     "Dev-demo completed history exhausted",
@@ -1167,7 +1171,8 @@ if [[ "$event" == push ]]; then
     exit 2
   fi
   printf 'anchor\n' >>"$TEST_GH_TRACE"
-  if [[ "$TEST_SCENARIO" == bootstrap-two-failures ]]; then
+  if [[ "$TEST_SCENARIO" == bootstrap-two-failures \
+    || "$TEST_SCENARIO" == bootstrap-missing-created-at ]]; then
     printf '%s\n' '{"workflow_runs":[]}'
     exit 0
   fi
@@ -1232,6 +1237,49 @@ case "$TEST_SCENARIO:$page" in
       ]}'
     ;;
   bootstrap-two-failures:*)
+    empty_runs
+    ;;
+  bootstrap-missing-created-at:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[{
+        id:703,head_sha:$head,status:"completed",conclusion:"success",
+        display_title:("Develop Dev Demo Environment deploy head-" + $head)
+      }]}'
+    ;;
+  bootstrap-missing-created-at:*)
+    empty_runs
+    ;;
+  successful-unaligned:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[{
+        id:704,head_sha:$head,status:"completed",conclusion:"success",
+        created_at:"2026-09-09T05:00:00Z",
+        display_title:("Develop Dev Demo Environment deploy head-" + $head)
+      }]}'
+    ;;
+  successful-unaligned:*)
+    empty_runs
+    ;;
+  successful-unaligned-budget:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[
+        {id:707,head_sha:$head,status:"completed",conclusion:"success",created_at:"2026-09-09T05:02:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
+        {id:706,head_sha:$head,status:"completed",conclusion:"success",created_at:"2026-09-09T05:01:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
+        {id:705,head_sha:$head,status:"completed",conclusion:"success",created_at:"2026-09-09T05:00:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)}
+      ]}'
+    ;;
+  successful-unaligned-budget:*)
+    empty_runs
+    ;;
+  successful-aligned:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[{
+        id:708,head_sha:$head,status:"completed",conclusion:"success",
+        created_at:"2026-09-09T05:00:00Z",
+        display_title:("Develop Dev Demo Environment deploy head-" + $head)
+      }]}'
+    ;;
+  successful-aligned:*)
     empty_runs
     ;;
   three-failures:*)
@@ -1348,5 +1396,9 @@ run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" 
 run_reconcile_fixture three-failures 1 0 "Dev-demo retry budget exhausted"
 run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
 run_reconcile_fixture bootstrap-two-failures 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
+run_reconcile_fixture bootstrap-missing-created-at 1 0 "Dev-demo history bootstrap invalid"
+run_reconcile_fixture successful-unaligned 0 1 "Redispatching successful dev-demo candidate"
+run_reconcile_fixture successful-unaligned-budget 1 0 "Dev-demo alignment retry budget exhausted"
+run_reconcile_fixture successful-aligned 0 0 "already aligned to successful develop head" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"
