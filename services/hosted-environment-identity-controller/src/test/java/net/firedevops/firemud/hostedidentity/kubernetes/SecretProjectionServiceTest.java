@@ -1398,6 +1398,58 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void singleOwnedCertificateRequestWithIncompleteIssuerKeepsMaterializationPending() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
+    GenericKubernetesResource request =
+        certificateRequest(
+            plan, plan.ingressCertificateName(), 1, "ingress-request-incomplete", sourceData, true);
+    Map<String, Object> requestProperties =
+        new LinkedHashMap<>(request.getAdditionalProperties());
+    requestProperties.put(
+        "spec", Map.of("issuerRef", Map.of("name", plan.ingressIssuer(), "kind", "ClusterIssuer")));
+    request.setAdditionalProperties(requestProperties);
+    stubCertificateRequests(fixture.secretClient().client(), plan, List.of(request));
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("materialization-pending", material.state());
+    assertEquals(false, material.ready());
+  }
+
+  @Test
+  void singleOwnedCertificateRequestWithWrongIssuerRemainsRejected() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
+    GenericKubernetesResource request =
+        certificateRequest(
+            plan, plan.ingressCertificateName(), 1, "ingress-request-wrong-issuer", sourceData, true);
+    Map<String, Object> requestProperties =
+        new LinkedHashMap<>(request.getAdditionalProperties());
+    requestProperties.put(
+        "spec",
+        Map.of(
+            "issuerRef",
+            Map.of(
+                "name", plan.grpcIssuer(),
+                "kind", "ClusterIssuer",
+                "group", "cert-manager.io")));
+    request.setAdditionalProperties(requestProperties);
+    stubCertificateRequests(fixture.secretClient().client(), plan, List.of(request));
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
+
+    assertEquals("CertificateRequest issuer binding is invalid", failure.getMessage());
+  }
+
+  @Test
   void zeroValidCertificateRequestsAmongOwnedDuplicatesKeepsMaterializationPending() {
     StableBatchFixture fixture = stableBatchFixture();
     EnvironmentIdentityPlan plan = fixture.plan();

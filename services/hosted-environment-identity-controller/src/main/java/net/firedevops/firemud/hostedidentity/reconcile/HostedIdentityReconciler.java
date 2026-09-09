@@ -1041,8 +1041,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             plan.ingressCertificateName(),
             plan.telnetCertificateName(),
             plan.gatewayInternalWsCertificateName(),
-            plan.tcpProxyBridgeCertificateName(),
-            plan.grpcCertificateName());
+            plan.tcpProxyBridgeCertificateName());
     List<String> ownedCertificateNames = new ArrayList<>();
     for (String name : certificateNames) {
       var operation =

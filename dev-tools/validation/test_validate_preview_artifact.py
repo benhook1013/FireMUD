@@ -419,6 +419,33 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
+    def test_injection_rejects_non_object_service_spec_or_ports(self):
+        for spec, message in (
+            ([], "Service/tcp-proxy-service.spec is not an object"),
+            (
+                {"ports": {}},
+                "Service/tcp-proxy-service.spec.ports is not a list of objects",
+            ),
+        ):
+            document = {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {
+                    "name": "tcp-proxy-service",
+                    "labels": {
+                        **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                        "app.kubernetes.io/instance": "pr-42",
+                    },
+                },
+                "spec": spec,
+            }
+            with tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                destination = Path(directory) / "destination.yaml"
+                source.write_text(yaml.safe_dump(document), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    self.validator.inject_telnet_port(source, destination, 32000, "pr-42")
+
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
     @classmethod

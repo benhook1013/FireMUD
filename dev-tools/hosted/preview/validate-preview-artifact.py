@@ -755,7 +755,14 @@ def sanitize(source: Path, destination: Path) -> None:
         if metadata.get("namespace") in {"firemud-system", "kube-system"}:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
         if kind in {"Deployment", "Job"}:
-            pod = ((raw.get("spec") or {}).get("template") or {}).get("spec")
+            spec = _require_mapping(raw.get("spec"), f"{kind}/{metadata['name']}.spec")
+            template = _require_mapping(
+                spec.get("template"), f"{kind}/{metadata['name']}.spec.template"
+            )
+            pod = _require_mapping(
+                template.get("spec"),
+                f"{kind}/{metadata['name']}.spec.template.spec",
+            )
             _validate_restricted_pod_security(
                 pod,
                 f"{kind}/{metadata['name']}.spec.template.spec",
@@ -823,8 +830,11 @@ def inject_telnet_port(
             continue
         if metadata.get("name") != "tcp-proxy-service":
             continue
-        for service_port in (document.get("spec") or {}).get("ports", []):
-            if isinstance(service_port, dict) and service_port.get("port") == 2323:
+        spec = _require_mapping(document.get("spec"), "Service/tcp-proxy-service.spec")
+        for service_port in _require_mapping_list(
+            spec.get("ports"), "Service/tcp-proxy-service.spec.ports"
+        ):
+            if service_port.get("port") == 2323:
                 matches.append(service_port)
     if len(matches) != 1:
         fail("validated preview render must contain exactly one TCP Proxy Telnet port")
@@ -1042,7 +1052,9 @@ def validate_network_policies(documents: list[dict]) -> None:
     _validate_internal_network_policies(policies)
 
     controller_policy = policies["account-service-controller-ingress"]
-    spec = controller_policy.get("spec") or {}
+    spec = _require_mapping(
+        controller_policy.get("spec"), "NetworkPolicy/account-service-controller-ingress.spec"
+    )
     if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
         fail("NetworkPolicy/account-service-controller-ingress selects an unsafe workload")
     if spec.get("policyTypes") != ["Ingress"]:
@@ -1062,7 +1074,10 @@ def validate_network_policies(documents: list[dict]) -> None:
     if spec.get("ingress") != expected_ingress:
         fail("NetworkPolicy/account-service-controller-ingress has an unsafe exception")
 
-    gateway_ingress = (policies["spring-cloud-gateway-ingress"].get("spec") or {})
+    gateway_ingress = _require_mapping(
+        policies["spring-cloud-gateway-ingress"].get("spec"),
+        "NetworkPolicy/spring-cloud-gateway-ingress.spec",
+    )
     expected_gateway_ingress = {
         "podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}},
         "policyTypes": ["Ingress"],
@@ -1096,7 +1111,10 @@ def validate_network_policies(documents: list[dict]) -> None:
     if gateway_ingress != expected_gateway_ingress:
         fail("NetworkPolicy/spring-cloud-gateway-ingress has an unsafe exception")
 
-    proxy_egress = (policies["tcp-proxy-service-egress"].get("spec") or {})
+    proxy_egress = _require_mapping(
+        policies["tcp-proxy-service-egress"].get("spec"),
+        "NetworkPolicy/tcp-proxy-service-egress.spec",
+    )
     expected_proxy_egress = {
         "podSelector": {"matchLabels": {"app": "tcp-proxy-service"}},
         "policyTypes": ["Egress"],
@@ -1254,7 +1272,14 @@ def validate_manifest(
             fail(f"manifest contains unexpected {document['kind']}/{name}")
         _validate_firemud_config_shape(document)
         if document["kind"] in {"Deployment", "Job"}:
-            pod = ((document.get("spec") or {}).get("template") or {}).get("spec")
+            spec = _require_mapping(document.get("spec"), f"{document['kind']}/{name}.spec")
+            template = _require_mapping(
+                spec.get("template"), f"{document['kind']}/{name}.spec.template"
+            )
+            pod = _require_mapping(
+                template.get("spec"),
+                f"{document['kind']}/{name}.spec.template.spec",
+            )
             _validate_restricted_pod_security(
                 pod,
                 f"{document['kind']}/{name}.spec.template.spec",

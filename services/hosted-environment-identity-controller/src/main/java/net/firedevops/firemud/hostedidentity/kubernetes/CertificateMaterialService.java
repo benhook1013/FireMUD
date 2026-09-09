@@ -659,9 +659,16 @@ public class CertificateMaterialService {
             .filter(request -> certificateRequestOwnedBy(request, certificate))
             .toList();
 
-    if (ownedRequests.size() == 1
-        && !certificate.issuerReference().equals(issuerReference(ownedRequests.get(0)))) {
-      throw new IllegalStateException("CertificateRequest issuer binding is invalid");
+    if (ownedRequests.size() == 1) {
+      Map<String, String> requestIssuer;
+      try {
+        requestIssuer = issuerReference(ownedRequests.get(0));
+      } catch (IllegalStateException exception) {
+        return false;
+      }
+      if (!certificate.issuerReference().equals(requestIssuer)) {
+        throw new IllegalStateException("CertificateRequest issuer binding is invalid");
+      }
     }
 
     long validRequestCount =

@@ -875,6 +875,18 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void retirementCleansGrpcSecretWithoutReadingSyntheticGrpcCertificate() {
+    RetirementDeletionFixture fixture = new RetirementDeletionFixture();
+    Resource<Secret> grpcSecret =
+        fixture.secret("firemud-grpc-tls", HostedIdentityContract.GRPC_ROLE);
+
+    fixture.retire();
+
+    verify(grpcSecret).delete();
+    verify(fixture.identityCertificates, never()).withName("firemud-grpc-tls");
+  }
+
+  @Test
   void retirementObservesNamespaceTerminationBeforeDeletingScopeObjects() {
     RetirementDeletionFixture fixture = new RetirementDeletionFixture();
     Namespace terminating = fixture.identityNamespace(true);

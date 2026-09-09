@@ -1843,7 +1843,7 @@ fi
 grep -q 'group: preview-allocation-lifecycle' "$trusted_workflow"
 test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 4
 test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
-test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'queue: max' "$trusted_workflow" || true)" -eq 0
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'resolve-certificate-identity-mode.py' "$janitor_workflow"
 grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"

@@ -190,7 +190,6 @@ jobs:
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
-      queue: max
     permissions:
       actions: read # Download the validated source workflow artifact.
       contents: read # Check out the trusted default-branch deployment implementation.
@@ -707,7 +706,6 @@ jobs:
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
-      queue: max
     permissions:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.
@@ -847,7 +845,6 @@ jobs:
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
-      queue: max
     permissions:
       contents: read # Check out the trusted default-branch cleanup implementation.
       pull-requests: read # Revalidate the closed pull request before runtime deletion.
@@ -927,7 +924,6 @@ jobs:
     concurrency:
       group: preview-allocation-lifecycle
       cancel-in-progress: false
-      queue: max
     permissions:
       contents: read # Check out the trusted default-branch retirement implementation.
       pull-requests: read # Revalidate the closed pull request before identity retirement.
