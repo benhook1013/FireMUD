@@ -259,7 +259,7 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
-assert deploy_by_name["Set up Helm"]["uses"] == "./.github/actions/setup-helm"
+assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1823,6 +1823,42 @@ run_projection_namespace_mismatch_fixture \
   'dev-demo identity requires the dev runtime namespace' \
   dev-demo-pr
 run_projection_namespace_mismatch_fixture \
+  pr-42 dev \
+  'PR identity pr-42 requires matching runtime namespace pr-42' \
+  pr-42-dev
+
+# The default readiness waiter rejects the same mismatches before reading the
+# runtime namespace or HostedEnvironmentIdentity.
+run_active_namespace_mismatch_fixture() {
+  local identity_name="$1"
+  local runtime_namespace="$2"
+  local expected_message="$3"
+  local suffix="$4"
+  local kubectl_log="$TEMP_DIR/active-mismatch-${suffix}.kubectl.log"
+  local error="$TEMP_DIR/active-mismatch-${suffix}.error"
+  local status
+  local expected_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+  : >"$kubectl_log"
+  set +e
+  env \
+    PATH="$projection_mismatch_stub_dir:$PATH" \
+    PROJECTION_KUBECTL_LOG="$kubectl_log" \
+    bash "$waiter" "$identity_name" "$expected_head" "$runtime_namespace" 1 \
+    >"$TEMP_DIR/active-mismatch-${suffix}.output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq 2 ]]
+  grep -Fq -- "$expected_message" "$error"
+  [[ ! -s "$kubectl_log" ]]
+}
+
+run_active_namespace_mismatch_fixture \
+  dev-demo pr-42 \
+  'dev-demo identity requires the dev runtime namespace' \
+  dev-demo-pr
+run_active_namespace_mismatch_fixture \
   pr-42 dev \
   'PR identity pr-42 requires matching runtime namespace pr-42' \
   pr-42-dev

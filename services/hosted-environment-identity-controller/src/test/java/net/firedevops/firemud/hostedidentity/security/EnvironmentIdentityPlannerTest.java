@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -83,9 +84,15 @@ class EnvironmentIdentityPlannerTest {
     properties.setPreviewDomain(
         "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(56));
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> new EnvironmentIdentityPlanner(properties).plan("pr-42"));
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new EnvironmentIdentityPlanner(properties).plan("pr-42"));
+    assertEquals(
+        "derived hostname must match the lowercase hostname contract and contain at most 253 characters",
+        failure.getMessage());
+    assertEquals(failure.getMessage(), failure.getCause().getMessage());
+    assertInstanceOf(IllegalStateException.class, failure.getCause());
   }
 
   @Test

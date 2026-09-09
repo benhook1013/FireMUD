@@ -3,6 +3,8 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -211,6 +213,58 @@ class HostedStatusServiceTest {
     assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
     assertEquals("head-recorded", resource.getStatus().getProfile().getDeployedHeadSha());
     assertEquals(32007, resource.getStatus().getProfile().getTelnetPort());
+  }
+
+  @Test
+  void plannerRuntimeFailureStillPreservesThePreviousProfile() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("pr-42")
+            .withNamespace("firemud-system")
+            .withGeneration(8L)
+            .build());
+    HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
+    RuntimeProfile oldProfile = new RuntimeProfile();
+    oldProfile.setName("pr-42");
+    oldProfile.setEnvironmentClass("pr-preview");
+    oldProfile.setIdentityNamespace("pr-42-identity");
+    oldProfile.setRuntimeNamespace("pr-42");
+    oldProfile.setHostname("pr-42.preview.firedevops.net");
+    oldProfile.setRuntimeNamespaceUid("uid-recorded");
+    oldProfile.setRequestedHeadSha("head-recorded");
+    oldProfile.setDeployedHeadSha("head-recorded");
+    oldProfile.setTelnetPort(32007);
+    oldStatus.setProfile(oldProfile);
+    resource.setStatus(oldStatus);
+
+    EnvironmentIdentityPlanner planner = mock(EnvironmentIdentityPlanner.class);
+    when(planner.plan("pr-42")).thenThrow(new IllegalStateException("unexpected planner failure"));
+    var service = new HostedStatusService(planner);
+
+    service.status(
+        resource,
+        HostedEnvironmentIdentityStatus.Phase.Blocked,
+        "ReconciliationBlocked",
+        "planner failed",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+
+    RuntimeProfile profile = resource.getStatus().getProfile();
+    assertEquals("pr-42", profile.getName());
+    assertEquals("pr-preview", profile.getEnvironmentClass());
+    assertEquals("pr-42-identity", profile.getIdentityNamespace());
+    assertEquals("pr-42", profile.getRuntimeNamespace());
+    assertEquals("pr-42.preview.firedevops.net", profile.getHostname());
+    assertEquals("uid-recorded", profile.getRuntimeNamespaceUid());
+    assertEquals("head-recorded", profile.getRequestedHeadSha());
+    assertEquals("head-recorded", profile.getDeployedHeadSha());
+    assertEquals(32007, profile.getTelnetPort());
   }
 
   @Test

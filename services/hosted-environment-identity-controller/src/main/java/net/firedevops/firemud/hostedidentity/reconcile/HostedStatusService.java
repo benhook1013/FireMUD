@@ -116,7 +116,7 @@ public class HostedStatusService {
       profile.setIdentityNamespace(plan.identityNamespace());
       profile.setRuntimeNamespace(plan.runtimeNamespace());
       profile.setHostname(plan.hostname());
-    } catch (IllegalArgumentException exception) {
+    } catch (RuntimeException exception) {
       if (previousProfile != null) {
         profile.setName(previousProfile.getName());
         profile.setEnvironmentClass(previousProfile.getEnvironmentClass());

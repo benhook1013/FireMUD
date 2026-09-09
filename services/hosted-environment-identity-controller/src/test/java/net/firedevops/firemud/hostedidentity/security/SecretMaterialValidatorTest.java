@@ -142,11 +142,15 @@ class SecretMaterialValidatorTest {
     X509Certificate certificate = mock(X509Certificate.class);
     when(certificate.getExtendedKeyUsage())
         .thenReturn(java.util.List.of("1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.3"));
-    assertThrows(
-        SecretMaterialValidator.MaterialValidationException.class,
-        () -> SecretMaterialValidator.validateUsage(certificate, true, false, true));
-
     when(certificate.getBasicConstraints()).thenReturn(-1);
+    when(certificate.getKeyUsage()).thenReturn(new boolean[] {true, false, true});
+    var extraEku =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () -> SecretMaterialValidator.validateUsage(certificate, true, false, true));
+    assertEquals(
+        "certificate EKUs do not exactly match the identity profile", extraEku.getMessage());
+
     when(certificate.getKeyUsage())
         .thenReturn(new boolean[] {true, false, true, true, false, false, false, false, false});
     var keyUsage =

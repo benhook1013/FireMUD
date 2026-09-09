@@ -204,9 +204,6 @@ jobs:
         with:
           version: v1.33.4
 
-      - name: Set up Helm
-        uses: ./.github/actions/setup-helm
-
       - name: Write runtime kubeconfig
         uses: ./.github/actions/write-kubeconfig
         with:

@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+validate_identity_runtime_pairing() {
+  local identity_name="$1"
+  local runtime_namespace="$2"
+
+  if [[ "$identity_name" == dev-demo && "$runtime_namespace" != dev ]]; then
+    echo "dev-demo identity requires the dev runtime namespace" >&2
+    exit 2
+  fi
+  if [[ "$identity_name" != dev-demo && "$runtime_namespace" != "$identity_name" ]]; then
+    echo "PR identity ${identity_name} requires matching runtime namespace ${identity_name}" >&2
+    exit 2
+  fi
+}
+
 if [[ "${1:-}" == "--projections" ]]; then
   if [[ $# -lt 2 || $# -gt 4 ]]; then
     echo "usage: $0 --projections <identity_name> [runtime_namespace] [timeout_seconds]" >&2
@@ -27,14 +41,7 @@ if [[ "${1:-}" == "--projections" ]]; then
     echo "timeout must be a positive integer" >&2
     exit 2
   fi
-  if [[ "$identity_name" == dev-demo && "$runtime_namespace" != dev ]]; then
-    echo "dev-demo identity requires the dev runtime namespace" >&2
-    exit 2
-  fi
-  if [[ "$identity_name" != dev-demo && "$runtime_namespace" != "$identity_name" ]]; then
-    echo "PR identity ${identity_name} requires matching runtime namespace ${identity_name}" >&2
-    exit 2
-  fi
+  validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
   if [[ "$identity_name" == dev-demo ]]; then
     projection_prefix=dev
@@ -180,6 +187,7 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
   echo "timeout must be a positive integer" >&2
   exit 2
 fi
+validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
 deadline=$((SECONDS + timeout_seconds))
 while (( SECONDS < deadline )); do

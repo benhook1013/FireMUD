@@ -8464,7 +8464,7 @@ spec:
                 path: ca.crt
         - name: grpc
           secret:
-            secretName: grpc-tls
+            secretName: firemud-grpc-tls
         - name: telnet
           secret:
             secretName: __RELEASE__-telnet-tls
