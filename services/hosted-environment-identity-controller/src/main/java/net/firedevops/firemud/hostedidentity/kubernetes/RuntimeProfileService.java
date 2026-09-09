@@ -162,6 +162,9 @@ public class RuntimeProfileService {
       requireLabel(labels, "firemud.dev/environment-class", "dev-demo-cluster");
       return;
     }
+    if (!plan.name().startsWith("pr-")) {
+      throw new IllegalStateException("runtime Namespace has an invalid identity plan name");
+    }
     requireLabel(labels, "firemud.dev/preview", "true");
     requireLabel(labels, "firemud.dev/pr-number", plan.name().substring("pr-".length()));
   }

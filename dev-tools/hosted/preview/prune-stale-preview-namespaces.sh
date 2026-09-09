@@ -156,7 +156,7 @@ for row in "${namespace_rows[@]}"; do
   fi
 
   case "$reason" in
-    preview-paused | dependency-bot | unsupported-base-branch | pr-not-open)
+    dependency-bot | unsupported-base-branch | pr-not-open)
       ;;
     *)
       echo "Keeping ${namespace}: PR #${pr_number} eligibility reason is not authoritative for pruning (reason=${reason})"

@@ -941,7 +941,7 @@ do
   fi
 done
 
-for non_authoritative_reason in malformed-label-metadata future-eligibility-reason; do
+for non_authoritative_reason in malformed-label-metadata preview-paused future-eligibility-reason; do
   reset_case
   export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
   export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${priority_labels_base64}\n"

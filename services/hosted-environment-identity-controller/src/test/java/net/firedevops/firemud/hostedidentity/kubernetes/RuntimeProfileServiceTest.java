@@ -20,6 +20,7 @@ import io.fabric8.kubernetes.client.dsl.Resource;
 import java.util.HashMap;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
 
@@ -82,6 +83,19 @@ class RuntimeProfileServiceTest {
         () ->
             RuntimeProfileService.validateRuntimeLabels(
                 previewPlan, Map.of("firemud.dev/preview", "true", "firemud.dev/pr-number", "43")));
+  }
+
+  @Test
+  void runtimeLabelsRejectAnInvalidIdentityPlanNameBeforeReadingItsPreviewSuffix() {
+    var invalidPlan = mock(EnvironmentIdentityPlan.class);
+    when(invalidPlan.name()).thenReturn("x");
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> RuntimeProfileService.validateRuntimeLabels(invalidPlan, Map.of()));
+
+    assertEquals("runtime Namespace has an invalid identity plan name", exception.getMessage());
   }
 
   @Test

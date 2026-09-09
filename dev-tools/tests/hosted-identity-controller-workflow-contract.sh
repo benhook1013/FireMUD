@@ -110,7 +110,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" <<'PY'
 import sys
 from pathlib import Path
 
@@ -119,6 +119,7 @@ import yaml
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
+dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run"], triggers
 assert triggers["workflow_run"] == {
@@ -247,7 +248,93 @@ assert apply_lines[dry_run_line - 1] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
-assert "preflight.py hosted-bridge" not in Path(sys.argv[1]).read_text(encoding="utf-8")
+
+dev_demo_steps = dev_demo_workflow["jobs"]["dev-demo-deploy"]["steps"]
+dev_demo_by_name = {
+    step.get("name"): step
+    for step in dev_demo_steps
+    if isinstance(step, dict)
+}
+dev_demo_render_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Validate dev-demo chart render"
+)
+dev_demo_deploy_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Deploy dev-demo release"
+)
+dev_demo_rollout_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Wait for dev-demo runtime rollouts"
+)
+dev_demo_ready_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Wait for exact dev-demo controller readiness"
+)
+dev_demo_operator_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Validate controller-projected dev-demo identity"
+)
+dev_demo_smoke_index = next(
+    index
+    for index, step in enumerate(dev_demo_steps)
+    if step.get("name") == "Smoke dev-demo over TCP"
+)
+assert (
+    dev_demo_render_index
+    < dev_demo_deploy_index
+    < dev_demo_rollout_index
+    < dev_demo_ready_index
+    < dev_demo_operator_index
+    < dev_demo_smoke_index
+)
+dev_demo_render_step = dev_demo_by_name["Validate dev-demo chart render"]
+dev_demo_render_run = dev_demo_render_step["run"]
+dev_demo_preflight = dev_demo_render_run
+hosted_mode_guard = (
+    'if [[ "${{ steps.certificate-identity.outputs.mode }}" '
+    '== "hosted-controller" ]]; then'
+)
+assert dev_demo_preflight.count(hosted_mode_guard) == 1
+assert dev_demo_preflight.count(
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge"
+) == 1
+preflight_start = dev_demo_preflight.index(hosted_mode_guard)
+preflight_end = dev_demo_preflight.index("\nfi\n", preflight_start)
+preflight_command_start = dev_demo_preflight.index(
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\", preflight_start
+)
+assert preflight_start < preflight_command_start < preflight_end
+preflight_lines = [line.strip() for line in dev_demo_preflight.splitlines()]
+preflight_line_start = preflight_lines.index("FIREMUD_PREFLIGHT_CONTEXT=ci-static \\")
+assert preflight_lines[preflight_line_start : preflight_line_start + 6] == [
+    "FIREMUD_PREFLIGHT_CONTEXT=ci-static \\",
+    "python3 ./dev-tools/deploy/preflight.py hosted-bridge \\",
+    "/tmp/dev-demo-rendered.yaml \\",
+    '"${{ needs.dev-demo-plan.outputs.namespace }}" \\',
+    '"${{ needs.dev-demo-plan.outputs.release_name }}" \\',
+    '--expected-hosted-telnet-node-port "${{ needs.dev-demo-plan.outputs.telnet_port }}"',
+]
+render_position = dev_demo_preflight.index(">/tmp/dev-demo-rendered.yaml")
+dry_run_position = dev_demo_preflight.index("kubectl apply --dry-run=server")
+assert render_position < preflight_command_start < dry_run_position
+assert "helm upgrade --install" in dev_demo_by_name["Deploy dev-demo release"]["run"]
+
+operator_step = dev_demo_by_name["Validate controller-projected dev-demo identity"]
+assert operator_step["if"] == (
+    "${{ steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'success' && "
+    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+operator_run = operator_step["run"]
+assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
+assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
+assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_requested_index = next(

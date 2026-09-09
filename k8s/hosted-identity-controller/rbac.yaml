@@ -53,7 +53,6 @@ rules:
       - platform.firemud.dev
     resources:
       - hostedenvironmentidentities/status
-      - hostedenvironmentidentities/finalizers
     verbs:
       - get
       - update

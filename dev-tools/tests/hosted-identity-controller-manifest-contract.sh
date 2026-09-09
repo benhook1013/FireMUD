@@ -711,10 +711,13 @@ assert primary["verbs"] == ["get", "list", "watch", "patch"]
 subresources = next(
     rule
     for rule in role["rules"]
-    if rule.get("resources")
-    == ["hostedenvironmentidentities/status", "hostedenvironmentidentities/finalizers"]
+    if rule.get("resources") == ["hostedenvironmentidentities/status"]
 )
 assert subresources["verbs"] == ["get", "update", "patch"]
+assert not any(
+    "hostedenvironmentidentities/finalizers" in rule.get("resources", [])
+    for rule in role["rules"]
+)
 PY
 cluster_role_rbac="$(
   select_named_yaml_document "$RBAC" ClusterRole \
@@ -921,9 +924,15 @@ active_transition = source.index(
     '  verify_grpc_ca_prerequisite'
 )
 assert last_authorization_probe < active_transition
+assert (
+    'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
+    '  patch hostedenvironmentidentities.platform.firemud.dev'
+) in source
+assert "hostedenvironmentidentities/finalizers.platform.firemud.dev" not in source
 assert 'rendered_activation_mode="$(sed -n ' in source
 assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
 assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
+assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 2
 assert 'fail "activation mode still contains the paused value after replacement"' in source
 PY
 require_literal "$PROJECTION" "ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION"

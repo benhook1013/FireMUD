@@ -27,10 +27,10 @@ public class AdmissionValidator {
       throw new IllegalArgumentException(
           "unsupported HostedEnvironmentIdentity apiVersion or kind");
     }
-    planner.plan(resource.getMetadata().getName());
     if (resource.getSpec() == null || resource.getSpec().getDesiredState() == null) {
       throw new IllegalArgumentException("spec.desiredState is required");
     }
+    planner.plan(resource.getMetadata().getName());
     if (resource.getStatus() != null
         && net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.Phase.Retired
             .equals(resource.getStatus().getPhase())
