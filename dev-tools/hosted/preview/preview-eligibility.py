@@ -92,7 +92,11 @@ def revalidate_deploy(
     head_repository = _nested_value(pull_request, "head", "repo", "full_name")
     if state != "open":
         return f"pull request is not open (state={_display_value(state)})"
-    if head_sha != expected_head_sha:
+    if (
+        not isinstance(head_sha, str)
+        or not isinstance(expected_head_sha, str)
+        or head_sha.lower() != expected_head_sha.lower()
+    ):
         return f"head is stale (expected={expected_head_sha}, current={_display_value(head_sha)})"
     if head_repository != expected_repository:
         return (

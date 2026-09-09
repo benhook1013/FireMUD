@@ -58,12 +58,17 @@ for required in \
   "helm_version='v3.20.1'" \
   "helm_sha256='0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3'" \
   'RUNNER_TEMP' \
+  'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
   'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
   '[[ "$reported_version" == "$helm_version" ]]'; do
   contains "$helm_action" "$required"
 done
+if grep -Fq -- '--retry-all-errors' "$helm_action"; then
+  echo "$helm_action must not retry non-transient curl failures" >&2
+  exit 1
+fi
 contains "$trusted" 'uses: ./.github/actions/write-kubeconfig'
 if grep -Fq 'KUBECONFIG_PATH=' "$trusted"; then
   echo "$trusted must delegate protected kubeconfig writes to the shared composite action" >&2
@@ -101,6 +106,8 @@ contains "$waiter" 'PR identity ${identity_name} requires matching runtime names
 contains "$waiter" 'firemud.dev/managed-by'
 contains "$waiter" 'firemud.dev/requested-preview-head-sha'
 contains "$waiter" 'firemud.dev/last-preview-head-sha'
+contains "$waiter" 'all_projections_ready=true'
+contains "$waiter" 'projection_attempted=false'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
 for phase in \
   Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying \
@@ -174,6 +181,7 @@ assert validate_job["permissions"] == {
     "contents": "read",
     "pull-requests": "read",
 }
+assert validate_job["timeout-minutes"] == 10
 assert jobs["deploy-runtime"]["permissions"] == {
     "actions": "read",
     "contents": "read",
@@ -194,8 +202,9 @@ assert jobs["retire-identity"]["permissions"] == {
     "contents": "read",
     "pull-requests": "read",
 }
-for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
+for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["timeout-minutes"] == 60, job_name
+assert jobs["deploy-runtime"]["timeout-minutes"] == 90
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 for fragment in (
@@ -401,6 +410,9 @@ assert "firemud.dev/last-preview-head-sha=${head_sha}" in preview_deployed_step[
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" not in preview_deployed_step["run"]
 assert "firemud.dev/requested-preview-head-sha=${head_sha}" in preview_annotator
 assert "firemud.dev/last-preview-head-sha=${head_sha}" not in preview_annotator
+assert preview_annotator.index(
+    '"firemud.dev/requested-preview-head-sha=${head_sha}"'
+) < preview_annotator.index('"firemud.dev/last-preview-image-tag=${image_tag}"')
 
 projection_wait = next(
     step["run"]
@@ -1733,6 +1745,34 @@ run_projection_namespace_mismatch_fixture \
   pr-42 dev \
   'PR identity pr-42 requires matching runtime namespace pr-42' \
   pr-42-dev
+
+projection_deadline_stub_dir="$TEMP_DIR/projection-deadline-waiter-stubs"
+mkdir -p "$projection_deadline_stub_dir"
+cat >"$projection_deadline_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${PROJECTION_KUBECTL_LOG:?}"
+exit 1
+SH
+cat >"$projection_deadline_stub_dir/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${REAL_SLEEP_PATH:?}" 1
+SH
+chmod +x "$projection_deadline_stub_dir/kubectl" "$projection_deadline_stub_dir/sleep"
+projection_deadline_log="$TEMP_DIR/projection-deadline.kubectl.log"
+: >"$projection_deadline_log"
+set +e
+env \
+  PATH="$projection_deadline_stub_dir:$PATH" \
+  REAL_SLEEP_PATH="$real_sleep_path" \
+  PROJECTION_KUBECTL_LOG="$projection_deadline_log" \
+  bash "$waiter" --projections pr-42 pr-42 1 \
+  >"$TEMP_DIR/projection-deadline.output" 2>"$TEMP_DIR/projection-deadline.error"
+projection_deadline_status=$?
+set -e
+[[ "$projection_deadline_status" -eq 1 ]]
+[[ "$(wc -l <"$projection_deadline_log")" -eq 5 ]]
 
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys

@@ -13,8 +13,10 @@ public class HostedIdentityProperties implements InitializingBean {
   private static final Logger LOGGER = LoggerFactory.getLogger(HostedIdentityProperties.class);
   private static final int MAX_HOSTNAME_LENGTH = 253;
   private static final Pattern HOSTNAME_PATTERN =
-      Pattern.compile("^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$");
+      Pattern.compile(
+          "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$");
   public static final Duration INTERNAL_CERTIFICATE_DURATION = Duration.ofDays(30);
+  public static final Duration INTERNAL_CERTIFICATE_RENEWAL_SLACK = Duration.ofMinutes(5);
   public static final Duration MINIMUM_GRPC_RENEW_BEFORE = Duration.ofMinutes(5);
   private static final int CANONICAL_PREVIEW_TELNET_PORT_BASE = 32000;
   private static final int CANONICAL_DEV_DEMO_TELNET_PORT = 32016;
@@ -52,6 +54,7 @@ public class HostedIdentityProperties implements InitializingBean {
 
   @Override
   public void afterPropertiesSet() {
+    ActivationMode resolvedMode = resolveActivationMode(true);
     if (!HostedIdentityContract.CONTROL_NAMESPACE.equals(controlNamespace)) {
       throw new IllegalStateException(
           "hosted identity control namespace must be " + HostedIdentityContract.CONTROL_NAMESPACE);
@@ -70,12 +73,15 @@ public class HostedIdentityProperties implements InitializingBean {
     requireValidOptionalSha256Pin("ingress trust-anchor SHA-256 pin", ingressTrustAnchorSha256);
     requireValidOptionalSha256Pin("telnet trust-anchor SHA-256 pin", telnetTrustAnchorSha256);
     requireValidOptionalSha256Pin("gRPC trust-anchor SHA-256 pin", grpcTrustAnchorSha256);
+    if (resolvedMode == ActivationMode.ACTIVE) {
+      requireConfiguredSha256Pin("gRPC trust-anchor SHA-256 pin", grpcTrustAnchorSha256);
+    }
     requireValidOptionalSha256Pin("ingress leaf SHA-256 pin", ingressLeafSha256);
     requireValidOptionalSha256Pin("telnet leaf SHA-256 pin", telnetLeafSha256);
     if (reconcileInterval == null || reconcileInterval.compareTo(Duration.ofSeconds(1)) < 0) {
       throw new IllegalStateException("reconcile interval must be at least 1 second");
     }
-    resolvedActivationMode = resolveActivationMode(true);
+    resolvedActivationMode = resolvedMode;
   }
 
   private static void requireValidOptionalSha256Pin(String propertyName, String value) {
@@ -85,7 +91,15 @@ public class HostedIdentityProperties implements InitializingBean {
     }
   }
 
-  private static void requireValidHostname(String propertyName, String value) {
+  private static void requireConfiguredSha256Pin(String propertyName, String value) {
+    if (value == null || !value.matches("[0-9a-f]{64}")) {
+      throw new IllegalStateException(
+          propertyName
+              + " must be a nonempty 64 lowercase hexadecimal value when activation is active");
+    }
+  }
+
+  public static void requireValidHostname(String propertyName, String value) {
     if (value == null
         || value.length() > MAX_HOSTNAME_LENGTH
         || !HOSTNAME_PATTERN.matcher(value).matches()) {
@@ -107,9 +121,11 @@ public class HostedIdentityProperties implements InitializingBean {
   public static void requireValidGrpcRenewBefore(Duration renewBefore) {
     if (renewBefore == null
         || renewBefore.compareTo(MINIMUM_GRPC_RENEW_BEFORE) < 0
-        || renewBefore.compareTo(INTERNAL_CERTIFICATE_DURATION) >= 0) {
+        || renewBefore.compareTo(
+                INTERNAL_CERTIFICATE_DURATION.minus(INTERNAL_CERTIFICATE_RENEWAL_SLACK))
+            > 0) {
       throw new IllegalStateException(
-          "gRPC renewal window must be at least 5 minutes and shorter than 30 days");
+          "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry");
     }
   }
 

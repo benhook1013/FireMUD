@@ -92,7 +92,12 @@ class CertificateResourceFactoryTest {
     var factory = new CertificateResourceFactory();
 
     for (Duration invalidRenewBefore :
-        java.util.List.of(Duration.ofMinutes(5).minusNanos(1), Duration.ofDays(30))) {
+        java.util.List.of(
+            Duration.ofMinutes(5).minusNanos(1),
+            HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION
+                .minus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK)
+                .plusNanos(1),
+            Duration.ofDays(30))) {
       assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, invalidRenewBefore));
       assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, invalidRenewBefore));
     }
@@ -104,7 +109,10 @@ class CertificateResourceFactoryTest {
     var factory = new CertificateResourceFactory();
 
     for (Duration validRenewBefore :
-        java.util.List.of(Duration.ofMinutes(5), Duration.ofDays(30).minusNanos(1))) {
+        java.util.List.of(
+            Duration.ofMinutes(5),
+            HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.minus(
+                HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK))) {
       assertDoesNotThrow(() -> factory.gatewayInternalWs(plan, validRenewBefore));
       assertDoesNotThrow(() -> factory.tcpProxyBridge(plan, validRenewBefore));
     }
@@ -114,7 +122,7 @@ class CertificateResourceFactoryTest {
       org.junit.jupiter.api.function.Executable factoryCall) {
     IllegalStateException failure = assertThrows(IllegalStateException.class, factoryCall);
     assertEquals(
-        "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
         failure.getMessage());
   }
 

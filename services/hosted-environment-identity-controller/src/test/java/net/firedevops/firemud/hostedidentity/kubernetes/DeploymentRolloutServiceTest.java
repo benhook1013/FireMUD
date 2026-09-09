@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -170,6 +171,49 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
+    verify(proxy).get();
+    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(account, never()).get();
+    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void runtimeProfileFenceExceptionStopsSyncBeforeEditAndLaterDeploymentReads() {
+    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    when(runtimeDeployments.withName("account-service")).thenReturn(account);
+    when(proxy.get()).thenReturn(readyDeployment("tcp-proxy-service", Map.of("other", "keep"), 3L));
+    java.util.concurrent.atomic.AtomicInteger guardCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            new DeploymentRolloutService()
+                .sync(
+                    client,
+                    plan,
+                    "telnet-new",
+                    "grpc-new",
+                    () -> {
+                      if (guardCalls.getAndIncrement() == 0) {
+                        return true;
+                      }
+                      throw new IllegalStateException("runtime profile fence");
+                    }));
+
     verify(proxy).get();
     verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
     verify(account, never()).get();

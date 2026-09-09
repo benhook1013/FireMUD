@@ -270,6 +270,12 @@ jobs:
           fi
 
           if [[ "${current_head_sha}" == "${desired_head_sha}" \
+            && -z "${candidate_run}" ]]; then
+            echo "Dev demo already aligned to develop head ${desired_head_sha}; no exact deploy candidate remains."
+            exit 0
+          fi
+
+          if [[ "${current_head_sha}" == "${desired_head_sha}" \
             && "${candidate_status}" == completed \
             && "${candidate_conclusion}" == success ]]; then
             echo "Dev demo already aligned to successful develop head ${desired_head_sha}"

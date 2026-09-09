@@ -97,6 +97,18 @@ class AdmissionValidatorTest {
     verify(planner).plan("pr-42");
   }
 
+  @Test
+  void nonReservedMetadataProceedsToPlanning() {
+    EnvironmentIdentityPlanner planner = planner();
+    HostedEnvironmentIdentity resource = validResource();
+    resource.getMetadata().setLabels(Map.of("example.com/team", "firemud"));
+    resource.getMetadata().setAnnotations(Map.of("example.com/source", "test"));
+
+    new AdmissionValidator(planner).validate(resource);
+
+    verify(planner).plan("pr-42");
+  }
+
   private static void assertRejectedBeforePlanning(
       Consumer<HostedEnvironmentIdentity> mutation, String expectedMessage) {
     HostedEnvironmentIdentity resource = validResource();

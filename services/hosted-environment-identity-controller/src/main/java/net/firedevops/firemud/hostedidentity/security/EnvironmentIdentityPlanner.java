@@ -52,6 +52,7 @@ public class EnvironmentIdentityPlanner {
     } else {
       throw new IllegalArgumentException("unsupported HostedEnvironmentIdentity name: " + name);
     }
+    HostedIdentityProperties.requireValidHostname("derived hostname", hostname);
     String materialPrefix = DEV_DEMO_NAME.equals(name) ? runtimeNamespace : name;
     return new EnvironmentIdentityPlan(
         name,

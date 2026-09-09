@@ -49,10 +49,13 @@ if [[ "${1:-}" == "--projections" ]]; then
     "firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"
   )
   deadline=$((SECONDS + timeout_seconds))
+  all_projections_ready=true
   for projection in "${projections[@]}"; do
     IFS='|' read -r secret_name role required_keys <<<"$projection"
     projection_ready=false
-    while (( SECONDS < deadline )); do
+    projection_attempted=false
+    while (( SECONDS < deadline )) || [[ "$projection_attempted" != true ]]; do
+      projection_attempted=true
       if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" -o json 2>/dev/null)" &&
         jq -e \
           --arg name "$secret_name" \
@@ -74,9 +77,12 @@ if [[ "${1:-}" == "--projections" ]]; then
     done
     if [[ "$projection_ready" != true ]]; then
       echo "Timed out waiting for complete controller projection ${runtime_namespace}/${secret_name}." >&2
-      exit 1
+      all_projections_ready=false
     fi
   done
+  if [[ "$all_projections_ready" != true ]]; then
+    exit 1
+  fi
   printf 'identity=%s\nruntimeNamespace=%s\nprojections=ready\n' \
     "$identity_name" "$runtime_namespace"
   exit 0

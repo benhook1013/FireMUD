@@ -366,7 +366,7 @@ class HostedStatusServiceTest {
         service.status(
             resource,
             HostedEnvironmentIdentityStatus.Phase.Verifying,
-            "RuntimeDeploymentPending",
+            "Reconciled",
             "waiting",
             false,
             profile,

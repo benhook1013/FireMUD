@@ -100,8 +100,18 @@ jobs:
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              echo "Preview ${namespace} already aligned to ${head_sha}"
-              continue
+              requested_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/requested-preview-head-sha}')"
+              if [[ -z "${requested_head_sha}" ]]; then
+                kubectl annotate namespace "${namespace}" \
+                  "firemud.dev/requested-preview-head-sha=${head_sha}" \
+                  --overwrite >/dev/null
+                echo "Repaired missing requested head for aligned preview ${namespace}"
+                continue
+              fi
+              if [[ "${requested_head_sha}" == "${head_sha}" ]]; then
+                echo "Preview ${namespace} already aligned to ${head_sha}"
+                continue
+              fi
             fi
 
             if [[ "$dispatch_sent" == "true" ]]; then

@@ -151,6 +151,7 @@ require_literal "$APPLICATION_CONFIG" "preview-requested-head-annotation: firemu
 require_literal "$APPLICATION_CONFIG" "preview-deployed-head-annotation: firemud.dev/last-preview-head-sha"
 require_regex "$CRD" "format: date-time"
 require_regex "$CRD" 'pattern: "\^\[0-9a-fA-F\]\{40\}\$"'
+require_literal "$CRD" "pattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$'"
 CRD="$CRD" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -177,6 +178,11 @@ def assert_structural(value, path="openAPIV3Schema"):
 assert_structural(schema)
 rules = [validation["rule"] for validation in schema["x-kubernetes-validations"]]
 assert rules == ["self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"]
+hostname = schema["properties"]["status"]["properties"]["profile"]["properties"]["hostname"]
+assert hostname["maxLength"] == 253
+assert hostname["pattern"] == (
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
 PY
 
 for text_value in \

@@ -1335,7 +1335,7 @@ def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "sanitize":
         try:
             sanitize(Path(sys.argv[2]), Path(sys.argv[3]))
-        except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
@@ -1347,14 +1347,14 @@ def main() -> int:
                 int(sys.argv[5]),
                 sys.argv[4],
             )
-        except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if len(sys.argv) == 5 and sys.argv[1] == "runtime-target":
         try:
             validate_runtime_target(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
-        except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview runtime target rejected: {exc}", file=sys.stderr)
             return 1
         return 0

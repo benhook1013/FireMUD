@@ -475,6 +475,43 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void productionGenerationAcceptsCaAtTheRenewalSlackBoundaryWhilePreservingTheCap()
+      throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    Duration caLifetime =
+        renewBefore.plus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, caLifetime);
+
+    Secret generated =
+        new GrpcTransportBundleGenerator().generate(plan, caSource, 2, renewBefore, now);
+
+    assertEquals(
+        certificate(caSource.getData().get("ca.crt")).getNotAfter(),
+        certificate(generated.getData().get("tls.crt")).getNotAfter());
+  }
+
+  @Test
+  void productionGenerationRejectsCaWithoutTheRenewalSlack() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    Duration caLifetime =
+        renewBefore.plus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK).minusNanos(1);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret caSource = generatedCa(now, caLifetime);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new GrpcTransportBundleGenerator().generate(plan, caSource, 2, renewBefore, now));
+
+    assertTrue(failure.getMessage().contains("expires within the gRPC renewal window"));
+  }
+
+  @Test
   void productionGenerationRejectsRenewalWindowBelowCertManagerMinimum() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     EnvironmentIdentityPlan plan =
@@ -489,7 +526,7 @@ class SecretMaterialValidatorTest {
                     .generate(plan, caSource, 2, Duration.ofMinutes(5).minusNanos(1), now));
 
     assertEquals(
-        "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
         failure.getMessage());
   }
 
@@ -508,7 +545,7 @@ class SecretMaterialValidatorTest {
                     .generate(plan, caSource, 2, Duration.ofDays(30), now));
 
     assertEquals(
-        "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
         failure.getMessage());
   }
 

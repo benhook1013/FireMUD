@@ -111,6 +111,10 @@ if [[ "$1" == wait && "$2" == --for=delete ]]; then
   fi
   exit 0
 fi
+if [[ "$1" == annotate && "$2" == namespace ]]; then
+  printf '%s\n' "$*" >> "$FAKE_ANNOTATE_LOG"
+  exit 0
+fi
 namespace="${3:-}"
 case "$namespace" in
   pr-101)
@@ -155,6 +159,7 @@ case "$namespace" in
     case "$*" in
       *pr-number*) printf '%s' "${FAKE_PR_901_OWNER:-}" ;;
       *last-preview-head-sha*) printf '%s' "${FAKE_PR_901_HEAD:-}" ;;
+      *requested-preview-head-sha*) printf '%s' "${FAKE_PR_901_REQUESTED_HEAD:-}" ;;
     esac
     ;;
   *) exit 1 ;;
@@ -193,6 +198,13 @@ encode_fake_labels() {
   fi
   printf '%s' "$labels_json" | base64 | tr -d '\n'
 }
+if [[ "$1" == run && "$2" == list ]]; then
+  exit 0
+fi
+if [[ "$*" == *"actions/workflows/preview.yml/dispatches"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_DISPATCH_LOG"
+  exit 0
+fi
 case "$resource" in
   */actions/runs/42)
     if [[ "$*" == *".path"* ]]; then
@@ -383,6 +395,8 @@ export FAKE_PUBLISH_LOG="$TEMP_DIR/publish.log"
 export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
+export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
+export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
@@ -399,7 +413,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -421,6 +435,7 @@ reset_case() {
   export FAKE_PRIORITY_QUERY_FAIL=false
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
+  export FAKE_PR_901_REQUESTED_HEAD=''
   export FAKE_DELETE_FAIL=false
   export FAKE_COMMENT_DELETE_FAIL=false
   export FAKE_PUBLISH_FAIL_PHASE=''
@@ -1170,6 +1185,7 @@ reconciler_valid_output="$TEMP_DIR/reconciler-valid.out"
   cd "$ROOT_DIR"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-901 \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_valid_output"
@@ -1178,6 +1194,38 @@ if ! grep -qx 'Preview pr-901 already aligned to head-901' "$reconciler_valid_ou
   sed 's/^/reconciler output: /' "$reconciler_valid_output" >&2
   exit 1
 fi
+
+reset_case
+reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_missing_requested_output"
+grep -qx 'Repaired missing requested head for aligned preview pr-901' \
+  "$reconciler_missing_requested_output"
+grep -Fqx \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_mismatched_requested_output="$TEMP_DIR/reconciler-mismatched-requested.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=head-old \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_mismatched_requested_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_mismatched_requested_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+grep -Fq 'inputs[pr_number]=901' "$FAKE_DISPATCH_LOG"
 
 reset_case
 malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"

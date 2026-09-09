@@ -56,6 +56,8 @@ assert_revalidation_refused() {
 
 valid_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
 revalidate_deploy "$valid_pull_request"
+valid_mixed_case_pull_request='{"state":"open","head":{"sha":"HEAD-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"human"},"labels":[]}'
+revalidate_deploy "$valid_mixed_case_pull_request"
 valid_automation_pull_request='{"state":"open","head":{"sha":"head-123","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
 revalidate_deploy "$valid_automation_pull_request"
 

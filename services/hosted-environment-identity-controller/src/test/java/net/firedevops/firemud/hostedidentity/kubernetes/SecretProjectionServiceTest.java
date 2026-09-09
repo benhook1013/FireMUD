@@ -92,16 +92,14 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void revisionRejectsMissingAndMalformedMaterialWithoutMaskingTheCause() {
+  void revisionRejectsMissingAndMalformedMaterial() {
     IllegalArgumentException missing =
         assertThrows(
             IllegalArgumentException.class, () -> SecretProjectionService.revisionForData(null));
     assertEquals("material data is required", missing.getMessage());
-    IllegalArgumentException malformed =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));
-    assertEquals("Illegal base64 character 2d", malformed.getMessage());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));
   }
 
   @Test

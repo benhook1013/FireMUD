@@ -78,6 +78,17 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void rejectsAnOverlongDerivedPreviewHostname() {
+    var properties = new HostedIdentityProperties();
+    properties.setPreviewDomain(
+        "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(56));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> new EnvironmentIdentityPlanner(properties).plan("pr-42"));
+  }
+
+  @Test
   void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
     String admission = Files.readString(admissionPath);

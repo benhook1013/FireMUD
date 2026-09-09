@@ -479,6 +479,8 @@ public class CertificateMaterialService {
     String expectedType = current.expectedType();
     String expectedTrustAnchor = current.trustAnchor();
     if (sharedGrpcTrust) {
+      // An accepted shared-role predecessor may remain under the prior internal CA during
+      // serialized CA rotation; the selected replacement is still pinned to the configured anchor.
       expectedTrustAnchor = "";
       if (HostedIdentityContract.GRPC_ROLE.equals(role)) {
         if (!"Opaque".equals(accepted.getType())) {

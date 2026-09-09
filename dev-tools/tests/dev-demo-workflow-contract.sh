@@ -252,6 +252,8 @@ for required in (
     'if (( bootstrap_exact_run_count == 0 )); then',
     'history_not_before="1970-01-01T00:00:00Z"',
     "retained history is complete and dispatch may proceed",
+    '&& -z "${candidate_run}"',
+    "no exact deploy candidate remains",
     ".head_sha == $head and .display_title == $title",
     "No decisive exact deploy history",
     "refusing a history-blind dispatch",
@@ -984,7 +986,11 @@ if [[ "${positional[*]}" != "get namespace dev" \
   echo "unexpected kubectl Namespace annotation lookup" >&2
   exit 2
 fi
-# The runtime Namespace is absent or has no aligned-head annotation.
+# The runtime Namespace is absent or has no aligned-head annotation unless a
+# fixture explicitly supplies TEST_CURRENT_HEAD_SHA.
+if [[ -n "${TEST_CURRENT_HEAD_SHA:-}" ]]; then
+  printf '%s' "$TEST_CURRENT_HEAD_SHA"
+fi
 exit 0
 SH
 
@@ -1165,7 +1171,7 @@ if [[ -n "$status" ]]; then
 fi
 
 case "$TEST_SCENARIO:$page" in
-  empty:*)
+  empty:*|aligned-no-record:*)
     empty_runs
     ;;
   three-failures:1|three-failures:2)
@@ -1184,6 +1190,15 @@ case "$TEST_SCENARIO:$page" in
         {id:699,head_sha:$head,status:"completed",conclusion:"failure",created_at:"2026-09-09T05:00:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
         {id:698,head_sha:$head,status:"completed",conclusion:"timed_out",created_at:"2026-09-09T05:00:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)}
       ]}'
+    ;;
+  one-failure:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[{
+        id:701,head_sha:$head,status:"completed",conclusion:"failure",created_at:"2026-09-09T05:00:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)
+      }]}'
+    ;;
+  one-failure:*)
+    empty_runs
     ;;
   three-failures:*)
     empty_runs
@@ -1227,6 +1242,7 @@ run_reconcile_fixture() {
   local expected_status="$2"
   local expected_dispatches="$3"
   local expected_output="$4"
+  local current_head_sha="${5:-}"
   local command_log="$fixture_dir/${scenario}-gh.log"
   local trace_log="$fixture_dir/${scenario}-gh.trace"
   local active_marker="$fixture_dir/${scenario}-active-seen"
@@ -1246,6 +1262,7 @@ run_reconcile_fixture() {
       TEST_SCENARIO="$scenario" \
       TEST_HEAD_SHA="$test_head_sha" \
       TEST_OTHER_HEAD_SHA="$test_other_head_sha" \
+      TEST_CURRENT_HEAD_SHA="$current_head_sha" \
       TEST_GH_LOG="$command_log" \
       TEST_GH_TRACE="$trace_log" \
       TEST_ACTIVE_MARKER="$active_marker" \
@@ -1284,6 +1301,8 @@ run_reconcile_fixture() {
 }
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
+run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" "$test_head_sha"
 run_reconcile_fixture three-failures 1 0 "Dev-demo retry budget exhausted"
+run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

@@ -80,6 +80,10 @@ class HostedIdentityPropertiesTest {
           "preview_firedevops_net",
           "-preview.firedevops.net",
           "preview.firedevops.net-",
+          "preview..firedevops.net",
+          "preview.-firedevops.net",
+          "preview-.firedevops.net",
+          "a".repeat(64) + ".firedevops.net",
           "a".repeat(254)
         }) {
       HostedIdentityProperties previewProperties = new HostedIdentityProperties();
@@ -100,8 +104,10 @@ class HostedIdentityPropertiesTest {
     }
 
     HostedIdentityProperties maximum = new HostedIdentityProperties();
-    maximum.setPreviewDomain("a".repeat(253));
-    maximum.setDevDemoHostname("b".repeat(253));
+    String maximumHostname =
+        "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(63) + "." + "b".repeat(61);
+    maximum.setPreviewDomain(maximumHostname);
+    maximum.setDevDemoHostname(maximumHostname);
     assertDoesNotThrow(maximum::afterPropertiesSet);
   }
 
@@ -140,7 +146,7 @@ class HostedIdentityPropertiesTest {
       IllegalStateException exception =
           assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
       assertEquals(
-          "gRPC renewal window must be at least 5 minutes and shorter than 30 days",
+          "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
           exception.getMessage());
     }
   }
@@ -152,8 +158,17 @@ class HostedIdentityPropertiesTest {
     assertDoesNotThrow(minimum::afterPropertiesSet);
 
     HostedIdentityProperties maximum = new HostedIdentityProperties();
-    maximum.setGrpcRenewBefore(Duration.ofDays(30).minusNanos(1));
+    maximum.setGrpcRenewBefore(
+        HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.minus(
+            HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK));
     assertDoesNotThrow(maximum::afterPropertiesSet);
+
+    HostedIdentityProperties beyondMaximum = new HostedIdentityProperties();
+    beyondMaximum.setGrpcRenewBefore(
+        HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION
+            .minus(HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK)
+            .plusNanos(1));
+    assertThrows(IllegalStateException.class, beyondMaximum::afterPropertiesSet);
   }
 
   @Test
@@ -196,6 +211,36 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
+  void activeModeRequiresANonemptyCanonicalGrpcTrustAnchorAtStartup() {
+    for (String trustAnchor : new String[] {null, ""}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      properties.setActivationMode("active");
+      properties.setGrpcTrustAnchorSha256(trustAnchor);
+
+      IllegalStateException failure =
+          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      assertEquals(
+          "gRPC trust-anchor SHA-256 pin must be a nonempty 64 lowercase hexadecimal value when activation is active",
+          failure.getMessage());
+    }
+  }
+
+  @Test
+  void nonActiveModesRetainOptionalGrpcTrustAnchorAndActiveAcceptsCanonicalPin() {
+    for (String mode : new String[] {"paused", "observe"}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      properties.setActivationMode(mode);
+      assertDoesNotThrow(properties::afterPropertiesSet);
+    }
+
+    HostedIdentityProperties active = new HostedIdentityProperties();
+    active.setActivationMode("active");
+    active.setGrpcTrustAnchorSha256("a".repeat(64));
+    assertDoesNotThrow(active::afterPropertiesSet);
+    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, active.activationMode());
+  }
+
+  @Test
   void activationDefaultsAndInvalidValuesFailClosedToPaused() {
     assertActivationMode(null, HostedIdentityProperties.ActivationMode.PAUSED);
     assertActivationMode("observe", HostedIdentityProperties.ActivationMode.OBSERVE);
@@ -224,6 +269,9 @@ class HostedIdentityPropertiesTest {
       String configured, HostedIdentityProperties.ActivationMode expected) {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     properties.setActivationMode(configured);
+    if (expected == HostedIdentityProperties.ActivationMode.ACTIVE) {
+      properties.setGrpcTrustAnchorSha256("a".repeat(64));
+    }
     properties.afterPropertiesSet();
     assertEquals(expected, properties.activationMode());
     assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());

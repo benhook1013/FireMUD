@@ -16,6 +16,7 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -189,9 +190,17 @@ public class GrpcTransportBundleGenerator {
       }
       X509Certificate caCertificate = parseCertificate(requiredData(caSource, "ca.crt"));
       Instant caNotAfter = caCertificate.getNotAfter().toInstant();
-      if (!caNotAfter.isAfter(now.plus(renewBefore))) {
+      Instant renewalHorizon = renewalHorizon(now, renewBefore);
+      Instant intendedNotAfter =
+          plus(
+              now,
+              HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
+              "gRPC certificate validity window is out of range");
+      Instant effectiveNotAfter =
+          caNotAfter.isBefore(intendedNotAfter) ? caNotAfter : intendedNotAfter;
+      if (effectiveNotAfter.isBefore(renewalHorizon)) {
         throw new IllegalStateException(
-            "configured gRPC CA expires within the gRPC renewal window");
+            "configured gRPC CA expires within the gRPC renewal window plus renewal slack");
       }
       KeyPair caKey =
           new KeyPair(
@@ -289,7 +298,8 @@ public class GrpcTransportBundleGenerator {
 
   static boolean renewalRequired(Secret secret, Duration renewBefore, Instant now) {
     issuanceGeneration(secret);
-    return !leafNotAfter(secret).isAfter(now.plus(renewBefore));
+    return !leafNotAfter(secret)
+        .isAfter(plus(now, renewBefore, "gRPC renewal threshold is out of range"));
   }
 
   static void validateAcceptedGeneration(long currentGeneration, long acceptedGeneration) {
@@ -374,7 +384,11 @@ public class GrpcTransportBundleGenerator {
       Instant now,
       Instant maximumNotAfter)
       throws Exception {
-    Instant notAfter = now.plus(Duration.ofDays(30));
+    Instant notAfter =
+        plus(
+            now,
+            HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
+            "certificate validity window is out of range");
     if (maximumNotAfter != null && maximumNotAfter.isBefore(notAfter)) {
       notAfter = maximumNotAfter;
     }
@@ -385,7 +399,8 @@ public class GrpcTransportBundleGenerator {
         new JcaX509v3CertificateBuilder(
             issuer,
             newCertificateSerial(),
-            Date.from(now.minus(Duration.ofMinutes(1))),
+            Date.from(
+                minus(now, Duration.ofMinutes(1), "certificate validity start is out of range")),
             Date.from(notAfter),
             subject,
             subjectKey.getPublic());
@@ -423,6 +438,30 @@ public class GrpcTransportBundleGenerator {
       serial = new BigInteger(159, SERIAL_RANDOM);
     } while (serial.signum() <= 0);
     return serial;
+  }
+
+  private static Instant renewalHorizon(Instant now, Duration renewBefore) {
+    Instant renewalThreshold = plus(now, renewBefore, "gRPC renewal threshold is out of range");
+    return plus(
+        renewalThreshold,
+        HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK,
+        "gRPC renewal horizon is out of range");
+  }
+
+  private static Instant plus(Instant instant, Duration duration, String failureMessage) {
+    try {
+      return instant.plus(duration);
+    } catch (ArithmeticException | DateTimeException exception) {
+      throw new IllegalStateException(failureMessage, exception);
+    }
+  }
+
+  private static Instant minus(Instant instant, Duration duration, String failureMessage) {
+    try {
+      return instant.minus(duration);
+    } catch (ArithmeticException | DateTimeException exception) {
+      throw new IllegalStateException(failureMessage, exception);
+    }
   }
 
   private static void requirePositiveRenewalWindow(Duration renewBefore) {

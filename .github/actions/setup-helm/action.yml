@@ -16,7 +16,7 @@ runs:
         install_dir="${helm_root}/bin"
 
         mkdir -p -- "$extraction_dir" "$install_dir"
-        curl -fsSL \
+        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
           "https://get.helm.sh/helm-${helm_version}-linux-amd64.tar.gz" \
           -o "$archive_path"
         printf '%s  %s\n' "$helm_sha256" "$archive_path" \

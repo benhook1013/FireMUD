@@ -15,6 +15,7 @@ jobs:
   validate-target:
     name: Validate Trusted Preview Target
     if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.name == 'PR Preview Environment') || (github.event_name == 'pull_request_target' && github.event.action == 'closed') }}
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       actions: read # Inspect the completed source workflow and its artifacts.
@@ -167,7 +168,7 @@ jobs:
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
-    timeout-minutes: 60
+    timeout-minutes: 90
     runs-on:
       - self-hosted
       - preview

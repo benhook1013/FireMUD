@@ -270,6 +270,12 @@ class RuntimeProfileServiceTest {
         "runtime Namespace has no canonical requested head identity",
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
 
+    Namespace malformedHead = previewRuntimeNamespace("not-a-head", "a".repeat(40), "32001");
+    when(namespace.get()).thenReturn(malformedHead);
+    assertEquals(
+        "runtime Namespace has no canonical requested head identity",
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+
     Namespace missingPort = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), null);
     when(namespace.get()).thenReturn(missingPort);
     assertEquals(
