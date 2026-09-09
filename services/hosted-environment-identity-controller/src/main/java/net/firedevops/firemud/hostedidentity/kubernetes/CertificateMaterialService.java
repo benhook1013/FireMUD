@@ -659,12 +659,12 @@ public class CertificateMaterialService {
             .filter(request -> certificateRequestOwnedBy(request, certificate))
             .toList();
 
-    if (ownedRequests.size() == 1) {
+    for (GenericKubernetesResource request : ownedRequests) {
       Map<String, String> requestIssuer;
       try {
-        requestIssuer = issuerReference(ownedRequests.get(0));
+        requestIssuer = issuerReference(request);
       } catch (IllegalStateException exception) {
-        return false;
+        throw new IllegalStateException("CertificateRequest issuer binding is invalid", exception);
       }
       if (!certificate.issuerReference().equals(requestIssuer)) {
         throw new IllegalStateException("CertificateRequest issuer binding is invalid");
@@ -673,20 +673,10 @@ public class CertificateMaterialService {
 
     long validRequestCount =
         ownedRequests.stream()
-            .filter(request -> certificateRequestHasExpectedIssuer(request, certificate))
             .filter(request -> certificateRequestMatchesSourceData(request, source))
             .limit(2)
             .count();
     return validRequestCount == 1;
-  }
-
-  private static boolean certificateRequestHasExpectedIssuer(
-      GenericKubernetesResource request, ReadyCertificate certificate) {
-    try {
-      return certificate.issuerReference().equals(issuerReference(request));
-    } catch (IllegalStateException exception) {
-      return false;
-    }
   }
 
   private static boolean certificateRequestMatchesSourceData(

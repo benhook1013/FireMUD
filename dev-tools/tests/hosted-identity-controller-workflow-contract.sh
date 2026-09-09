@@ -2396,7 +2396,11 @@ case "$resource" in
   repos/example/FireMUD/actions/runs/42)
     if [[ -z "$jq_expression" ]]; then
       printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
-      printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+      if [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
+        printf '%s' "$FAKE_WORKFLOW_RUN_JSON"
+      else
+        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+      fi
     elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
     else
@@ -2442,6 +2446,44 @@ target_gh_log="$TEMP_DIR/target-gh.log"
 )
 test "$(cat "$TEMP_DIR/output")" = 'action=none'
 test "$(cat "$target_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+
+run_target_without_pull_request_metadata() {
+  local scenario="$1"
+  local workflow_run_json="$2"
+  local output="$TEMP_DIR/target-${scenario}.output"
+  local gh_log="$TEMP_DIR/target-${scenario}.gh.log"
+
+  : >"$output"
+  : >"$gh_log"
+  (
+    cd "$ROOT_DIR"
+    PATH="$TEMP_DIR/bin:$PATH" \
+      GH_TOKEN=fake \
+      GITHUB_REPOSITORY=example/FireMUD \
+      EVENT_NAME=workflow_run \
+      EVENT_ACTION=completed \
+      WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+      EVENT_PR_NUMBER='' \
+      EVENT_HEAD_SHA='' \
+      INPUT_PR_NUMBER='' \
+      INPUT_HEAD_SHA='' \
+      INPUT_ACTION='' \
+      FAKE_WORKFLOW_RUN_JSON="$workflow_run_json" \
+      SOURCE_GH_LOG="$gh_log" \
+      GITHUB_OUTPUT="$output" \
+      bash "$TEMP_DIR/target.sh"
+  )
+  test "$(cat "$output")" = 'action=none'
+  test "$(cat "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+}
+
+run_target_without_pull_request_metadata \
+  missing \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}'
+run_target_without_pull_request_metadata \
+  empty \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}'
 
 source_step="$TEMP_DIR/source.sh"
 python3 - "$trusted" "$source_step" <<'PY'

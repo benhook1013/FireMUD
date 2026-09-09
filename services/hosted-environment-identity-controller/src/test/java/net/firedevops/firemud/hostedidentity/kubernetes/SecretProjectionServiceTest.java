@@ -1414,10 +1414,9 @@ class SecretProjectionServiceTest {
     request.setAdditionalProperties(requestProperties);
     stubCertificateRequests(fixture.secretClient().client(), plan, List.of(request));
 
-    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
-
-    assertEquals("materialization-pending", material.state());
-    assertEquals(false, material.ready());
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
+    assertEquals("CertificateRequest issuer binding is invalid", failure.getMessage());
   }
 
   @Test
@@ -1450,6 +1449,58 @@ class SecretProjectionServiceTest {
     IllegalStateException failure =
         assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
 
+    assertEquals("CertificateRequest issuer binding is invalid", failure.getMessage());
+  }
+
+  @Test
+  void ownedCertificateRequestWithWrongIssuerIsRejectedEvenWhenAnotherRequestIsValid() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
+    GenericKubernetesResource wrong =
+        certificateRequest(plan, plan.ingressCertificateName(), 1, "wrong", sourceData, true);
+    Map<String, Object> properties = new LinkedHashMap<>(wrong.getAdditionalProperties());
+    properties.put(
+        "spec",
+        Map.of(
+            "issuerRef",
+            Map.of("name", plan.grpcIssuer(), "kind", "ClusterIssuer", "group", "cert-manager.io")));
+    wrong.setAdditionalProperties(properties);
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(plan, plan.ingressCertificateName(), 1, "valid", sourceData, true),
+            wrong));
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
+    assertEquals("CertificateRequest issuer binding is invalid", failure.getMessage());
+  }
+
+  @Test
+  void ownedCertificateRequestWithMalformedIssuerIsRejectedEvenWhenAnotherRequestIsValid() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), true, 1, sourceData);
+    GenericKubernetesResource malformed =
+        certificateRequest(plan, plan.ingressCertificateName(), 1, "malformed", sourceData, true);
+    Map<String, Object> properties = new LinkedHashMap<>(malformed.getAdditionalProperties());
+    properties.put("spec", Map.of("issuerRef", Map.of("name", plan.ingressIssuer())));
+    malformed.setAdditionalProperties(properties);
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(plan, plan.ingressCertificateName(), 1, "valid", sourceData, true),
+            malformed));
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
     assertEquals("CertificateRequest issuer binding is invalid", failure.getMessage());
   }
 
