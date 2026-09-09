@@ -75,7 +75,12 @@ jobs:
             --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.ref, .head.sha, .user.login, .base.ref, .state, (.labels | map(.name) | any(. == "preview:priority")), (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
             | sort -t $'\t' -k1,1n -k2,2n |
           while IFS=$'\t' read -r _ pr_number head_ref head_sha pr_author pr_base_ref pr_state is_priority labels_json_base64; do
-            labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode)"
+            if ! labels_json="$(printf '%s' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||
+              [[ -z "$labels_json" ]] ||
+              ! jq -e 'type == "array"' <<<"$labels_json" >/dev/null; then
+              echo "Skipping PR #${pr_number}: label metadata could not be decoded as a JSON array." >&2
+              continue
+            fi
             eligibility_output="$(
               python3 "$eligibility_script" \
                 --operation deploy \

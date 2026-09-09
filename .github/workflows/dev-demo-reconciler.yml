@@ -65,6 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          export LC_ALL=C
           namespace="dev"
           desired_head_sha="$(
             gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'

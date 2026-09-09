@@ -6387,6 +6387,19 @@ def secret_keys_lookup_failure(
             ),
             True,
         )
+    invalid_value_keys = sorted(
+        key
+        for key in required_keys
+        if not isinstance(data[key], str) or not data[key]
+    )
+    if invalid_value_keys:
+        return (
+            (
+                f"Required Secret {namespace}/{secret_name} has empty or non-string values for keys: "
+                + ", ".join(invalid_value_keys)
+            ),
+            True,
+        )
     return None, False
 
 
@@ -6479,6 +6492,20 @@ def hosted_bridge_preflight(
         if isinstance(metadata, dict) and not metadata.get("namespace"):
             metadata["namespace"] = namespace
 
+    release_identity_issues: list[str] = []
+    for document in documents:
+        metadata = document.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else None
+        if not isinstance(labels, dict) or "app.kubernetes.io/instance" not in labels:
+            continue
+        rendered_release_name = labels["app.kubernetes.io/instance"]
+        if rendered_release_name != release_name:
+            release_identity_issues.append(
+                "rendered Helm release identity for "
+                f"{document.get('kind', 'resource')}/{metadata.get('name') or '<unnamed>'} "
+                f"{rendered_release_name!r} does not match trusted release {release_name!r}"
+            )
+
     _, gateway_issues = validate_gateway_ws_values(documents, expected)
     telnet_issues = validate_hosted_telnet_tls_values(
         documents,
@@ -6486,8 +6513,11 @@ def hosted_bridge_preflight(
         expected_hosted_telnet_node_port=expected_hosted_telnet_node_port,
         target_namespace=namespace,
     )
-    issues = label_bridge_validation_issues(gateway_issues, telnet_issues)
-    if context == "operator":
+    issues = [
+        *release_identity_issues,
+        *label_bridge_validation_issues(gateway_issues, telnet_issues),
+    ]
+    if context == "operator" and not release_identity_issues:
         secret_requirements = [
             (
                 f"{release_name}-gateway-internal-ws",

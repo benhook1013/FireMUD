@@ -836,6 +836,7 @@ jobs:
 
   dev-demo-destroy:
     name: Destroy Dev Demo Release
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview

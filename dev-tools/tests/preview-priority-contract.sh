@@ -1451,7 +1451,7 @@ reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_malformed_output"
-grep -qx 'Skipping preview reconcile for PR #901: not preview-eligible (reason=malformed-label-metadata, author=human, base=develop)' \
+grep -qx 'Skipping PR #901: label metadata could not be decoded as a JSON array.' \
   "$reconciler_malformed_output"
 if grep -q '^Dispatching preview deploy' "$reconciler_malformed_output"; then
   echo "reconciler dispatched after malformed label metadata" >&2
@@ -1614,5 +1614,11 @@ grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath=' 
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
 grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
+grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
+  "$reconciler_workflow"
+grep -Fq -- '[[ -z "$labels_json" ]] ||' "$reconciler_workflow"
+grep -Fq -- '! jq -e '\''type == "array"'\'' <<<"$labels_json" >/dev/null' \
+  "$reconciler_workflow"
 
 echo "preview priority contract checks passed"

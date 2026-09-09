@@ -85,6 +85,8 @@ if workflow["concurrency"] != {
     raise SystemExit("dev-demo lifecycle must remain non-cancelling")
 if workflow["jobs"]["dev-demo-deploy"]["timeout-minutes"] != 150:
     raise SystemExit("dev-demo deploy timeout must remain 150 minutes")
+if workflow["jobs"]["dev-demo-destroy"]["timeout-minutes"] != 60:
+    raise SystemExit("dev-demo destroy timeout must remain 60 minutes")
 if reconciler["concurrency"]["cancel-in-progress"] is not False:
     raise SystemExit("dev-demo reconciler must remain non-cancelling")
 if reconciler["jobs"]["reconcile-dev-demo"]["timeout-minutes"] != 9:
@@ -256,6 +258,7 @@ reconcile_run = next(
 )
 for required in (
     "set -euo pipefail",
+    "export LC_ALL=C",
     "--ignore-not-found",
     '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]',
     '"${candidate_conclusion}" == success',
@@ -301,6 +304,8 @@ for required in (
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
+if reconcile_run.index("export LC_ALL=C") > reconcile_run.index("created_at >= $not_before"):
+    raise SystemExit("dev-demo reconciler must set the bytewise locale before timestamp comparisons")
 if "gh run list" in reconcile_run or "--limit" in reconcile_run:
     raise SystemExit("dev-demo retry evidence must not use an evictable global run limit")
 if "for nonterminal_status in" in reconcile_run:

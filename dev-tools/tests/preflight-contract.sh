@@ -2169,6 +2169,78 @@ try:
 finally:
     module.subprocess.run = original_subprocess_run
 
+original_subprocess_run = module.subprocess.run
+original_secret_ready_attempts = module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+original_secret_retry_delay = module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+original_time_sleep = module.time.sleep
+try:
+    def secret_lookup(payload):
+        def lookup(args, **kwargs):
+            if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+                raise SystemExit("Secret-key lookup did not receive its deployment timeout")
+            return module.subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+        return lookup
+
+    module.subprocess.run = secret_lookup({"data": {"tls.crt": "encoded"}})
+    ready_issue, ready_retryable = module.secret_keys_lookup_failure(
+        "ready", "pr-42", {"tls.crt"}
+    )
+    if ready_issue is not None or ready_retryable:
+        raise SystemExit(f"non-empty Secret data was not accepted: {ready_issue}, {ready_retryable}")
+
+    module.subprocess.run = secret_lookup({"data": {}})
+    missing_issue, missing_retryable = module.secret_keys_lookup_failure(
+        "missing-key", "pr-42", {"tls.crt"}
+    )
+    if missing_retryable is not True or "missing keys" not in missing_issue:
+        raise SystemExit(f"missing Secret data key was not retryable: {missing_issue}, {missing_retryable}")
+
+    for invalid_value in ("", 123):
+        module.subprocess.run = secret_lookup({"data": {"tls.crt": invalid_value}})
+        invalid_issue, invalid_retryable = module.secret_keys_lookup_failure(
+            "not-ready", "pr-42", {"tls.crt"}
+        )
+        if invalid_retryable is not True or "empty or non-string values" not in invalid_issue:
+            raise SystemExit(
+                f"invalid Secret data value was not retryable: {invalid_issue}, {invalid_retryable}"
+            )
+
+    module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = 2
+    module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 0
+    module.time.sleep = lambda _: None
+    retry_payloads = iter(
+        ({"data": {"tls.crt": ""}}, {"data": {"tls.crt": "encoded"}})
+    )
+
+    def retry_lookup(args, **kwargs):
+        if kwargs.get("timeout") != module.SECRET_LOOKUP_TIMEOUT_SECONDS:
+            raise SystemExit("retrying Secret lookup did not receive its deployment timeout")
+        return module.subprocess.CompletedProcess(args, 0, json.dumps(next(retry_payloads)), "")
+
+    module.subprocess.run = retry_lookup
+    retry_issues = module.wait_for_secret_key_requirements(
+        [("retrying", {"tls.crt"})], "pr-42"
+    )
+    if retry_issues:
+        raise SystemExit(f"empty Secret value did not retry to readiness: {retry_issues}")
+
+    module.subprocess.run = secret_lookup({"data": {"tls.crt": 456}})
+    exhausted_issues = module.wait_for_secret_key_requirements(
+        [("exhausted", {"tls.crt"})], "pr-42"
+    )
+    if (
+        len(exhausted_issues) != 1
+        or "empty or non-string values" not in exhausted_issues[0]
+        or "still not ready after 2 attempts" not in exhausted_issues[0]
+    ):
+        raise SystemExit(f"non-string Secret value did not exhaust as retryable: {exhausted_issues}")
+finally:
+    module.subprocess.run = original_subprocess_run
+    module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts
+    module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
+    module.time.sleep = original_time_sleep
+
 issues = module.external_binding_uniqueness_issues(env_root, "staging", staging)
 if not any("backupStorage.bucket matches production" in issue for issue in issues):
     raise SystemExit(f"expected duplicate backupStorage.bucket issue, got: {issues}")
@@ -8534,6 +8606,34 @@ if (
     not in mismatch_result.get("message", "")
 ):
     raise SystemExit(f"hosted-bridge mismatch result was not explicit: {mismatch_result}")
+
+instance_mismatch_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+next(
+    document
+    for document in instance_mismatch_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway-mtls"
+)["metadata"].setdefault("labels", {})["app.kubernetes.io/instance"] = "pr-43"
+instance_mismatch_path = tmp / "hosted-bridge-contract-instance-mismatch.yaml"
+instance_mismatch_path.write_text(
+    yaml.safe_dump_all(instance_mismatch_documents, sort_keys=False), encoding="utf-8"
+)
+instance_mismatch = run_hosted(
+    instance_mismatch_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if instance_mismatch.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a mismatched rendered Helm release identity")
+instance_mismatch_result = json.loads(instance_mismatch.stdout)
+if (
+    instance_mismatch_result.get("status") != "fail"
+    or "does not match trusted release" not in instance_mismatch_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge release identity mismatch result was not explicit: "
+        f"{instance_mismatch_result}"
+    )
 
 invalid_port = run_hosted(
     render_path,

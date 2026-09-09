@@ -333,6 +333,30 @@ for rollout_steps, step_name in (
     assert "for deployment in" not in rollout_step["run"], step_name
     assert "rollout status" not in rollout_step["run"], step_name
 
+verify_steps = jobs["verify-runtime"]["steps"]
+verify_success_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name") == "Publish trusted preview success"
+)
+verify_failure_index = next(
+    index
+    for index, step in enumerate(verify_steps)
+    if step.get("name") == "Publish trusted preview verification failure"
+)
+assert verify_success_index < verify_failure_index
+verify_success = verify_steps[verify_success_index]
+assert verify_success["if"] == "${{ success() }}"
+verify_failure = verify_steps[verify_failure_index]
+assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
+failure_script = verify_failure["with"]["script"]
+assert 'mode: "failure"' in failure_script
+assert 'markerPolicy: "replace"' in failure_script
+assert 'statePolicy: "expected-open"' in failure_script
+assert 'telnetPort: "unavailable"' in failure_script
+assert 'failureStage: "verify-runtime"' in failure_script
+assert verify_failure["uses"] == verify_success["uses"]
+
 dev_demo_steps = dev_demo_workflow["jobs"]["dev-demo-deploy"]["steps"]
 dev_demo_by_name = {
     step.get("name"): step
