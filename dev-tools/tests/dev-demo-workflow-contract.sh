@@ -1314,7 +1314,7 @@ case "$TEST_SCENARIO:$page" in
 esac
 SH
 
-chmod +x "$reconcile_step" "$stub_dir/gh" "$stub_dir/kubectl"
+chmod +x "$stub_dir/gh" "$stub_dir/kubectl"
 test_head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 test_other_head_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 

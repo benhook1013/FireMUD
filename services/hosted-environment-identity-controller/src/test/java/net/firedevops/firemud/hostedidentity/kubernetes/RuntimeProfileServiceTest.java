@@ -356,8 +356,10 @@ class RuntimeProfileServiceTest {
                     "firemud.dev/dev-demo", "true",
                     "firemud.dev/environment-class",
                     HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
-            .addToAnnotations("firemud.dev/requested-dev-demo-head-sha", requestedHead)
             .addToAnnotations("firemud.dev/last-dev-demo-telnet-port", "32016");
+    if (requestedHead != null) {
+      builder.addToAnnotations("firemud.dev/requested-dev-demo-head-sha", requestedHead);
+    }
     if (deployedHead != null) {
       builder.addToAnnotations("firemud.dev/last-dev-demo-head-sha", deployedHead);
     }

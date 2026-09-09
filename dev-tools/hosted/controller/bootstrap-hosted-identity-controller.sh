@@ -95,13 +95,13 @@ if ! [[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
 fi
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
+umask 077
 
 temporary_manifest="$(mktemp)"
 cleanup() {
   rm -f "$temporary_manifest"
 }
 trap cleanup EXIT
-umask 077
 
 # Render privately so the checked-in base cannot silently acquire a mutable
 # image tag or an activation mode.  Server-side apply below remains the only

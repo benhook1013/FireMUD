@@ -868,9 +868,30 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
         for location, value in walk(document):
             if location.endswith(".nodePort"):
                 node_ports.append((f"{document.get('kind')}/{name}", location, value))
+    tcp_proxy_services = [
+        document
+        for document in documents
+        if document.get("kind") == "Service"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ]
+    if len(tcp_proxy_services) != 1:
+        fail(
+            "prepared preview render must contain exactly one Service/tcp-proxy-service"
+        )
+    service_ports = tcp_proxy_services[0].get("spec", {}).get("ports", [])
+    declared_ports = [
+        (index, port)
+        for index, port in enumerate(service_ports)
+        if port.get("port") == 2323
+    ]
+    if len(declared_ports) != 1:
+        fail(
+            "Service/tcp-proxy-service must contain exactly one declared TCP port 2323"
+        )
+    port_index, _declared_port = declared_ports[0]
     expected = (
         "Service/tcp-proxy-service",
-        "object.spec.ports[0].nodePort",
+        f"object.spec.ports[{port_index}].nodePort",
         expected_port,
     )
     if node_ports != [expected]:

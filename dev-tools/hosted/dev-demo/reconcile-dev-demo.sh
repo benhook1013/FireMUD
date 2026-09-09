@@ -5,7 +5,10 @@ namespace="dev"
 desired_head_sha="$(
   gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
 )"
-[[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]]
+[[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "::error title=Invalid develop head SHA::Expected exactly 40 lowercase hexadecimal characters from the develop branch." >&2
+  exit 1
+}
 current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
 max_failed_attempts=3
 max_history_pages=10

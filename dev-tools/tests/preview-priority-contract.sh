@@ -308,6 +308,12 @@ case "$resource" in
     if [[ "${FAKE_PRIORITY_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
     fi
+    if [[ "$*" == *"per_page=1&page=1001"* ]]; then
+      if [[ "${FAKE_PRIORITY_OVERFLOW:-false}" == "true" ]]; then
+        printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
+      fi
+      exit 0
+    fi
     printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
     ;;
   */pulls/900)
@@ -566,6 +572,7 @@ reset_case() {
   export FAKE_PRUNE_MULTI_TEST=false
   export FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE=''
   export FAKE_OPEN_PRIORITY_ROWS=''
+  export FAKE_PRIORITY_OVERFLOW=false
   export FAKE_PRIORITY_QUERY_FAIL=false
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
@@ -1814,7 +1821,45 @@ body = source[start:end]
 assert "inspect_labels" not in body
 assert "--operation deploy" in body
 assert "s/^priority=//p" in body
+assert "priority_page_size=100" in body
+assert "max_priority_pages=$((max_priority_candidates / priority_page_size))" in body
+assert 'page=${page}' in body
+assert 'per_page=1&page=$((max_priority_candidates + 1))' in body
+assert 'candidate limit exceeded' in body
+assert "--paginate" not in body
 PY
+
+# Accept exactly the configured candidate limit, then use only a one-record
+# overflow probe to reject candidate 1001.
+priority_limit_rows=""
+for _ in $(seq 1 100); do
+  priority_limit_rows+=$'901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t'"${priority_labels_base64}"$'\n'
+done
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="$priority_limit_rows"
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
+  >"$TEMP_DIR/priority-limit.output" 2>&1; then
+  echo "ordinary allocation unexpectedly succeeded with an unsatisfied priority PR" >&2
+  exit 1
+fi
+if grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-limit.output"; then
+  echo "exactly max_priority_candidates was rejected" >&2
+  exit 1
+fi
+grep -Fq 'Yielding ordinary PR #900' "$TEMP_DIR/priority-limit.output"
+
+reset_case
+export FAKE_TARGET_PRIORITY=false
+export FAKE_OPEN_PRIORITY_ROWS="$priority_limit_rows"
+export FAKE_PRIORITY_OVERFLOW=true
+if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
+  >"$TEMP_DIR/priority-overflow.output" 2>&1; then
+  echo "allocation unexpectedly succeeded with priority candidate 1001" >&2
+  exit 1
+fi
+grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-overflow.output"
+
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"

@@ -135,6 +135,10 @@ contains "$waiter" 'firemud.dev/requested-preview-head-sha'
 contains "$waiter" 'firemud.dev/last-preview-head-sha'
 contains "$waiter" 'all_projections_ready=true'
 contains "$waiter" 'projection_attempted=false'
+contains "$waiter" 'projection_attempted=true'
+# shellcheck disable=SC2016 # Match the literal timeout classification branch.
+contains "$waiter" 'if [[ "$projection_attempted" == true ]]; then'
+contains "$waiter" 'Skipped waiting for complete controller projection'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'

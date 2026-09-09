@@ -111,11 +111,12 @@ find_unsatisfied_priority_pr() {
   local namespace
   local namespace_owner
   local namespace_head
-
-  if ! priority_rows="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-    --jq '
-      .[]
-      | [
+  local page
+  local page_rows
+  local priority_page_size=100
+  local max_priority_pages=$((max_priority_candidates / priority_page_size))
+  local overflow_row
+  local priority_jq='.[] | [
           .number,
           .head.sha,
           .head.repo.full_name,
@@ -123,14 +124,35 @@ find_unsatisfied_priority_pr() {
           .base.ref,
           .state,
           (.labels | tojson | @base64)
-        ]
-      | @tsv')"; then
-    echo "Unable to query current priority pull requests" >&2
-    return 1
-  fi
-  if (( $(grep -c . <<<"$priority_rows") > max_priority_candidates )); then
-    echo "Unable to evaluate priority pull requests: candidate limit exceeded" >&2
-    return 1
+        ] | @tsv'
+
+  priority_rows=""
+  for ((page = 1; page <= max_priority_pages; page++)); do
+    if ! page_rows="$(gh api \
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${priority_page_size}&page=${page}" \
+      --jq "$priority_jq")"; then
+      echo "Unable to query current priority pull requests" >&2
+      return 1
+    fi
+    if [[ -z "$page_rows" ]]; then
+      break
+    fi
+    priority_rows+="$page_rows"$'\n'
+    if (( $(grep -c . <<<"$page_rows") < priority_page_size )); then
+      break
+    fi
+  done
+  if (( page > max_priority_pages )); then
+    if ! overflow_row="$(gh api \
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=1&page=$((max_priority_candidates + 1))" \
+      --jq "$priority_jq")"; then
+      echo "Unable to query current priority pull requests" >&2
+      return 1
+    fi
+    if [[ -n "$overflow_row" ]]; then
+      echo "Unable to evaluate priority pull requests: candidate limit exceeded" >&2
+      return 1
+    fi
   fi
   while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state labels_base64; do
     if [[ -z "$pr_number" ]]; then

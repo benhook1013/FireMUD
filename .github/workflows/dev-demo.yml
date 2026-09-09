@@ -234,6 +234,8 @@ jobs:
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
 
       - name: Restore dev-demo runtime kubeconfig
+        # The requester kubeconfig is needed only for the identity request;
+        # subsequent runtime waits must use the restored runtime credentials.
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         run: echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 

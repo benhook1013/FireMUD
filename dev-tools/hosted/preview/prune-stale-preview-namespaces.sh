@@ -6,8 +6,8 @@ preview_delete_timeout="${PREVIEW_DELETE_TIMEOUT:-600}"
 delete_runtime_namespace() {
   local runtime_namespace="$1"
   local runtime_lookup runtime_lookup_status wait_status
-  if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
-    echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
+  if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]*$ ]]; then
+    echo "runtime namespace is not a canonical PR preview: ${runtime_namespace}" >&2
     return 2
   fi
 

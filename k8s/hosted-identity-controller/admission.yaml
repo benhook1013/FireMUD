@@ -141,7 +141,9 @@ spec:
   matchConditions:
     - name: hosted-identity-secret-boundary
       expression: >-
-        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
+        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
+         (request.operation != 'DELETE' ||
+          request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]*|pr-[1-9][0-9]*-identity)$'))) ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$')) ||
         ((request.namespace in ['dev', 'dev-identity'] ||

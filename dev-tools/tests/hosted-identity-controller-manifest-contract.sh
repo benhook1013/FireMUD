@@ -712,7 +712,8 @@ cert_manager_match = (
 )
 assert normalized_secret_match.count(cert_manager_match) == 1
 assert "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in secret_match
-assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||" in secret_match
+assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in secret_match
+assert "request.operation != 'DELETE' || request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]*|pr-[1-9][0-9]*-identity)$')" in normalized_secret_match
 assert "request.operation == 'DELETE'" in secret_match
 assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match

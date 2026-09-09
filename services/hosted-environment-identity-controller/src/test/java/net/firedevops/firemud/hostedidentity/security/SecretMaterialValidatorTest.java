@@ -418,7 +418,7 @@ class SecretMaterialValidatorTest {
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
     String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
-    Secret rotatedCa = generatedCa(now, Duration.ofDays(60));
+    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
 
     KubernetesClient client = mock(KubernetesClient.class);
     MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
@@ -556,18 +556,24 @@ class SecretMaterialValidatorTest {
     when(existingResource.get()).thenReturn(existing);
     when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
     when(caResource.get()).thenReturn(rotatedCa);
-    org.mockito.ArgumentCaptor<Secret> replacement =
-        org.mockito.ArgumentCaptor.forClass(Secret.class);
-    when(identitySecrets.resource(replacement.capture())).thenReturn(replacementResource);
+    Secret[] replacementHolder = new Secret[1];
+    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenAnswer(
+            invocation -> {
+              replacementHolder[0] = invocation.getArgument(0, Secret.class);
+              return replacementResource;
+            });
     when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
-    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacement.getValue());
+    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacementHolder[0]);
 
     Secret repaired = generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
 
+    org.mockito.ArgumentCaptor<Secret> replacement =
+        org.mockito.ArgumentCaptor.forClass(Secret.class);
     verify(identitySecrets).resource(replacement.capture());
     verify(replacementResource).lockResourceVersion("7");
     verify(lockedReplacementResource).replace();
-    Secret rotated = replacement.getValue();
+    Secret rotated = replacementHolder[0];
     assertSame(rotated, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));
     assertEquals("7", rotated.getMetadata().getResourceVersion());
@@ -662,6 +668,8 @@ class SecretMaterialValidatorTest {
 
   @Test
   void productionGenerationRejectsCaWithoutTheRenewalSlack() throws Exception {
+    // X.509 validity timestamps have whole-second precision; truncating now
+    // makes this one-nanosecond-under-boundary case deterministic before encoding.
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     Duration renewBefore = Duration.ofDays(7);
     Duration caLifetime =

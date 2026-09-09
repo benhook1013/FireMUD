@@ -419,6 +419,31 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
+    def test_runtime_target_finds_declared_telnet_port_without_relying_on_index(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": "tcp-proxy-service",
+                "namespace": "pr-42",
+                "labels": {
+                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
+            "spec": {
+                "ports": [
+                    {"name": "metrics", "port": 8080},
+                    {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prepared.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            self.validator.validate_runtime_target(path, "pr-42", 32001)
+
     def test_injection_rejects_missing_object_metadata_after_namespace_validation(self):
         document = {
             "apiVersion": "v1",

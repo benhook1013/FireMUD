@@ -68,7 +68,7 @@ if [[ "${1:-}" == "--projections" ]]; then
     IFS='|' read -r secret_name role required_keys <<<"$projection"
     projection_ready=false
     projection_attempted=false
-    while (( SECONDS < deadline )) || [[ "$projection_attempted" != true ]]; do
+    while (( SECONDS < deadline )); do
       projection_attempted=true
       if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json)"; then
         if [[ -z "$secret_json" ]]; then
@@ -99,7 +99,11 @@ if [[ "${1:-}" == "--projections" ]]; then
       sleep 5
     done
     if [[ "$projection_ready" != true ]]; then
-      echo "Timed out waiting for complete controller projection ${runtime_namespace}/${secret_name}." >&2
+      if [[ "$projection_attempted" == true ]]; then
+        echo "Timed out waiting for complete controller projection ${runtime_namespace}/${secret_name}." >&2
+      else
+        echo "Skipped waiting for complete controller projection ${runtime_namespace}/${secret_name}; shared deadline exhausted." >&2
+      fi
       all_projections_ready=false
     fi
   done

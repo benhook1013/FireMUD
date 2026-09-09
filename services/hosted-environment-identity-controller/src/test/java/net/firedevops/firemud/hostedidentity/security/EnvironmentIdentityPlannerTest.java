@@ -110,17 +110,19 @@ class EnvironmentIdentityPlannerTest {
   @Test
   void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
-    Map<?, ?> scopeRolePolicy =
-        java.util.stream.StreamSupport.stream(
-                new Yaml().loadAll(Files.newBufferedReader(admissionPath)).spliterator(), false)
-            .map(Map.class::cast)
-            .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
-            .filter(
-                document ->
-                    "firemud-hosted-identity-scope-roles"
-                        .equals(((Map<?, ?>) document.get("metadata")).get("name")))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
+    Map<?, ?> scopeRolePolicy;
+    try (var reader = Files.newBufferedReader(admissionPath)) {
+      scopeRolePolicy =
+          java.util.stream.StreamSupport.stream(new Yaml().loadAll(reader).spliterator(), false)
+              .map(Map.class::cast)
+              .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
+              .filter(
+                  document ->
+                      "firemud-hosted-identity-scope-roles"
+                          .equals(((Map<?, ?>) document.get("metadata")).get("name")))
+              .findFirst()
+              .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
+    }
     Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
     List<?> validations = (List<?>) spec.get("validations");
     String scopeRoleExpression = (String) ((Map<?, ?>) validations.get(0)).get("expression");
