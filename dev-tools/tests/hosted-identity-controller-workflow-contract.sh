@@ -110,6 +110,15 @@ contains "$waiter" 'firemud.dev/last-preview-head-sha'
 contains "$waiter" 'all_projections_ready=true'
 contains "$waiter" 'projection_attempted=false'
 contains "$waiter" 'tls.crt,tls.key,ca.crt,client.crt,client.key'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'get secret "$secret_name" --ignore-not-found -o json'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'kubectl get namespace "$runtime_namespace" --ignore-not-found -o json'
+# shellcheck disable=SC2016 # Match literal shell source in the waiter.
+contains "$waiter" 'get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json'
+contains "$waiter" 'Unable to determine controller projection'
+contains "$waiter" 'Unable to determine runtime namespace'
+contains "$waiter" 'Unable to determine HostedEnvironmentIdentity'
 for phase in \
   Pending Provisioning WaitingForCertificate RuntimeAbsent Syncing Verifying \
   Blocked Degraded Retiring Retired; do
@@ -222,7 +231,7 @@ for fragment in (
     '[[ "$state" == closed ]] || emit_no_action',
     'Ignoring closed pull request because it has been reopened.',
     '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action',
-    'Ignoring stale closed pull request for an earlier PR head.',
+    'Ignoring stale lifecycle event for an earlier PR head.',
 ):
     assert fragment in target_script, fragment
 assert 'if [[ "$ACTION" == deploy ]]' not in target_script
@@ -1795,33 +1804,235 @@ run_projection_namespace_mismatch_fixture \
   'PR identity pr-42 requires matching runtime namespace pr-42' \
   pr-42-dev
 
-projection_deadline_stub_dir="$TEMP_DIR/projection-deadline-waiter-stubs"
-mkdir -p "$projection_deadline_stub_dir"
-cat >"$projection_deadline_stub_dir/kubectl" <<'SH'
+# Active waiter reads treat a successful empty --ignore-not-found response as
+# absence, while a kubectl failure is an immediately fatal API/auth/transport
+# error. Nonempty incomplete projection state remains retryable.
+waiter_stub_dir="$TEMP_DIR/active-waiter-stubs"
+mkdir -p "$waiter_stub_dir"
+cat >"$waiter_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"${PROJECTION_KUBECTL_LOG:?}"
-exit 1
+
+scenario="${WAITER_SCENARIO:?}"
+printf '%s\n' "$*" >>"${WAITER_KUBECTL_LOG:?}"
+
+next_count() {
+  local name="$1"
+  local path="${WAITER_COUNT_ROOT:?}/${name}"
+  local count=0
+  if [[ -f "$path" ]]; then
+    count="$(<"$path")"
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$path"
+  printf '%s' "$count"
+}
+
+namespace_json() {
+  jq -nc --arg expected_head "${WAITER_EXPECTED_HEAD:?}" '{
+    metadata: {
+      uid: "uid-pr-42",
+      annotations: {
+        "firemud.dev/requested-preview-head-sha": $expected_head,
+        "firemud.dev/last-preview-head-sha": $expected_head
+      }
+    }
+  }'
+}
+
+identity_json() {
+  jq -nc --arg expected_head "${WAITER_EXPECTED_HEAD:?}" '{
+    metadata: {generation: 1},
+    status: {
+      observedGeneration: 1,
+      phase: "Ready",
+      conditions: [{type: "Ready", status: "True", observedGeneration: 1}],
+      profile: {
+        runtimeNamespaceUid: "uid-pr-42",
+        requestedHeadSha: $expected_head,
+        deployedHeadSha: $expected_head
+      },
+      ingress: {revision: "ingress-1"},
+      telnet: {revision: "telnet-1"},
+      grpc: {revision: "grpc-1"},
+      gatewayInternalWs: {revision: "gateway-1"},
+      tcpProxyBridge: {revision: "bridge-1"}
+    }
+  }'
+}
+
+if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
+  [[ $# -eq 8 && "$6" == --ignore-not-found && "$7" == -o && "$8" == json ]]
+  secret_name="$5"
+  if [[ "$scenario" == projection-command-failure ]]; then
+    printf 'Error from server (Forbidden): secrets are forbidden\n' >&2
+    exit 42
+  fi
+  if [[ "$scenario" == projection-absence && "$secret_name" == pr-42-tls ]]; then
+    projection_count="$(next_count projection)"
+    if (( projection_count == 1 )); then
+      exit 0
+    fi
+    if (( projection_count == 2 )); then
+      printf '{}'
+      exit 0
+    fi
+  fi
+  case "$secret_name" in
+    pr-42-tls)
+      printf '%s' '{"metadata":{"name":"pr-42-tls","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"ingress","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key"}}'
+      ;;
+    pr-42-telnet-tls)
+      printf '%s' '{"metadata":{"name":"pr-42-telnet-tls","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"telnet","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key"}}'
+      ;;
+    pr-42-gateway-internal-ws)
+      printf '%s' '{"metadata":{"name":"pr-42-gateway-internal-ws","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"gateway-internal-ws","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    pr-42-tcp-proxy-bridge)
+      printf '%s' '{"metadata":{"name":"pr-42-tcp-proxy-bridge","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"tcp-proxy-bridge","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
+    firemud-grpc-tls)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-tls","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca","client.crt":"client-cert","client.key":"client-key"}}'
+      ;;
+    *)
+      printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ "$1" == get && "$2" == namespace ]]; then
+  [[ $# -eq 6 && "$3" == pr-42 && "$4" == --ignore-not-found && "$5" == -o && "$6" == json ]]
+  if [[ "$scenario" == namespace-command-failure ]]; then
+    printf 'Error from server (Forbidden): namespaces are forbidden\n' >&2
+    exit 43
+  fi
+  if [[ "$scenario" == namespace-absence ]]; then
+    namespace_count="$(next_count namespace)"
+    if (( namespace_count == 1 )); then
+      exit 0
+    fi
+  fi
+  namespace_json
+  exit 0
+fi
+
+if [[ "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" == hostedenvironmentidentity ]]; then
+  [[ $# -eq 8 && "$5" == pr-42 && "$6" == --ignore-not-found && "$7" == -o && "$8" == json ]]
+  if [[ "$scenario" == identity-command-failure ]]; then
+    printf 'Error from server (Forbidden): hostedenvironmentidentities are forbidden\n' >&2
+    exit 44
+  fi
+  if [[ "$scenario" == identity-absence ]]; then
+    identity_count="$(next_count identity)"
+    if (( identity_count == 1 )); then
+      exit 0
+    fi
+  fi
+  identity_json
+  exit 0
+fi
+
+printf 'unexpected waiter kubectl invocation: %s\n' "$*" >&2
+exit 2
 SH
-cat >"$projection_deadline_stub_dir/sleep" <<'SH'
+cat >"$waiter_stub_dir/sleep" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${REAL_SLEEP_PATH:?}" 2
+printf '%s\n' "$*" >>"${WAITER_SLEEP_LOG:?}"
 SH
-chmod +x "$projection_deadline_stub_dir/kubectl" "$projection_deadline_stub_dir/sleep"
-projection_deadline_log="$TEMP_DIR/projection-deadline.kubectl.log"
-: >"$projection_deadline_log"
-set +e
-env \
-  PATH="$projection_deadline_stub_dir:$PATH" \
-  REAL_SLEEP_PATH="$real_sleep_path" \
-  PROJECTION_KUBECTL_LOG="$projection_deadline_log" \
-  bash "$waiter" --projections pr-42 pr-42 1 \
-  >"$TEMP_DIR/projection-deadline.output" 2>"$TEMP_DIR/projection-deadline.error"
-projection_deadline_status=$?
-set -e
-[[ "$projection_deadline_status" -eq 1 ]]
-[[ "$(wc -l <"$projection_deadline_log")" -eq 5 ]]
+chmod +x "$waiter_stub_dir/kubectl" "$waiter_stub_dir/sleep"
+
+run_projection_waiter_fixture() {
+  local scenario="$1"
+  local expected_status="$2"
+  local expected_kubectl_calls="$3"
+  local expected_sleep_calls="$4"
+  local kubectl_log="$TEMP_DIR/${scenario}.kubectl.log"
+  local sleep_log="$TEMP_DIR/${scenario}.sleep.log"
+  local count_root="$TEMP_DIR/${scenario}.counts"
+  local output="$TEMP_DIR/${scenario}.output"
+  local error="$TEMP_DIR/${scenario}.error"
+  local status
+  local expected_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+  mkdir -p "$count_root"
+  : >"$kubectl_log"
+  : >"$sleep_log"
+  set +e
+  env \
+    PATH="$waiter_stub_dir:$PATH" \
+    WAITER_SCENARIO="$scenario" \
+    WAITER_EXPECTED_HEAD="$expected_head" \
+    WAITER_COUNT_ROOT="$count_root" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    WAITER_SLEEP_LOG="$sleep_log" \
+    bash "$waiter" --projections pr-42 pr-42 2 \
+    >"$output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq "$expected_status" ]]
+  [[ "$(wc -l <"$kubectl_log")" -eq "$expected_kubectl_calls" ]]
+  [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
+  [[ "$(head -n 1 "$kubectl_log")" == \
+    "-n pr-42 get secret pr-42-tls --ignore-not-found -o json" ]]
+  if [[ "$expected_status" -eq 0 ]]; then
+    grep -Fq 'projections=ready' "$output"
+  else
+    grep -Fq 'kubectl get failed' "$error"
+    grep -Fq 'Error from server (Forbidden)' "$error"
+  fi
+}
+
+run_projection_waiter_fixture projection-absence 0 7 2
+run_projection_waiter_fixture projection-command-failure 42 1 0
+
+run_active_waiter_fixture() {
+  local scenario="$1"
+  local expected_status="$2"
+  local expected_kubectl_calls="$3"
+  local expected_sleep_calls="$4"
+  local kubectl_log="$TEMP_DIR/${scenario}.kubectl.log"
+  local sleep_log="$TEMP_DIR/${scenario}.sleep.log"
+  local count_root="$TEMP_DIR/${scenario}.counts"
+  local output="$TEMP_DIR/${scenario}.output"
+  local error="$TEMP_DIR/${scenario}.error"
+  local status
+  local expected_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+  mkdir -p "$count_root"
+  : >"$kubectl_log"
+  : >"$sleep_log"
+  set +e
+  env \
+    PATH="$waiter_stub_dir:$PATH" \
+    WAITER_SCENARIO="$scenario" \
+    WAITER_EXPECTED_HEAD="$expected_head" \
+    WAITER_COUNT_ROOT="$count_root" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    WAITER_SLEEP_LOG="$sleep_log" \
+    bash "$waiter" pr-42 "$expected_head" pr-42 2 \
+    >"$output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq "$expected_status" ]]
+  [[ "$(wc -l <"$kubectl_log")" -eq "$expected_kubectl_calls" ]]
+  [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
+  if [[ "$expected_status" -eq 0 ]]; then
+    grep -Fq 'identity=pr-42' "$output"
+  else
+    grep -Fq 'kubectl get failed' "$error"
+    grep -Fq 'Error from server (Forbidden)' "$error"
+  fi
+}
+
+run_active_waiter_fixture namespace-absence 0 3 1
+run_active_waiter_fixture identity-absence 0 4 1
+run_active_waiter_fixture namespace-command-failure 43 1 0
+run_active_waiter_fixture identity-command-failure 44 2 0
 
 python3 - "$kubeconfig_action" "$TEMP_DIR/write-kubeconfig.sh" <<'PY'
 import sys
@@ -2121,7 +2332,7 @@ grep -Fxq 'Ignoring closed pull request because its base branch is unsupported.'
 run_closed_target_fixture stale-head closed example/FireMUD develop \
   "$closed_head" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0
 test "$(cat "$TEMP_DIR/closed-target-stale-head.output")" = 'action=none'
-grep -Fxq 'Ignoring stale closed pull request for an earlier PR head.' \
+grep -Fxq 'Ignoring stale lifecycle event for an earlier PR head.' \
   "$TEMP_DIR/closed-target-stale-head.stdout"
 
 echo 'hosted identity controller workflow contract passed'

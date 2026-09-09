@@ -131,7 +131,7 @@ jobs:
               "Ignoring closed pull request because it has been reopened."
           fi
           [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
-            "Ignoring stale closed pull request for an earlier PR head."
+            "Ignoring stale lifecycle event for an earlier PR head."
           {
             echo "action=${ACTION}"
             echo "pr_number=${PR_NUMBER}"

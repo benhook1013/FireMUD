@@ -32,8 +32,10 @@ class HostedIdentityPropertiesTest {
     }
     var properties = new HostedIdentityProperties();
 
-    Binder.get(environment).bind("firemud.hosted-identity", Bindable.ofInstance(properties));
+    var binding =
+        Binder.get(environment).bind("firemud.hosted-identity", Bindable.ofInstance(properties));
 
+    assertTrue(binding.isBound());
     assertEquals(
         "firemud.dev/requested-preview-head-sha", properties.getPreviewRequestedHeadAnnotation());
     assertEquals(

@@ -957,12 +957,25 @@ assert (
     'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
     '  patch hostedenvironmentidentities.platform.firemud.dev'
 ) in source
+assert (
+    'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
+    '  get hostedenvironmentidentities.platform.firemud.dev'
+) in source
+assert (
+    'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
+    '  update hostedenvironmentidentities.platform.firemud.dev/status'
+) in source
+for forbidden_controller_root_operation in ("create", "update", "delete"):
+    assert (
+        f'expect_can_i no --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
+        f'  {forbidden_controller_root_operation} hostedenvironmentidentities.platform.firemud.dev'
+    ) in source
+assert source.count("expect_can_i ") == 14
 assert "hostedenvironmentidentities/finalizers.platform.firemud.dev" not in source
 assert 'rendered_activation_mode="$(sed -n ' in source
 assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
 assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
-assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 2
-assert 'fail "activation mode still contains the paused value after replacement"' in source
+assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 1
 PY
 require_literal "$PROJECTION" "ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION"
 forbid_literal "$GRPC_GENERATOR" 'requiredData(caSource, "tls.crt")'
@@ -1048,6 +1061,19 @@ if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicybinding" ]]; th
 fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then
   record_event auth-check
+  if [[ " $* " == *" --as=system:serviceaccount:firemud-system:firemud-hosted-identity-controller "* ]] &&
+    [[ "$*" =~ (create|update|delete)[[:space:]]hostedenvironmentidentities\.platform\.firemud\.dev($|[[:space:]]) ]]; then
+    if [[ "${FAKE_CAN_I_ERROR:-0}" == "1" ]]; then
+      printf 'simulated authorization API failure\n' >&2
+      exit 2
+    fi
+    if [[ "${FAKE_CAN_I_ALLOW_DENIED:-0}" == "1" ]]; then
+      printf 'yes\n'
+      exit 0
+    fi
+    printf 'no\n'
+    exit 1
+  fi
   if [[ " $* " == *" --all-namespaces "* || " $* " == *" --namespace=dev "* ]]; then
     if [[ "${FAKE_CAN_I_ERROR:-0}" == "1" ]]; then
       printf 'simulated authorization API failure\n' >&2
@@ -1146,7 +1172,7 @@ for index in "${!active_events[@]}"; do
     apply:active) active_apply_index="$index" ;;
   esac
 done
-[[ "$auth_checks" -eq 11 ]] || fail "active bootstrap did not run all authorization probes"
+[[ "$auth_checks" -eq 14 ]] || fail "active bootstrap did not run all authorization probes"
 (( first_ca_index > last_auth_index )) || \
   fail "active bootstrap read the CA before all authorization probes completed"
 (( active_apply_index > first_ca_index )) || \

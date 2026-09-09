@@ -270,6 +270,58 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                 )
 
 
+class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+
+    def test_injection_rejects_missing_namespace_before_reading_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing.yaml"
+            destination = Path(directory) / "destination.yaml"
+            with self.assertRaisesRegex(
+                ValueError, "preview runtime namespace is required"
+            ):
+                self.validator.inject_telnet_port(source, destination, 32000, None)
+            self.assertFalse(destination.exists())
+
+    def test_injection_rejects_noncanonical_namespace_before_reading_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "missing.yaml"
+            destination = Path(directory) / "destination.yaml"
+            with self.assertRaisesRegex(
+                ValueError, "runtime namespace is not canonical: 'dev'"
+            ):
+                self.validator.inject_telnet_port(source, destination, 32000, "dev")
+            self.assertFalse(destination.exists())
+
+    def test_injection_accepts_canonical_namespace(self):
+        document = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": "tcp-proxy-service",
+                "labels": {
+                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
+            "spec": {
+                "ports": [{"name": "tcp-2323", "port": 2323}],
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            destination = Path(directory) / "destination.yaml"
+            source.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            self.validator.inject_telnet_port(source, destination, 32000, "pr-42")
+
+            prepared = yaml.safe_load(destination.read_text(encoding="utf-8"))
+            self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
+            self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
+
+
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

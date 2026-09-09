@@ -146,6 +146,11 @@ for name in controller_steps:
     condition = deploy_by_name[name].get("if", "")
     if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in condition:
         raise SystemExit(f"{name} is not fail-closed behind hosted-controller mode")
+restore_condition = deploy_by_name["Restore dev-demo runtime kubeconfig"].get("if", "")
+if "always()" not in restore_condition:
+    raise SystemExit("dev-demo runtime kubeconfig restore must run after earlier step failures")
+if "steps.cluster-access.outputs.available == 'true'" not in restore_condition:
+    raise SystemExit("dev-demo runtime kubeconfig restore lost its cluster-access guard")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")
@@ -276,7 +281,7 @@ for required in (
     "refusing a history-blind dispatch",
     "-f event=push",
     "-F per_page=100",
-    "for nonterminal_status in requested waiting pending queued in_progress",
+    '.status != "completed"',
     ".head_sha == $head",
     ".display_title == $title",
     ".created_at >= $not_before",
@@ -291,6 +296,10 @@ for required in (
         raise SystemExit(f"dev-demo reconciler lacks {required}")
 if "gh run list" in reconcile_run or "--limit" in reconcile_run:
     raise SystemExit("dev-demo retry evidence must not use an evictable global run limit")
+if "for nonterminal_status in" in reconcile_run:
+    raise SystemExit("dev-demo active-run lookup must use one all-status traversal")
+if reconcile_run.count('run_page="$(list_run_page "$page")"') != 2:
+    raise SystemExit("dev-demo active and completed history must use bounded all-status pages")
 if reconcile_run.count('-f "head_sha=${desired_head_sha}"') != 1:
     raise SystemExit("only the one-result develop push anchor may use head_sha search")
 if reconcile_run.count("-f branch=develop") != 1:
@@ -731,7 +740,7 @@ cat >"$waiter_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -eq 5 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == pr-42 ) && "$4" == -o && "$5" == json ]]; then
+if [[ $# -eq 6 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == pr-42 ) && "$4" == --ignore-not-found && "$5" == -o && "$6" == json ]]; then
   if [[ "$3" == dev ]]; then
     requested_annotation="firemud.dev/requested-dev-demo-head-sha"
     deployed_annotation="firemud.dev/last-dev-demo-head-sha"
@@ -753,7 +762,7 @@ if [[ $# -eq 5 && "$1" == get && "$2" == namespace && ( "$3" == dev || "$3" == p
   exit 0
 fi
 
-if [[ $# -eq 7 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" == hostedenvironmentidentity && ( "$5" == dev-demo || "$5" == pr-42 ) && "$6" == -o && "$7" == json ]]; then
+if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" == hostedenvironmentidentity && ( "$5" == dev-demo || "$5" == pr-42 ) && "$6" == --ignore-not-found && "$7" == -o && "$8" == json ]]; then
   revision="sha256:$(printf 'a%.0s' {1..64})"
   grpc_revision="$revision"
   if [[ "${FAKE_MISSING_ROLE:-}" == grpc ]]; then
@@ -1148,12 +1157,7 @@ if [[ "$method" != GET || "$method_explicit" != true || -n "$jq_filter" \
   echo "unexpected gh workflow-run page lookup" >&2
   exit 2
 fi
-if [[ -n "$status" ]]; then
-  if [[ ${#raw_fields[@]} -ne 1 ]] || ! has_raw_field "status=${status}"; then
-    echo "unexpected gh status-filtered workflow-run lookup" >&2
-    exit 2
-  fi
-elif [[ ${#raw_fields[@]} -ne 0 ]]; then
+if [[ ${#raw_fields[@]} -ne 0 ]]; then
   echo "unexpected gh unfiltered workflow-run lookup" >&2
   exit 2
 fi
@@ -1162,30 +1166,7 @@ empty_runs() {
   printf '%s\n' '{"workflow_runs":[]}'
 }
 
-if [[ -n "$status" ]]; then
-  printf 'runs status=%s page=%s\n' "$status" "$page" >>"$TEST_GH_TRACE"
-  if [[ "$TEST_SCENARIO" != nonterminal-old || "$status" != requested ]]; then
-    empty_runs
-  elif [[ "$page" == 1 ]]; then
-    jq -nc --arg other "$TEST_OTHER_HEAD_SHA" \
-      '{workflow_runs:[range(0;100) as $index | {
-        id:(700 + $index), head_sha:$other, status:"requested", conclusion:null,
-        created_at:"2026-09-09T05:10:00Z",
-        display_title:("Develop Dev Demo Environment deploy head-" + $other)
-      }]}'
-  elif [[ "$page" == 2 ]]; then
-    : >"$TEST_ACTIVE_MARKER"
-    jq -nc --arg head "$TEST_HEAD_SHA" \
-      '{workflow_runs:[{
-        id:699, head_sha:$head, status:"requested", conclusion:null,
-        created_at:"2026-09-09T05:00:00Z",
-        display_title:("Develop Dev Demo Environment deploy head-" + $head)
-      }]}'
-  else
-    empty_runs
-  fi
-  exit 0
-fi
+printf 'runs status=all page=%s\n' "$page" >>"$TEST_GH_TRACE"
 
 case "$TEST_SCENARIO:$page" in
   empty:*|aligned-no-record:*)
@@ -1232,11 +1213,19 @@ case "$TEST_SCENARIO:$page" in
       ]}'
     ;;
   nonterminal-old:1)
-    printf 'runs status=all page=1\n' >>"$TEST_GH_TRACE"
+    jq -nc --arg other "$TEST_OTHER_HEAD_SHA" \
+      '{workflow_runs:[range(0;100) as $index | {
+        id:(700 + $index), head_sha:$other, status:"requested", conclusion:null,
+        created_at:"2026-09-09T05:10:00Z",
+        display_title:("Develop Dev Demo Environment deploy head-" + $other)
+      }]}'
+    ;;
+  nonterminal-old:2)
+    : >"$TEST_ACTIVE_MARKER"
     jq -nc --arg head "$TEST_HEAD_SHA" \
       '{workflow_runs:[{
-        id:800, head_sha:$head, status:"completed", conclusion:"failure",
-        created_at:"2026-09-09T05:10:00Z",
+        id:699, head_sha:$head, status:"requested", conclusion:null,
+        created_at:"2026-09-09T05:00:00Z",
         display_title:("Develop Dev Demo Environment deploy head-" + $head)
       }]}'
     ;;
@@ -1306,7 +1295,7 @@ run_reconcile_fixture() {
   }
 
   if [[ "$scenario" == nonterminal-old ]]; then
-    expected_trace=$'anchor\nruns status=requested page=1\nruns status=requested page=2'
+    expected_trace=$'anchor\nruns status=all page=1\nruns status=all page=2'
     actual_trace="$(<"$trace_log")"
     if [[ "$actual_trace" != "$expected_trace" || ! -f "$active_marker" ]]; then
       echo "reconciler fixture $scenario did not discover the active re-run before completed history" >&2

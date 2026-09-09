@@ -221,7 +221,7 @@ jobs:
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Active
 
       - name: Restore dev-demo runtime kubeconfig
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
         run: echo "KUBECONFIG=$RUNNER_TEMP/dev-demo-runtime.kubeconfig" >> "$GITHUB_ENV"
 
       - name: Wait for all controller identity projections

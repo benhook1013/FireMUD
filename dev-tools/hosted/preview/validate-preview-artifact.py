@@ -790,6 +790,10 @@ def inject_telnet_port(
 ) -> None:
     """Add only trusted runtime target data after artifact validation."""
 
+    if expected_namespace is None:
+        fail("preview runtime namespace is required")
+    if not re.fullmatch(r"pr-[1-9][0-9]*", expected_namespace):
+        fail(f"runtime namespace is not canonical: {expected_namespace!r}")
     if not MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT:
         fail(
             "preview telnet port must be between "

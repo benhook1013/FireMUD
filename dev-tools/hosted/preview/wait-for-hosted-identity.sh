@@ -56,22 +56,31 @@ if [[ "${1:-}" == "--projections" ]]; then
     projection_attempted=false
     while (( SECONDS < deadline )) || [[ "$projection_attempted" != true ]]; do
       projection_attempted=true
-      if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" -o json 2>/dev/null)" &&
-        jq -e \
-          --arg name "$secret_name" \
-          --arg identity "$identity_name" \
-          --arg role "$role" \
-          --arg keys "$required_keys" '
-            .metadata.name == $name and
-            .metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller" and
-            .metadata.labels["firemud.dev/identity-name"] == $identity and
-            .metadata.labels["firemud.dev/role"] == $role and
-            .metadata.labels["firemud.dev/retention"] == "retained" and
-            (. as $secret | ($keys | split(",")) as $required |
-              all($required[]; . as $key | $secret.data[$key] | type == "string" and length > 0))
-          ' <<<"$secret_json" >/dev/null; then
-        projection_ready=true
-        break
+      if secret_json="$(kubectl -n "$runtime_namespace" get secret "$secret_name" --ignore-not-found -o json)"; then
+        if [[ -z "$secret_json" ]]; then
+          echo "Waiting for controller projection ${runtime_namespace}/${secret_name} to appear."
+        elif jq -e \
+            --arg name "$secret_name" \
+            --arg identity "$identity_name" \
+            --arg role "$role" \
+            --arg keys "$required_keys" '
+              .metadata.name == $name and
+              .metadata.labels["firemud.dev/managed-by"] == "hosted-identity-controller" and
+              .metadata.labels["firemud.dev/identity-name"] == $identity and
+              .metadata.labels["firemud.dev/role"] == $role and
+              .metadata.labels["firemud.dev/retention"] == "retained" and
+              (. as $secret | ($keys | split(",")) as $required |
+                all($required[]; . as $key | $secret.data[$key] | type == "string" and length > 0))
+            ' <<<"$secret_json" >/dev/null; then
+          projection_ready=true
+          break
+        else
+          echo "Controller projection ${runtime_namespace}/${secret_name} is incomplete; retrying."
+        fi
+      else
+        kubectl_status=$?
+        echo "Unable to determine controller projection ${runtime_namespace}/${secret_name}; kubectl get failed (exit ${kubectl_status})." >&2
+        exit "$kubectl_status"
       fi
       sleep 5
     done
@@ -174,10 +183,16 @@ fi
 
 deadline=$((SECONDS + timeout_seconds))
 while (( SECONDS < deadline )); do
-  if ! namespace_json="$(kubectl get namespace "$runtime_namespace" -o json 2>/dev/null)"; then
-    echo "Waiting for runtime namespace ${runtime_namespace}..."
-    sleep 5
-    continue
+  if namespace_json="$(kubectl get namespace "$runtime_namespace" --ignore-not-found -o json)"; then
+    if [[ -z "$namespace_json" ]]; then
+      echo "Waiting for runtime namespace ${runtime_namespace} to appear..."
+      sleep 5
+      continue
+    fi
+  else
+    kubectl_status=$?
+    echo "Unable to determine runtime namespace ${runtime_namespace}; kubectl get failed (exit ${kubectl_status})." >&2
+    exit "$kubectl_status"
   fi
 
   namespace_uid="$(jq -r '.metadata.uid // empty' <<<"$namespace_json")"
@@ -214,10 +229,16 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  if ! identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" -o json 2>/dev/null)"; then
-    echo "Waiting for HostedEnvironmentIdentity/${identity_name}..."
-    sleep 5
-    continue
+  if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
+    if [[ -z "$identity_json" ]]; then
+      echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear..."
+      sleep 5
+      continue
+    fi
+  else
+    kubectl_status=$?
+    echo "Unable to determine HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
+    exit "$kubectl_status"
   fi
 
   generation="$(jq -r '.metadata.generation // empty' <<<"$identity_json")"

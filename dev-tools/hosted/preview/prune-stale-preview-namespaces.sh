@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+preview_delete_timeout="${PREVIEW_DELETE_TIMEOUT:-600}"
+if ! [[ "$preview_delete_timeout" =~ ^[1-9][0-9]*$ ]] ||
+  ((${#preview_delete_timeout} > 4)) ||
+  ((10#$preview_delete_timeout > 3600)); then
+  echo "PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600" >&2
+  exit 2
+fi
+
 delete_runtime_namespace() {
   local runtime_namespace="$1"
   local runtime_lookup runtime_lookup_status wait_status
@@ -27,7 +35,7 @@ delete_runtime_namespace() {
 
   kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false
   wait_status=0
-  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${PREVIEW_DELETE_TIMEOUT:-10m}" \
+  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${preview_delete_timeout}s" \
     || wait_status=$?
   if ((wait_status != 0)); then
     runtime_lookup="$(

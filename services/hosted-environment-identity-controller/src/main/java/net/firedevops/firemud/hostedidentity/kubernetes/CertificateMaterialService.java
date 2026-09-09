@@ -236,9 +236,6 @@ public class CertificateMaterialService {
     if (pinned != null) {
       return pinned;
     }
-    if (batch.deferBehindSelectedRotation(role)) {
-      return acceptedMaterial(client, plan, role, expectation);
-    }
     return serialize(
         client,
         plan,

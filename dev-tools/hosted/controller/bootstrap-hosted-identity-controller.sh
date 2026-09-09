@@ -248,6 +248,12 @@ expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
   patch hostedenvironmentidentities.platform.firemud.dev
 expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
   update hostedenvironmentidentities.platform.firemud.dev/status
+expect_can_i no --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
+  create hostedenvironmentidentities.platform.firemud.dev
+expect_can_i no --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
+  update hostedenvironmentidentities.platform.firemud.dev
+expect_can_i no --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \
+  delete hostedenvironmentidentities.platform.firemud.dev
 expect_can_i yes --as="$controller_sa" get namespace
 expect_can_i yes --as="$requester_sa" --namespace="$CONTROL_NAMESPACE" \
   create hostedenvironmentidentities.platform.firemud.dev
@@ -268,9 +274,6 @@ if [[ "$ACTIVATION_MODE" == "active" ]]; then
   rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
   [[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]] || \
     fail "active activation replacement did not produce exactly one active value"
-  if [[ "$rendered_activation_mode" == "$initial_activation_mode" ]]; then
-    fail "activation mode still contains the paused value after replacement"
-  fi
   kubectl apply \
     --server-side \
     --field-manager="$FIELD_MANAGER" \

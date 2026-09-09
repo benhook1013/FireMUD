@@ -100,15 +100,25 @@ jobs:
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              requested_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/requested-preview-head-sha}')"
+              requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-preview-head-sha}')"
               if [[ -z "${requested_head_sha}" ]]; then
-                kubectl annotate namespace "${namespace}" \
-                  "firemud.dev/requested-preview-head-sha=${head_sha}" \
-                  --overwrite >/dev/null
-                echo "Repaired missing requested head for aligned preview ${namespace}"
-                continue
-              fi
-              if [[ "${requested_head_sha}" == "${head_sha}" ]]; then
+                if ! namespace_lookup="$(kubectl get namespace "${namespace}" --ignore-not-found -o name)"; then
+                  echo "Unable to determine whether namespace ${namespace} exists." >&2
+                  exit 1
+                fi
+                if [[ -z "${namespace_lookup}" ]]; then
+                  namespace_exists=false
+                elif [[ "${namespace_lookup}" != "namespace/${namespace}" ]]; then
+                  echo "Namespace ${namespace} lookup returned an unexpected identity." >&2
+                  exit 1
+                else
+                  kubectl annotate namespace "${namespace}" \
+                    "firemud.dev/requested-preview-head-sha=${head_sha}" \
+                    --overwrite >/dev/null
+                  echo "Repaired missing requested head for aligned preview ${namespace}"
+                  continue
+                fi
+              elif [[ "${requested_head_sha}" == "${head_sha}" ]]; then
                 echo "Preview ${namespace} already aligned to ${head_sha}"
                 continue
               fi

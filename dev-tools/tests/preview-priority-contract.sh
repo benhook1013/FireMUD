@@ -79,6 +79,13 @@ if [[ "$*" == *"get namespaces"* ]]; then
 fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
+  if [[ -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" ]]; then
+    rm -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER"
+    if [[ "${FAKE_REQUESTED_HEAD_RECHECK_ERROR:-false}" == true ]]; then
+      exit 1
+    fi
+    exit 0
+  fi
   if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" ]]; then
     if [[ "${FAKE_RUNTIME_RECHECK_ERROR:-false}" == true ]]; then
       exit 1
@@ -94,6 +101,19 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"*
     exit 0
   fi
   printf 'namespace/%s\n' "${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
+  exit 0
+fi
+if [[ "$1" == get && "$2" == namespace && "$*" == *"requested-preview-head-sha"* ]]; then
+  printf '%s\n' "$*" >> "$FAKE_REQUESTED_HEAD_LOG"
+  if [[ "${FAKE_REQUESTED_HEAD_READ_ERROR:-false}" == true ]]; then
+    if [[ "${FAKE_REQUESTED_HEAD_NOT_FOUND:-false}" == true &&
+      "$*" == *"--ignore-not-found"* ]]; then
+      : > "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER"
+      exit 0
+    fi
+    exit 1
+  fi
+  printf '%s' "${FAKE_PR_901_REQUESTED_HEAD:-}"
   exit 0
 fi
 if [[ "$1" == delete && "$2" == namespace ]]; then
@@ -396,6 +416,8 @@ export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
+export FAKE_REQUESTED_HEAD_LOG="$TEMP_DIR/requested-head.log"
+export FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER="$TEMP_DIR/requested-head-not-found"
 export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
@@ -413,7 +435,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -436,6 +458,9 @@ reset_case() {
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
   export FAKE_PR_901_REQUESTED_HEAD=''
+  export FAKE_REQUESTED_HEAD_READ_ERROR=false
+  export FAKE_REQUESTED_HEAD_NOT_FOUND=false
+  export FAKE_REQUESTED_HEAD_RECHECK_ERROR=false
   export FAKE_DELETE_FAIL=false
   export FAKE_COMMENT_DELETE_FAIL=false
   export FAKE_PUBLISH_FAIL_PHASE=''
@@ -455,7 +480,7 @@ reset_case() {
   export FAKE_RUNTIME_RECHECK_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
   export FAKE_HELM_UNINSTALL_ERROR=false
-  unset PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS
+  unset PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS PREVIEW_DELETE_TIMEOUT
   export FAKE_ELIGIBILITY_OUTPUT=''
   export PREVIEW_ELIGIBILITY_SCRIPT="$ROOT_DIR/dev-tools/hosted/preview/preview-eligibility.py"
   export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
@@ -924,7 +949,30 @@ export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
 bash "$PRUNER" --delete-runtime pr-101
 test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
 grep -qx 'delete namespace pr-101 --ignore-not-found --wait=false' "$FAKE_RUNTIME_KUBECTL_LOG"
-grep -qx 'wait --for=delete namespace/pr-101 --timeout=10m' "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'wait --for=delete namespace/pr-101 --timeout=600s' "$FAKE_RUNTIME_KUBECTL_LOG"
+
+for invalid_preview_delete_timeout in 0 invalid 3601 99999999999999999999; do
+  reset_case
+  export PREVIEW_DELETE_TIMEOUT="$invalid_preview_delete_timeout"
+  if bash "$PRUNER" --delete-runtime pr-101; then
+    echo "pruner accepted an invalid PREVIEW_DELETE_TIMEOUT" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
+done
+
+for valid_preview_delete_timeout in 1 3600; do
+  reset_case
+  export PREVIEW_DELETE_TIMEOUT="$valid_preview_delete_timeout"
+  bash "$PRUNER" --delete-runtime pr-101
+  grep -qx \
+    "wait --for=delete namespace/pr-101 --timeout=${valid_preview_delete_timeout}s" \
+    "$FAKE_RUNTIME_KUBECTL_LOG"
+done
+
+reset_case
+bash "$PRUNER" --delete-runtime pr-101
+grep -qx 'wait --for=delete namespace/pr-101 --timeout=600s' "$FAKE_RUNTIME_KUBECTL_LOG"
 
 reset_case
 export FAKE_RUNTIME_WAIT_ERROR=true
@@ -1210,7 +1258,62 @@ grep -qx 'Repaired missing requested head for aligned preview pr-901' \
 grep -Fqx \
   'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
   "$FAKE_ANNOTATE_LOG"
+grep -Fq -- '--ignore-not-found -o jsonpath=' "$FAKE_REQUESTED_HEAD_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_deleted_requested_output="$TEMP_DIR/reconciler-deleted-requested.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=stale-head \
+    FAKE_REQUESTED_HEAD_READ_ERROR=true \
+    FAKE_REQUESTED_HEAD_NOT_FOUND=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash -e "$RECONCILER_RUN"
+) > "$reconciler_deleted_requested_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_deleted_requested_output"
+grep -Fq -- '--ignore-not-found -o jsonpath=' "$FAKE_REQUESTED_HEAD_LOG"
+grep -Fqx 'get namespace pr-901 --ignore-not-found -o name' \
+  "$FAKE_RUNTIME_KUBECTL_LOG"
+test ! -e "$FAKE_ANNOTATE_LOG"
+grep -Fq 'inputs[pr_number]=901' "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_requested_read_error_output="$TEMP_DIR/reconciler-requested-read-error.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=stale-head \
+    FAKE_REQUESTED_HEAD_READ_ERROR=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash -e "$RECONCILER_RUN"
+) > "$reconciler_requested_read_error_output" 2>&1; then
+  echo "reconciler suppressed a requested-head annotation API error" >&2
+  exit 1
+fi
+test ! -e "$FAKE_ANNOTATE_LOG"
+
+reset_case
+reconciler_requested_recheck_error_output="$TEMP_DIR/reconciler-requested-recheck-error.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_REQUESTED_HEAD_READ_ERROR=true \
+    FAKE_REQUESTED_HEAD_NOT_FOUND=true \
+    FAKE_REQUESTED_HEAD_RECHECK_ERROR=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash -e "$RECONCILER_RUN"
+) > "$reconciler_requested_recheck_error_output" 2>&1; then
+  echo "reconciler suppressed a namespace recheck API error" >&2
+  exit 1
+fi
+test ! -e "$FAKE_ANNOTATE_LOG"
 
 reset_case
 reconciler_mismatched_requested_output="$TEMP_DIR/reconciler-mismatched-requested.out"
@@ -1383,6 +1486,9 @@ test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'Skipping ordinary PR #' "$reconciler_workflow"
 grep -q 'another preview repair was already dispatched this cycle' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert missing namespaces are tolerated while other get errors fail.
+grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath=' \
+  "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.

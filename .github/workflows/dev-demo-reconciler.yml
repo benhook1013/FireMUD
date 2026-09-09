@@ -78,16 +78,12 @@ jobs:
 
           list_run_page() {
             local page="$1"
-            local status="${2:-}"
             local api_args=(
               --method GET
               "${workflow_runs_api}"
               -F per_page=100
               -F "page=${page}"
             )
-            if [[ -n "$status" ]]; then
-              api_args+=(-f "status=${status}")
-            fi
             gh api "${api_args[@]}"
           }
 
@@ -177,32 +173,30 @@ jobs:
           fi
 
           # Re-runs retain their original workflow-run identity and can therefore
-          # sort behind newer completed attempts. Search every nonterminal state
+          # sort behind newer completed attempts. Search all statuses
           # before using completed history to decide whether another dispatch is safe.
           candidate_run=""
-          for nonterminal_status in requested waiting pending queued in_progress; do
-            page=1
-            while (( page <= max_history_pages )); do
-              run_page="$(list_run_page "$page" "$nonterminal_status")"
-              candidate_run="$(
-                jq -r --arg head "${desired_head_sha}" --arg title "${expected_deploy_title}" \
-                  '(first(.workflow_runs[] | select(.head_sha == $head and .display_title == $title)) // empty) | [.id, .status, (.conclusion // "")] | @tsv' \
-                  <<<"${run_page}"
-              )"
-              if [[ -n "$candidate_run" ]]; then
-                break 2
-              fi
-              page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
-              if (( page_size < 100 )); then
-                break
-              fi
-              ((page += 1))
-            done
-            if (( page > max_history_pages )); then
-              echo "::error title=Dev-demo nonterminal history exhausted::Refusing an unbounded nonterminal history scan."
-              exit 1
+          page=1
+          while (( page <= max_history_pages )); do
+            run_page="$(list_run_page "$page")"
+            candidate_run="$(
+              jq -r --arg head "${desired_head_sha}" --arg title "${expected_deploy_title}" \
+                '(first(.workflow_runs[] | select(.head_sha == $head and .display_title == $title and .status != "completed")) // empty) | [.id, .status, (.conclusion // "")] | @tsv' \
+                <<<"${run_page}"
+            )"
+            if [[ -n "$candidate_run" ]]; then
+              break
             fi
+            page_size="$(jq -r '.workflow_runs | length' <<<"${run_page}")"
+            if (( page_size < 100 )); then
+              break
+            fi
+            ((page += 1))
           done
+          if (( page > max_history_pages )); then
+            echo "::error title=Dev-demo nonterminal history exhausted::Refusing an unbounded nonterminal history scan."
+            exit 1
+          fi
 
           IFS=$'\t' read -r candidate_run_id candidate_status candidate_conclusion <<<"${candidate_run}"
 
