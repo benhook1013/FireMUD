@@ -45,6 +45,69 @@ forbid_regex() {
   fi
 }
 
+check_rbac_wildcards() {
+  python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def reject_rbac_wildcards(documents, source):
+    for document in documents:
+        if not isinstance(document, dict) or document.get("kind") not in {
+            "Role",
+            "ClusterRole",
+        }:
+            continue
+        rules = document.get("rules", [])
+        if not isinstance(rules, list):
+            continue
+        identity = f'{document["kind"]}/{document.get("metadata", {}).get("name", "<unnamed>")}'
+        for rule_index, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                continue
+            for field in ("apiGroups", "resources", "verbs"):
+                values = rule.get(field, [])
+                if not isinstance(values, list):
+                    values = [values]
+                if any(isinstance(value, str) and value == "*" for value in values):
+                    raise AssertionError(
+                        f"{source}: {identity} rule {rule_index} {field} contains '*'")
+
+
+block_style_fixture = yaml.safe_load(
+    """
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: block-style-wildcard-fixture
+rules:
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+    verbs:
+      - get
+      - "*"
+"""
+)
+try:
+    reject_rbac_wildcards([block_style_fixture], "block-style fixture")
+except AssertionError:
+    pass
+else:
+    raise SystemExit("block-style RBAC wildcard fixture was not rejected")
+
+for argument in sys.argv[1:]:
+    path = Path(argument)
+    reject_rbac_wildcards(
+        yaml.safe_load_all(path.read_text(encoding="utf-8")),
+        str(path),
+    )
+PY
+}
+
 select_named_yaml_document() {
   local file="$1"
   local kind="$2"
@@ -691,10 +754,7 @@ for status_field in sourceGeneration sourceObjectGeneration spkiSha256; do
   require_literal "$CRD" "$status_field:"
 done
 
-for file in "$MANIFEST_DIR"/*.yaml; do
-  forbid_literal "$file" 'apiGroups: ["*"]'
-  forbid_literal "$file" 'resources: ["*"]'
-done
+check_rbac_wildcards "$MANIFEST_DIR"/*.yaml
 require_literal "$RBAC" "name: firemud-hosted-identity-controller-namespace-lifecycle"
 require_literal "$RBAC" "- namespaces"
 require_literal "$RBAC" "- create"
@@ -1664,7 +1724,6 @@ kubectl kustomize "$MANIFEST_DIR" >"$rendered"
 require_literal "$rendered" "kind: CustomResourceDefinition"
 require_literal "$rendered" "kind: ValidatingAdmissionPolicy"
 require_literal "$rendered" "kind: Deployment"
-forbid_literal "$rendered" 'apiGroups: ["*"]'
-forbid_literal "$rendered" 'resources: ["*"]'
+check_rbac_wildcards "$rendered"
 
 echo "hosted identity controller manifest contract passed"

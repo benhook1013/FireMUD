@@ -232,7 +232,12 @@ for required in (
 ):
     if required not in waiter:
         raise SystemExit(f"projection waiter lacks {required}")
-projection_waiter = waiter.split('if [[ "${1:-}" == "--retired" ]]', maxsplit=1)[0]
+retired_mode_marker = 'if [[ "${1:-}" == "--retired" ]]'
+if waiter.count(retired_mode_marker) != 1:
+    raise SystemExit(
+        "projection waiter must contain exactly one --retired mode boundary marker"
+    )
+projection_waiter = waiter.split(retired_mode_marker, maxsplit=1)[0]
 for required in (
     "projection_ready=false",
     "projection_ready=true",
