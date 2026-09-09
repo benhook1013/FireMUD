@@ -1450,7 +1450,7 @@ reconciler_malformed_output="$TEMP_DIR/reconciler-malformed.out"
   FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${malformed_labels_base64}\n" \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_malformed_output"
+) > "$reconciler_malformed_output" 2>&1
 grep -qx 'Skipping PR #901: label metadata could not be decoded as a JSON array.' \
   "$reconciler_malformed_output"
 if grep -q '^Dispatching preview deploy' "$reconciler_malformed_output"; then
@@ -1617,7 +1617,9 @@ grep -Fq -- '--labels-json "$labels_json"' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert malformed label metadata fails closed before eligibility.
 grep -Fq -- 'if ! labels_json="$(printf '\''%s'\'' "$labels_json_base64" | base64 --decode 2>/dev/null)" ||' \
   "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
 grep -Fq -- '[[ -z "$labels_json" ]] ||' "$reconciler_workflow"
+# shellcheck disable=SC2016 # Assert literal shell source in the workflow.
 grep -Fq -- '! jq -e '\''type == "array"'\'' <<<"$labels_json" >/dev/null' \
   "$reconciler_workflow"
 
