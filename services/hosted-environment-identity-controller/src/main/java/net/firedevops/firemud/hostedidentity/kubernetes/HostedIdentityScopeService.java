@@ -75,9 +75,7 @@ public class HostedIdentityScopeService {
                         && !identityNamespaceLabels(plan).containsKey(entry.getKey()))) {
       return false;
     }
-    return (namespace.getMetadata().getAnnotations() == null
-            || namespace.getMetadata().getAnnotations().isEmpty())
-        && (namespace.getMetadata().getOwnerReferences() == null
+    return (namespace.getMetadata().getOwnerReferences() == null
             || namespace.getMetadata().getOwnerReferences().isEmpty())
         && (namespace.getMetadata().getFinalizers() == null
             || namespace.getMetadata().getFinalizers().isEmpty());

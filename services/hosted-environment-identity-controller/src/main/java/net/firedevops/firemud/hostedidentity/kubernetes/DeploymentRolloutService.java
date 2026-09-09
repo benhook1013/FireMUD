@@ -2,11 +2,15 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
+import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
+import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
@@ -25,6 +29,12 @@ public class DeploymentRolloutService {
       Supplier<Boolean> runtimeProfileCurrent) {
     if (runtimeProfileCurrent == null) {
       throw new IllegalArgumentException("runtime profile guard is required");
+    }
+    if (telnetRevision == null) {
+      throw new IllegalArgumentException("telnet revision is required");
+    }
+    if (grpcRevision == null) {
+      throw new IllegalArgumentException("gRPC revision is required");
     }
     Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
     revisionsByDeployment
@@ -58,7 +68,7 @@ public class DeploymentRolloutService {
 
   /**
    * Terminates both bridge endpoints for the monotonic Retired identity-removal intent while
-   * fencing every read/edit boundary with the current runtime identity. A false guard means the
+   * fencing every read/replace boundary with the current runtime identity. A false guard means the
    * namespace identity is no longer safe to mutate; callers may throw from the guard to preserve
    * the precise failure reason.
    */
@@ -102,7 +112,7 @@ public class DeploymentRolloutService {
       if (!guardPassed(runtimeProfileCurrent)) {
         return new StopOneResult(false, false);
       }
-      operation.edit(DeploymentRolloutService::applyRetirementScaleDown);
+      replaceWithCas(operation, deployment, DeploymentRolloutService::applyRetirementScaleDown);
       return new StopOneResult(false, true);
     }
     return new StopOneResult(retirementScaleDownObserved(deployment), true);
@@ -136,7 +146,7 @@ public class DeploymentRolloutService {
       if (!guardPassed(runtimeProfileCurrent)) {
         return new SyncOneResult(false, false);
       }
-      operation.edit(current -> applyRevisions(current, desiredRevisions));
+      replaceWithCas(operation, deployment, current -> applyRevisions(current, desiredRevisions));
       return new SyncOneResult(false, true);
     }
     return new SyncOneResult(activeRolloutObserved(deployment), true);
@@ -205,6 +215,35 @@ public class DeploymentRolloutService {
 
   private static int value(Integer value) {
     return value == null ? 0 : value;
+  }
+
+  /** Replaces an observed Deployment with its resourceVersion as the Kubernetes CAS fence. */
+  private static void replaceWithCas(
+      RollableScalableResource<Deployment> operation,
+      Deployment observed,
+      UnaryOperator<Deployment> mutation) {
+    requireResourceVersion(observed);
+    Deployment replacement = new DeploymentBuilder(observed).build();
+    mutation.apply(replacement);
+    replacement.getMetadata().setResourceVersion(observed.getMetadata().getResourceVersion());
+    try {
+      operation.replace(replacement);
+    } catch (KubernetesClientException exception) {
+      if (exception.getCode() != 409) {
+        throw exception;
+      }
+      // A 409 means another controller won the CAS; the caller returns its retryable
+      // not-ready/not-stopped result while preserving the already-passed runtime guard.
+    }
+  }
+
+  private static void requireResourceVersion(Deployment deployment) {
+    if (deployment == null
+        || deployment.getMetadata() == null
+        || deployment.getMetadata().getResourceVersion() == null
+        || deployment.getMetadata().getResourceVersion().isBlank()) {
+      throw new IllegalStateException("Deployment has no resourceVersion for CAS");
+    }
   }
 
   private static boolean guardPassed(Supplier<Boolean> runtimeProfileCurrent) {

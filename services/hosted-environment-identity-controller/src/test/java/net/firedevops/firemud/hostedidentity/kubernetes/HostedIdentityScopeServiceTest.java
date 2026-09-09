@@ -1,13 +1,17 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.fabric8.kubernetes.api.model.Namespace;
+import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Role;
@@ -26,6 +30,7 @@ import io.fabric8.kubernetes.client.dsl.Resource;
 import java.util.Map;
 import java.util.function.UnaryOperator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
@@ -58,6 +63,27 @@ class HostedIdentityScopeServiceTest {
           "hosted-identity-controller",
           "firemud.dev/identity-name",
           "pr-42");
+
+  @Test
+  void identityNamespaceAllowsUnrelatedAnnotationsButRequiresOwnedLabels() {
+    EnvironmentIdentityPlan plan = plan();
+    Namespace exact = identityNamespace(plan);
+    Namespace annotated =
+        new NamespaceBuilder(exact)
+            .editMetadata()
+            .addToAnnotations("tooling.example/managed-by", "cluster-tool")
+            .endMetadata()
+            .build();
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));
+
+    Namespace wrongOwnedLabel =
+        new NamespaceBuilder(exact)
+            .editMetadata()
+            .addToLabels(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller")
+            .endMetadata()
+            .build();
+    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(wrongOwnedLabel, plan));
+  }
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
@@ -315,6 +341,24 @@ class HostedIdentityScopeServiceTest {
 
   private static EnvironmentIdentityPlan plan() {
     return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+  }
+
+  private static Namespace identityNamespace(EnvironmentIdentityPlan plan) {
+    return new NamespaceBuilder()
+        .withNewMetadata()
+        .withName(plan.identityNamespace())
+        .withLabels(
+            Map.of(
+                HostedIdentityContract.MANAGED_BY_LABEL,
+                HostedIdentityContract.CONTROLLER_NAME,
+                HostedIdentityContract.ENVIRONMENT_LABEL,
+                plan.name(),
+                HostedIdentityContract.RETENTION_LABEL,
+                HostedIdentityContract.RETAINED,
+                "firemud.dev/environment-class",
+                "pr-preview"))
+        .endMetadata()
+        .build();
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})

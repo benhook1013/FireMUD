@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -12,13 +13,13 @@ import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import io.fabric8.kubernetes.api.model.apps.DeploymentList;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.AppsAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import java.util.List;
 import java.util.Map;
-import java.util.function.UnaryOperator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -49,8 +50,28 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
+  void syncRejectsNullRevisionsAtTheBoundary() {
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    DeploymentRolloutService service = new DeploymentRolloutService();
+
+    IllegalArgumentException telnetFailure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.sync(client, plan, null, "grpc-revision", () -> true));
+    IllegalArgumentException grpcFailure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.sync(client, plan, "telnet-revision", null, () -> true));
+
+    assertEquals("telnet revision is required", telnetFailure.getMessage());
+    assertEquals("gRPC revision is required", grpcFailure.getMessage());
+    org.mockito.Mockito.verifyNoInteractions(client);
+  }
+
+  @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void tcpProxyTelnetAndGrpcChangesUseOneEditAndConvergeTogether() {
+  void tcpProxyTelnetAndGrpcChangesUseOneCasReplaceAndConvergeTogether() {
     EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
     KubernetesClient client = mock(KubernetesClient.class);
     AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
@@ -81,14 +102,16 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, first.ready());
     assertEquals(false, first.telnetReady());
     assertEquals(false, first.grpcReady());
-    ArgumentCaptor<UnaryOperator<Deployment>> editor = ArgumentCaptor.forClass(UnaryOperator.class);
-    verify(proxy, times(1)).edit(editor.capture());
-    Deployment converged = editor.getValue().apply(new DeploymentBuilder(oldProxy).build());
+    ArgumentCaptor<Deployment> replacement = ArgumentCaptor.forClass(Deployment.class);
+    verify(proxy, times(1)).replace(replacement.capture());
+    Deployment converged = replacement.getValue();
     Map<String, String> annotations =
         converged.getSpec().getTemplate().getMetadata().getAnnotations();
     assertEquals("keep", annotations.get("other"));
     assertEquals("telnet-new", annotations.get(HostedIdentityContract.TELNET_REVISION_ANNOTATION));
     assertEquals("grpc-new", annotations.get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+    assertEquals(
+        oldProxy.getMetadata().getResourceVersion(), converged.getMetadata().getResourceVersion());
 
     converged.getMetadata().setGeneration(4L);
     converged.getStatus().setObservedGeneration(4L);
@@ -99,8 +122,68 @@ class DeploymentRolloutServiceTest {
     assertEquals(true, second.ready());
     assertEquals(true, second.telnetReady());
     assertEquals(true, second.grpcReady());
-    verify(proxy, times(1)).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
-    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void revisionCasConflictIsRetryableAndKeepsGuardPassed() {
+    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
+    when(proxy.get()).thenReturn(observed);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(proxy)
+        .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+
+    DeploymentRolloutService.RolloutResult result =
+        new DeploymentRolloutService().sync(client, plan, "telnet-new", "grpc-new", () -> true);
+
+    assertEquals(false, result.ready());
+    assertEquals(false, result.telnetReady());
+    assertEquals(false, result.grpcReady());
+    verify(proxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void revisionCasRequiresObservedResourceVersion() {
+    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
+    observed.getMetadata().setResourceVersion(null);
+    when(proxy.get()).thenReturn(observed);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .sync(client, plan, "telnet-new", "grpc-new", () -> true));
+
+    assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -139,8 +222,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
-    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -175,8 +258,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
-    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -208,9 +291,9 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
     verify(proxy).get();
-    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(account, never()).get();
-    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -251,9 +334,9 @@ class DeploymentRolloutServiceTest {
                     }));
 
     verify(proxy).get();
-    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(account, never()).get();
-    verify(account, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
@@ -299,14 +382,14 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.gatewayStopped());
     assertEquals(false, result.proxyStopped());
     verify(gateway).get();
-    verify(gateway, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(gateway, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(proxy, never()).get();
-    verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
-  void stopBridgesEditsBothDeploymentsThenObservesBothStopped() {
+  void stopBridgesCasReplacesBothDeploymentsThenObservesBothStopped() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     KubernetesClient client = mock(KubernetesClient.class);
     AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
@@ -332,18 +415,20 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, first.stopped());
     assertEquals(false, first.gatewayStopped());
     assertEquals(false, first.proxyStopped());
-    ArgumentCaptor<UnaryOperator<Deployment>> gatewayEditor =
-        ArgumentCaptor.forClass(UnaryOperator.class);
-    ArgumentCaptor<UnaryOperator<Deployment>> proxyEditor =
-        ArgumentCaptor.forClass(UnaryOperator.class);
-    verify(gateway).edit(gatewayEditor.capture());
-    verify(proxy).edit(proxyEditor.capture());
-    Deployment editedGateway =
-        gatewayEditor.getValue().apply(new DeploymentBuilder(runningGateway).build());
-    Deployment editedProxy =
-        proxyEditor.getValue().apply(new DeploymentBuilder(runningProxy).build());
+    ArgumentCaptor<Deployment> gatewayReplacement = ArgumentCaptor.forClass(Deployment.class);
+    ArgumentCaptor<Deployment> proxyReplacement = ArgumentCaptor.forClass(Deployment.class);
+    verify(gateway).replace(gatewayReplacement.capture());
+    verify(proxy).replace(proxyReplacement.capture());
+    Deployment editedGateway = gatewayReplacement.getValue();
+    Deployment editedProxy = proxyReplacement.getValue();
     assertEquals(0, editedGateway.getSpec().getReplicas());
     assertEquals(0, editedProxy.getSpec().getReplicas());
+    assertEquals(
+        runningGateway.getMetadata().getResourceVersion(),
+        editedGateway.getMetadata().getResourceVersion());
+    assertEquals(
+        runningProxy.getMetadata().getResourceVersion(),
+        editedProxy.getMetadata().getResourceVersion());
 
     Deployment stoppedGateway = stoppedDeployment(editedGateway);
     Deployment stoppedProxy = stoppedDeployment(editedProxy);
@@ -358,8 +443,41 @@ class DeploymentRolloutServiceTest {
     assertEquals(true, second.proxyStopped());
     verify(gateway, times(2)).get();
     verify(proxy, times(2)).get();
-    verify(gateway, times(1)).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
-    verify(proxy, times(1)).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(gateway, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void retirementCasConflictIsRetryableAndAllowsNextBridgeRead() {
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    when(gateway.get()).thenReturn(readyDeployment("spring-cloud-gateway", Map.of(), 3L));
+    when(proxy.get()).thenReturn(null);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(gateway)
+        .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+
+    DeploymentRolloutService.RetirementResult result =
+        new DeploymentRolloutService().stopBridges(client, plan, () -> true);
+
+    assertEquals(false, result.stopped());
+    assertEquals(false, result.gatewayStopped());
+    assertEquals(true, result.proxyStopped());
+    verify(gateway).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy).get();
   }
 
   private static Deployment readyDeployment(
@@ -368,6 +486,7 @@ class DeploymentRolloutServiceTest {
         .withNewMetadata()
         .withName(name)
         .withGeneration(generation)
+        .withResourceVersion("rv-" + generation)
         .endMetadata()
         .withNewSpec()
         .withReplicas(1)

@@ -4154,7 +4154,7 @@ def validate_hosted_telnet_tls_values(
         if document.get("kind") == "Deployment"
         and metadata_name(document) == "tcp-proxy-service"
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
     ]
     if len(deployments) != 1:
@@ -4281,7 +4281,7 @@ def validate_hosted_telnet_tls_values(
         if document.get("kind") == "Certificate"
         and metadata_name(document)
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
     }
     ingress_secrets = {
@@ -4289,7 +4289,7 @@ def validate_hosted_telnet_tls_values(
         for document in documents
         if document.get("kind") == "Ingress"
         and rendered_namespace_matches(
-            document, tcp_namespace, default_namespace="firemud"
+            document, tcp_namespace, default_namespace=tcp_namespace
         )
         for tls_entry in ((document.get("spec") or {}).get("tls") or [])
         if isinstance(tls_entry, dict)

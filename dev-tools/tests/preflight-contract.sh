@@ -8427,6 +8427,7 @@ if blocked_status != "fail" or "remains blocked until canonical recovery-control
 PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
+import copy
 import importlib.util
 import json
 import os
@@ -8633,6 +8634,71 @@ if (
     raise SystemExit(
         "hosted-bridge release identity mismatch result was not explicit: "
         f"{instance_mismatch_result}"
+    )
+
+standalone_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+for document in standalone_documents:
+    if (
+        document.get("kind") in {"Service", "Deployment"}
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    ):
+        document["metadata"]["labels"]["firemud.dev/certificate-identity-mode"] = "standalone"
+standalone_documents.extend(
+    [
+        {
+            "apiVersion": "cert-manager.io/v1",
+            "kind": "Certificate",
+            "metadata": {
+                "name": f"{release}-telnet-tls",
+                "namespace": namespace,
+            },
+            "spec": {"secretName": f"{release}-telnet-tls"},
+        },
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": {"name": "firemud-preview", "namespace": namespace},
+            "spec": {"tls": [{"secretName": f"{release}-http-tls"}]},
+        },
+    ]
+)
+for omitted_kind in ("Deployment", "Certificate"):
+    omitted_documents = copy.deepcopy(standalone_documents)
+    next(
+        document
+        for document in omitted_documents
+        if document.get("kind") == omitted_kind
+    )["metadata"].pop("namespace")
+    omitted_issues = module.validate_hosted_telnet_tls_values(
+        omitted_documents,
+        required_identity_mode="standalone",
+        target_namespace=namespace,
+    )
+    if omitted_issues:
+        raise SystemExit(
+            f"omitted {omitted_kind} metadata.namespace was rejected: {omitted_issues}"
+        )
+
+ingress_omitted_documents = copy.deepcopy(standalone_documents)
+ingress_document = next(
+    document
+    for document in ingress_omitted_documents
+    if document.get("kind") == "Ingress"
+)
+ingress_document["spec"]["tls"][0]["secretName"] = f"{release}-telnet-tls"
+ingress_document["metadata"].pop("namespace")
+ingress_omitted_issues = module.validate_hosted_telnet_tls_values(
+    ingress_omitted_documents,
+    required_identity_mode="standalone",
+    target_namespace=namespace,
+)
+if not any(
+    "must not reuse the HTTP Ingress TLS Secret" in issue
+    for issue in ingress_omitted_issues
+):
+    raise SystemExit(
+        "omitted Ingress metadata.namespace did not resolve against the target namespace: "
+        f"{ingress_omitted_issues}"
     )
 
 invalid_port = run_hosted(

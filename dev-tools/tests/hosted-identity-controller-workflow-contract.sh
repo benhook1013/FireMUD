@@ -1775,7 +1775,7 @@ run_retirement_waiter_fixture() {
     WAITER_SCENARIO="$scenario" \
     WAITER_KUBECTL_LOG="$kubectl_log" \
     WAITER_SLEEP_LOG="$sleep_log" \
-    bash "$waiter" --retired pr-42 1 \
+    bash "$waiter" --retired pr-42 2 \
     >"$output" 2>"$error"
   status=$?
   set -e

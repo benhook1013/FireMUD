@@ -389,7 +389,7 @@ class RuntimeProfileServiceTest {
                 .endMetadata()
                 .build(),
             previewPlan));
-    assertFalse(
+    assertTrue(
         HostedIdentityScopeService.isExpectedIdentityNamespace(
             new NamespaceBuilder(preview)
                 .editMetadata()
