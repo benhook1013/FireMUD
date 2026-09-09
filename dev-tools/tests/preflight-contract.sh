@@ -8711,6 +8711,32 @@ if (
 ):
     raise SystemExit(f"hosted-bridge mismatch result was not explicit: {mismatch_result}")
 
+out_of_range_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
+out_of_range_service = next(
+    document
+    for document in out_of_range_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+out_of_range_service["metadata"]["annotations"]["firemud.dev/allocated-telnet-port"] = "65536"
+out_of_range_service["spec"]["ports"][0]["nodePort"] = 65536
+out_of_range_path = tmp / "hosted-bridge-contract-out-of-range.yaml"
+out_of_range_path.write_text(
+    yaml.safe_dump_all(out_of_range_documents, sort_keys=False), encoding="utf-8"
+)
+out_of_range = run_hosted(out_of_range_path)
+if out_of_range.returncode == 0:
+    raise SystemExit("hosted-bridge accepted an out-of-range allocated Telnet port")
+out_of_range_result = json.loads(out_of_range.stdout)
+if (
+    out_of_range_result.get("status") != "fail"
+    or "requires an allocated Telnet port annotation"
+    not in out_of_range_result.get("message", "")
+):
+    raise SystemExit(
+        f"hosted-bridge out-of-range allocated port result was not explicit: {out_of_range_result}"
+    )
+
 instance_mismatch_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 next(
     document

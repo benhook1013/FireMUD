@@ -12,6 +12,7 @@ permissions:
 jobs:
   prune-stale-preview-namespaces:
     name: Prune Stale Preview Namespaces
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview

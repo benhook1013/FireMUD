@@ -1743,6 +1743,7 @@ for job_name, required_gate in expected_gates.items():
 PY
 
 janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+grep -q 'timeout-minutes: 60' "$janitor_workflow"
 # Dormant successor deployment and cleanup code remains source-bound and
 # fail-closed until successor triggers and producer artifacts are activated.
 grep -q 'ACTION=deploy' "$trusted_workflow"

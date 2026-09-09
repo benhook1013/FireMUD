@@ -4244,9 +4244,13 @@ def validate_hosted_telnet_tls_values(
             if isinstance(annotations, dict)
             else None
         )
-        if not isinstance(allocated_port, str) or not re.fullmatch(
-            r"[1-9][0-9]*", allocated_port
-        ):
+        allocated_port_value = (
+            int(allocated_port)
+            if isinstance(allocated_port, str)
+            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
+            else None
+        )
+        if allocated_port_value is None or not 1 <= allocated_port_value <= 65535:
             issues.append(
                 "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
             )
@@ -4255,9 +4259,8 @@ def validate_hosted_telnet_tls_values(
                 "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
             )
         elif (
-            isinstance(allocated_port, str)
-            and re.fullmatch(r"[1-9][0-9]*", allocated_port)
-            and telnet_ports[0]["nodePort"] != int(allocated_port)
+            allocated_port_value is not None
+            and telnet_ports[0]["nodePort"] != allocated_port_value
         ):
             issues.append(
                 "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
