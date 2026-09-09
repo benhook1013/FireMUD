@@ -51,10 +51,12 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class SecretMaterialValidatorTest {
   private static final AtomicLong CA_SERIAL = new AtomicLong(1);
+  private static final KeyPair FIXTURE_CA_KEY_PAIR = generateRsaKeyPair();
 
   @Test
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() {
@@ -89,11 +91,11 @@ class SecretMaterialValidatorTest {
 
   @Test
   void trustAnchorFingerprintRequiresExactlyOneCertificate() throws Exception {
-    Secret singleCertificate = generatedCa(Instant.now(), Duration.ofDays(60));
+    Secret singleCertificate = generatedCaWithDistinctKeyPair(Instant.now(), Duration.ofDays(60));
     String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(singleCertificate);
     assertEquals(64, fingerprint.length());
 
-    Secret secondCertificate = generatedCa(Instant.now(), Duration.ofDays(60));
+    Secret secondCertificate = generatedCaWithDistinctKeyPair(Instant.now(), Duration.ofDays(60));
     Map<String, String> multiCertificateData = new LinkedHashMap<>(singleCertificate.getData());
     multiCertificateData.put(
         "ca.crt",
@@ -406,7 +408,7 @@ class SecretMaterialValidatorTest {
 
   @Test
   @SuppressWarnings("unchecked")
-  void ensureRegeneratesTimeCurrentBundleWhenTheValidatedCaRotates() throws Exception {
+  void ensureRejectsStaleConfiguredTrustAnchorBeforeIdentityWrite() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
@@ -417,6 +419,126 @@ class SecretMaterialValidatorTest {
     existing.getMetadata().setResourceVersion("7");
     String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
     Secret rotatedCa = generatedCa(now, Duration.ofDays(60));
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> controlSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    Resource<Secret> caResource = mock(Resource.class);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
+    when(caResource.get()).thenReturn(rotatedCa);
+    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenReturn(replacementResource);
+
+    IllegalStateException stalePin =
+        assertThrows(
+            IllegalStateException.class,
+            () -> generator.ensure(client, plan, 4L, renewBefore, oldTrustAnchor));
+    assertEquals("configured gRPC CA trust anchor mismatch", stalePin.getMessage());
+    verify(identitySecrets, org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @SuppressWarnings("unchecked")
+  void ensurePreservesCurrentBundleWithoutRepair(String resourceVersion) throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion(resourceVersion);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> controlSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    Resource<Secret> caResource = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
+    when(caResource.get()).thenReturn(ca);
+
+    assertSame(existing, generator.ensure(client, plan, 4L, renewBefore, trustAnchor));
+    verify(identitySecrets, org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @SuppressWarnings("unchecked")
+  void ensureRejectsCaRotationWithoutResourceVersionBeforeIdentityWrite(String resourceVersion)
+      throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret oldCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion(resourceVersion);
+    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> controlSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    Resource<Secret> caResource = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
+    when(caResource.get()).thenReturn(rotatedCa);
+
+    IllegalStateException missingVersion =
+        assertThrows(
+            IllegalStateException.class,
+            () -> generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor));
+    assertEquals(
+        "existing gRPC Secret has no resourceVersion for repair", missingVersion.getMessage());
+    verify(identitySecrets, org.mockito.Mockito.never())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void ensureRegeneratesTimeCurrentBundleWhenTheValidatedCaRotates() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret oldCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion("7");
+    String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
+    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
     String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
     assertFalse(GrpcTransportBundleGenerator.renewalRequired(existing, renewBefore, Instant.now()));
     assertNotEquals(rotatedTrustAnchor, SecretMaterialValidator.trustAnchorFingerprint(existing));
@@ -438,49 +560,14 @@ class SecretMaterialValidatorTest {
     when(existingResource.get()).thenReturn(existing);
     when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
     when(caResource.get()).thenReturn(rotatedCa);
+    org.mockito.ArgumentCaptor<Secret> replacement =
+        org.mockito.ArgumentCaptor.forClass(Secret.class);
+    when(identitySecrets.resource(replacement.capture())).thenReturn(replacementResource);
     when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
-    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenAnswer(
-            invocation -> {
-              Secret candidate = invocation.getArgument(0);
-              when(lockedReplacementResource.replace()).thenReturn(candidate);
-              return replacementResource;
-            });
-
-    IllegalStateException stalePin =
-        assertThrows(
-            IllegalStateException.class,
-            () -> generator.ensure(client, plan, 4L, renewBefore, oldTrustAnchor));
-    assertEquals("configured gRPC CA trust anchor mismatch", stalePin.getMessage());
-    verify(identitySecrets, org.mockito.Mockito.never())
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
-
-    when(caResource.get()).thenReturn(oldCa);
-    for (String resourceVersion : new String[] {null, ""}) {
-      existing.getMetadata().setResourceVersion(resourceVersion);
-      assertSame(existing, generator.ensure(client, plan, 4L, renewBefore, oldTrustAnchor));
-      verify(identitySecrets, org.mockito.Mockito.never())
-          .resource(org.mockito.ArgumentMatchers.any(Secret.class));
-    }
-    when(caResource.get()).thenReturn(rotatedCa);
-
-    for (String resourceVersion : new String[] {null, ""}) {
-      existing.getMetadata().setResourceVersion(resourceVersion);
-      IllegalStateException missingVersion =
-          assertThrows(
-              IllegalStateException.class,
-              () -> generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor));
-      assertEquals(
-          "existing gRPC Secret has no resourceVersion for repair", missingVersion.getMessage());
-      verify(identitySecrets, org.mockito.Mockito.never())
-          .resource(org.mockito.ArgumentMatchers.any(Secret.class));
-    }
-    existing.getMetadata().setResourceVersion("7");
+    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacement.getValue());
 
     Secret repaired = generator.ensure(client, plan, 4L, renewBefore, rotatedTrustAnchor);
 
-    org.mockito.ArgumentCaptor<Secret> replacement =
-        org.mockito.ArgumentCaptor.forClass(Secret.class);
     verify(identitySecrets).resource(replacement.capture());
     verify(replacementResource).lockResourceVersion("7");
     verify(lockedReplacementResource).replace();
@@ -774,12 +861,23 @@ class SecretMaterialValidatorTest {
 
   private static Secret generatedCa(Instant now, Duration lifetime, X500Name name)
       throws Exception {
+    return generatedCa(now, lifetime, name, FIXTURE_CA_KEY_PAIR);
+  }
+
+  private static Secret generatedCaWithDistinctKeyPair(Instant now, Duration lifetime)
+      throws Exception {
+    return generatedCa(
+        now,
+        lifetime,
+        new X500Name("CN=FireMUD test transport root, O=FireMUD"),
+        generateRsaKeyPair());
+  }
+
+  private static Secret generatedCa(Instant now, Duration lifetime, X500Name name, KeyPair keyPair)
+      throws Exception {
     if (Security.getProvider("BC") == null) {
       Security.addProvider(new BouncyCastleProvider());
     }
-    KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-    keyPairGenerator.initialize(2048);
-    KeyPair keyPair = keyPairGenerator.generateKeyPair();
     var builder =
         new JcaX509v3CertificateBuilder(
             name,
@@ -801,6 +899,16 @@ class SecretMaterialValidatorTest {
                 "ca.crt", pem("CERTIFICATE", ca.getEncoded()),
                 "ca.key", pem("PRIVATE KEY", keyPair.getPrivate().getEncoded())))
         .build();
+  }
+
+  private static KeyPair generateRsaKeyPair() {
+    try {
+      KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+      keyPairGenerator.initialize(2048);
+      return keyPairGenerator.generateKeyPair();
+    } catch (Exception exception) {
+      throw new AssertionError("unable to create RSA test fixture key pair", exception);
+    }
   }
 
   private static String pem(String label, byte[] der) {

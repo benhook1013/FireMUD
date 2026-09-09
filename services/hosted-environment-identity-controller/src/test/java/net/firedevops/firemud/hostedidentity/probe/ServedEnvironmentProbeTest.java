@@ -88,29 +88,7 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     EnvironmentIdentityPlan missingProbeConsumer =
-        new EnvironmentIdentityPlan(
-            plan.name(),
-            plan.controlNamespace(),
-            plan.identityNamespace(),
-            plan.runtimeNamespace(),
-            plan.hostname(),
-            plan.ingressCertificateName(),
-            plan.ingressSecretName(),
-            plan.telnetCertificateName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsCertificateName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.gatewayInternalWsDnsName(),
-            plan.tcpProxyBridgeCertificateName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.tcpProxyBridgeUriSan(),
-            plan.grpcCertificateName(),
-            plan.grpcSecretName(),
-            plan.ingressIssuer(),
-            plan.telnetIssuer(),
-            plan.grpcIssuer(),
-            plan.caSecretName(),
-            List.of("tcp-proxy-service"));
+        withConsumers(plan, "tcp-proxy-service");
     ServedEnvironmentProbe.EndpointProbe ready =
         (hostname, port) -> new ServedEnvironmentProbe.ProbeResult(true, "ready");
 
@@ -156,17 +134,13 @@ class ServedEnvironmentProbeTest {
     doThrow(new IOException("connect failed"))
         .when(socket)
         .connect(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt());
-    var method =
-        ServedEnvironmentProbe.class.getDeclaredMethod(
-            "openTlsSocket", String.class, int.class, String.class, SSLSocket.class);
-    method.setAccessible(true);
-
-    InvocationTargetException failure =
+    IOException failure =
         assertThrows(
-            InvocationTargetException.class,
-            () -> method.invoke(null, "pr-42.example.test", 443, "1".repeat(64), socket));
-    assertEquals(IOException.class, failure.getCause().getClass());
-    assertEquals("connect failed", failure.getCause().getMessage());
+            IOException.class,
+            () ->
+                ServedEnvironmentProbe.openTlsSocket(
+                    "pr-42.example.test", 443, "1".repeat(64), socket));
+    assertEquals("connect failed", failure.getMessage());
     verify(socket).close();
   }
 
@@ -175,29 +149,7 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     EnvironmentIdentityPlan missingProbeConsumer =
-        new EnvironmentIdentityPlan(
-            plan.name(),
-            plan.controlNamespace(),
-            plan.identityNamespace(),
-            plan.runtimeNamespace(),
-            plan.hostname(),
-            plan.ingressCertificateName(),
-            plan.ingressSecretName(),
-            plan.telnetCertificateName(),
-            plan.telnetSecretName(),
-            plan.gatewayInternalWsCertificateName(),
-            plan.gatewayInternalWsSecretName(),
-            plan.gatewayInternalWsDnsName(),
-            plan.tcpProxyBridgeCertificateName(),
-            plan.tcpProxyBridgeSecretName(),
-            plan.tcpProxyBridgeUriSan(),
-            plan.grpcCertificateName(),
-            plan.grpcSecretName(),
-            plan.ingressIssuer(),
-            plan.telnetIssuer(),
-            plan.grpcIssuer(),
-            plan.caSecretName(),
-            List.of("tcp-proxy-service"));
+        withConsumers(plan, "tcp-proxy-service");
 
     Secret material = generatedMaterial(plan);
     properties.setGrpcTrustAnchorSha256(fingerprint(material.getData().get("ca.crt")));
@@ -257,6 +209,18 @@ class ServedEnvironmentProbeTest {
             "generate", EnvironmentIdentityPlan.class);
     generate.setAccessible(true);
     return (Secret) generate.invoke(new GrpcTransportBundleGenerator(), plan);
+  }
+
+  private static EnvironmentIdentityPlan withConsumers(
+      EnvironmentIdentityPlan plan, String... consumers) {
+    return new EnvironmentIdentityPlan(
+        plan.name(), plan.controlNamespace(), plan.identityNamespace(), plan.runtimeNamespace(),
+        plan.hostname(), plan.ingressCertificateName(), plan.ingressSecretName(),
+        plan.telnetCertificateName(), plan.telnetSecretName(), plan.gatewayInternalWsCertificateName(),
+        plan.gatewayInternalWsSecretName(), plan.gatewayInternalWsDnsName(),
+        plan.tcpProxyBridgeCertificateName(), plan.tcpProxyBridgeSecretName(), plan.tcpProxyBridgeUriSan(),
+        plan.grpcCertificateName(), plan.grpcSecretName(), plan.ingressIssuer(), plan.telnetIssuer(),
+        plan.grpcIssuer(), plan.caSecretName(), List.of(consumers));
   }
 
   private static int readStatus(String statusLine) throws Exception {

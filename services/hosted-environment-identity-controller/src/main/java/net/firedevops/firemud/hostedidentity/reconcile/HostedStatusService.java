@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.reconcile;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
 import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
@@ -119,8 +120,7 @@ public class HostedStatusService {
     try {
       var plan = planner.plan(resource.getMetadata().getName());
       profile.setName(plan.name());
-      profile.setEnvironmentClass(
-          "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
+      profile.setEnvironmentClass(HostedIdentityContract.environmentClass(plan.name()));
       profile.setIdentityNamespace(plan.identityNamespace());
       profile.setRuntimeNamespace(plan.runtimeNamespace());
       profile.setHostname(plan.hostname());

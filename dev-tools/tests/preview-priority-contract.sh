@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+# shellcheck disable=SC2016 # Match the literal script guard.
+grep -Fq 'if ! kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false; then' "$PRUNER"
+grep -Fq 'Unable to submit deletion for runtime namespace' "$PRUNER"
 DELETE_HOSTED_NAMESPACE="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT

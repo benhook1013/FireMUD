@@ -8,6 +8,7 @@ python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
 workflow="$ROOT_DIR/.github/workflows/dev-demo.yml"
 reconciler="$ROOT_DIR/.github/workflows/dev-demo-reconciler.yml"
+reconcile_step="$ROOT_DIR/dev-tools/hosted/dev-demo/reconcile-dev-demo.sh"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
@@ -60,7 +61,7 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: standalon
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: true\n'
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controller\n'
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$reconcile_step" <<'PY'
 from __future__ import annotations
 
 import subprocess
@@ -69,7 +70,7 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, reconcile_script_path = map(
     Path, sys.argv[1:]
 )
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
@@ -77,6 +78,7 @@ reconciler = yaml.safe_load(reconciler_path.read_text(encoding="utf-8"))
 requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
 annotator = annotator_path.read_text(encoding="utf-8")
+reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
 
 if workflow["concurrency"] != {
     "group": "dev-demo-${{ github.workflow }}",
@@ -256,6 +258,9 @@ reconcile_run = next(
     for step in reconcile_steps
     if step.get("name") == "Dispatch dev-demo deploy when stale or missing"
 )
+if "bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh" not in reconcile_run:
+    raise SystemExit("workflow must invoke the extracted reconciler script")
+reconcile_run = reconcile_script
 for required in (
     "set -euo pipefail",
     "export LC_ALL=C",
@@ -981,23 +986,10 @@ grep -Fxq -- "identity=pr-42" "$preview_waiter_success_output"
 # Execute the exact reconciler workflow step against deterministic GitHub and
 # Kubernetes command fixtures. The reference model above keeps the cases easy
 # to read; this harness makes those cases discriminating against shell/JQ drift.
-reconcile_step="$fixture_dir/reconcile-step.sh"
-python3 - "$reconciler" >"$reconcile_step" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-steps = workflow["jobs"]["reconcile-dev-demo"]["steps"]
-print(
-    next(
-        step["run"]
-        for step in steps
-        if step.get("name") == "Dispatch dev-demo deploy when stale or missing"
-    )
-)
-PY
+[[ -x "$reconcile_step" ]] || {
+  echo "$reconcile_step must be executable" >&2
+  exit 1
+}
 
 stub_dir="$fixture_dir/reconcile-stubs"
 mkdir -p "$stub_dir"

@@ -91,7 +91,7 @@ public class HostedIdentityScopeService {
         HostedIdentityContract.RETENTION_LABEL,
         HostedIdentityContract.RETAINED,
         "firemud.dev/environment-class",
-        "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
+        HostedIdentityContract.environmentClass(plan.name()));
   }
 
   private static void ensureIdentity(KubernetesClient client, EnvironmentIdentityPlan plan) {
@@ -249,7 +249,7 @@ public class HostedIdentityScopeService {
         HostedIdentityContract.ENVIRONMENT_LABEL,
         plan.name(),
         "firemud.dev/environment-class",
-        "dev-demo".equals(plan.name()) ? "dev-demo-cluster" : "pr-preview");
+        HostedIdentityContract.environmentClass(plan.name()));
   }
 
   static void ensureRole(KubernetesClient client, String namespace, Role desired) {

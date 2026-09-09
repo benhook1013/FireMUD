@@ -267,6 +267,7 @@ class HostedIdentityPropertiesTest {
     properties.afterPropertiesSet();
 
     assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    // The second read proves the invalid-mode fallback is memoized and warns only once.
     assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
     String warning =
         "Rejected hosted identity activation mode 'unexpected-mode'; defaulting to paused";

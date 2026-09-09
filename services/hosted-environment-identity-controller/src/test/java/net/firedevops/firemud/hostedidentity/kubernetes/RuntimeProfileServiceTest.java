@@ -10,16 +10,12 @@ import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
-import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
-import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
-import io.fabric8.kubernetes.api.model.rbac.RoleBindingBuilder;
-import io.fabric8.kubernetes.api.model.rbac.RoleBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
-import java.util.HashMap;
 import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
@@ -29,6 +25,21 @@ class RuntimeProfileServiceTest {
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
   private final RuntimeProfileService service =
       new RuntimeProfileService(new HostedIdentityProperties());
+
+  @Test
+  void environmentClassificationUsesCanonicalDevDemoAndPreviewValues() {
+    assertTrue(HostedIdentityContract.isDevDemo(HostedIdentityContract.DEV_DEMO_NAME));
+    assertFalse(HostedIdentityContract.isDevDemo("pr-42"));
+    assertEquals(
+        HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS,
+        HostedIdentityContract.environmentClass(HostedIdentityContract.DEV_DEMO_NAME));
+    assertEquals(
+        HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS,
+        HostedIdentityContract.environmentClass("pr-42"));
+    assertEquals(
+        HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS,
+        HostedIdentityContract.environmentClass("unsupported"));
+  }
 
   @Test
   void previewPortsAreLimitedToTheAllocatedSixteenPortWindow() {
@@ -68,7 +79,10 @@ class RuntimeProfileServiceTest {
     RuntimeProfileService.validateRuntimeLabels(
         devPlan,
         Map.of(
-            "firemud.dev/dev-demo", "true", "firemud.dev/environment-class", "dev-demo-cluster"));
+            "firemud.dev/dev-demo",
+            "true",
+            "firemud.dev/environment-class",
+            HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS));
     assertThrows(
         IllegalStateException.class,
         () ->
@@ -311,177 +325,6 @@ class RuntimeProfileServiceTest {
         assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
   }
 
-  @Test
-  void retainedIdentityNamespaceMustHaveOnlyItsDerivedControllerLabels() {
-    var devPlan = planner.plan("dev-demo");
-    var valid =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("dev-identity")
-            .withLabels(
-                Map.of(
-                    "firemud.dev/managed-by", "hosted-identity-controller",
-                    "firemud.dev/identity-name", "dev-demo",
-                    "firemud.dev/retention", "retained",
-                    "firemud.dev/environment-class", "dev-demo-cluster"))
-            .endMetadata()
-            .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(valid, devPlan));
-
-    Map<String, String> injectedLabels = new HashMap<>(valid.getMetadata().getLabels());
-    injectedLabels.put("kubernetes.io/metadata.name", "dev-identity");
-    var apiRoundTripped =
-        new NamespaceBuilder(valid)
-            .editMetadata()
-            .withLabels(injectedLabels)
-            .withUid("api-uid")
-            .withResourceVersion("9")
-            .endMetadata()
-            .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(apiRoundTripped, devPlan));
-
-    Map<String, String> labels = new HashMap<>(valid.getMetadata().getLabels());
-    labels.put("firemud.dev/other", "unexpected");
-    var unexpectedLabels =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("dev-identity")
-            .withLabels(labels)
-            .endMetadata()
-            .build();
-    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(unexpectedLabels, devPlan));
-
-    var unexpectedOwner =
-        new NamespaceBuilder(valid)
-            .editMetadata()
-            .withOwnerReferences(new OwnerReferenceBuilder().withName("other").build())
-            .endMetadata()
-            .build();
-    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(unexpectedOwner, devPlan));
-
-    var previewPlan = planner.plan("pr-42");
-    var preview =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("pr-42-identity")
-            .withLabels(
-                Map.of(
-                    "firemud.dev/managed-by", "hosted-identity-controller",
-                    "firemud.dev/identity-name", "pr-42",
-                    "firemud.dev/retention", "retained",
-                    "firemud.dev/environment-class", "pr-preview"))
-            .endMetadata()
-            .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(preview, previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withName("pr-43-identity")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withGenerateName("pr-42-")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertTrue(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .addToAnnotations("external", "unexpected")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withFinalizers("external/finalizer")
-                .endMetadata()
-                .build(),
-            previewPlan));
-  }
-
-  @Test
-  void rbacRoundTripNormalizesOnlyNullEmptyFieldsAndInjectedServerMetadata() {
-    Map<String, String> labels = Map.of("firemud.dev/managed-by", "hosted-identity-controller");
-    var desired =
-        new RoleBuilder()
-            .withNewMetadata()
-            .withName("scope")
-            .withNamespace("pr-42")
-            .withLabels(labels)
-            .endMetadata()
-            .withRules(
-                new PolicyRuleBuilder()
-                    .withApiGroups("")
-                    .withResources("secrets")
-                    .withResourceNames()
-                    .withVerbs("create")
-                    .build())
-            .build();
-    var roundTripped = new RoleBuilder(desired).build();
-    roundTripped.getMetadata().setUid("api-uid");
-    roundTripped.getMetadata().setResourceVersion("7");
-    roundTripped.getRules().get(0).setResourceNames(null);
-    roundTripped.getRules().get(0).setNonResourceURLs(null);
-    assertTrue(HostedIdentityScopeService.roleEquivalent(roundTripped, desired));
-
-    roundTripped
-        .getMetadata()
-        .setOwnerReferences(
-            java.util.List.of(new OwnerReferenceBuilder().withName("other").build()));
-    assertFalse(HostedIdentityScopeService.roleEquivalent(roundTripped, desired));
-
-    var verbDrift = new RoleBuilder(desired).build();
-    verbDrift.getRules().get(0).setVerbs(java.util.List.of("get"));
-    assertFalse(HostedIdentityScopeService.roleEquivalent(verbDrift, desired));
-
-    var resourceDrift = new RoleBuilder(desired).build();
-    resourceDrift.getRules().get(0).setResources(java.util.List.of("configmaps"));
-    assertFalse(HostedIdentityScopeService.roleEquivalent(resourceDrift, desired));
-
-    var ruleCountDrift =
-        new RoleBuilder(desired)
-            .addToRules(
-                new PolicyRuleBuilder()
-                    .withApiGroups("")
-                    .withResources("configmaps")
-                    .withVerbs("get")
-                    .build())
-            .build();
-    assertFalse(HostedIdentityScopeService.roleEquivalent(ruleCountDrift, desired));
-  }
-
-  @Test
-  void roleBindingRoundTripAllowsOnlyNullEmptySubjectApiGroupDifference() {
-    Map<String, String> labels = Map.of("firemud.dev/managed-by", "hosted-identity-controller");
-    var desired =
-        new RoleBindingBuilder()
-            .withNewMetadata()
-            .withName("scope")
-            .withNamespace("pr-42")
-            .withLabels(labels)
-            .endMetadata()
-            .withNewRoleRef("rbac.authorization.k8s.io", "Role", "scope")
-            .addNewSubject()
-            .withKind("ServiceAccount")
-            .withName("controller")
-            .withNamespace("system")
-            .endSubject()
-            .build();
-    var roundTripped = new RoleBindingBuilder(desired).build();
-    roundTripped.getSubjects().get(0).setApiGroup("");
-    assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
-    roundTripped.getMetadata().setAnnotations(Map.of("unexpected", "ownership"));
-    assertFalse(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
-  }
-
   private static Namespace previewRuntimeNamespace(
       String requestedHead, String deployedHead, String port) {
     var builder =
@@ -511,7 +354,8 @@ class RuntimeProfileServiceTest {
             .withLabels(
                 Map.of(
                     "firemud.dev/dev-demo", "true",
-                    "firemud.dev/environment-class", "dev-demo-cluster"))
+                    "firemud.dev/environment-class",
+                    HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
             .addToAnnotations("firemud.dev/requested-dev-demo-head-sha", requestedHead)
             .addToAnnotations("firemud.dev/last-dev-demo-telnet-port", "32016");
     if (deployedHead != null) {

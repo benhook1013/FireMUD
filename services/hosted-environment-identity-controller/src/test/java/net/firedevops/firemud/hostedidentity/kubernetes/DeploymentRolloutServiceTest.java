@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 class DeploymentRolloutServiceTest {
   @Test
@@ -141,7 +143,7 @@ class DeploymentRolloutServiceTest {
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
   void revisionCasConflictIsRetryableAndKeepsGuardPassed() {
-    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service");
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     KubernetesClient client = mock(KubernetesClient.class);
     AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
     MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
@@ -149,12 +151,20 @@ class DeploymentRolloutServiceTest {
     NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
         runtimeDeployments = mock(NonNamespaceOperation.class);
     RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
     when(client.apps()).thenReturn(apps);
     when(apps.deployments()).thenReturn(deployments);
     when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
     when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    when(runtimeDeployments.withName("account-service")).thenReturn(account);
     Deployment observed = readyDeployment("tcp-proxy-service", Map.of(), 3L);
+    Deployment readyAccount =
+        readyDeployment(
+            "account-service",
+            Map.of(HostedIdentityContract.GRPC_REVISION_ANNOTATION, "grpc-new"),
+            3L);
     when(proxy.get()).thenReturn(observed);
+    when(account.get()).thenReturn(readyAccount);
     ReplaceDeletable<Deployment> lockedProxy = mock(ReplaceDeletable.class);
     when(proxy.lockResourceVersion("rv-3")).thenReturn(lockedProxy);
     doThrow(new KubernetesClientException("conflict", 409, null))
@@ -166,9 +176,16 @@ class DeploymentRolloutServiceTest {
 
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
-    assertEquals(false, result.grpcReady());
+    assertEquals(true, result.grpcReady());
     verify(proxy).lockResourceVersion("rv-3");
     verify(lockedProxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account).get();
+    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    InOrder order = inOrder(proxy, lockedProxy, account);
+    order.verify(proxy).get();
+    order.verify(proxy).lockResourceVersion("rv-3");
+    order.verify(lockedProxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    order.verify(account).get();
   }
 
   @Test
@@ -332,22 +349,25 @@ class DeploymentRolloutServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            new DeploymentRolloutService()
-                .sync(
-                    client,
-                    plan,
-                    "telnet-new",
-                    "grpc-new",
-                    () -> {
-                      if (guardCalls.getAndIncrement() == 0) {
-                        return true;
-                      }
-                      throw new IllegalStateException("runtime profile fence");
-                    }));
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .sync(
+                        client,
+                        plan,
+                        "telnet-new",
+                        "grpc-new",
+                        () -> {
+                          if (guardCalls.getAndIncrement() == 0) {
+                            return true;
+                          }
+                          throw new IllegalStateException("runtime profile fence");
+                        }));
 
+    assertEquals("runtime profile fence", failure.getMessage());
+    assertEquals(2, guardCalls.get());
     verify(proxy).get();
     verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(account, never()).get();
@@ -535,6 +555,137 @@ class DeploymentRolloutServiceTest {
     verify(gateway).lockResourceVersion("rv-3");
     verify(lockedGateway).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(proxy).get();
+  }
+
+  @Test
+  void rolloutEditPreservesEveryFieldExceptTheSelectedTemplateAnnotation() {
+    var deployment =
+        new DeploymentBuilder()
+            .withNewMetadata()
+            .withName("account-service")
+            .addToLabels("owner", "runtime")
+            .endMetadata()
+            .withNewSpec()
+            .withReplicas(3)
+            .withNewSelector()
+            .addToMatchLabels("app", "account-service")
+            .endSelector()
+            .withNewTemplate()
+            .withNewMetadata()
+            .addToLabels("app", "account-service")
+            .addToAnnotations("other", "keep")
+            .endMetadata()
+            .withNewSpec()
+            .addNewContainer()
+            .withName("app")
+            .withImage("image@sha256:test")
+            .endContainer()
+            .endSpec()
+            .endTemplate()
+            .endSpec()
+            .build();
+
+    DeploymentRolloutService.applyRevision(deployment, "firemud.dev/grpc-revision", "sha256:new");
+
+    assertEquals(3, deployment.getSpec().getReplicas());
+    assertEquals("runtime", deployment.getMetadata().getLabels().get("owner"));
+    assertEquals(
+        "image@sha256:test",
+        deployment.getSpec().getTemplate().getSpec().getContainers().get(0).getImage());
+    assertEquals(
+        "keep", deployment.getSpec().getTemplate().getMetadata().getAnnotations().get("other"));
+    assertEquals(
+        "sha256:new",
+        deployment
+            .getSpec()
+            .getTemplate()
+            .getMetadata()
+            .getAnnotations()
+            .get("firemud.dev/grpc-revision"));
+  }
+
+  @Test
+  void activeRolloutRequiresAtLeastOneDesiredReplica() {
+    var deployment =
+        new DeploymentBuilder()
+            .withNewMetadata()
+            .withName("account-service")
+            .withGeneration(3L)
+            .endMetadata()
+            .withNewSpec()
+            .withReplicas(0)
+            .endSpec()
+            .withNewStatus()
+            .withObservedGeneration(3L)
+            .withUpdatedReplicas(0)
+            .withAvailableReplicas(0)
+            .endStatus()
+            .build();
+
+    assertEquals(false, DeploymentRolloutService.activeRolloutObserved(deployment));
+
+    deployment.getSpec().setReplicas(1);
+    deployment.getStatus().setUpdatedReplicas(1);
+    deployment.getStatus().setAvailableReplicas(2);
+    deployment.getStatus().setReplicas(2);
+    assertEquals(false, DeploymentRolloutService.activeRolloutObserved(deployment));
+
+    deployment.getStatus().setAvailableReplicas(1);
+    deployment.getStatus().setReplicas(null);
+    assertEquals(false, DeploymentRolloutService.activeRolloutObserved(deployment));
+
+    deployment.getStatus().setReplicas(1);
+    assertEquals(true, DeploymentRolloutService.activeRolloutObserved(deployment));
+  }
+
+  @Test
+  void explicitRetirementScalesBothBridgeEndpointsToZeroAndWaitsForObservedShutdown() {
+    assertEquals(
+        java.util.List.of("spring-cloud-gateway", "tcp-proxy-service"),
+        DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
+    var deployment =
+        new DeploymentBuilder()
+            .withNewMetadata()
+            .withName("spring-cloud-gateway")
+            .addToLabels("owner", "runtime")
+            .endMetadata()
+            .withNewSpec()
+            .withReplicas(2)
+            .withNewSelector()
+            .addToMatchLabels("app", "spring-cloud-gateway")
+            .endSelector()
+            .withNewTemplate()
+            .withNewMetadata()
+            .addToLabels("app", "spring-cloud-gateway")
+            .endMetadata()
+            .withNewSpec()
+            .addNewContainer()
+            .withName("gateway")
+            .withImage("image@sha256:test")
+            .endContainer()
+            .endSpec()
+            .endTemplate()
+            .endSpec()
+            .withNewStatus()
+            .withReplicas(2)
+            .withReadyReplicas(2)
+            .withAvailableReplicas(2)
+            .endStatus()
+            .build();
+
+    DeploymentRolloutService.applyRetirementScaleDown(deployment);
+
+    assertEquals(0, deployment.getSpec().getReplicas());
+    assertEquals("runtime", deployment.getMetadata().getLabels().get("owner"));
+    assertEquals(
+        "image@sha256:test",
+        deployment.getSpec().getTemplate().getSpec().getContainers().get(0).getImage());
+    assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
+    deployment.getStatus().setReadyReplicas(0);
+    deployment.getStatus().setAvailableReplicas(0);
+    assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
+    deployment.getStatus().setReplicas(0);
+    assertEquals(true, DeploymentRolloutService.retirementScaleDownObserved(deployment));
   }
 
   private static Deployment readyDeployment(

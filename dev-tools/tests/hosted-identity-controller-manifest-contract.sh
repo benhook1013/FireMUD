@@ -173,6 +173,7 @@ for resource in namespace serviceaccounts crd admission rbac deployment networkp
   require_literal "$KUSTOMIZATION" "- $resource.yaml"
 done
 require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
+require_literal "$MANIFEST_DIR/namespace.yaml" "fixed control-plane labels must be restored"
 for namespace_label in \
   "pod-security.kubernetes.io/enforce: restricted" \
   "pod-security.kubernetes.io/audit: restricted" \
@@ -846,6 +847,7 @@ done
 
 check_rbac_wildcards "$MANIFEST_DIR"/*.yaml
 require_literal "$RBAC" "name: firemud-hosted-identity-controller-namespace-lifecycle"
+require_literal "$RBAC" "RBAC cannot constrain CREATE with resourceNames"
 require_literal "$RBAC" "- namespaces"
 require_literal "$RBAC" "- create"
 require_literal "$RBAC" "- delete"

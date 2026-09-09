@@ -15,29 +15,24 @@ import org.junit.jupiter.api.Test;
 
 class CertificateResourceFactoryTest {
   @Test
-  void ingressAndTelnetUseSeparateCertificatesAndFixedIssuer() {
-    var properties = new HostedIdentityProperties();
-    properties.setGrpcRenewBefore(Duration.ofHours(5));
-    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+  void ingressCertificateUsesPublicServerMaterialContract() {
+    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     var factory = new CertificateResourceFactory();
 
-    var ingress = factory.ingress(plan);
-    var telnet = factory.telnet(plan);
-    var ingressSpec = spec(ingress);
-    var telnetSpec = spec(telnet);
-    var gatewaySpec = spec(factory.gatewayInternalWs(plan, properties.getGrpcRenewBefore()));
-    var bridgeSpec = spec(factory.tcpProxyBridge(plan, properties.getGrpcRenewBefore()));
-    assertEquals("pr-42-tls", ingress.getMetadata().getName());
-    assertEquals("pr-42-telnet-tls", telnet.getMetadata().getName());
-    assertEquals("pr-42-tls", ingressSpec.get("secretName"));
-    assertEquals("pr-42-telnet-tls", telnetSpec.get("secretName"));
+    var certificate = factory.ingress(plan);
+    var certificateSpec = spec(certificate);
+    assertEquals("pr-42-tls", certificate.getMetadata().getName());
+    assertEquals("pr-42-tls", certificateSpec.get("secretName"));
     assertEquals(
         java.util.List.of("digital signature", "key encipherment", "server auth"),
-        ingressSpec.get("usages"));
+        certificateSpec.get("usages"));
     assertEquals(
-        java.util.List.of("digital signature", "key encipherment", "server auth"),
-        telnetSpec.get("usages"));
-    Map<?, ?> secretTemplate = (Map<?, ?>) ingressSpec.get("secretTemplate");
+        java.util.List.of("pr-42.preview.firedevops.net"), certificateSpec.get("dnsNames"));
+    assertEquals("letsencrypt-prod", issuerName(certificateSpec));
+    assertCertificateDefaults(certificateSpec);
+    assertFalse(certificateSpec.containsKey("duration"));
+    assertFalse(certificateSpec.containsKey("renewBefore"));
+    Map<?, ?> secretTemplate = (Map<?, ?>) certificateSpec.get("secretTemplate");
     assertFalse(secretTemplate.containsKey("metadata"));
     assertEquals(
         HostedIdentityContract.managedLabels(plan.name(), HostedIdentityContract.INGRESS_ROLE),
@@ -49,47 +44,78 @@ class CertificateResourceFactoryTest {
             HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION,
             "source-materialized"),
         secretTemplate.get("annotations"));
-    assertFalse(ingressSpec.containsKey("duration"));
-    assertFalse(ingressSpec.containsKey("renewBefore"));
-    assertFalse(telnetSpec.containsKey("duration"));
-    assertFalse(telnetSpec.containsKey("renewBefore"));
-    assertEquals("letsencrypt-prod", ((Map<?, ?>) ingressSpec.get("issuerRef")).get("name"));
-    assertEquals("letsencrypt-prod", ((Map<?, ?>) telnetSpec.get("issuerRef")).get("name"));
-    for (Map<String, Object> certificateSpec :
-        java.util.List.of(ingressSpec, telnetSpec, gatewaySpec, bridgeSpec)) {
-      Map<?, ?> issuerRef = (Map<?, ?>) certificateSpec.get("issuerRef");
-      assertEquals("ClusterIssuer", issuerRef.get("kind"));
-      assertEquals("cert-manager.io", issuerRef.get("group"));
-      assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
-      assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
-    }
-    assertEquals(java.util.List.of("pr-42.preview.firedevops.net"), ingressSpec.get("dnsNames"));
-    assertEquals(java.util.List.of("pr-42.preview.firedevops.net"), telnetSpec.get("dnsNames"));
-    assertEquals("pr-42-gateway-internal-ws", gatewaySpec.get("secretName"));
-    assertEquals("firemud-ca-issuer", ((Map<?, ?>) gatewaySpec.get("issuerRef")).get("name"));
-    assertEquals("720h", gatewaySpec.get("duration"));
-    assertEquals("5h", gatewaySpec.get("renewBefore"));
-    assertEquals(
-        java.util.List.of("spring-cloud-gateway-mtls.pr-42.svc.cluster.local"),
-        gatewaySpec.get("dnsNames"));
+  }
+
+  @Test
+  void telnetCertificateUsesPublicServerMaterialContract() {
+    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    var factory = new CertificateResourceFactory();
+
+    var certificate = factory.telnet(plan);
+    var certificateSpec = spec(certificate);
+    assertEquals("pr-42-telnet-tls", certificate.getMetadata().getName());
+    assertEquals("pr-42-telnet-tls", certificateSpec.get("secretName"));
     assertEquals(
         java.util.List.of("digital signature", "key encipherment", "server auth"),
-        gatewaySpec.get("usages"));
-    assertEquals("pr-42-tcp-proxy-bridge", bridgeSpec.get("secretName"));
-    assertEquals("firemud-ca-issuer", ((Map<?, ?>) bridgeSpec.get("issuerRef")).get("name"));
-    assertEquals("720h", bridgeSpec.get("duration"));
-    assertEquals("5h", bridgeSpec.get("renewBefore"));
-    assertFalse(bridgeSpec.containsKey("dnsNames"));
+        certificateSpec.get("usages"));
+    assertEquals(
+        java.util.List.of("pr-42.preview.firedevops.net"), certificateSpec.get("dnsNames"));
+    assertEquals("letsencrypt-prod", issuerName(certificateSpec));
+    assertCertificateDefaults(certificateSpec);
+    assertFalse(certificateSpec.containsKey("duration"));
+    assertFalse(certificateSpec.containsKey("renewBefore"));
+  }
+
+  @Test
+  void gatewayInternalWsCertificateUsesInternalServerMaterialContract() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory().gatewayInternalWs(plan, properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-gateway-internal-ws", certificate.getMetadata().getName());
+    assertEquals("pr-42-gateway-internal-ws", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals("720h", certificateSpec.get("duration"));
+    assertEquals("5h", certificateSpec.get("renewBefore"));
+    assertEquals(
+        java.util.List.of("spring-cloud-gateway-mtls.pr-42.svc.cluster.local"),
+        certificateSpec.get("dnsNames"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth"),
+        certificateSpec.get("usages"));
+    assertCertificateDefaults(certificateSpec);
+  }
+
+  @Test
+  void tcpProxyBridgeCertificateUsesInternalClientMaterialContract() {
+    var properties = propertiesWithRenewBefore();
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    var certificate =
+        new CertificateResourceFactory().tcpProxyBridge(plan, properties.getGrpcRenewBefore());
+    var certificateSpec = spec(certificate);
+
+    assertEquals("pr-42-tcp-proxy-bridge", certificate.getMetadata().getName());
+    assertEquals("pr-42-tcp-proxy-bridge", certificateSpec.get("secretName"));
+    assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+    assertEquals("720h", certificateSpec.get("duration"));
+    assertEquals("5h", certificateSpec.get("renewBefore"));
+    assertFalse(certificateSpec.containsKey("dnsNames"));
     assertEquals(
         java.util.List.of("spiffe://firemud/ns/pr-42/sa/tcp-proxy-service"),
-        bridgeSpec.get("uris"));
+        certificateSpec.get("uris"));
     assertEquals(
         java.util.List.of("digital signature", "key encipherment", "client auth"),
-        bridgeSpec.get("usages"));
+        certificateSpec.get("usages"));
+    assertCertificateDefaults(certificateSpec);
+  }
+
+  @Test
+  void certificateFactoryHasNoGrpcCertificateFactoryMethod() {
     assertTrue(
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
-            .noneMatch(method -> method.getName().equals("grpc")),
-        "CertificateResourceFactory must not issue gRPC material");
+            .noneMatch(method -> method.getName().equals("grpc")));
   }
 
   @Test
@@ -124,6 +150,31 @@ class CertificateResourceFactoryTest {
     }
   }
 
+  private static HostedIdentityProperties propertiesWithRenewBefore() {
+    var properties = new HostedIdentityProperties();
+    properties.setGrpcRenewBefore(Duration.ofHours(5));
+    return properties;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> spec(
+      io.fabric8.kubernetes.api.model.GenericKubernetesResource resource) {
+    return (Map<String, Object>) resource.getAdditionalProperties().get("spec");
+  }
+
+  private static String issuerName(Map<?, ?> certificateSpec) {
+    return (String) ((Map<?, ?>) certificateSpec.get("issuerRef")).get("name");
+  }
+
+  private static void assertCertificateDefaults(Map<?, ?> certificateSpec) {
+    Map<?, ?> issuerRef = (Map<?, ?>) certificateSpec.get("issuerRef");
+    assertEquals("ClusterIssuer", issuerRef.get("kind"));
+    assertEquals("cert-manager.io", issuerRef.get("group"));
+    assertEquals(
+        "Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
+    assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
+  }
+
   private static void assertInvalidRenewalWindow(
       org.junit.jupiter.api.function.Executable factoryCall) {
     IllegalStateException failure = assertThrows(IllegalStateException.class, factoryCall);
@@ -132,9 +183,4 @@ class CertificateResourceFactoryTest {
         failure.getMessage());
   }
 
-  @SuppressWarnings("unchecked")
-  private static Map<String, Object> spec(
-      io.fabric8.kubernetes.api.model.GenericKubernetesResource resource) {
-    return (Map<String, Object>) resource.getAdditionalProperties().get("spec");
-  }
 }

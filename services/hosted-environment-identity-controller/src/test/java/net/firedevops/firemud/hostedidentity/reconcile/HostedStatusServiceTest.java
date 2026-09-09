@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
 import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
@@ -267,7 +268,7 @@ class HostedStatusServiceTest {
     HostedEnvironmentIdentityStatus oldStatus = new HostedEnvironmentIdentityStatus();
     RuntimeProfile oldProfile = new RuntimeProfile();
     oldProfile.setName("pr-42");
-    oldProfile.setEnvironmentClass("pr-preview");
+    oldProfile.setEnvironmentClass(HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS);
     oldProfile.setIdentityNamespace("pr-42-identity");
     oldProfile.setRuntimeNamespace("pr-42");
     oldProfile.setHostname("pr-42.preview.firedevops.net");
@@ -297,7 +298,7 @@ class HostedStatusServiceTest {
 
     RuntimeProfile profile = resource.getStatus().getProfile();
     assertEquals("pr-42", profile.getName());
-    assertEquals("pr-preview", profile.getEnvironmentClass());
+    assertEquals(HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS, profile.getEnvironmentClass());
     assertEquals("pr-42-identity", profile.getIdentityNamespace());
     assertEquals("pr-42", profile.getRuntimeNamespace());
     assertEquals("pr-42.preview.firedevops.net", profile.getHostname());

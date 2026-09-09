@@ -20,6 +20,7 @@ artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
 runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+credential_source="$ROOT_DIR/dev-tools/hosted/preview/provision-runtime-credentials.sh"
 
 contains() {
   grep -Fq -- "$2" "$1" || {
@@ -31,10 +32,25 @@ contains() {
 contains "$runtime" 'hosted-environment-identity-controller'
 contains "$runtime" 'services/hosted-environment-identity-controller/**'
 contains "$publisher" 'hosted-environment-identity-controller'
+# shellcheck disable=SC2016 # These assertions intentionally match literal publisher shell.
 contains "$publisher" 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
-contains "$publisher" 'Source artifact does not contain $image; skipping publication.'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal publisher shell.
+contains "$publisher" 'Source artifact does not contain optional $image; skipping publication.'
 contains "$publisher" 'continue'
-contains "$build_gradle" '":hosted-environment-identity-controller:bootBuildImage"'
+contains "$build_gradle" '"buildHostedEnvironmentIdentityControllerImage"'
+python3 - "$build_gradle" <<'PY'
+import sys
+from pathlib import Path
+
+build_gradle = Path(sys.argv[1]).read_text(encoding="utf-8")
+aggregate_start = build_gradle.index('tasks.register("buildDockerImages")')
+aggregate_end = build_gradle.index(
+    'tasks.register("buildHostedEnvironmentIdentityControllerImage")'
+)
+aggregate = build_gradle[aggregate_start:aggregate_end]
+assert '"buildHostedEnvironmentIdentityControllerImage"' in aggregate
+assert ':hosted-environment-identity-controller:bootBuildImage' not in aggregate
+PY
 contains "$controller_build_gradle" 'archiveFileName.set("hosted-environment-identity-controller.jar")'
 contains "$controller_dockerfile" 'COPY --chown=firemud:firemud --chmod=644 hosted-environment-identity-controller.jar app.jar'
 if grep -Fq -- '*.jar' "$controller_dockerfile"; then
@@ -142,7 +158,8 @@ contains "$trusted" 'contents: read # Check out the trusted default-branch workf
 }
 # shellcheck disable=SC2016 # These assertions intentionally match literal helper source.
 contains "$runtime_rollout_waiter" 'usage: $0 <namespace> <per_deployment_timeout_seconds>'
-contains "$runtime_rollout_waiter" 'per_deployment_timeout_seconds must be a positive integer'
+contains "$runtime_rollout_waiter" 'runtime namespace must match dev or pr-[1-9][0-9]*'
+contains "$runtime_rollout_waiter" 'per_deployment_timeout_seconds must be an integer between 1 and 3600'
 contains "$runtime_rollout_waiter" 'This bound applies independently to each deployment rollout.'
 
 # Dev-demo is the prerequisite's only active consumer integration. It preserves
@@ -156,7 +173,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" <<'PY'
 import sys
 from pathlib import Path
 
@@ -166,6 +183,7 @@ workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
+publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
@@ -240,6 +258,31 @@ assert jobs["retire-identity"]["permissions"] == {
 for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["timeout-minutes"] == 60, job_name
 assert jobs["deploy-runtime"]["timeout-minutes"] == 90
+
+publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
+publisher_script = next(
+    step["run"]
+    for step in publisher_steps
+    if step.get("name") == "Publish fixed PR image tags"
+)
+missing_image_block = '''if ! docker image inspect "$image" >/dev/null 2>&1; then
+    if [[ "$service" == hosted-environment-identity-controller ]]; then
+      echo "Source artifact does not contain optional $image; skipping publication." >&2
+      continue
+    fi
+    echo "Required source artifact image for $service is missing: $image." >&2
+    exit 1
+  fi'''
+assert missing_image_block in publisher_script
+assert publisher_script.count(
+    'if [[ "$service" == hosted-environment-identity-controller ]]; then'
+) == 1
+assert publisher_script.count(
+    'echo "Source artifact does not contain optional $image; skipping publication." >&2'
+) == 1
+assert publisher_script.count(
+    'echo "Required source artifact image for $service is missing: $image." >&2'
+) == 1
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 for fragment in (
@@ -443,9 +486,22 @@ assert "for deployment in" not in dev_demo_rollout_step["run"]
 assert "rollout status" not in dev_demo_rollout_step["run"]
 dev_demo_render_step = dev_demo_by_name["Validate dev-demo chart render"]
 dev_demo_render_run = dev_demo_render_step["run"]
+dev_demo_kubeconfig_step = dev_demo_by_name["Write dev-demo runtime kubeconfig"]
+assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
+    "run"
+]
+assert 'echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
+    dev_demo_kubeconfig_step["run"]
+)
+assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' == (
+    dev_demo_by_name["Restore dev-demo runtime kubeconfig"]["run"]
+)
+assert dev_demo_render_step["env"]["CERTIFICATE_IDENTITY_MODE"] == (
+    "${{ steps.certificate-identity.outputs.mode }}"
+)
 dev_demo_preflight = dev_demo_render_run
 hosted_mode_guard = (
-    'if [[ "${{ steps.certificate-identity.outputs.mode }}" '
+    'if [[ "$CERTIFICATE_IDENTITY_MODE" '
     '== "hosted-controller" ]]; then'
 )
 assert dev_demo_preflight.count(hosted_mode_guard) == 1
@@ -578,10 +634,14 @@ assert retired_request["run"] == (
 )
 
 credential_step = next(
-    step["run"]
+    step
     for step in deploy_steps
     if step.get("name") == "Create canonical non-identity runtime credentials"
 )
+assert credential_step["run"] == (
+    "bash ./dev-tools/hosted/preview/provision-runtime-credentials.sh"
+)
+credential_step = Path(sys.argv[6]).read_text(encoding="utf-8")
 for fragment in (
     'read_secret_if_present firemud-secret',
     'read_secret_if_present minio-credentials',
@@ -688,24 +748,45 @@ env \
 expected_runtime_rollouts=$'deployment/postgres\ndeployment/redis-coord\ndeployment/redis-cache\ndeployment/minio\ndeployment/account-service\ndeployment/automation-scripting-service\ndeployment/entity-management-service\ndeployment/game-design-service\ndeployment/game-logic-service\ndeployment/game-session-service\ndeployment/logging-admin-service\ndeployment/social-groups-service\ndeployment/spring-cloud-gateway\ndeployment/tcp-proxy-service\ndeployment/world-management-service'
 test "$(<"$runtime_rollout_log")" = "$expected_runtime_rollouts"
 
+for runtime_rollout_case in "dev 1" "pr-1 3600"; do
+  read -r runtime_rollout_namespace runtime_rollout_timeout <<<"$runtime_rollout_case"
+  : >"$runtime_rollout_log"
+  env \
+    PATH="$runtime_rollout_stub_dir:$PATH" \
+    RUNTIME_ROLLOUT_NAMESPACE="$runtime_rollout_namespace" \
+    RUNTIME_ROLLOUT_TIMEOUT="$runtime_rollout_timeout" \
+    RUNTIME_ROLLOUT_LOG="$runtime_rollout_log" \
+    bash "$runtime_rollout_waiter" "$runtime_rollout_namespace" "$runtime_rollout_timeout"
+  test "$(<"$runtime_rollout_log")" = "$expected_runtime_rollouts"
+done
+
+for invalid_runtime_rollout_namespace in "" dev-identity pr-0 pr-01 pr-abc pr-42-identity; do
+  if bash "$runtime_rollout_waiter" "$invalid_runtime_rollout_namespace" 120 \
+    >"$TEMP_DIR/invalid-runtime-rollout-namespace.output" \
+    2>"$TEMP_DIR/invalid-runtime-rollout-namespace.error"; then
+    fail "runtime rollout waiter accepted invalid namespace: $invalid_runtime_rollout_namespace"
+  fi
+  expected_runtime_rollout_namespace_error='runtime namespace must match dev or pr-[1-9][0-9]*'
+  if [[ -z "$invalid_runtime_rollout_namespace" ]]; then
+    expected_runtime_rollout_namespace_error='runtime namespace is required'
+  fi
+  grep -Fxq "$expected_runtime_rollout_namespace_error" \
+    "$TEMP_DIR/invalid-runtime-rollout-namespace.error"
+done
+for invalid_runtime_rollout_timeout in 0 invalid 3601 99999999999999999999; do
+  if bash "$runtime_rollout_waiter" pr-42 "$invalid_runtime_rollout_timeout" \
+    >"$TEMP_DIR/invalid-runtime-rollout-timeout.output" \
+    2>"$TEMP_DIR/invalid-runtime-rollout-timeout.error"; then
+    fail "runtime rollout waiter accepted invalid timeout: $invalid_runtime_rollout_timeout"
+  fi
+  grep -Fxq 'per_deployment_timeout_seconds must be an integer between 1 and 3600' \
+    "$TEMP_DIR/invalid-runtime-rollout-timeout.error"
+done
+
 # Execute the exact credential step with a stateful Kubernetes stub. The first
 # pass creates the application, MinIO, and JWT resources from random values;
 # the second pass must reuse every exact stored byte without regenerating them.
-credential_script="$TEMP_DIR/create-runtime-credentials.sh"
-python3 - "$trusted" "$credential_script" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-step = next(
-    step
-    for step in workflow["jobs"]["deploy-runtime"]["steps"]
-    if step.get("name") == "Create canonical non-identity runtime credentials"
-)
-Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
-PY
+credential_script="$credential_source"
 
 credential_stub_dir="$TEMP_DIR/credential-stubs"
 credential_state_root="$TEMP_DIR/credential-state"

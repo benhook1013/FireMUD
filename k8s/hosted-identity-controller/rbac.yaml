@@ -122,6 +122,8 @@ metadata:
     app.kubernetes.io/component: controller
     app.kubernetes.io/part-of: firemud
     firemud.dev/managed-by: hosted-identity-controller
+# RBAC cannot constrain CREATE with resourceNames; fail-closed admission
+# policies enforce the exact managed namespace for this lifecycle permission.
 rules:
   - apiGroups:
       - ""

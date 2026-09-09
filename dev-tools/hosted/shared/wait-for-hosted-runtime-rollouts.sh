@@ -12,8 +12,14 @@ if [[ -z "$namespace" ]]; then
   echo "runtime namespace is required" >&2
   exit 2
 fi
-if ! [[ "$per_deployment_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
-  echo "per_deployment_timeout_seconds must be a positive integer" >&2
+if ! [[ "$namespace" =~ ^(dev|pr-[1-9][0-9]*)$ ]]; then
+  echo "runtime namespace must match dev or pr-[1-9][0-9]*" >&2
+  exit 2
+fi
+if ! [[ "$per_deployment_timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
+  ((${#per_deployment_timeout_seconds} > 4)) ||
+  ((10#$per_deployment_timeout_seconds > 3600)); then
+  echo "per_deployment_timeout_seconds must be an integer between 1 and 3600" >&2
   exit 2
 fi
 

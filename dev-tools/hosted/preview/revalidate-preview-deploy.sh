@@ -25,7 +25,8 @@ if [[ -z "${GITHUB_REPOSITORY:-}" || -z "${GH_TOKEN:-}" ]]; then
 fi
 
 refuse_preview() {
-  echo "::error::Refusing preview deploy for PR #${pr_number}: $1" >&2
+  echo "::error::Refusing preview deploy for PR #${pr_number}: $1"
+  echo "Refusing preview deploy for PR #${pr_number}: $1" >&2
   exit 1
 }
 

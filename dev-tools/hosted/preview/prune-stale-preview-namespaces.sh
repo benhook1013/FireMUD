@@ -27,7 +27,10 @@ delete_runtime_namespace() {
     return 0
   fi
 
-  kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false
+  if ! kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false; then
+    echo "Unable to submit deletion for runtime namespace ${runtime_namespace}." >&2
+    return 1
+  fi
   wait_status=0
   kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${preview_delete_timeout}s" \
     || wait_status=$?

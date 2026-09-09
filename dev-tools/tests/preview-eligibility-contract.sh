@@ -206,6 +206,12 @@ EOF
 chmod +x "$TEMP_DIR/bin/gh"
 
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+# shellcheck disable=SC2016 # Match literal helper source.
+grep -Fq -- 'echo "::error::Refusing preview deploy for PR #${pr_number}: $1"' \
+  "$revalidation_helper"
+# shellcheck disable=SC2016 # Match literal helper source.
+grep -Fq -- 'echo "Refusing preview deploy for PR #${pr_number}: $1" >&2' \
+  "$revalidation_helper"
 if GITHUB_REPOSITORY=example/FireMUD \
   GH_TOKEN=test-token \
   FAKE_GH_LOG="$TEMP_DIR/revalidate-gh.log" \
@@ -220,6 +226,24 @@ fi
 grep -Fxq 'expected head SHA must be exactly 40 hexadecimal characters' \
   "$TEMP_DIR/invalid-shell-revalidation.err"
 test ! -e "$TEMP_DIR/revalidate-gh.log"
+
+if GITHUB_REPOSITORY=example/FireMUD \
+  GH_TOKEN=test-token \
+  FAKE_GH_LOG="$TEMP_DIR/refused-gh.log" \
+  FAKE_PULL_REQUEST_JSON='not-json' \
+  PATH="$TEMP_DIR/bin:$PATH" \
+  bash "$revalidation_helper" 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  >"$TEMP_DIR/refused.stdout" \
+  2>"$TEMP_DIR/refused.stderr"; then
+  echo "revalidate-preview-deploy accepted malformed pull request metadata" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error::Refusing preview deploy for PR #42: current pull request metadata is malformed' \
+  "$TEMP_DIR/refused.stdout"
+grep -Fxq \
+  'Refusing preview deploy for PR #42: current pull request metadata is malformed' \
+  "$TEMP_DIR/refused.stderr"
 
 dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
 (

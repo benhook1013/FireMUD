@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.springframework.stereotype.Component;
 
@@ -40,7 +41,7 @@ public class RuntimeProfileService {
     Map<String, String> annotations = namespace.getMetadata().getAnnotations();
     String requestedHead;
     String deployedHead;
-    if (plan.name().equals("dev-demo")) {
+    if (HostedIdentityContract.isDevDemo(plan.name())) {
       requestedHead =
           requiredCanonicalHead(
               annotations,
@@ -60,7 +61,7 @@ public class RuntimeProfileService {
               annotations, properties.getPreviewDeployedHeadAnnotation(), "deployed head identity");
     }
     String portAnnotation =
-        plan.name().equals("dev-demo")
+        HostedIdentityContract.isDevDemo(plan.name())
             ? properties.getDevDemoTelnetPortAnnotation()
             : properties.getPreviewTelnetPortAnnotation();
     String portValue = annotations == null ? null : annotations.get(portAnnotation);
@@ -146,7 +147,7 @@ public class RuntimeProfileService {
     if (port < 1 || port > 65535) {
       return false;
     }
-    if (plan.name().equals("dev-demo")) {
+    if (HostedIdentityContract.isDevDemo(plan.name())) {
       return port == properties.getDevDemoTelnetPort();
     }
     int base = properties.getPreviewTelnetPortBase();
@@ -157,9 +158,12 @@ public class RuntimeProfileService {
     if (labels == null) {
       throw new IllegalStateException("runtime Namespace has no lifecycle labels");
     }
-    if (plan.name().equals("dev-demo")) {
+    if (HostedIdentityContract.isDevDemo(plan.name())) {
       requireLabel(labels, "firemud.dev/dev-demo", "true");
-      requireLabel(labels, "firemud.dev/environment-class", "dev-demo-cluster");
+      requireLabel(
+          labels,
+          "firemud.dev/environment-class",
+          HostedIdentityContract.environmentClass(plan.name()));
       return;
     }
     if (!plan.name().startsWith("pr-")) {

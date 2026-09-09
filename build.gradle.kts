@@ -457,7 +457,7 @@ tasks.register("buildDockerImages") {
     dependsOn(
         "buildBaseImage",
         "buildPgDumpCronImage",
-        ":hosted-environment-identity-controller:bootBuildImage",
+        "buildHostedEnvironmentIdentityControllerImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",

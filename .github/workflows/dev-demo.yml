@@ -179,6 +179,7 @@ jobs:
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
             "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
@@ -242,7 +243,7 @@ jobs:
 
       - name: Restore dev-demo runtime kubeconfig
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: echo "KUBECONFIG=$RUNNER_TEMP/dev-demo-runtime.kubeconfig" >> "$GITHUB_ENV"
+        run: echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Wait for all controller identity projections
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
@@ -286,13 +287,15 @@ jobs:
 
       - name: Validate dev-demo chart render
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        env:
+          CERTIFICATE_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
         run: |
           set -euo pipefail
           helm template "${{ needs.dev-demo-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/dev-demo-values.yaml \
             --namespace "${{ needs.dev-demo-plan.outputs.namespace }}" \
             >/tmp/dev-demo-rendered.yaml
-          if [[ "${{ steps.certificate-identity.outputs.mode }}" == "hosted-controller" ]]; then
+          if [[ "$CERTIFICATE_IDENTITY_MODE" == "hosted-controller" ]]; then
             FIREMUD_PREFLIGHT_CONTEXT=ci-static \
               python3 ./dev-tools/deploy/preflight.py hosted-bridge \
               /tmp/dev-demo-rendered.yaml \

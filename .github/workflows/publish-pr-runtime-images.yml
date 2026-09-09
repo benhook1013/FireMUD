@@ -95,8 +95,12 @@ jobs:
             hosted-environment-identity-controller; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             if ! docker image inspect "$image" >/dev/null 2>&1; then
-              echo "Source artifact does not contain $image; skipping publication."
-              continue
+              if [[ "$service" == hosted-environment-identity-controller ]]; then
+                echo "Source artifact does not contain optional $image; skipping publication." >&2
+                continue
+              fi
+              echo "Required source artifact image for $service is missing: $image." >&2
+              exit 1
             fi
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               echo "Fixed image tag already exists; preserving first publication: $image"

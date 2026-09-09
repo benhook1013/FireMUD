@@ -63,22 +63,13 @@ public class ServedEnvironmentProbe {
       String expectedGatewayInternalWsLeafSha256,
       Secret grpcMaterial,
       String expectedGrpcLeafSha256) {
-    ProbeResult https = https(plan.hostname(), 443, expectedIngressLeafSha256);
-    if (!https.ready()) {
-      return new ProbeResult(false, "https-" + https.reason());
-    }
-    ProbeResult telnet = telnet(plan.hostname(), telnetPort, expectedTelnetLeafSha256);
-    if (!telnet.ready()) {
-      return new ProbeResult(false, "telnet-" + telnet.reason());
-    }
-    ProbeResult bridge = bridge(plan, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256);
-    if (!bridge.ready()) {
-      return new ProbeResult(false, "bridge-" + bridge.reason());
-    }
-    ProbeResult grpc = grpc(plan, grpcMaterial, expectedGrpcLeafSha256);
-    return grpc.ready()
-        ? new ProbeResult(true, "served-bridge-and-grpc-accepted")
-        : new ProbeResult(false, "grpc-" + grpc.reason());
+    return probe(
+        plan,
+        telnetPort,
+        (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
+        (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
+        (hostname, port) -> bridge(plan, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
+        (hostname, port) -> grpc(plan, grpcMaterial, expectedGrpcLeafSha256));
   }
 
   ProbeResult probe(
@@ -431,7 +422,7 @@ public class ServedEnvironmentProbe {
     return openTlsSocket(hostname, port, expectedFingerprint, socket);
   }
 
-  private static SSLSocket openTlsSocket(
+  static SSLSocket openTlsSocket(
       String hostname, int port, String expectedFingerprint, SSLSocket socket) throws Exception {
     boolean transferred = false;
     try {

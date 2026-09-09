@@ -1,6 +1,8 @@
 apiVersion: v1
 kind: Namespace
 metadata:
+  # These fixed control-plane labels must be restored when the namespace is
+  # deleted and recreated during controller installation or recovery.
   name: firemud-system
   labels:
     app.kubernetes.io/part-of: firemud

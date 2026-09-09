@@ -11,6 +11,9 @@ public final class HostedIdentityContract {
   public static final String PLURAL = "hostedenvironmentidentities";
   public static final String FINALIZER = API_GROUP + "/hosted-environment-identity";
   public static final String CONTROL_NAMESPACE = "firemud-system";
+  public static final String DEV_DEMO_NAME = "dev-demo";
+  public static final String DEV_DEMO_ENVIRONMENT_CLASS = "dev-demo-cluster";
+  public static final String PREVIEW_ENVIRONMENT_CLASS = "pr-preview";
   public static final String GRPC_CA_SECRET_NAME = "firemud-grpc-ca";
 
   public static final String MANAGED_BY_LABEL = "firemud.dev/managed-by";
@@ -47,6 +50,14 @@ public final class HostedIdentityContract {
   public static final String TRANSPORT_PROVENANCE = "hosted-identity-controller-transport-only";
 
   private HostedIdentityContract() {}
+
+  public static boolean isDevDemo(String identityName) {
+    return DEV_DEMO_NAME.equals(identityName);
+  }
+
+  public static String environmentClass(String identityName) {
+    return isDevDemo(identityName) ? DEV_DEMO_ENVIRONMENT_CLASS : PREVIEW_ENVIRONMENT_CLASS;
+  }
 
   public static Map<String, String> managedLabels(String environment, String role) {
     return Map.of(

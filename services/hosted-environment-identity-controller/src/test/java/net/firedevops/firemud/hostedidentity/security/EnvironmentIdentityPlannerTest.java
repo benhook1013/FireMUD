@@ -11,19 +11,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import org.junit.jupiter.api.Test;
+import org.yaml.snakeyaml.Yaml;
 
 class EnvironmentIdentityPlannerTest {
   private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
       Pattern.compile(
-          "r\\.apiGroups == \\['apps'\\] &&\\s+"
-              + "r\\.resources == \\['deployments'\\] &&\\s+"
-              + "r\\.resourceNames == \\[([^\\]]+)] &&\\s+"
-              + "r\\.verbs == \\['get', 'update', 'patch'\\]",
-          Pattern.DOTALL);
+          "r\\.apiGroups == \\[\\'apps\\'\\] && r\\.resources == \\[\\'deployments\\'\\] && r\\.resourceNames == \\[([^\\]]+)]");
+  private static final Pattern RUNTIME_DEPLOYMENT_VERBS =
+      Pattern.compile("r\\.verbs == \\[([^\\]]+)]");
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
@@ -110,16 +110,25 @@ class EnvironmentIdentityPlannerTest {
   @Test
   void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
-    String admission = Files.readString(admissionPath);
-    int policyStart = admission.indexOf("name: firemud-hosted-identity-scope-roles");
-    assertTrue(policyStart >= 0, "scope-role admission policy must exist");
-    int policyEnd = admission.indexOf("\n---", policyStart);
-    String scopeRolePolicy =
-        admission.substring(policyStart, policyEnd < 0 ? admission.length() : policyEnd);
+    Map<?, ?> scopeRolePolicy =
+        java.util.stream.StreamSupport.stream(
+                new Yaml().loadAll(Files.newBufferedReader(admissionPath)).spliterator(), false)
+            .map(Map.class::cast)
+            .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
+            .filter(
+                document ->
+                    "firemud-hosted-identity-scope-roles"
+                        .equals(((Map<?, ?>) document.get("metadata")).get("name")))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
+    Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
+    List<?> validations = (List<?>) spec.get("validations");
+    String scopeRoleExpression = (String) ((Map<?, ?>) validations.get(0)).get("expression");
     int runtimeScopeStart =
-        scopeRolePolicy.lastIndexOf("(object.metadata.name == 'firemud-hosted-runtime-scope'");
+        scopeRoleExpression.lastIndexOf("(object.metadata.name == 'firemud-hosted-runtime-scope'");
     assertTrue(runtimeScopeStart >= 0, "runtime-scope admission branch must exist");
-    String runtimeScopePolicy = scopeRolePolicy.substring(runtimeScopeStart);
+    String runtimeScopePolicy =
+        scopeRoleExpression.substring(runtimeScopeStart).replaceAll("\\s+", " ");
 
     Matcher resourceNames = RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(runtimeScopePolicy);
     assertTrue(resourceNames.find(), "runtime deployment resourceNames rule must exist");
@@ -132,6 +141,12 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
     assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
     assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
+    Matcher verbs = RUNTIME_DEPLOYMENT_VERBS.matcher(runtimeScopePolicy);
+    boolean expectedVerbs = false;
+    while (verbs.find()) {
+      expectedVerbs |= "'get', 'update', 'patch'".equals(verbs.group(1));
+    }
+    assertTrue(expectedVerbs, "runtime deployment verbs rule must exist");
   }
 
   @Test
