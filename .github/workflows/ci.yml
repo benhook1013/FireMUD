@@ -260,6 +260,7 @@ jobs:
         run: |
           bash ./dev-tools/tests/cloc-report-contract.sh
           bash ./dev-tools/tests/ci-lightweight-scope-contract.sh
+          bash ./dev-tools/tests/coderabbit-cli-wrapper-contract.sh
           bash ./dev-tools/tests/coderabbit-review-contract.sh
           bash ./dev-tools/tests/pr-retarget-workflow-contract.sh
           bash ./dev-tools/tests/static-analysis-summary-contract.sh
