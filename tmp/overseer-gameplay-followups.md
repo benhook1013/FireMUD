@@ -34,8 +34,11 @@ Integrate the saved backlog into that scope, rechecking current implementation b
 - Converge the gRPC non-OK/`RPCErrorDetail` error contract as a strong Phase 1 item.
 - Treat legacy global-role/god/`HIDDEN_STAFF` gameplay handling under ADR0026/ADR0046 as a Phase 1 candidate where shared policy or obsolete paths are involved; leave other local cleanup for Phase 2.
 - Track the Entity blank `effectId` replay bypass as an explicit correctness item, independent of whole-program completion, and combine it with related replay work when appropriate.
+- Reconsider the named construction/model shape for the 22-field `EnvironmentIdentityPlan` during shared plan/classifier foundation work. Independent Sol review `1773ea252` found one canonical production construction and three test copies; the small `withConsumers` helper is being consumed now, while a broader builder requires a lasting API/validation choice. This is an explicit Overseer-approved postponement after the 2026-09-10 review, not a generic cleanup obligation.
 
 Phase 2 follows Phase 1: per-service or other coherent local maintainability cleanup for remaining internal patterns.
+
+During controller-lifecycle maintainability work, reconsider consolidating `HostedIdentityReconciler` role descriptors. Independent Sol review `1773ea252` found five ordered projection/ack operations, each with an immediate fail-closed fence, and named per-role state reused in probes, readiness, and status. Any refactor must preserve explicit order, per-role failure and fence proof, and partial-transition reporting; a mechanical loop/map may obscure those guarantees. This is an explicit Overseer-approved postponement after the 2026-09-10 review, not a generic cleanup obligation.
 
 The Overseer maintains priorities; Gameplay decomposes and implements; consequential architecture decisions remain with the Overseer. Do not create another tracker.
 
