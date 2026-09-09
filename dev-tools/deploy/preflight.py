@@ -6476,6 +6476,8 @@ def wait_for_secret_key_requirements(
     """Bound one controller-projection wait across all required Secrets."""
     if ready_attempts is None:
         ready_attempts = HOSTED_BRIDGE_SECRET_READY_ATTEMPTS
+    if ready_attempts <= 0:
+        raise ValueError("ready_attempts must be positive")
     if ready_timeout_seconds is None:
         ready_timeout_seconds = HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
     deadline = time.monotonic() + ready_timeout_seconds

@@ -5,6 +5,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -853,11 +854,17 @@ public class CertificateMaterialService {
           throw new IllegalStateException("owned Certificate has no resourceVersion for repair");
         }
         desired.getMetadata().setResourceVersion(resourceVersion);
-        client
-            .genericKubernetesResources(ResourceContexts.CERTIFICATES)
-            .inNamespace(namespace)
-            .resource(desired)
-            .replace();
+        try {
+          client
+              .genericKubernetesResources(ResourceContexts.CERTIFICATES)
+              .inNamespace(namespace)
+              .resource(desired)
+              .replace();
+        } catch (KubernetesClientException exception) {
+          if (exception.getCode() != 409) {
+            throw exception;
+          }
+        }
       }
     }
   }

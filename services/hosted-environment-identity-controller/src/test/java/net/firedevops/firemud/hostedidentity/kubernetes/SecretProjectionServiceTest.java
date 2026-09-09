@@ -1,7 +1,9 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.clearInvocations;
@@ -465,6 +467,66 @@ class SecretProjectionServiceTest {
         IllegalStateException.class,
         () ->
             CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void certificateRepairTreatsConflictAsTransientButPropagatesOtherFailures() {
+    EnvironmentIdentityPlan plan = plan();
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    GenericKubernetesResource existing = new GenericKubernetesResource();
+    existing.setApiVersion("cert-manager.io/v1");
+    existing.setKind("Certificate");
+    existing.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(desired.getMetadata().getName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(desired.getMetadata().getLabels())
+            .withResourceVersion("7")
+            .build());
+    Map<String, Object> existingSpec =
+        new LinkedHashMap<>((Map<String, Object>) desired.getAdditionalProperties().get("spec"));
+    existingSpec.put("secretName", "obsolete-secret-name");
+    existing.setAdditionalProperties(Map.of("spec", existingSpec));
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
+    Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(desired.getMetadata().getName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(replacementResource)
+        .replace();
+
+    assertDoesNotThrow(
+        () ->
+            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+
+    existingSpec.put("secretName", "another-obsolete-secret-name");
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+    org.mockito.Mockito.doThrow(failure).when(replacementResource).replace();
+
+    KubernetesClientException thrown =
+        assertThrows(
+            KubernetesClientException.class,
+            () ->
+                CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+
+    assertSame(failure, thrown);
   }
 
   @Test

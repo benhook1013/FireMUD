@@ -2279,6 +2279,17 @@ try:
     if retry_issues:
         raise SystemExit(f"empty Secret value did not retry to readiness: {retry_issues}")
 
+    for invalid_attempts in (0, -1):
+        try:
+            module.wait_for_secret_key_requirements(
+                [("invalid-attempts", {"tls.crt"})], "pr-42", ready_attempts=invalid_attempts
+            )
+        except ValueError as error:
+            if str(error) != "ready_attempts must be positive":
+                raise SystemExit(f"invalid readiness-attempt error was not precise: {error}")
+        else:
+            raise SystemExit(f"non-positive ready_attempts was accepted: {invalid_attempts}")
+
     module.subprocess.run = secret_lookup({"data": {"tls.crt": 456}})
     exhausted_issues = module.wait_for_secret_key_requirements(
         [("exhausted", {"tls.crt"})], "pr-42"
