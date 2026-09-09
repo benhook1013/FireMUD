@@ -396,6 +396,39 @@ class DeploymentRolloutServiceTest {
 
   @Test
   @SuppressWarnings({"unchecked", "rawtypes"})
+  void retirementCasRequiresObservedResourceVersion() {
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    Deployment observed = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
+    observed.getMetadata().setResourceVersion(null);
+    when(gateway.get()).thenReturn(observed);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new DeploymentRolloutService().stopBridges(client, plan, () -> true));
+
+    assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
+    verify(gateway).get();
+    verify(gateway, never()).lockResourceVersion(org.mockito.ArgumentMatchers.anyString());
+    verify(gateway, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).get();
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
   void stopBridgesCasReplacesBothDeploymentsThenObservesBothStopped() {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     KubernetesClient client = mock(KubernetesClient.class);

@@ -343,6 +343,14 @@ for policy in policy_documents:
         )
 policies = {document["metadata"]["name"]: document for document in policy_documents}
 assert len(policies) == len(policy_documents)
+policy_names = set(policies)
+binding_policy_names = [
+    binding.get("spec", {}).get("policyName") for binding in binding_documents
+]
+assert all(isinstance(name, str) and name for name in binding_policy_names)
+assert len(binding_policy_names) == len(set(binding_policy_names))
+assert len(binding_policy_names) == len(policy_names)
+assert set(binding_policy_names) == policy_names
 break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
 callers = {
     "firemud-hosted-identity-main": "firemud-hosted-identity-requester",

@@ -189,6 +189,9 @@ if [[ "$*" == *"delete hostedenvironmentidentity"* ]]; then
   if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
     printf 'identity-delete\n' >> "$FAKE_OPERATION_SEQUENCE"
   fi
+  if [[ "${FAKE_IDENTITY_DELETE_FAIL:-false}" == "true" ]]; then
+    exit 1
+  fi
   exit 0
 fi
 namespace="${3:-}"
@@ -438,6 +441,9 @@ printf '%s\n' "$*" >> "$FAKE_IDENTITY_REQUEST_LOG"
 if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
   printf 'identity-request\n' >> "$FAKE_OPERATION_SEQUENCE"
 fi
+if [[ "${FAKE_IDENTITY_REQUEST_FAIL:-false}" == "true" ]]; then
+  exit 1
+fi
 EOF
 
 cat > "$TEMP_DIR/identity-wait" <<'EOF'
@@ -446,6 +452,9 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_IDENTITY_WAIT_LOG"
 if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
   printf 'identity-wait\n' >> "$FAKE_OPERATION_SEQUENCE"
+fi
+if [[ "${FAKE_IDENTITY_WAIT_FAIL:-false}" == "true" ]]; then
+  exit 1
 fi
 EOF
 
@@ -575,6 +584,9 @@ reset_case() {
   export FAKE_PRUNE_METADATA=''
   export FAKE_PRUNE_QUERY_FAIL=false
   export FAKE_PRUNE_JQ_FAIL=false
+  export FAKE_IDENTITY_REQUEST_FAIL=false
+  export FAKE_IDENTITY_WAIT_FAIL=false
+  export FAKE_IDENTITY_DELETE_FAIL=false
   export FAKE_NAMESPACE_LIST_ERROR=false
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
@@ -1064,6 +1076,27 @@ grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/multiple-retire.out"
+
+for identity_failure in request wait delete; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS='pr-101\t101\n'
+  export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_base64}\n"
+  export HOSTED_IDENTITY_MODE=hosted-controller
+  export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+  export FAKE_RECORD_RUNTIME_CHECK=true
+  case "$identity_failure" in
+    request) export FAKE_IDENTITY_REQUEST_FAIL=true; expected_sequence=$'runtime-delete\nruntime-check\nidentity-request' ;;
+    wait) export FAKE_IDENTITY_WAIT_FAIL=true; expected_sequence=$'runtime-delete\nruntime-check\nidentity-request\nidentity-wait' ;;
+    delete) export FAKE_IDENTITY_DELETE_FAIL=true; expected_sequence=$'runtime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete' ;;
+  esac
+  if bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/identity-${identity_failure}.out" 2>&1; then
+    echo "pruner suppressed a ${identity_failure} failure" >&2
+    exit 1
+  fi
+  test "$(<"$FAKE_OPERATION_SEQUENCE")" = "$expected_sequence"
+  grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
+    "$TEMP_DIR/identity-${identity_failure}.out"
+done
 
 reset_case
 export FAKE_NAMESPACE_ROWS='pr-101\t101\n'

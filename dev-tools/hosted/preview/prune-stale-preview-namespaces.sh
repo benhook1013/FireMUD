@@ -152,13 +152,19 @@ retire_hosted_identity() {
     return 1
   fi
 
-  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
-    bash "$identity_request_script" "$identity_name" Retired
-  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
-    bash "$identity_wait_script" --retired "$identity_name" 600
-  KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+  if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+    bash "$identity_request_script" "$identity_name" Retired; then
+    return 1
+  fi
+  if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+    bash "$identity_wait_script" --retired "$identity_name" 600; then
+    return 1
+  fi
+  if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
     kubectl -n firemud-system delete hostedenvironmentidentity "$identity_name" \
-      --wait=true --timeout=180s
+      --wait=true --timeout=180s; then
+    return 1
+  fi
 }
 
 if ! namespace_rows_output="$(
