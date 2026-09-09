@@ -164,6 +164,9 @@ public class SecretProjectionService {
     var operation =
         client.secrets().inNamespace(plan.runtimeNamespace()).withName(targetName(plan, role));
     Secret current = operation.get();
+    if (current == null) {
+      return ProjectionResult.awaiting("projection-absent", expectedRevision);
+    }
     requireOwned(current, plan.name(), role, "runtime projection Secret");
     Map<String, String> annotations = current.getMetadata().getAnnotations();
     String revision = value(annotations, HostedIdentityContract.REVISION_ANNOTATION);

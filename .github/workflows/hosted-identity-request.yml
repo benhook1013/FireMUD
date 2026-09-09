@@ -646,14 +646,8 @@ jobs:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
-          for deployment in \
-            postgres redis-coord redis-cache minio \
-            account-service automation-scripting-service entity-management-service \
-            game-design-service game-logic-service game-session-service \
-            logging-admin-service social-groups-service spring-cloud-gateway \
-            tcp-proxy-service world-management-service; do
-            kubectl -n "$RUNTIME_NAMESPACE" rollout status "deployment/${deployment}" --timeout=120s
-          done
+          bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh \
+            "$RUNTIME_NAMESPACE" 120
 
       - name: Revalidate prepared preview runtime target
         env:
@@ -713,14 +707,8 @@ jobs:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
         run: |
           set -euo pipefail
-          for deployment in \
-            postgres redis-coord redis-cache minio \
-            account-service automation-scripting-service entity-management-service \
-            game-design-service game-logic-service game-session-service \
-            logging-admin-service social-groups-service spring-cloud-gateway \
-            tcp-proxy-service world-management-service; do
-            kubectl -n "$RUNTIME_NAMESPACE" rollout status "deployment/${deployment}" --timeout=120s
-          done
+          bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh \
+            "$RUNTIME_NAMESPACE" 120
 
       - name: Read allocated TCP port
         id: runtime-port

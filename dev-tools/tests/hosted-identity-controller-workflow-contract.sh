@@ -19,6 +19,7 @@ requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
 preview_annotator="$ROOT_DIR/dev-tools/hosted/preview/annotate-preview-namespace.sh"
+runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
 
 contains() {
   grep -Fq -- "$2" "$1" || {
@@ -120,6 +121,10 @@ contains "$mode_resolver" 'ALLOWED_MODES = frozenset({"standalone", "hosted-cont
 contains "$requester" 'desiredState: ${desired_state}'
 contains "$trusted" 'actions: read # Inspect the completed source workflow and its artifacts.'
 contains "$trusted" 'contents: read # Check out the trusted default-branch workflow implementation.'
+[[ -x "$runtime_rollout_waiter" ]] || {
+  echo "$runtime_rollout_waiter must be executable" >&2
+  exit 1
+}
 
 # Dev-demo is the prerequisite's only active consumer integration. It preserves
 # standalone operation and gates controller requests/waits on resolved mode.
@@ -297,6 +302,19 @@ assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
 
+runtime_rollout_call = (
+    'bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh'
+)
+for rollout_steps, step_name in (
+    (deploy_steps, "Wait for runtime rollouts before operator validation"),
+    (jobs["verify-runtime"]["steps"], "Wait for runtime rollouts"),
+):
+    rollout_step = next(step for step in rollout_steps if step.get("name") == step_name)
+    assert rollout_step["run"].count(runtime_rollout_call) == 1, step_name
+    assert '"$RUNTIME_NAMESPACE" 120' in rollout_step["run"], step_name
+    assert "for deployment in" not in rollout_step["run"], step_name
+    assert "rollout status" not in rollout_step["run"], step_name
+
 dev_demo_steps = dev_demo_workflow["jobs"]["dev-demo-deploy"]["steps"]
 dev_demo_by_name = {
     step.get("name"): step
@@ -341,6 +359,11 @@ assert (
     < dev_demo_operator_index
     < dev_demo_smoke_index
 )
+assert dev_demo_workflow["jobs"]["dev-demo-deploy"]["timeout-minutes"] == 150
+dev_demo_rollout_step = dev_demo_by_name["Wait for dev-demo runtime rollouts"]
+assert dev_demo_rollout_step["run"].count(runtime_rollout_call) == 1
+assert "for deployment in" not in dev_demo_rollout_step["run"]
+assert "rollout status" not in dev_demo_rollout_step["run"]
 dev_demo_render_step = dev_demo_by_name["Validate dev-demo chart render"]
 dev_demo_render_run = dev_demo_render_step["run"]
 dev_demo_preflight = dev_demo_render_run
@@ -526,6 +549,32 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# Execute the shared rollout inventory with a strict kubectl stub. This proves
+# every canonical deployment is checked in order with the caller-supplied
+# namespace and timeout.
+runtime_rollout_stub_dir="$TEMP_DIR/runtime-rollout-stubs"
+runtime_rollout_log="$TEMP_DIR/runtime-rollouts.log"
+mkdir -p "$runtime_rollout_stub_dir"
+cat >"$runtime_rollout_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 6 ]]
+[[ "$1" == -n && "$2" == "${RUNTIME_ROLLOUT_NAMESPACE:?}" ]]
+[[ "$3" == rollout && "$4" == status ]]
+[[ "$5" == deployment/* ]]
+[[ "$6" == "--timeout=${RUNTIME_ROLLOUT_TIMEOUT:?}s" ]]
+printf '%s\n' "$5" >>"${RUNTIME_ROLLOUT_LOG:?}"
+SH
+chmod +x "$runtime_rollout_stub_dir/kubectl"
+env \
+  PATH="$runtime_rollout_stub_dir:$PATH" \
+  RUNTIME_ROLLOUT_NAMESPACE=pr-42 \
+  RUNTIME_ROLLOUT_TIMEOUT=120 \
+  RUNTIME_ROLLOUT_LOG="$runtime_rollout_log" \
+  bash "$runtime_rollout_waiter" pr-42 120
+expected_runtime_rollouts=$'deployment/postgres\ndeployment/redis-coord\ndeployment/redis-cache\ndeployment/minio\ndeployment/account-service\ndeployment/automation-scripting-service\ndeployment/entity-management-service\ndeployment/game-design-service\ndeployment/game-logic-service\ndeployment/game-session-service\ndeployment/logging-admin-service\ndeployment/social-groups-service\ndeployment/spring-cloud-gateway\ndeployment/tcp-proxy-service\ndeployment/world-management-service'
+test "$(<"$runtime_rollout_log")" = "$expected_runtime_rollouts"
 
 # Execute the exact credential step with a stateful Kubernetes stub. The first
 # pass creates the application, MinIO, and JWT resources from random values;

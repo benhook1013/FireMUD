@@ -381,6 +381,34 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void acknowledgementAwaitsWhenProjectionIsAbsentAfterTheProbe() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    String expectedRevision = "sha256:" + "1".repeat(64);
+    Resource<Secret> currentResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.ingressSecretName()))
+        .thenReturn(currentResource);
+    when(currentResource.get()).thenReturn(null);
+
+    SecretProjectionService.ProjectionResult result =
+        new SecretProjectionService()
+            .acknowledge(
+                secretClient.client(),
+                plan,
+                HostedIdentityContract.INGRESS_ROLE,
+                expectedRevision,
+                1,
+                1,
+                "1".repeat(64),
+                ALWAYS_CURRENT);
+
+    assertEquals("projection-absent", result.state());
+    assertEquals(expectedRevision, result.revision());
+    verify(currentResource).get();
+    verify(currentResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void controlledCertificateFieldsAreRepairedButUnknownDriftIsRejected() {
     EnvironmentIdentityPlan plan = plan();
@@ -719,11 +747,15 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void pendingIngressDoesNotReadAnyRotationProjectionOrSource() {
+  void pendingIngressStillWaitsBeforeReadingSourceMaterial() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    KubernetesClient client = mock(KubernetesClient.class);
-    stubCertificate(client, plan, plan.ingressCertificateName(), false);
+    SecretClient secretClient = secretClient(plan);
+    Resource<Secret> absentRuntimeSecret = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(absentRuntimeSecret);
+    when(absentRuntimeSecret.get()).thenReturn(null);
+    stubCertificate(secretClient.client(), plan, plan.ingressCertificateName(), false);
     CertificateMaterialService service =
         new CertificateMaterialService(
             new CertificateResourceFactory(),
@@ -732,11 +764,30 @@ class SecretProjectionServiceTest {
             properties);
 
     CertificateMaterialService.RoleMaterial ingress =
-        service.beginMaterialization(client, plan).ingress();
+        service.beginMaterialization(secretClient.client(), plan).ingress();
 
     assertEquals(false, ingress.ready());
     assertEquals("certificate-pending", ingress.state());
-    verify(client, never()).secrets();
+    verify(secretClient.runtimeSecrets(), org.mockito.Mockito.atLeastOnce())
+        .withName(org.mockito.ArgumentMatchers.anyString());
+    verify(secretClient.identitySecrets(), never())
+        .withName(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void selectedRotationIsResolvedBeforeAnEarlierNonSelectedRoleAppliesItsCertificate() {
+    StableBatchFixture fixture = stableBatchFixture();
+    Secret telnetSource =
+        fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()).get();
+    telnetSource.setData(
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2")));
+
+    CertificateMaterialService.RoleMaterial ingress = fixture.batch().ingress();
+
+    assertEquals("serialized-deferred", ingress.state());
+    assertEquals(fixture.acceptedData(), ingress.source().getData());
+    verify(fixture.secretClient().client(), never())
+        .genericKubernetesResources(ResourceContexts.CERTIFICATES);
   }
 
   @Test

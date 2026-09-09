@@ -6,7 +6,8 @@ This directory contains tooling for FireMUD's hosted Kubernetes environments.
 
 - `shared/`
   - helpers used by both hosted lanes
-  - kubeconfig setup, namespace deletion, shared smoke, shared image wait, shared rollout diagnostics, and shared pull-secret/TLS setup
+  - kubeconfig setup, namespace deletion, shared smoke, shared image wait, shared runtime rollout wait, rollout diagnostics, and shared pull-secret/TLS setup
+  - `wait-for-hosted-runtime-rollouts.sh` owns the canonical 15-deployment rollout inventory; callers provide the namespace and per-deployment timeout
 
 - `preview/`
   - PR-preview-only helpers

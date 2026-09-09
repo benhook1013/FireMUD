@@ -224,7 +224,7 @@ public class CertificateMaterialService {
       String secretName,
       RoleExpectation expectation,
       MaterializationBatch batch) {
-    if (batch.rotationSelectionResolved && batch.deferBehindSelectedRotation(role)) {
+    if (batch.deferBehindSelectedRotation(role)) {
       return acceptedMaterial(client, plan, role, expectation);
     }
     ReadyCertificate readyCertificate =

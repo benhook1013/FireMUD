@@ -268,6 +268,64 @@ class DeploymentRolloutServiceTest {
     verify(proxy, never()).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
   }
 
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void stopBridgesEditsBothDeploymentsThenObservesBothStopped() {
+    EnvironmentIdentityPlan plan = planWithConsumers("account-service");
+    KubernetesClient client = mock(KubernetesClient.class);
+    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
+    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
+        mock(MixedOperation.class);
+    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
+        runtimeDeployments = mock(NonNamespaceOperation.class);
+    RollableScalableResource<Deployment> gateway = mock(RollableScalableResource.class);
+    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
+    when(client.apps()).thenReturn(apps);
+    when(apps.deployments()).thenReturn(deployments);
+    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
+    when(runtimeDeployments.withName("spring-cloud-gateway")).thenReturn(gateway);
+    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
+    Deployment runningGateway = readyDeployment("spring-cloud-gateway", Map.of(), 3L);
+    Deployment runningProxy = readyDeployment("tcp-proxy-service", Map.of(), 3L);
+    when(gateway.get()).thenReturn(runningGateway);
+    when(proxy.get()).thenReturn(runningProxy);
+
+    DeploymentRolloutService service = new DeploymentRolloutService();
+    DeploymentRolloutService.RetirementResult first = service.stopBridges(client, plan, () -> true);
+
+    assertEquals(false, first.stopped());
+    assertEquals(false, first.gatewayStopped());
+    assertEquals(false, first.proxyStopped());
+    ArgumentCaptor<UnaryOperator<Deployment>> gatewayEditor =
+        ArgumentCaptor.forClass(UnaryOperator.class);
+    ArgumentCaptor<UnaryOperator<Deployment>> proxyEditor =
+        ArgumentCaptor.forClass(UnaryOperator.class);
+    verify(gateway).edit(gatewayEditor.capture());
+    verify(proxy).edit(proxyEditor.capture());
+    Deployment editedGateway =
+        gatewayEditor.getValue().apply(new DeploymentBuilder(runningGateway).build());
+    Deployment editedProxy =
+        proxyEditor.getValue().apply(new DeploymentBuilder(runningProxy).build());
+    assertEquals(0, editedGateway.getSpec().getReplicas());
+    assertEquals(0, editedProxy.getSpec().getReplicas());
+
+    Deployment stoppedGateway = stoppedDeployment(editedGateway);
+    Deployment stoppedProxy = stoppedDeployment(editedProxy);
+    when(gateway.get()).thenReturn(stoppedGateway);
+    when(proxy.get()).thenReturn(stoppedProxy);
+
+    DeploymentRolloutService.RetirementResult second =
+        service.stopBridges(client, plan, () -> true);
+
+    assertEquals(true, second.stopped());
+    assertEquals(true, second.gatewayStopped());
+    assertEquals(true, second.proxyStopped());
+    verify(gateway, times(2)).get();
+    verify(proxy, times(2)).get();
+    verify(gateway, times(1)).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+    verify(proxy, times(1)).edit(org.mockito.ArgumentMatchers.<UnaryOperator<Deployment>>any());
+  }
+
   private static Deployment readyDeployment(
       String name, Map<String, String> annotations, long generation) {
     return new DeploymentBuilder()
@@ -290,6 +348,16 @@ class DeploymentRolloutServiceTest {
         .withReplicas(1)
         .endStatus()
         .build();
+  }
+
+  private static Deployment stoppedDeployment(Deployment deployment) {
+    Deployment stopped = new DeploymentBuilder(deployment).build();
+    stopped.getSpec().setReplicas(0);
+    stopped.getStatus().setUpdatedReplicas(0);
+    stopped.getStatus().setAvailableReplicas(0);
+    stopped.getStatus().setReadyReplicas(0);
+    stopped.getStatus().setReplicas(0);
+    return stopped;
   }
 
   private static EnvironmentIdentityPlan planWithConsumers(String... consumers) {

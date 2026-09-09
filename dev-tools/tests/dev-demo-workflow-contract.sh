@@ -11,6 +11,11 @@ reconciler="$ROOT_DIR/.github/workflows/dev-demo-reconciler.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 annotator="$ROOT_DIR/dev-tools/hosted/dev-demo/annotate-dev-demo-namespace.sh"
+runtime_rollout_waiter="$ROOT_DIR/dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh"
+[[ -x "$runtime_rollout_waiter" ]] || {
+  echo "$runtime_rollout_waiter must be executable" >&2
+  exit 1
+}
 fixture_dir="$(mktemp -d)"
 trap 'rm -rf "$fixture_dir"' EXIT
 
@@ -78,6 +83,8 @@ if workflow["concurrency"] != {
     "cancel-in-progress": False,
 }:
     raise SystemExit("dev-demo lifecycle must remain non-cancelling")
+if workflow["jobs"]["dev-demo-deploy"]["timeout-minutes"] != 150:
+    raise SystemExit("dev-demo deploy timeout must remain 150 minutes")
 if reconciler["concurrency"]["cancel-in-progress"] is not False:
     raise SystemExit("dev-demo reconciler must remain non-cancelling")
 if reconciler["jobs"]["reconcile-dev-demo"]["timeout-minutes"] != 9:
@@ -146,6 +153,16 @@ if "request-hosted-identity.sh dev-demo Active" not in deploy_by_name[
     "Apply fixed dev-demo Active request"
 ]["run"]:
     raise SystemExit("dev-demo activation is not the fixed-shape shared request")
+runtime_rollout_call = (
+    'bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh'
+)
+runtime_rollout_run = deploy_by_name["Wait for dev-demo runtime rollouts"]["run"]
+if runtime_rollout_run.count(runtime_rollout_call) != 1:
+    raise SystemExit("dev-demo rollout wait must use the shared runtime inventory helper")
+if '"$RUNTIME_NAMESPACE" 120' not in runtime_rollout_run:
+    raise SystemExit("dev-demo rollout wait must preserve its namespace and timeout")
+if "for deployment in" in runtime_rollout_run or "rollout status" in runtime_rollout_run:
+    raise SystemExit("dev-demo rollout wait must not duplicate the shared inventory")
 if "firemud.dev/requested-dev-demo-head-sha=${head_sha}" not in annotator:
     raise SystemExit("pre-Helm namespace preparation lacks requested-head evidence")
 if "firemud.dev/last-dev-demo-head-sha=${head_sha}" in annotator:

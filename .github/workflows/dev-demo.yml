@@ -125,6 +125,7 @@ jobs:
 
   dev-demo-deploy:
     name: Deploy Dev Demo Release
+    timeout-minutes: 150
     runs-on:
       - self-hosted
       - preview
@@ -352,14 +353,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "DEV_DEMO_STAGE=runtime-rollouts" >> "$GITHUB_ENV"
-          for deployment in \
-            postgres redis-coord redis-cache minio \
-            account-service automation-scripting-service entity-management-service \
-            game-design-service game-logic-service game-session-service \
-            logging-admin-service social-groups-service spring-cloud-gateway \
-            tcp-proxy-service world-management-service; do
-            kubectl -n "$RUNTIME_NAMESPACE" rollout status "deployment/${deployment}" --timeout=120s
-          done
+          bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh \
+            "$RUNTIME_NAMESPACE" 120
 
       - name: Wait for exact dev-demo controller readiness
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
