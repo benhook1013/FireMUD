@@ -94,6 +94,7 @@ get_pr_state() {
 }
 
 find_unsatisfied_priority_pr() {
+  local max_priority_candidates=1000
   local priority_rows
   local pr_number
   local head_sha
@@ -125,6 +126,10 @@ find_unsatisfied_priority_pr() {
         ]
       | @tsv')"; then
     echo "Unable to query current priority pull requests" >&2
+    return 1
+  fi
+  if (( $(grep -c . <<<"$priority_rows") > max_priority_candidates )); then
+    echo "Unable to evaluate priority pull requests: candidate limit exceeded" >&2
     return 1
   fi
   while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state labels_base64; do

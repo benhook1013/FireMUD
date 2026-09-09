@@ -38,6 +38,19 @@ import org.mockito.ArgumentCaptor;
 
 class HostedIdentityScopeServiceTest {
   @Test
+  void identityRoleNamesOnlyCoverCertManagerCertificates() {
+    EnvironmentIdentityPlan plan = plan();
+
+    assertEquals(
+        java.util.List.of(
+            "pr-42-tls",
+            "pr-42-telnet-tls",
+            "pr-42-gateway-internal-ws",
+            "pr-42-tcp-proxy-bridge"),
+        HostedIdentityScopeService.requiredCertificateNames(plan));
+  }
+
+  @Test
   void runtimeRoleCoversBothBridgeDeploymentsAndEveryGrpcConsumer() {
     EnvironmentIdentityPlan plan = plan();
 

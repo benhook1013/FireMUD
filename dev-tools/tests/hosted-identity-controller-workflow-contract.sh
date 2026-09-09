@@ -65,7 +65,8 @@ for required in \
   'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
-  '[[ "$reported_version" == "$helm_version" ]]'; do
+  'Helm version mismatch' \
+  'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
 done
 if grep -Fq -- '--retry-all-errors' "$helm_action"; then

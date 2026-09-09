@@ -284,14 +284,13 @@ spec:
           (request.operation != 'DELETE' &&
            has(object.metadata.labels) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
-           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] &&
-           (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
-           object.metadata.name == 'firemud-grpc-tls') &&
+           object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge'] &&
+           object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
            object.spec.secretName == object.metadata.name &&
            ((object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] &&
              object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net'] &&
              object.spec.issuerRef.name == 'letsencrypt-prod') ||
-            (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge', 'grpc'] &&
+            (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] &&
              object.spec.issuerRef.name == 'firemud-ca-issuer')) &&
            object.spec.issuerRef.kind == 'ClusterIssuer' &&
            object.spec.issuerRef.group == 'cert-manager.io' &&
@@ -316,8 +315,7 @@ spec:
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.subResource == 'status' &&
          request.operation == 'UPDATE' &&
-         (object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') ||
-          object.metadata.name == 'firemud-grpc-tls') &&
+         object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
          object.spec == oldObject.spec)
       message: only the controller may manage exact hosted Certificate specs; cert-manager may update status without changing spec
       reason: Forbidden
@@ -414,7 +412,7 @@ spec:
             object.rules.exists(r,
               r.apiGroups == ['cert-manager.io'] &&
               r.resources == ['certificates'] &&
-              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge'), 'firemud-grpc-tls'] &&
+              r.resourceNames == [(((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-telnet-tls'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-gateway-internal-ws'), (((object.metadata.namespace == 'dev' || object.metadata.namespace == 'dev-identity') ? 'dev' : object.metadata.labels['firemud.dev/identity-name']) + '-tcp-proxy-bridge')] &&
               r.verbs == ['get', 'update', 'patch', 'delete']) &&
             object.rules.exists(r,
               r.apiGroups == ['cert-manager.io'] &&

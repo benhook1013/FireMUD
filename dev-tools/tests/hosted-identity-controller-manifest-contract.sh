@@ -701,6 +701,13 @@ secret_expressions = [
     validation["expression"]
     for validation in secret_policy["spec"]["validations"]
 ]
+controller_secret_expression = next(
+    expression
+    for expression in secret_expressions
+    if "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in expression
+)
+assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc']" in controller_secret_expression
+assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 cert_manager_expression = next(
     expression
     for expression in secret_expressions
@@ -728,11 +735,30 @@ certificate_match = " ".join(
 )
 assert "((request.operation == 'DELETE' && request.name.matches(" in certificate_match
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
+assert (
+    "object.metadata.labels['firemud.dev/role'] in "
+    "['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge']"
+) in certificate_match
+assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc']" not in certificate_match
+assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
 
 certificate_expressions = [
     validation["expression"]
     for validation in certificate_policy["spec"]["validations"]
 ]
+controller_non_delete_expression = certificate_expressions[0].split(
+    "(request.operation != 'DELETE' &&", 1
+)[1].split(
+    "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
+    1,
+)[0]
+assert "firemud-grpc-tls" not in controller_non_delete_expression
+assert "'grpc'" not in controller_non_delete_expression
+cert_manager_status_expression = certificate_expressions[0].split(
+    "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
+    1,
+)[1]
+assert "firemud-grpc-tls" not in cert_manager_status_expression
 profile_expression = next(
     expression for expression in certificate_expressions if "gateway-internal-ws" in expression
 )
@@ -824,6 +850,20 @@ for forbidden_cluster_permission in secrets certificates hostedenvironmentidenti
     fail "controller ClusterRole has broad $forbidden_cluster_permission access"
   fi
 done
+CLUSTER_ROLE_RBAC="$cluster_role_rbac" python3 - <<'PY'
+import os
+
+import yaml
+
+cluster_role = yaml.safe_load(os.environ["CLUSTER_ROLE_RBAC"])
+namespace_rule = next(
+    rule
+    for rule in cluster_role["rules"]
+    if rule.get("resources") == ["namespaces"]
+)
+assert namespace_rule["apiGroups"] == [""]
+assert namespace_rule["verbs"] == ["get", "create", "delete"]
+PY
 scope_writer_rbac="$(
   select_named_yaml_document "$RBAC" ClusterRole firemud-hosted-identity-scope-writer
 )"

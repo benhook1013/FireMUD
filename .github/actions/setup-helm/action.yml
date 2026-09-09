@@ -31,5 +31,8 @@ runs:
         reported_version="$(
           "$install_dir/helm" version --template '{{ .Version }}'
         )"
-        [[ "$reported_version" == "$helm_version" ]]
+        if [[ "$reported_version" != "$helm_version" ]]; then
+          echo "::error title=Helm version mismatch::Expected ${helm_version}, but the installed Helm binary reported ${reported_version}." >&2
+          exit 1
+        fi
         echo "$install_dir" >> "$GITHUB_PATH"

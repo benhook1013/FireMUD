@@ -114,12 +114,7 @@ public class HostedIdentityScopeService {
                 rule(
                     List.of("cert-manager.io"),
                     List.of("certificates"),
-                    List.of(
-                        plan.ingressCertificateName(),
-                        plan.telnetCertificateName(),
-                        plan.gatewayInternalWsCertificateName(),
-                        plan.tcpProxyBridgeCertificateName(),
-                        plan.grpcCertificateName()),
+                    requiredCertificateNames(plan),
                     List.of("get", "update", "patch", "delete")),
                 rule(
                     List.of("cert-manager.io"),
@@ -205,6 +200,14 @@ public class HostedIdentityScopeService {
     LinkedHashSet<String> names = new LinkedHashSet<>(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     names.addAll(plan.grpcConsumers());
     return List.copyOf(names);
+  }
+
+  static List<String> requiredCertificateNames(EnvironmentIdentityPlan plan) {
+    return List.of(
+        plan.ingressCertificateName(),
+        plan.telnetCertificateName(),
+        plan.gatewayInternalWsCertificateName(),
+        plan.tcpProxyBridgeCertificateName());
   }
 
   private static Role role(

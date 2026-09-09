@@ -1775,6 +1775,7 @@ grep -q -- '--operation deploy' "$ROOT_DIR/dev-tools/hosted/preview/allocate-pre
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 grep -q -- "s/^priority=//p" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q 'max_priority_candidates=1000' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" python3 - <<'PY'
 import os
 from pathlib import Path
