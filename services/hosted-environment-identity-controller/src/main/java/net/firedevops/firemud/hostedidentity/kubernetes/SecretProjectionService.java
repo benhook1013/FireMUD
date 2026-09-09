@@ -338,10 +338,9 @@ public class SecretProjectionService {
           .sorted(Map.Entry.comparingByKey())
           .forEach(
               entry -> {
-                digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 0);
-                digest.update(Base64.getDecoder().decode(entry.getValue()));
-                digest.update((byte) 0);
+                updateLengthPrefixed(
+                    digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
+                updateLengthPrefixed(digest, Base64.getDecoder().decode(entry.getValue()));
               });
       StringBuilder result = new StringBuilder("sha256:");
       for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value));
@@ -349,6 +348,15 @@ public class SecretProjectionService {
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("unable to calculate material revision", exception);
     }
+  }
+
+  private static void updateLengthPrefixed(MessageDigest digest, byte[] value) {
+    int length = value.length;
+    digest.update((byte) (length >>> 24));
+    digest.update((byte) (length >>> 16));
+    digest.update((byte) (length >>> 8));
+    digest.update((byte) length);
+    digest.update(value);
   }
 
   public static String revisionForRole(String role, Map<String, String> data) {

@@ -68,6 +68,16 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void revisionLengthPrefixesKeysAndValuesToPreventDelimiterCollisions() {
+    Map<String, String> embeddedNull = Map.of("a", encoded("x\0b\0y"));
+    Map<String, String> splitEntries = Map.of("a", encoded("x"), "b", encoded("y"));
+
+    assertNotEquals(
+        SecretProjectionService.revisionForData(embeddedNull),
+        SecretProjectionService.revisionForData(splitEntries));
+  }
+
+  @Test
   void projectRejectsMissingProvenanceBeforeWriting() {
     EnvironmentIdentityPlan plan = plan();
     Secret source =

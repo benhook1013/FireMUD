@@ -141,10 +141,7 @@ spec:
   matchConditions:
     - name: hosted-identity-secret-boundary
       expression: >-
-        (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
-         (request.namespace in ['dev', 'dev-identity'] ||
-          request.namespace.matches('^pr-[1-9][0-9]*$') ||
-          request.namespace.matches('^pr-[1-9][0-9]*-identity$'))) ||
+        request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||
         (request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&
          request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$')) ||
         ((request.namespace in ['dev', 'dev-identity'] ||
@@ -460,7 +457,8 @@ spec:
             object.rules.exists(r,
               r.apiGroups == [''] &&
               r.resources == ['services', 'pods'] &&
-              r.verbs == ['get', 'list', 'watch']) &&
+              r.verbs == ['get', 'list', 'watch'] &&
+              (!has(r.resourceNames) || r.resourceNames.size() == 0)) &&
             object.rules.exists(r,
               r.apiGroups == ['networking.k8s.io'] &&
               r.resources == ['ingresses'] &&

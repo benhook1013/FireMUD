@@ -665,6 +665,12 @@ assert "object.rules.size() == 7" in role_expression
 assert "object.rules.size() == 6" in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
+normalized_role_expression = " ".join(role_expression.split())
+assert (
+    "r.apiGroups == [''] && r.resources == ['services', 'pods'] && "
+    "r.verbs == ['get', 'list', 'watch'] && "
+    "(!has(r.resourceNames) || r.resourceNames.size() == 0)"
+) in normalized_role_expression
 binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
 assert "object.metadata.labels.size() == 5" in binding_expression
@@ -692,6 +698,7 @@ cert_manager_match = (
 )
 assert normalized_secret_match.count(cert_manager_match) == 1
 assert "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in secret_match
+assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||" in secret_match
 assert "request.operation == 'DELETE'" in secret_match
 assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match

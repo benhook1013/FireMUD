@@ -31,6 +31,12 @@ class CertificateResourceFactoryTest {
     assertEquals("pr-42-telnet-tls", telnet.getMetadata().getName());
     assertEquals("pr-42-tls", ingressSpec.get("secretName"));
     assertEquals("pr-42-telnet-tls", telnetSpec.get("secretName"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth"),
+        ingressSpec.get("usages"));
+    assertEquals(
+        java.util.List.of("digital signature", "key encipherment", "server auth"),
+        telnetSpec.get("usages"));
     Map<?, ?> secretTemplate = (Map<?, ?>) ingressSpec.get("secretTemplate");
     assertFalse(secretTemplate.containsKey("metadata"));
     assertEquals(

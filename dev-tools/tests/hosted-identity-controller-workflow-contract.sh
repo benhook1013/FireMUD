@@ -1856,7 +1856,7 @@ run_retirement_waiter_fixture() {
     WAITER_SCENARIO="$scenario" \
     WAITER_KUBECTL_LOG="$kubectl_log" \
     WAITER_SLEEP_LOG="$sleep_log" \
-    bash "$waiter" --retired pr-42 2 \
+    bash "$waiter" --retired pr-42 60 \
     >"$output" 2>"$error"
   status=$?
   set -e
@@ -2132,7 +2132,7 @@ run_projection_waiter_fixture() {
     WAITER_COUNT_ROOT="$count_root" \
     WAITER_KUBECTL_LOG="$kubectl_log" \
     WAITER_SLEEP_LOG="$sleep_log" \
-    bash "$waiter" --projections pr-42 pr-42 2 \
+    bash "$waiter" --projections pr-42 pr-42 60 \
     >"$output" 2>"$error"
   status=$?
   set -e
@@ -2177,7 +2177,7 @@ run_active_waiter_fixture() {
     WAITER_COUNT_ROOT="$count_root" \
     WAITER_KUBECTL_LOG="$kubectl_log" \
     WAITER_SLEEP_LOG="$sleep_log" \
-    bash "$waiter" pr-42 "$expected_head" pr-42 2 \
+    bash "$waiter" pr-42 "$expected_head" pr-42 60 \
     >"$output" 2>"$error"
   status=$?
   set -e

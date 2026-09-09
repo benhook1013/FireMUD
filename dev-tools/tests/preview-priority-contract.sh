@@ -853,8 +853,8 @@ reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
-if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
-  echo "existing ordinary preview did not yield to an unsatisfied priority PR" >&2
+if ! bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
+  echo "existing ordinary preview was blocked by an unsatisfied priority PR" >&2
   exit 1
 fi
 test ! -e "$FAKE_DELETE_LOG"
