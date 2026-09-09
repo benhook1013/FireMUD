@@ -1417,6 +1417,36 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void unreadyCertificateRequestKeepsMaterializationPending() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> sourceData = fixture.acceptedData();
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        sourceData);
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        plan,
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request-unready",
+                sourceData,
+                false)));
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("materialization-pending", material.state());
+    assertEquals(false, material.ready());
+  }
+
+  @Test
   void serializedRotationPrioritizesTheFirstDriftedRole() {
     var pending =
         new CertificateMaterialService.RotationState("ingress", true, false, false, false);

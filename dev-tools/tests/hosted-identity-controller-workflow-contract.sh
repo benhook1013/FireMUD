@@ -192,7 +192,7 @@ mode_step = next(
     step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
 )
 assert mode_step["run"].count("resolve-certificate-identity-mode.py") == 1
-for job_name in ("deploy-runtime", "verify-runtime", "retire-identity"):
+for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
     assert "certificate_identity_mode == 'hosted-controller'" in jobs[job_name]["if"], job_name
 assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "

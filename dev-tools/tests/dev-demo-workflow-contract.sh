@@ -289,7 +289,6 @@ for required in (
     "refusing a history-blind dispatch",
     "-f event=push",
     "-F branch=develop",
-    "-F event=workflow_dispatch",
     "-F per_page=100",
     '.status != "completed"',
     ".head_sha == $head",
@@ -318,8 +317,8 @@ if reconcile_run.count("-f branch=develop") != 1:
     raise SystemExit("only the develop push anchor may use branch search")
 if reconcile_run.count("-F branch=develop") != 1:
     raise SystemExit("all paginated history must remain scoped to develop")
-if reconcile_run.count("-F event=workflow_dispatch") != 1:
-    raise SystemExit("all paginated history must remain scoped to workflow dispatch")
+if "-F event=workflow_dispatch" in reconcile_run:
+    raise SystemExit("all paginated history must include push-triggered dev-demo runs")
 if "while true" in reconcile_run.split("bootstrap_complete=false", 1)[1].split(
     'if [[ "$bootstrap_complete" != true ]]', 1
 )[0]:
@@ -1177,9 +1176,8 @@ if [[ "$event" == push ]]; then
 fi
 
 if [[ "$method" != GET || "$method_explicit" != true || -n "$jq_filter" \
-  || ${#typed_fields[@]} -ne 4 ]] \
+  || ${#typed_fields[@]} -ne 3 ]] \
   || ! has_typed_field 'branch=develop' \
-  || ! has_typed_field 'event=workflow_dispatch' \
   || ! has_typed_field 'per_page=100' \
   || ! has_typed_field "page=${page}"; then
   echo "unexpected gh workflow-run page lookup" >&2
@@ -1263,6 +1261,7 @@ case "$TEST_SCENARIO:$page" in
     jq -nc --arg head "$TEST_HEAD_SHA" \
       '{workflow_runs:[{
         id:699, head_sha:$head, status:"requested", conclusion:null,
+        event:"push",
         created_at:"2026-09-09T05:00:00Z",
         display_title:("Develop Dev Demo Environment deploy head-" + $head)
       }]}'

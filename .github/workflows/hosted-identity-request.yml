@@ -839,7 +839,7 @@ jobs:
       - self-hosted
       - preview
     needs: validate-target
-    if: ${{ needs.validate-target.outputs.action == 'destroy' }}
+    if: ${{ needs.validate-target.outputs.action == 'destroy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle

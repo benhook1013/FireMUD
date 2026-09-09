@@ -96,6 +96,18 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void acceptsTheMaximumLengthDerivedPreviewHostname() {
+    var properties = new HostedIdentityProperties();
+    properties.setPreviewDomain(
+        "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(63) + "." + "a".repeat(55));
+
+    var plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+
+    assertEquals(253, plan.hostname().length());
+    assertTrue(plan.hostname().endsWith("." + "a".repeat(55)));
+  }
+
+  @Test
   void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
     String admission = Files.readString(admissionPath);
