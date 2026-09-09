@@ -889,7 +889,7 @@ forbid_literal "$DEPLOYMENT" "$forbidden_strategy"
 for text_value in \
   policyTypes: '- Ingress' '- Egress' 'ingress: []' 'k8s-app: kube-dns' \
   'port: 53' 'port: 443' 'port: 6443' \
-  'endPort: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
+  'port: 32001' 'port: 32016' 'port: 6565' 'firemud.dev/preview: "true"' \
   'firemud.dev/dev-demo: "true"' 'cannot select the apiserver or a public hostname' \
   'except:' '169.254.0.0/16' 'fe80::/10'; do
   require_literal "$NETWORKPOLICY" "$text_value"
@@ -915,7 +915,7 @@ telnet_rules = [
     rule
     for rule in policy["spec"]["egress"]
     if rule.get("ports")
-    == [{"protocol": "TCP", "port": 32000, "endPort": 32016}]
+    == [{"protocol": "TCP", "port": port} for port in range(32000, 32017)]
 ]
 assert len(telnet_rules) == 1, "controller Telnet NodePort egress rule is missing"
 assert telnet_rules[0]["to"] == [

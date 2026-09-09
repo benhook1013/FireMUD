@@ -59,7 +59,8 @@ spec:
     # Hosted Telnet uses preview allocator NodePorts 32000-32015 plus the fixed
     # dev-demo NodePort 32016.
     # The controller probes only the port derived from the canonical identity;
-    # this range is the smallest cluster-independent NetworkPolicy allowance.
+    # Keep each NodePort explicit because the deployed policy enforcement
+    # version's support for NetworkPolicy endPort ranges is not guaranteed.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -72,7 +73,38 @@ spec:
       ports:
         - protocol: TCP
           port: 32000
-          endPort: 32016
+        - protocol: TCP
+          port: 32001
+        - protocol: TCP
+          port: 32002
+        - protocol: TCP
+          port: 32003
+        - protocol: TCP
+          port: 32004
+        - protocol: TCP
+          port: 32005
+        - protocol: TCP
+          port: 32006
+        - protocol: TCP
+          port: 32007
+        - protocol: TCP
+          port: 32008
+        - protocol: TCP
+          port: 32009
+        - protocol: TCP
+          port: 32010
+        - protocol: TCP
+          port: 32011
+        - protocol: TCP
+          port: 32012
+        - protocol: TCP
+          port: 32013
+        - protocol: TCP
+          port: 32014
+        - protocol: TCP
+          port: 32015
+        - protocol: TCP
+          port: 32016
     # Ready additionally requires an mTLS handshake to the fixed Account gRPC
     # Service using the current projected leaf. Runtime Namespace labels are
     # externally owned and validated before the controller reaches this probe.

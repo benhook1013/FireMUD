@@ -479,6 +479,19 @@ assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
 assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 60
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
+preview_mode_step = next(
+    step
+    for step in preview_steps
+    if step.get("name") == "Resolve certificate identity mode"
+)
+assert preview_mode_step["id"] == "certificate-identity"
+assert "resolve-certificate-identity-mode.py" in preview_mode_step["run"]
+preview_ensure_step = next(
+    step
+    for step in preview_steps
+    if step.get("name") == "Ensure preview gRPC TLS secret exists"
+)
+assert "steps.certificate-identity.outputs.mode == 'standalone'" in preview_ensure_step["if"]
 preview_requested_index = next(
     index
     for index, step in enumerate(preview_steps)
