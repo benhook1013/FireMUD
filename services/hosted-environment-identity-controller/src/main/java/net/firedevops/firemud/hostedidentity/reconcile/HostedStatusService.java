@@ -11,11 +11,14 @@ import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStat
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.RoleStatus;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.RuntimeProfile;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Builds non-secret status and binds Ready to the exact runtime namespace/head tuple. */
 @Component
 public class HostedStatusService {
+  private static final Logger LOGGER = LoggerFactory.getLogger(HostedStatusService.class);
   private final EnvironmentIdentityPlanner planner;
 
   public HostedStatusService(EnvironmentIdentityPlanner planner) {
@@ -117,6 +120,10 @@ public class HostedStatusService {
       profile.setRuntimeNamespace(plan.runtimeNamespace());
       profile.setHostname(plan.hostname());
     } catch (RuntimeException exception) {
+      LOGGER.warn(
+          "Unable to plan hosted identity resource '{}'; preserving previous runtime profile",
+          resource.getMetadata().getName(),
+          exception);
       if (previousProfile != null) {
         profile.setName(previousProfile.getName());
         profile.setEnvironmentClass(previousProfile.getEnvironmentClass());

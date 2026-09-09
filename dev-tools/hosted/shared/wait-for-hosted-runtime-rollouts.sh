@@ -2,18 +2,18 @@
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <namespace> <timeout_seconds>" >&2
+  echo "usage: $0 <namespace> <per_deployment_timeout_seconds>" >&2
   exit 2
 fi
 
 namespace="$1"
-timeout_seconds="$2"
+per_deployment_timeout_seconds="$2"
 if [[ -z "$namespace" ]]; then
   echo "runtime namespace is required" >&2
   exit 2
 fi
-if ! [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
-  echo "timeout_seconds must be a positive integer" >&2
+if ! [[ "$per_deployment_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  echo "per_deployment_timeout_seconds must be a positive integer" >&2
   exit 2
 fi
 
@@ -26,6 +26,7 @@ readonly runtime_deployments=(
 )
 
 for deployment in "${runtime_deployments[@]}"; do
+  # This bound applies independently to each deployment rollout.
   kubectl -n "$namespace" rollout status "deployment/${deployment}" \
-    --timeout="${timeout_seconds}s"
+    --timeout="${per_deployment_timeout_seconds}s"
 done

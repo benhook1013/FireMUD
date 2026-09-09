@@ -15,9 +15,13 @@ import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStat
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.RuntimeProfile;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class HostedStatusServiceTest {
   @Test
   void runtimeNamespaceRecreationInvalidatesPreviouslyReadyTuple() {
@@ -216,7 +220,7 @@ class HostedStatusServiceTest {
   }
 
   @Test
-  void plannerRuntimeFailureStillPreservesThePreviousProfile() {
+  void plannerRuntimeFailureStillPreservesThePreviousProfile(CapturedOutput output) {
     HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
     resource.setMetadata(
         new ObjectMetaBuilder()
@@ -265,6 +269,14 @@ class HostedStatusServiceTest {
     assertEquals("head-recorded", profile.getRequestedHeadSha());
     assertEquals("head-recorded", profile.getDeployedHeadSha());
     assertEquals(32007, profile.getTelnetPort());
+    assertTrue(
+        output
+            .getOut()
+            .contains(
+                "Unable to plan hosted identity resource 'pr-42'; preserving previous runtime profile"));
+    assertTrue(output.getOut().contains("IllegalStateException: unexpected planner failure"));
+    assertFalse(output.getOut().contains("head-recorded"));
+    assertFalse(output.getOut().contains("pr-42.preview.firedevops.net"));
   }
 
   @Test

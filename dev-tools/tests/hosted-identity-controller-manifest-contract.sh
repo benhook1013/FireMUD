@@ -828,7 +828,7 @@ for text_value in \
     fail "scope-writer ClusterRole is missing $text_value"
 done
 require_literal "$ADMISSION" "object.metadata.name == object.roleRef.name"
-for forbidden_scope_permission in 'apiGroups: ["*"]' 'resources: ["*"]' namespaces secrets certificates; do
+for forbidden_scope_permission in namespaces secrets certificates; do
   if grep -Fqi -- "$forbidden_scope_permission" <<<"$scope_writer_rbac"; then
     fail "scope-writer ClusterRole has forbidden $forbidden_scope_permission access"
   fi

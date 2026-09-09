@@ -134,6 +134,10 @@ contains "$trusted" 'contents: read # Check out the trusted default-branch workf
   echo "$runtime_rollout_waiter must be executable" >&2
   exit 1
 }
+# shellcheck disable=SC2016 # These assertions intentionally match literal helper source.
+contains "$runtime_rollout_waiter" 'usage: $0 <namespace> <per_deployment_timeout_seconds>'
+contains "$runtime_rollout_waiter" 'per_deployment_timeout_seconds must be a positive integer'
+contains "$runtime_rollout_waiter" 'This bound applies independently to each deployment rollout.'
 
 # Dev-demo is the prerequisite's only active consumer integration. It preserves
 # standalone operation and gates controller requests/waits on resolved mode.
