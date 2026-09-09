@@ -55,20 +55,10 @@ Entry format:
   - Observation: cached Spotless task state can report success without formatting the renamed/new file.
   - Expected pattern: explicitly run the formatter/apply task, inspect the resulting diff, and only then trust formatting checks rather than relying on stale cache state.
 
-- `2026-08-15`: CodeRabbit rate-limit replies require direct command-comment verification
-  - Context: `check-coderabbit-review.py` reported a new hosted request as unfinished and not rate-limited even though CodeRabbit had already replied to that command with `Action not completed` and a 58-minute rate-limit window.
-  - Observation: the current review checker does not recognize every top-level rate-limit reply shape, so an unfinished request can be mistaken for an active review and keep a watcher waiting indefinitely.
-  - Expected pattern: when a hosted request remains unfinished unexpectedly, inspect CodeRabbit's direct reply to the latest explicit command before treating the review as active; improve the checker in a dedicated tooling slice rather than adding ad hoc parsing during unrelated review work.
-
 - `2026-08-15`: ADR consolidation must preserve authority direction without creating secondary contract copies
   - Context: script-transition consolidation exposed secondary docs calling projections authoritative or presenting target contracts as live.
   - Observation: canonical owner architecture docs define the detailed normative contracts; accepted ADRs retain binding accepted-decision constraints plus rationale and human-review provenance. Repeated technical restatement in secondary docs creates drift.
   - Expected pattern: service docs, trackers, and journeys link to the owner and retain only concise local consequences/current proof; they must not contradict or demote accepted ADR decisions, while ADR links must not be treated as co-equal self-contained contract copies or as replacing owner authority.
-
-- `2026-08-18`: A failed CodeRabbit command can leave its external check pending
-  - Context: a hosted full-review command replied `Action failed` within a minute, but the CodeRabbit status check remained pending and `check-coderabbit-review.py` continued to report the request as unfinished for more than an hour.
-  - Observation: a pending external check and an unfinished helper result do not prove that hosted review is still active when the direct command reply is already terminal.
-  - Expected pattern: when hosted review remains pending substantially longer than normal, inspect the direct CodeRabbit reply to the latest command. Treat an explicit failed reply as terminal for review-safety, preserve any prepared local fixes, and request a fresh review only after publishing the next validated head or after the applicable cooldown.
 
 - `2026-08-18`: Structural agent-thread exhaustion is not model capacity
   - Context: autonomous delegation encountered `agent thread limit reached`.
@@ -119,11 +109,6 @@ Entry format:
   - Context: Packet 6 assurance-tail review exposed ambiguity between scheduler candidate skips and handler-scoped tenant-budget denials in an operations cookbook example.
   - Observation: Query examples must preserve the observability boundary: pre-handler or catch-up candidate skips use the bounded skip metric, while a denial after executor claim uses handler-scoped trigger and budget-denial metrics plus its audit row. The same discipline keeps dry-run breaker accounting isolated, breaker aggregates exact in scope with resets auditable, advisory notifications subordinate to lifecycle and admission fences, resume windows isolated by mode with terminal catch-up skips visible, and metric-label definitions coupled to alert validation; broad or unbounded label placeholders can hide these distinctions.
   - Expected pattern: when documenting scripting metrics, state the lifecycle stage and increment unit beside each query, enumerate every finite label value, bind breaker aggregates and reset evidence to exact scope, keep notifications advisory, separate resume modes and terminal skips, and validate alerts against the canonical finite-label vocabulary.
-
-- `2026-08-29`: Direct CodeRabbit command replies outrank conflicting derived rate-limit state
-  - Context: a hosted full-review request remained unfinished with no findings while the checker reported `latest_review_request_rate_limited=false`; the direct CodeRabbit command reply was already terminal `Action not completed — Review rate limited`.
-  - Observation: a derived checker flag can miss terminal rate-limit evidence and leave a watcher treating a completed request as active.
-  - Expected pattern: when a hosted request appears stuck, inspect the direct reply. Treat an explicit rate-limit response as terminal, stop its watcher, and request again only when authorized on the next meaningful head or after the stated availability window.
 
 - `2026-08-29`: Caller-selected names are selectors, not destructive ownership proof
   - Context: tightening local Compose smoke project binding and lifecycle checks.
