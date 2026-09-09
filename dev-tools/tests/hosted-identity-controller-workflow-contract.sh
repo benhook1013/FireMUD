@@ -1757,7 +1757,7 @@ SH
 cat >"$projection_deadline_stub_dir/sleep" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "${REAL_SLEEP_PATH:?}" 1
+exec "${REAL_SLEEP_PATH:?}" 2
 SH
 chmod +x "$projection_deadline_stub_dir/kubectl" "$projection_deadline_stub_dir/sleep"
 projection_deadline_log="$TEMP_DIR/projection-deadline.kubectl.log"
