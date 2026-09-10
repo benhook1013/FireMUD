@@ -833,7 +833,7 @@ jobs:
           fi
 
       - name: Summarize dev-demo access
-        if: ${{ success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.smoke.outcome == 'success' }}
+        if: ${{ success() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' }}
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             success \

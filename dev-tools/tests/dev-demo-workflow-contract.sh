@@ -315,11 +315,12 @@ if "success()" not in smoke_condition:
 if "!cancelled()" in smoke_condition:
     raise SystemExit("dev-demo smoke redundantly combines !cancelled() with success()")
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
-for required in ("success()", "steps.smoke.outcome == 'success'"):
-    if required not in success_condition:
-        raise SystemExit(f"dev-demo success publication lacks {required}")
-if "!cancelled()" in success_condition:
-    raise SystemExit("dev-demo success publication redundantly combines !cancelled() with success()")
+expected_success_condition = (
+    "${{ success() && steps.cluster-access.outputs.available == 'true' && "
+    "steps.deploy-release.outcome == 'success' }}"
+)
+if success_condition != expected_success_condition:
+    raise SystemExit("dev-demo success publication condition is not minimal and fail-closed")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
