@@ -499,6 +499,38 @@ cat >"$TMP_DIR/substantive-quoted-rate-limit.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/actionable-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/actionable-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "**Actionable comments posted: 1**\n\nThe report quotes: Review rate limited",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/actionable-quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/automatic-review-rate-limited.json" <<'JSON'
 {
   "data": {
@@ -990,6 +1022,10 @@ grep -q "retrigger_review_allowed=false" "$TMP_DIR/edited-review-rate-limited.ou
 substantive_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-quoted-rate-limit.json")"
 grep -q "latest_review_request_rate_limited=false" <<<"$substantive_quoted_rate_limit_output"
 grep -q "retrigger_review_allowed=true" <<<"$substantive_quoted_rate_limit_output"
+
+actionable_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/actionable-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$actionable_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$actionable_quoted_rate_limit_output"
 
 expect_failure_output "$TMP_DIR/automatic-review-rate-limited.json" "$TMP_DIR/automatic-review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

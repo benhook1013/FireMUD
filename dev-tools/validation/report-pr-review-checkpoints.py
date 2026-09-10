@@ -224,6 +224,11 @@ def parse_checkpoint_comments(
         if suffix is None:
             unparsed_candidates += 1
             continue
+        raw_found = int(match.group("raw_found"))
+        accepted = int(match.group("accepted"))
+        if accepted > raw_found:
+            unparsed_candidates += 1
+            continue
         sha = suffix.group("sha")
         if sha is not None:
             sha = sha.strip("`")
@@ -233,8 +238,8 @@ def parse_checkpoint_comments(
                 comment_id=comment_id,
                 created_at=created_at,
                 type=match.group("type"),
-                raw_found=int(match.group("raw_found")),
-                accepted=int(match.group("accepted")),
+                raw_found=raw_found,
+                accepted=accepted,
                 reviewed_sha=sha,
                 file_count=int(file_count) if file_count is not None else None,
                 correction=match.group("correction") is not None,
@@ -954,9 +959,11 @@ def load_capture(checkpoint: Checkpoint, repo: str, pr_number: int) -> CaptureDa
     status_path = _contained_file(run_dir, "exit-status")
     assert metadata_path is not None and stdout_path is not None and status_path is not None
     metadata = _read_metadata(metadata_path)
-    required = ("repository", "pull_request", "candidate_sha", "candidate_files")
+    required = ("run_id", "repository", "pull_request", "candidate_sha", "candidate_files")
     if any(key not in metadata for key in required):
         raise CaptureInvalid("linked capture metadata is missing identity fields")
+    if metadata["run_id"] != checkpoint.run_id:
+        raise CaptureInvalid("linked capture run ID does not match the checkpoint")
     if metadata["repository"].casefold() != repo.casefold() or metadata["pull_request"] != str(pr_number):
         raise CaptureInvalid("linked capture metadata does not match the requested repository and PR")
     candidate_sha = metadata["candidate_sha"]

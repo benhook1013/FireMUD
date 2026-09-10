@@ -87,6 +87,34 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(checkpoints[2].updated_at, "2026-09-09T04:19:20Z")
         self.assertTrue(checkpoints[3].correction)
 
+    def test_rejects_accepted_counts_greater_than_raw_findings(self) -> None:
+        comments = [
+            {
+                "body": "**CLI: 1 found / 2 accepted**",
+                "created_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "body": "**Hosted: 0 found / 1 accepted**",
+                "created_at": "2026-09-10T00:01:00Z",
+            },
+            {
+                "body": "**CLI: 1 found / 1 accepted**",
+                "created_at": "2026-09-10T00:02:00Z",
+            },
+            {
+                "body": "**Hosted: 0 found / 0 accepted**",
+                "created_at": "2026-09-10T00:03:00Z",
+            },
+        ]
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(comments)
+
+        self.assertEqual(unparsed, 2)
+        self.assertEqual(
+            [(checkpoint.type, checkpoint.raw_found, checkpoint.accepted) for checkpoint in checkpoints],
+            [("CLI", 1, 1), ("Hosted", 0, 0)],
+        )
+
     def test_parses_hidden_run_marker_and_warns_for_unlinked_cli_comments(self) -> None:
         comments = [
             {
@@ -423,6 +451,7 @@ class CheckpointReporterTest(unittest.TestCase):
             run_dir = log_root / "run.A1b2C3"
             run_dir.mkdir()
             (run_dir / "metadata").write_text(
+                "run_id=run.A1b2C3\n"
                 "repository=owner/repo\n"
                 "pull_request=42\n"
                 "candidate_sha=abc1234567890123456789012345678901234567\n"
@@ -532,13 +561,15 @@ class CheckpointReporterTest(unittest.TestCase):
             real_log_root = root / "real-logs"
             run_dir = real_log_root / "run.A1b2C3"
             run_dir.mkdir(parents=True)
-            (run_dir / "metadata").write_text(
+            metadata_path = run_dir / "metadata"
+            metadata = (
+                "run_id=run.A1b2C3\n"
                 "repository=owner/repo\n"
                 "pull_request=42\n"
                 "candidate_sha=abc1234567890123456789012345678901234567\n"
-                "candidate_files=0\n",
-                encoding="utf-8",
+                "candidate_files=0\n"
             )
+            metadata_path.write_text(metadata, encoding="utf-8")
             (run_dir / "exit-status").write_text("0\n", encoding="utf-8")
             (run_dir / "stdout").write_text(
                 json.dumps(
@@ -578,6 +609,12 @@ class CheckpointReporterTest(unittest.TestCase):
                 capture = self.reporter.load_capture(checkpoint, "owner/repo", 42)
 
             self.assertEqual(capture.metadata["candidate_files"], "0")
+            metadata_path.write_text(metadata.replace("run.A1b2C3", "run.a1b2c3"), encoding="utf-8")
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=linked_log_root),
+                self.assertRaisesRegex(self.reporter.CaptureInvalid, "run ID does not match"),
+            ):
+                self.reporter.load_capture(checkpoint, "owner/repo", 42)
 
             outside = root / "outside.tsv"
             outside.write_text("1\taccepted\t\n", encoding="utf-8")

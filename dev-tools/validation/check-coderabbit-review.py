@@ -611,7 +611,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if created_at_dt is None:
             continue
         body = comment.get("body", "")
-        if SUBSTANTIVE_REVIEW_MARKER in body:
+        if is_substantive_review_body(body):
             continue
         if (
             REVIEW_LIMIT_MARKER not in body
