@@ -112,10 +112,6 @@ jobs:
           current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
           base_sha="$(jq -r '.base.sha // empty' <<<"$pull_request_json")"
           merge_sha="$(jq -r '.merge_commit_sha // empty' <<<"$pull_request_json")"
-          labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
-          label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
-            --inspect-labels --labels-json "$labels_json")"
-          labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
           normalize_head_sha() {
             local head_sha="$1"
             [[ "$head_sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
@@ -136,6 +132,10 @@ jobs:
               "Ignoring source render because the current PR base branch is unsupported."
             [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
               "Ignoring stale source render for an earlier PR head."
+            labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
+            label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
+              --inspect-labels --labels-json "$labels_json")"
+            labels_valid="$(sed -n 's/^labels_valid=//p' <<<"$label_metadata")"
             [[ "$labels_valid" == true ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
             expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"

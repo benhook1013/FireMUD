@@ -71,6 +71,8 @@ decode_secret_key() {
     [[ -z "$decoded_secret_value" ]]; then
     reject_existing_secret "$secret_name" "key ${key} is empty or malformed"
   fi
+  # Bash command substitution strips trailing newlines and cannot preserve NUL bytes;
+  # canonical re-encoding therefore rejects those decoded values as well as noncanonical Base64.
   canonical_encoded_value="$(printf '%s' "$decoded_secret_value" | base64 --wrap=0)"
   if [[ "$canonical_encoded_value" != "$encoded_value" ]]; then
     reject_existing_secret "$secret_name" "key ${key} is empty or malformed"

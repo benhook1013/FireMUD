@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -232,7 +233,7 @@ class DeploymentRolloutServiceTest {
                     .sync(client, plan, "telnet-new", "grpc-new", () -> true));
 
     assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
   }
 
   @Test

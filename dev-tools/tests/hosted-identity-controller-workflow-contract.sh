@@ -293,6 +293,15 @@ assert publisher_script.count(
 ) == 1
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
+workflow_run_start = target_script.rindex('if [[ "$EVENT_NAME" == workflow_run ]]; then')
+destroy_branch_start = target_script.index("else\n", workflow_run_start)
+for label_fragment in (
+    'labels_json="$(jq -c',
+    'label_metadata="$(python3',
+    'labels_valid="$(sed -n',
+):
+    label_index = target_script.index(label_fragment)
+    assert workflow_run_start < label_index < destroy_branch_start, label_fragment
 for fragment in (
     '[[ -n "$WORKFLOW_RUN_ID" ]] || {',
     '[[ "$source_path" == ',
@@ -2513,7 +2522,8 @@ case "$resource" in
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
-      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:[]}'
+      --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
+      '{state:$state,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"base-900"},merge_commit_sha:"merge-900",labels:$labels}'
     ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
     printf '%s' '[{"artifacts":[]}]'
@@ -2617,6 +2627,14 @@ EOF
 )"
 test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
+target_python_log="$TEMP_DIR/closed-target-python.log"
+cat >"$TEMP_DIR/bin/python3" <<SH
+#!/usr/bin/env bash
+printf 'unexpected label parser invocation\n' >>"$target_python_log"
+printf 'labels_valid=true\npriority=false\n'
+SH
+chmod +x "$TEMP_DIR/bin/python3"
+
 run_closed_target_fixture() {
   local scenario="$1"
   local state="$2"
@@ -2643,6 +2661,7 @@ run_closed_target_fixture() {
       WORKFLOW_RUN_HEAD_SHA='' \
       EVENT_PR_NUMBER=900 \
       EVENT_HEAD_SHA="$event_head_sha" \
+      TEST_PR_LABELS_JSON='{}' \
       INPUT_PR_NUMBER='' \
       INPUT_HEAD_SHA='' \
       INPUT_ACTION='' \
@@ -2662,6 +2681,7 @@ run_closed_target_fixture() {
 closed_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 run_closed_target_fixture accepted closed example/FireMUD develop \
   "$closed_head" "$closed_head" 0
+test ! -s "$target_python_log"
 test "$(cat "$TEMP_DIR/closed-target-accepted.output")" = "$(cat <<EOF
 action=destroy
 pr_number=900

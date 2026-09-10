@@ -669,6 +669,7 @@ assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:fire
 assert "object.metadata.labels.size() == 6" in role_expression
 assert "object.rules.size() == 7" in role_expression
 assert "object.rules.size() == 6" in role_expression
+assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
 normalized_role_expression = " ".join(role_expression.split())
@@ -1086,7 +1087,7 @@ require_literal "$BOOTSTRAP" ".spec.validationActions[*]"
 for forbidden_command in 'kubectl delete' 'kubectl apply --all'; do
   forbid_literal "$BOOTSTRAP" "$forbidden_command"
 done
-require_literal "$ADMISSION" "'firemud-grpc-tls-previous', 'firemud-grpc-ca'"
+require_literal "$ADMISSION" "'firemud-grpc-tls-previous'] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
 # shellcheck disable=SC2016 # Match the literal bootstrap expression.

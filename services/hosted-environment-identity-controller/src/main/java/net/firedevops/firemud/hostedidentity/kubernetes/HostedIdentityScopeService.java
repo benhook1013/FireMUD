@@ -134,8 +134,7 @@ public class HostedIdentityScopeService {
                         plan.telnetSecretName() + "-previous",
                         plan.gatewayInternalWsSecretName() + "-previous",
                         plan.tcpProxyBridgeSecretName() + "-previous",
-                        plan.grpcSecretName() + "-previous",
-                        plan.caSecretName()),
+                        plan.grpcSecretName() + "-previous"),
                     List.of("get")),
                 rule(
                     List.of(""),
