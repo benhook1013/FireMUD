@@ -942,9 +942,13 @@ def validate_workflow(root: Path) -> None:
     bootstrap_step = _find_step(deploy_job, "Create dev-demo smoke account")
     smoke_step = _find_step(deploy_job, "Smoke dev-demo over TCP")
     smoke_condition = smoke_step.get("if")
-    if not isinstance(smoke_condition, str) or "!cancelled()" not in smoke_condition:
+    if not isinstance(smoke_condition, str) or "success()" not in smoke_condition:
         raise AssertionError(
-            "dev-demo TCP smoke must still run after a non-cancellation bootstrap failure"
+            "dev-demo TCP smoke must remain gated on prior-step success"
+        )
+    if "!cancelled()" in smoke_condition:
+        raise AssertionError(
+            "dev-demo TCP smoke must not redundantly combine !cancelled() with success()"
         )
     bootstrap_manifest = bootstrap_step.get("run")
     if not isinstance(bootstrap_manifest, str):

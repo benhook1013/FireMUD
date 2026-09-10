@@ -68,7 +68,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-public class SecretMaterialValidatorTest {
+class SecretMaterialValidatorTest {
   static {
     if (Security.getProvider("BC") == null) {
       Security.addProvider(new BouncyCastleProvider());
@@ -1444,15 +1444,6 @@ public class SecretMaterialValidatorTest {
     return new SecretBuilder(bundle).withData(data).build();
   }
 
-  /** Compile-time test seam for cross-package probe coverage of generated transport material. */
-  public static final class GrpcMaterialFixture {
-    private GrpcMaterialFixture() {}
-
-    public static Secret generate(EnvironmentIdentityPlan plan) {
-      return generatedGrpcBundle(plan);
-    }
-  }
-
   private static Secret generatedGrpcBundle(EnvironmentIdentityPlan plan) {
     try {
       Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
@@ -1465,7 +1456,6 @@ public class SecretMaterialValidatorTest {
       throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
     }
   }
-
   private static X509Certificate certificate(String encoded) throws Exception {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")
