@@ -58,86 +58,57 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
-  @SuppressWarnings("unchecked")
-  void controlledCertificateFieldsAreRepairedButUnknownDriftIsRejected() {
-    EnvironmentIdentityPlan plan = plan();
-    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
-    GenericKubernetesResource existing = new GenericKubernetesResource();
-    existing.setApiVersion("cert-manager.io/v1");
-    existing.setKind("Certificate");
-    existing.setMetadata(
-        new ObjectMetaBuilder()
-            .withName(desired.getMetadata().getName())
-            .withNamespace(plan.identityNamespace())
-            .withLabels(desired.getMetadata().getLabels())
-            .withResourceVersion("7")
-            .build());
-    Map<String, Object> existingSpec =
-        new LinkedHashMap<>((Map<String, Object>) desired.getAdditionalProperties().get("spec"));
-    existingSpec.put("secretName", "obsolete-secret-name");
-    existing.setAdditionalProperties(Map.of("spec", existingSpec));
-    KubernetesClient client = mock(KubernetesClient.class);
-    MixedOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        certificates = mock(MixedOperation.class);
-    NonNamespaceOperation<
-            GenericKubernetesResource,
-            GenericKubernetesResourceList,
-            Resource<GenericKubernetesResource>>
-        identityCertificates = mock(NonNamespaceOperation.class);
-    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
-    Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
-    ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource =
-        mock(ReplaceDeletable.class);
-    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
-    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
-    when(identityCertificates.withName(desired.getMetadata().getName()))
-        .thenReturn(existingResource);
-    when(existingResource.get()).thenReturn(existing);
-    when(identityCertificates.resource(desired)).thenReturn(replacementResource);
-    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+  void controlledCertificateSecretNameDriftIsRepairedThroughCas() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("secretName", "obsolete-secret-name");
 
-    CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+    fixture.apply();
 
-    assertEquals("7", desired.getMetadata().getResourceVersion());
-    verify(replacementResource).lockResourceVersion("7");
-    verify(lockedReplacementResource).replace();
+    assertEquals("7", fixture.desired().getMetadata().getResourceVersion());
+    verify(fixture.replacementResource()).lockResourceVersion("7");
+    verify(fixture.lockedReplacementResource()).replace();
+  }
 
-    existingSpec.put(
-        "secretName",
-        ((Map<String, Object>) desired.getAdditionalProperties().get("spec")).get("secretName"));
-    existingSpec.put("isCA", true);
-    clearInvocations(replacementResource, lockedReplacementResource);
+  @Test
+  void controlledCertificateIsCaDriftIsRepairedThroughCas() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("isCA", true);
 
-    CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+    fixture.apply();
 
-    verify(replacementResource).lockResourceVersion("7");
-    verify(lockedReplacementResource).replace();
+    assertEquals("7", fixture.desired().getMetadata().getResourceVersion());
+    verify(fixture.replacementResource()).lockResourceVersion("7");
+    verify(fixture.lockedReplacementResource()).replace();
+  }
 
-    existingSpec.put("isCA", false);
-    existingSpec.put("commonName", "unexpected.example.test");
-    IllegalStateException unknownSpec =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                CertificateMaterialService.applyCertificate(
-                    client, plan.identityNamespace(), desired));
+  @Test
+  void unknownCertificateSpecDriftIsRejected() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("commonName", "unexpected.example.test");
+
+    IllegalStateException unknownSpec = assertThrows(IllegalStateException.class, fixture::apply);
+
     assertEquals("owned Certificate spec has unknown drift", unknownSpec.getMessage());
-    existingSpec.remove("commonName");
-    existing.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
-    assertDoesNotThrow(
-        () ->
-            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
-    existing
+  }
+
+  @Test
+  void externalCertificateLabelsAreTolerated() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existing().getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
+
+    assertDoesNotThrow(fixture::apply);
+  }
+
+  @Test
+  void managedByCertificateLabelHijackIsRejected() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture
+        .existing()
         .getMetadata()
         .getLabels()
         .put(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller");
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+
+    assertThrows(IllegalStateException.class, fixture::apply);
   }
 
   @Test
@@ -676,6 +647,72 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void projectedReplacementKeepsRotationSerializedUntilAcceptance() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Map<String, String> replacementData =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    Secret replacement =
+        new SecretBuilder().withType("kubernetes.io/tls").withData(replacementData).build();
+
+    new SecretProjectionService()
+        .project(
+            fixture.secretClient().client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            replacement,
+            2,
+            2,
+            "4".repeat(64),
+            "cert-manager",
+            () -> true);
+
+    ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
+    verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());
+    Secret projectedReplacement = candidate.getValue();
+    Resource<Secret> projectionResource =
+        fixture.secretClient().runtimeSecrets().withName(plan.ingressSecretName());
+    when(projectionResource.get()).thenReturn(projectedReplacement);
+
+    Map<String, String> newerIngressData =
+        Map.of("tls.crt", encoded("newer-ingress"), "tls.key", encoded("key-3"));
+    Resource<Secret> ingressSource = mock(Resource.class);
+    when(fixture.secretClient().identitySecrets().withName(plan.ingressSecretName()))
+        .thenReturn(ingressSource);
+    when(ingressSource.get())
+        .thenReturn(
+            certManagerSource(
+                plan,
+                HostedIdentityContract.INGRESS_ROLE,
+                plan.ingressSecretName(),
+                newerIngressData));
+    Resource<Secret> telnetSource =
+        fixture.secretClient().identitySecrets().withName(plan.telnetSecretName());
+    when(telnetSource.get())
+        .thenReturn(
+            certManagerSource(
+                plan,
+                HostedIdentityContract.TELNET_ROLE,
+                plan.telnetSecretName(),
+                replacementData));
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        newerIngressData);
+
+    CertificateMaterialService.RoleMaterial continued = fixture.batch().ingress();
+
+    assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
+    assertEquals(SERIALIZED_IN_FLIGHT, continued.state());
+    assertEquals(projectedReplacement, continued.source());
+    verify(fixture.secretClient().runtimeSecrets(), org.mockito.Mockito.times(1))
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+  }
+
+  @Test
   void unacceptedProjectionPinsItsMaterialAndAcceptedProjectionAdvancesOnRestart() {
     StableBatchFixture fixture = stableBatchFixture();
     Secret ingressProjection =
@@ -817,8 +854,10 @@ class CertificateMaterialServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
-            "encodeUsagesInRequest", true,
-            "isCA", false,
+            "encodeUsagesInRequest",
+            true,
+            "isCA",
+            false,
             "privateKey",
             Map.of("algorithm", "RSA", "size", 2048),
             "dnsNames",
@@ -827,8 +866,10 @@ class CertificateMaterialServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
-            "encodeUsagesInRequest", true,
-            "isCA", false,
+            "encodeUsagesInRequest",
+            true,
+            "isCA",
+            false,
             "revisionHistoryLimit",
             1L,
             "privateKey",
@@ -1782,6 +1823,55 @@ class CertificateMaterialServiceTest {
   }
 
   @SuppressWarnings("unchecked")
+  private static CertificateApplyFixture certificateApplyFixture() {
+    EnvironmentIdentityPlan plan = plan();
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    GenericKubernetesResource existing = new GenericKubernetesResource();
+    existing.setApiVersion("cert-manager.io/v1");
+    existing.setKind("Certificate");
+    existing.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(desired.getMetadata().getName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(desired.getMetadata().getLabels())
+            .withResourceVersion("7")
+            .build());
+    Map<String, Object> existingSpec =
+        new LinkedHashMap<>((Map<String, Object>) desired.getAdditionalProperties().get("spec"));
+    existing.setAdditionalProperties(Map.of("spec", existingSpec));
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
+    Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource =
+        mock(ReplaceDeletable.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(desired.getMetadata().getName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+    return new CertificateApplyFixture(
+        plan,
+        desired,
+        existing,
+        existingSpec,
+        client,
+        replacementResource,
+        lockedReplacementResource);
+  }
+
+  @SuppressWarnings("unchecked")
   private static SecretClient secretClient(EnvironmentIdentityPlan plan) {
     KubernetesClient client = mock(KubernetesClient.class);
     MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
@@ -1901,6 +1991,19 @@ class CertificateMaterialServiceTest {
       KubernetesClient client,
       NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets,
       NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets) {}
+
+  private record CertificateApplyFixture(
+      EnvironmentIdentityPlan plan,
+      GenericKubernetesResource desired,
+      GenericKubernetesResource existing,
+      Map<String, Object> existingSpec,
+      KubernetesClient client,
+      Resource<GenericKubernetesResource> replacementResource,
+      ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource) {
+    private void apply() {
+      CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+    }
+  }
 
   private record StableBatchFixture(
       EnvironmentIdentityPlan plan,

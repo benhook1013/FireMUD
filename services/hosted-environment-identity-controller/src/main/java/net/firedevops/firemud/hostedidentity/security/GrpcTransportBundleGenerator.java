@@ -338,8 +338,7 @@ public class GrpcTransportBundleGenerator {
     }
   }
 
-  private static boolean trustAnchorChanged(
-      Secret existing, String expectedTrustAnchorSha256) {
+  private static boolean trustAnchorChanged(Secret existing, String expectedTrustAnchorSha256) {
     String existingTrustAnchorSha256;
     try {
       existingTrustAnchorSha256 = SecretMaterialValidator.trustAnchorFingerprint(existing);

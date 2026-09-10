@@ -97,6 +97,18 @@ public class HostedIdentityScopeService {
   }
 
   private static void ensureIdentity(KubernetesClient client, EnvironmentIdentityPlan plan) {
+    List<String> identitySecretNames =
+        List.of(
+            plan.ingressSecretName(),
+            plan.telnetSecretName(),
+            plan.gatewayInternalWsSecretName(),
+            plan.tcpProxyBridgeSecretName(),
+            plan.grpcSecretName(),
+            plan.ingressSecretName() + "-previous",
+            plan.telnetSecretName() + "-previous",
+            plan.gatewayInternalWsSecretName() + "-previous",
+            plan.tcpProxyBridgeSecretName() + "-previous",
+            plan.grpcSecretName() + "-previous");
     Role desired =
         role(
             plan.identityNamespace(),
@@ -123,35 +135,11 @@ public class HostedIdentityScopeService {
                     List.of("certificates"),
                     List.of(),
                     List.of("create")),
+                rule(List.of(""), List.of("secrets"), identitySecretNames, List.of("get")),
                 rule(
                     List.of(""),
                     List.of("secrets"),
-                    List.of(
-                        plan.ingressSecretName(),
-                        plan.telnetSecretName(),
-                        plan.gatewayInternalWsSecretName(),
-                        plan.tcpProxyBridgeSecretName(),
-                        plan.grpcSecretName(),
-                        plan.ingressSecretName() + "-previous",
-                        plan.telnetSecretName() + "-previous",
-                        plan.gatewayInternalWsSecretName() + "-previous",
-                        plan.tcpProxyBridgeSecretName() + "-previous",
-                        plan.grpcSecretName() + "-previous"),
-                    List.of("get")),
-                rule(
-                    List.of(""),
-                    List.of("secrets"),
-                    List.of(
-                        plan.ingressSecretName(),
-                        plan.telnetSecretName(),
-                        plan.gatewayInternalWsSecretName(),
-                        plan.tcpProxyBridgeSecretName(),
-                        plan.grpcSecretName(),
-                        plan.ingressSecretName() + "-previous",
-                        plan.telnetSecretName() + "-previous",
-                        plan.gatewayInternalWsSecretName() + "-previous",
-                        plan.tcpProxyBridgeSecretName() + "-previous",
-                        plan.grpcSecretName() + "-previous"),
+                    identitySecretNames,
                     List.of("update", "patch", "delete")),
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create"))));
     ensureRole(client, plan.identityNamespace(), desired);

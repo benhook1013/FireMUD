@@ -54,7 +54,7 @@ public class HostedIdentityProperties implements InitializingBean {
 
   @Override
   public void afterPropertiesSet() {
-    ActivationMode resolvedMode = resolveActivationMode(true);
+    ActivationMode resolvedMode = resolveActivationMode();
     if (!HostedIdentityContract.CONTROL_NAMESPACE.equals(controlNamespace)) {
       throw new IllegalStateException(
           "hosted identity control namespace must be " + HostedIdentityContract.CONTROL_NAMESPACE);
@@ -175,17 +175,15 @@ public class HostedIdentityProperties implements InitializingBean {
     return resolvedActivationMode;
   }
 
-  private ActivationMode resolveActivationMode(boolean warnIfInvalid) {
+  private ActivationMode resolveActivationMode() {
     if (activationMode == null) {
       return ActivationMode.PAUSED;
     }
     try {
       return ActivationMode.valueOf(activationMode.trim().toUpperCase(java.util.Locale.ROOT));
     } catch (IllegalArgumentException exception) {
-      if (warnIfInvalid) {
-        LOGGER.warn(
-            "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
-      }
+      LOGGER.warn(
+          "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
       return ActivationMode.PAUSED;
     }
   }

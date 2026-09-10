@@ -731,8 +731,14 @@ assert controller_scope_labels_are_valid(
 assert not controller_scope_labels_are_valid(
     {**binding_labels, "firemud.dev/unowned": "drift"}, binding_labels
 )
-namespace_expression = policies["firemud-hosted-system-namespace-guard"]["spec"]["validations"][0]["expression"]
+namespace_validation = policies["firemud-hosted-system-namespace-guard"]["spec"]["validations"][0]
+namespace_expression = namespace_validation["expression"]
 namespace_rule = policies["firemud-hosted-system-namespace-guard"]["spec"]["matchConstraints"]["resourceRules"][0]
+assert namespace_validation["message"] == (
+    "firemud-system and retained identity Namespace CREATE/DELETE operations require "
+    "system:masters; only firemud-system permits no-op updates, and ordinary retained "
+    "identity lifecycle is controller-managed"
+)
 assert namespace_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
 assert namespace_rule["resources"] == ["namespaces", "namespaces/status", "namespaces/finalize"]
 assert namespace_expression.startswith(f"({break_glass} &&")
@@ -741,6 +747,15 @@ assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_
 assert "request.subResource == ''" in namespace_expression
 assert "request.subResource in ['status', 'finalize']" in namespace_expression
 assert "request.operation == 'UPDATE'" in namespace_expression
+namespace_noop_update_expression = namespace_expression.split(
+    "(request.operation == 'UPDATE' &&", 1
+)[1].split(
+    "(request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller'",
+    1,
+)[0]
+assert "request.name == 'firemud-system'" in namespace_noop_update_expression
+assert "dev-identity" not in namespace_noop_update_expression
+assert "pr-[1-9]" not in namespace_noop_update_expression
 assert "system:serviceaccount:kube-system:namespace-controller" in namespace_expression
 assert "(request.subResource == 'finalize' || object.spec == oldObject.spec)" in namespace_expression
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression

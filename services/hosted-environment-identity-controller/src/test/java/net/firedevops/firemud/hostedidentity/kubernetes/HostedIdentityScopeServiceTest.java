@@ -31,11 +31,15 @@ import io.fabric8.kubernetes.client.dsl.Resource;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 class HostedIdentityScopeServiceTest {
@@ -120,7 +124,7 @@ class HostedIdentityScopeServiceTest {
           "pr-42");
 
   @Test
-  void identityNamespaceAllowsUnrelatedAnnotationsButRequiresOwnedLabels() {
+  void retainedIdentityNamespaceAllowsUnrelatedAnnotations() {
     EnvironmentIdentityPlan plan = plan();
     Namespace exact = identityNamespace(plan);
     Namespace annotated =
@@ -130,37 +134,20 @@ class HostedIdentityScopeServiceTest {
             .endMetadata()
             .build();
     assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(annotated, plan));
+  }
 
-    Namespace wrongOwnedLabel =
-        new NamespaceBuilder(exact)
-            .editMetadata()
-            .addToLabels(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller")
-            .endMetadata()
-            .build();
-    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(wrongOwnedLabel, plan));
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("validRetainedIdentityNamespaces")
+  void retainedIdentityNamespaceAcceptsCanonicalDerivedLabels(
+      String scenario, EnvironmentIdentityPlan plan, Namespace namespace) {
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(namespace, plan));
   }
 
   @Test
-  void retainedIdentityNamespaceRequiresItsDerivedControllerLabelsAndAllowsExternalLabels() {
-    var devPlan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
-    var valid =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("dev-identity")
-            .withLabels(
-                Map.of(
-                    "firemud.dev/managed-by",
-                    "hosted-identity-controller",
-                    "firemud.dev/identity-name",
-                    "dev-demo",
-                    "firemud.dev/retention",
-                    "retained",
-                    "firemud.dev/environment-class",
-                    HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
-            .endMetadata()
-            .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(valid, devPlan));
-
+  void retainedIdentityNamespaceAcceptsApiMetadataAndExternalLabels() {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
+    Namespace valid = identityNamespace(plan);
     Map<String, String> injectedLabels = new HashMap<>(valid.getMetadata().getLabels());
     injectedLabels.put("kubernetes.io/metadata.name", "dev-identity");
     injectedLabels.put("tooling.example/managed-by", "cluster-tool");
@@ -172,86 +159,14 @@ class HostedIdentityScopeServiceTest {
             .withResourceVersion("9")
             .endMetadata()
             .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(apiRoundTripped, devPlan));
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(apiRoundTripped, plan));
+  }
 
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(valid)
-                .editMetadata()
-                .addToLabels("kubernetes.io/metadata.name", "other-identity")
-                .endMetadata()
-                .build(),
-            devPlan));
-
-    Map<String, String> labels = new HashMap<>(valid.getMetadata().getLabels());
-    labels.put("firemud.dev/other", "unexpected");
-    var unexpectedLabels =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("dev-identity")
-            .withLabels(labels)
-            .endMetadata()
-            .build();
-    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(unexpectedLabels, devPlan));
-
-    var unexpectedOwner =
-        new NamespaceBuilder(valid)
-            .editMetadata()
-            .withOwnerReferences(new OwnerReferenceBuilder().withName("other").build())
-            .endMetadata()
-            .build();
-    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(unexpectedOwner, devPlan));
-
-    var previewPlan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    var preview =
-        new NamespaceBuilder()
-            .withNewMetadata()
-            .withName("pr-42-identity")
-            .withLabels(
-                Map.of(
-                    "firemud.dev/managed-by",
-                    "hosted-identity-controller",
-                    "firemud.dev/identity-name",
-                    "pr-42",
-                    "firemud.dev/retention",
-                    "retained",
-                    "firemud.dev/environment-class",
-                    HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS))
-            .endMetadata()
-            .build();
-    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(preview, previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withName("pr-43-identity")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withGenerateName("pr-42-")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertTrue(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .addToAnnotations("external", "unexpected")
-                .endMetadata()
-                .build(),
-            previewPlan));
-    assertFalse(
-        HostedIdentityScopeService.isExpectedIdentityNamespace(
-            new NamespaceBuilder(preview)
-                .editMetadata()
-                .withFinalizers("external/finalizer")
-                .endMetadata()
-                .build(),
-            previewPlan));
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("rejectedRetainedIdentityNamespaces")
+  void retainedIdentityNamespaceRejectsOwnedMetadataDrift(
+      String scenario, EnvironmentIdentityPlan plan, Namespace namespace) {
+    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(namespace, plan));
   }
 
   @Test
@@ -607,6 +522,84 @@ class HostedIdentityScopeServiceTest {
     return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
   }
 
+  private static Stream<Arguments> validRetainedIdentityNamespaces() {
+    EnvironmentIdentityPlan devPlan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
+    EnvironmentIdentityPlan previewPlan = plan();
+    return Stream.of(
+        Arguments.of("dev-demo namespace", devPlan, identityNamespace(devPlan)),
+        Arguments.of("preview namespace", previewPlan, identityNamespace(previewPlan)));
+  }
+
+  private static Stream<Arguments> rejectedRetainedIdentityNamespaces() {
+    EnvironmentIdentityPlan devPlan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
+    Namespace devNamespace = identityNamespace(devPlan);
+    EnvironmentIdentityPlan previewPlan = plan();
+    Namespace previewNamespace = identityNamespace(previewPlan);
+
+    Map<String, String> unexpectedLabels = new HashMap<>(devNamespace.getMetadata().getLabels());
+    unexpectedLabels.put("firemud.dev/other", "unexpected");
+
+    return Stream.of(
+        Arguments.of(
+            "managed-by label mismatch",
+            previewPlan,
+            new NamespaceBuilder(previewNamespace)
+                .editMetadata()
+                .addToLabels(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller")
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "mismatched API metadata-name label",
+            devPlan,
+            new NamespaceBuilder(devNamespace)
+                .editMetadata()
+                .addToLabels("kubernetes.io/metadata.name", "other-identity")
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "unexpected firemud.dev label",
+            devPlan,
+            new NamespaceBuilder(devNamespace)
+                .editMetadata()
+                .withLabels(unexpectedLabels)
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "owner reference",
+            devPlan,
+            new NamespaceBuilder(devNamespace)
+                .editMetadata()
+                .withOwnerReferences(new OwnerReferenceBuilder().withName("other").build())
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "preview namespace name",
+            previewPlan,
+            new NamespaceBuilder(previewNamespace)
+                .editMetadata()
+                .withName("pr-43-identity")
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "generateName",
+            previewPlan,
+            new NamespaceBuilder(previewNamespace)
+                .editMetadata()
+                .withGenerateName("pr-42-")
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "finalizer",
+            previewPlan,
+            new NamespaceBuilder(previewNamespace)
+                .editMetadata()
+                .withFinalizers("external/finalizer")
+                .endMetadata()
+                .build()));
+  }
+
   private static Namespace identityNamespace(EnvironmentIdentityPlan plan) {
     return new NamespaceBuilder()
         .withNewMetadata()
@@ -620,7 +613,7 @@ class HostedIdentityScopeServiceTest {
                 HostedIdentityContract.RETENTION_LABEL,
                 HostedIdentityContract.RETAINED,
                 "firemud.dev/environment-class",
-                HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS))
+                HostedIdentityContract.environmentClass(plan.name())))
         .endMetadata()
         .build();
   }

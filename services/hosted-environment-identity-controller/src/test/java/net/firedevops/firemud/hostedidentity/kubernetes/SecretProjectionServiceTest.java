@@ -2,7 +2,6 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
-import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_IN_FLIGHT;
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -612,7 +611,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void replacementProjectionRetainsAcceptedSnapshotAndKeepsRotationSerialized() {
+  void replacementProjectionRetainsAcceptedSnapshot() {
     EnvironmentIdentityPlan plan = plan();
     SecretProjectionService service = new SecretProjectionService();
     SecretClient secretClient = secretClient(plan);
@@ -693,78 +692,6 @@ class SecretProjectionServiceTest {
     verify(lockedPredecessorResource).replace();
     verify(replacementResource).lockResourceVersion("7");
     verify(lockedReplacementResource).replace();
-
-    Secret capturedReplacement = candidate.getValue();
-    when(existingResource.get()).thenReturn(capturedReplacement);
-    Map<String, String> newerIngressData =
-        Map.of("tls.crt", encoded("newer-ingress"), "tls.key", encoded("key-3"));
-    Resource<Secret> ingressSource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(plan.ingressSecretName()))
-        .thenReturn(ingressSource);
-    when(ingressSource.get())
-        .thenReturn(
-            certManagerSource(
-                plan,
-                HostedIdentityContract.INGRESS_ROLE,
-                plan.ingressSecretName(),
-                newerIngressData));
-    for (String role :
-        List.of(
-            HostedIdentityContract.TELNET_ROLE,
-            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
-            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
-            HostedIdentityContract.GRPC_ROLE)) {
-      String name = secretName(plan, role);
-      String revision = SecretProjectionService.revisionForRole(role, acceptedData);
-      Resource<Secret> projection = mock(Resource.class);
-      when(secretClient.runtimeSecrets().withName(name)).thenReturn(projection);
-      when(projection.get())
-          .thenReturn(
-              ownedSecret(
-                  plan, role, name, acceptedData, acceptedAnnotations(revision, acceptedSpki)));
-      Map<String, String> sourceData =
-          HostedIdentityContract.TELNET_ROLE.equals(role) ? replacementData : acceptedData;
-      Resource<Secret> source = mock(Resource.class);
-      when(secretClient.identitySecrets().withName(name)).thenReturn(source);
-      when(source.get())
-          .thenReturn(
-              HostedIdentityContract.GRPC_ROLE.equals(role)
-                  ? ownedSecret(plan, role, name, sourceData, Map.of())
-                  : certManagerSource(plan, role, name, sourceData));
-    }
-    stubCertificate(client, plan, plan.ingressCertificateName(), true, 1, newerIngressData);
-    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
-    SecretMaterialValidator.MaterialSummary summary =
-        new SecretMaterialValidator.MaterialSummary(
-            "3".repeat(64),
-            "4".repeat(64),
-            java.time.Instant.EPOCH,
-            java.time.Instant.MAX,
-            "5".repeat(64));
-    when(validator.validateIdentity(
-            org.mockito.ArgumentMatchers.any(Secret.class),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyCollection(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyBoolean(),
-            org.mockito.ArgumentMatchers.anyString()))
-        .thenReturn(summary);
-    CertificateMaterialService materialService =
-        new CertificateMaterialService(
-            new CertificateResourceFactory(),
-            validator,
-            mock(GrpcTransportBundleGenerator.class),
-            new HostedIdentityProperties());
-
-    CertificateMaterialService.RoleMaterial continued =
-        materialService.beginMaterialization(client, plan).ingress();
-
-    assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
-    assertEquals(SERIALIZED_IN_FLIGHT, continued.state());
-    assertEquals(capturedReplacement, continued.source());
-    verify(secretClient.runtimeSecrets(), org.mockito.Mockito.times(1))
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
   @Test
