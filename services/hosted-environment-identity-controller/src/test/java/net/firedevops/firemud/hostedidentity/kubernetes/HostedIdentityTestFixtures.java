@@ -312,7 +312,7 @@ final class HostedIdentityTestFixtures {
     return new SecretClient(client, runtimeSecrets, identitySecrets);
   }
 
-  static StableBatchFixture stableBatchFixture(ProjectionAndSourceStub projectionAndSourceStub) {
+  static StableBatchFixture stableBatchFixture() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     SecretClient secretClient = secretClient(plan);
@@ -325,8 +325,7 @@ final class HostedIdentityTestFixtures {
             HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
             HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
             HostedIdentityContract.GRPC_ROLE)) {
-      projectionAndSourceStub.stub(
-          secretClient, plan, role, acceptedData, acceptedData, acceptedData);
+      stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
       secretClient
           .runtimeSecrets()
           .withName(secretName(plan, role))
@@ -368,6 +367,39 @@ final class HostedIdentityTestFixtures {
         validator,
         grpcGenerator,
         service.beginMaterialization(secretClient.client(), plan));
+  }
+
+  static Secret stubProjectionAndSource(
+      SecretClient secretClient,
+      EnvironmentIdentityPlan plan,
+      String role,
+      Map<String, String> projectionData,
+      Map<String, String> recordedData,
+      Map<String, String> sourceData) {
+    String name = secretName(plan, role);
+    String revision = SecretProjectionService.revisionForRole(role, recordedData);
+    Secret projection =
+        ownedSecret(
+            plan, role, name, projectionData, acceptedAnnotations(revision, "2".repeat(64)));
+    if (HostedIdentityContract.GRPC_ROLE.equals(role)) {
+      projection.setType("Opaque");
+    }
+    projection.getMetadata().setResourceVersion("7");
+    Resource<Secret> projectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
+    when(projectionResource.get()).thenReturn(projection);
+    Secret source =
+        HostedIdentityContract.GRPC_ROLE.equals(role)
+            ? ownedSecret(plan, role, name, sourceData, Map.of())
+            : certManagerSource(plan, role, name, sourceData);
+    Resource<Secret> sourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
+    when(sourceResource.get()).thenReturn(source);
+    Resource<Secret> predecessorResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(name + "-previous"))
+        .thenReturn(predecessorResource);
+    when(predecessorResource.get()).thenReturn(null);
+    return source;
   }
 
   static EnvironmentIdentityPlan plan() {
@@ -415,17 +447,6 @@ final class HostedIdentityTestFixtures {
       case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
       default -> throw new IllegalArgumentException("unsupported role");
     };
-  }
-
-  @FunctionalInterface
-  interface ProjectionAndSourceStub {
-    Secret stub(
-        SecretClient secretClient,
-        EnvironmentIdentityPlan plan,
-        String role,
-        Map<String, String> projectionData,
-        Map<String, String> recordedData,
-        Map<String, String> sourceData);
   }
 
   record SecretClient(
