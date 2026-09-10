@@ -28,7 +28,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
-- `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
+- `maintenance/` – maintenance and analysis utilities, including `cloc-report.py` for repository summaries and read-only PR impact snippets. Use `python3 dev-tools/maintenance/cloc-report.py --help` for invocation details; publication timing is defined in the [PR lifecycle](../design/developer-workflows/pr-lifecycle.md).
 - `observability/` – observability contract and evidence validators.
 - `release/` – release/notice generation utilities.
 - `restores/` – restore, state-reset, and external-credential validation helpers; see `restores/README.md` for the script map.

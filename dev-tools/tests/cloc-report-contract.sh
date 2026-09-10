@@ -195,11 +195,58 @@ EOF
   git commit -q -m "Initial minimal fixture"
 )
 
+REAL_PR_SOURCE="$TMP_DIR/real-pr-source"
+REAL_PR_REMOTE="$TMP_DIR/real-pr-remote.git"
+REAL_PR_CALLER="$TMP_DIR/real-pr-caller"
+mkdir -p "$REAL_PR_SOURCE"
+(
+  cd "$REAL_PR_SOURCE"
+  git init -q
+  git config user.name "FireMUD Test"
+  git config user.email "test@example.com"
+  cat >app.py <<'EOF'
+print("base")
+EOF
+  git add app.py
+  git commit -q -m "Initial PR fixture"
+  git branch -M develop
+  cat >base.py <<'EOF'
+print("base branch")
+EOF
+  git add base.py
+  git commit -q -m "Base branch change"
+  git checkout -q -b feature
+  cat >feature.py <<'EOF'
+print("feature one")
+print("feature two")
+EOF
+  git add feature.py
+  git rm -q app.py
+  git commit -q -m "Feature change"
+  git checkout -q develop
+  cat >develop.py <<'EOF'
+print("develop one")
+print("develop two")
+print("develop three")
+EOF
+  git add develop.py
+  git commit -q -m "Diverged base change"
+  git init -q --bare "$REAL_PR_REMOTE"
+  git remote add origin "$REAL_PR_REMOTE"
+  git push -q origin develop
+  git push -q origin feature:refs/pull/2736/head
+)
+git clone -q --branch develop "$REAL_PR_REMOTE" "$REAL_PR_CALLER"
+printf 'print("dirty caller")\n' >"$REAL_PR_CALLER/dirty.py"
+export REAL_PR_SOURCE REAL_PR_CALLER
+
 python3 - <<'PY'
 import json
 import importlib.util
+import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 repo = Path.cwd()
@@ -330,14 +377,14 @@ assert [child["name"] for child in summary["root"]["children"]] == [
 assert summary_nodes["design"]["parent"] == "repo"
 assert summary_nodes["design"]["files"] == 3
 assert summary_nodes["markdown"]["children"] == []
-assert summary_nodes["markdown"]["overlaps"] == ["source", "design"]
+assert summary_nodes["markdown"]["overlaps"] == ["design"]
 
 assert "scope / relationship" in summary_table
 assert "files  lines  share of parent (lines)" in summary_table.splitlines()[0]
 assert "|-- source (= prod + tests)" in summary_table
 assert "|   |-- prod" in summary_table
 assert "|   `-- tests" in summary_table
-assert "|-- markdown (overlaps source and design)" in summary_table
+assert "|-- markdown (overlaps design)" in summary_table
 assert "`-- design (= sections below)" in summary_table
 assert "    |-- architecture" in summary_table
 assert "    |-- project management" in summary_table
@@ -358,6 +405,7 @@ assert f"{architecture_share:5.1f}%" in next(
     line for line in summary_table.splitlines() if "|-- architecture" in line
 )
 assert "Additive branches: source = prod + tests; design = its listed sections" in summary_table
+assert "Markdown is excluded from source and overlaps design where paths match" in summary_table
 assert "Bars compare each row's lines with its immediate parent" in summary_table
 assert "Lines exclude blank and comment-only lines" in summary_table
 
@@ -413,11 +461,240 @@ deletion_nodes = nodes_by_name(json.loads(deletion_diff.stdout))
 assert all(row["files"] == 0 and row["lines"] == 0 for row in deletion_nodes.values())
 assert "omitted 1 tracked path(s) that are deleted or missing" in deletion_diff.stderr
 
+mock_metadata = cloc_report.PullRequestMetadata(
+    number=2736,
+    repository="example/example",
+    base_ref="stack/base",
+    base_oid="a" * 40,
+    head_ref="feature/forked",
+    head_oid="b" * 40,
+)
+base_design_children = [
+    cloc_report.ReportNode(
+        key=key,
+        label=label,
+        counts=cloc_report.Counts(lines=0),
+    )
+    for key, label, _prefix in cloc_report.DESIGN_SECTIONS
+]
+head_design_children = [
+    cloc_report.ReportNode(
+        key=key,
+        label=label,
+        counts=cloc_report.Counts(lines=1 if key == "architecture" else 0),
+    )
+    for key, label, _prefix in cloc_report.DESIGN_SECTIONS
+]
+base_source = cloc_report.ReportNode(
+    key="source",
+    label="source (= prod + tests)",
+    counts=cloc_report.Counts(files=3, lines=8),
+    children=[
+        cloc_report.ReportNode("prod", "prod", cloc_report.Counts(files=2, lines=5)),
+        cloc_report.ReportNode("tests", "tests", cloc_report.Counts(files=1, lines=3)),
+    ],
+)
+head_source = cloc_report.ReportNode(
+    key="source",
+    label="source (= prod + tests)",
+    counts=cloc_report.Counts(files=3, lines=7),
+    children=[
+        cloc_report.ReportNode("prod", "prod", cloc_report.Counts(files=2, lines=5)),
+        cloc_report.ReportNode("tests", "tests", cloc_report.Counts(files=1, lines=2)),
+    ],
+)
+base_summary_node = cloc_report.ReportNode(
+    key="repo",
+    label="repo",
+    counts=cloc_report.Counts(files=4, lines=10),
+    children=[
+        base_source,
+        cloc_report.ReportNode("markdown", "markdown (overlaps design)", cloc_report.Counts(lines=2), overlaps=("design",)),
+        cloc_report.ReportNode("design", "design (= sections below)", cloc_report.Counts(lines=0), children=base_design_children),
+    ],
+)
+head_summary_node = cloc_report.ReportNode(
+    key="repo",
+    label="repo",
+    counts=cloc_report.Counts(files=4, lines=12),
+    children=[
+        head_source,
+        cloc_report.ReportNode("markdown", "markdown (overlaps design)", cloc_report.Counts(lines=2), overlaps=("design",)),
+        cloc_report.ReportNode("design", "design (= sections below)", cloc_report.Counts(lines=1), children=head_design_children),
+    ],
+)
+
+original_pr_functions = (
+    cloc_report.resolve_pull_request,
+    cloc_report.pull_request_merge_base,
+    cloc_report.classifier_digest,
+    cloc_report.snapshot_worktree,
+    cloc_report.summary_for_root,
+)
+snapshot_revisions = []
+cloc_report.resolve_pull_request = lambda _root, _number, _repository: mock_metadata
+cloc_report.pull_request_merge_base = lambda _root, _metadata: "c" * 40
+cloc_report.classifier_digest = lambda: "digest"
+
+@contextmanager
+def fake_snapshot(_root, revision):
+    snapshot_revisions.append(revision)
+    yield Path("/isolated") / revision
+
+cloc_report.snapshot_worktree = fake_snapshot
+cloc_report.summary_for_root = lambda snapshot: (
+    base_summary_node if snapshot.name == "".join(["c"] * 40) else head_summary_node
+)
+try:
+    impact = cloc_report.build_pr_report(repo, 2736, "example/example")
+    impact_rows_by_name = {row["name"]: row for row in impact["sections"]}
+    assert snapshot_revisions == ["c" * 40, "b" * 40]
+    assert impact["base"]["oid"] == "a" * 40
+    assert impact["base"]["merge_base"] == "c" * 40
+    assert impact_rows_by_name["repo"]["delta"]["lines"] == 2
+    assert impact_rows_by_name["tests"]["delta"]["lines"] == -1
+    assert impact_rows_by_name["prod"]["change_percent"] == 0.0
+    assert impact_rows_by_name["architecture"]["change_percent"] is None
+    rendered_impact = cloc_report.render_pr_report(impact)
+    assert cloc_report.PR_REPORT_START in rendered_impact
+    assert cloc_report.PR_REPORT_END in rendered_impact
+    assert "| Overall | 10 | 12 | +2 | +20.0% |" in rendered_impact
+    assert "| ↳ Production | 5 | 5 | 0 | 0.0% |" in rendered_impact
+    assert "| ↳ Architecture | 0 | 1 | +1 | new |" in rendered_impact
+finally:
+    (
+        cloc_report.resolve_pull_request,
+        cloc_report.pull_request_merge_base,
+        cloc_report.classifier_digest,
+        cloc_report.snapshot_worktree,
+        cloc_report.summary_for_root,
+    ) = original_pr_functions
+
+fetch_calls = []
+availability = {"a" * 40: [False, True], "b" * 40: [False, True]}
+original_commit_object_exists = cloc_report.commit_object_exists
+original_run_command = cloc_report.run_command
+cloc_report.commit_object_exists = lambda _root, object_id: availability[object_id].pop(0)
+def fake_pr_command(args, _root):
+    fetch_calls.append(args)
+    if args[1:] == ("merge-base", "a" * 40, "b" * 40):
+        return subprocess.CompletedProcess(args, 0, stdout=("c" * 40).encode(), stderr=b"")
+    return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+cloc_report.run_command = fake_pr_command
+try:
+    assert cloc_report.pull_request_merge_base(repo, mock_metadata) == "c" * 40
+    assert any("refs/heads/stack/base" in args for args in fetch_calls)
+    assert any("refs/pull/2736/head" in args for args in fetch_calls)
+finally:
+    cloc_report.commit_object_exists = original_commit_object_exists
+    cloc_report.run_command = original_run_command
+
+assert cloc_report.format_change(0.04, 1, 1) == "+<0.1%"
+assert cloc_report.format_change(-0.04, -1, 1) == "-<0.1%"
+assert cloc_report.format_change(0.0, 0, 0) == "0.0%"
+
+metadata_calls = []
+original_require_tool = cloc_report.require_tool
+original_run_command = cloc_report.run_command
+cloc_report.require_tool = lambda _name: None
+def fake_metadata_command(args, _root):
+    metadata_calls.append(args)
+    if args[:3] == ("git", "remote", "get-url"):
+        return subprocess.CompletedProcess(args, 0, stdout=b"git@github.com:example/example.git\n", stderr=b"")
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {
+                "baseRefName": "develop",
+                "baseRefOid": "a" * 40,
+                "headRefName": "feature/forked",
+                "headRefOid": "b" * 40,
+                "headRepository": {"nameWithOwner": "contributor/example"},
+            }
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_metadata_command
+try:
+    resolved_metadata = cloc_report.resolve_pull_request(repo, 2736, "example/example")
+    assert resolved_metadata == mock_metadata.__class__(
+        number=2736,
+        repository="example/example",
+        base_ref="develop",
+        base_oid="a" * 40,
+        head_ref="feature/forked",
+        head_oid="b" * 40,
+    )
+    assert any(args[0] == "gh" and "--repo" in args for args in metadata_calls)
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
+real_source = Path(os.environ["REAL_PR_SOURCE"])
+real_caller = Path(os.environ["REAL_PR_CALLER"])
+
+def git_revision(directory: Path, ref: str) -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", ref], cwd=directory, text=True
+    ).strip()
+
+real_base_oid = git_revision(real_caller, "origin/develop")
+real_head_oid = git_revision(real_source, "feature")
+real_merge_base = subprocess.check_output(
+    ["git", "merge-base", real_base_oid, real_head_oid],
+    cwd=real_source,
+    text=True,
+).strip()
+real_metadata = cloc_report.PullRequestMetadata(
+    number=2736,
+    repository="example/example",
+    base_ref="develop",
+    base_oid=real_base_oid,
+    head_ref="feature/forked",
+    head_oid=real_head_oid,
+)
+original_resolve_pull_request = cloc_report.resolve_pull_request
+cloc_report.resolve_pull_request = lambda _root, _number, _repository: real_metadata
+dirty_file = real_caller / "dirty.py"
+dirty_before = dirty_file.read_text()
+status_before = subprocess.check_output(
+    ["git", "status", "--porcelain=v1"], cwd=real_caller, text=True
+)
+try:
+    real_impact = cloc_report.build_pr_report(real_caller, 2736, None)
+    real_rows = {row["name"]: row for row in real_impact["sections"]}
+    assert real_impact["base"]["merge_base"] == real_merge_base
+    assert real_impact["base"]["oid"] == real_base_oid
+    assert real_impact["head"]["oid"] == real_head_oid
+    assert real_rows["repo"]["base"]["lines"] == 2
+    assert real_rows["repo"]["head"]["lines"] == 3
+    assert real_rows["repo"]["delta"]["lines"] == 1
+    assert real_rows["tests"]["delta"]["lines"] == 0
+    assert dirty_file.read_text() == dirty_before
+    assert subprocess.check_output(
+        ["git", "status", "--porcelain=v1"], cwd=real_caller, text=True
+    ) == status_before
+finally:
+    cloc_report.resolve_pull_request = original_resolve_pull_request
+
+outside_target = real_caller.parent / "outside-target.py"
+outside_target.write_text('print("outside")\n')
+escape_link = real_caller / "escape.py"
+escape_link.symlink_to(outside_target)
+try:
+    cloc_report.scan_cloc(real_caller, ["escape.py"])
+except cloc_report.ReportError as error:
+    assert "escapes the snapshot through a symlink" in str(error)
+else:
+    raise AssertionError("snapshot symlink escape must fail closed")
+
 help_output = subprocess.check_output([*script, "--help"], cwd=repo, text=True)
 assert "summary" in help_output
 assert "scope" in help_output
 assert "modules" in help_output
 assert "diff" in help_output
+assert "pr" in help_output
 assert "classify" in help_output
 
 print("cloc report contract checks passed")
