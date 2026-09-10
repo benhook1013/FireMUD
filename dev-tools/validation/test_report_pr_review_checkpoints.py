@@ -431,6 +431,8 @@ class CheckpointReporterTest(unittest.TestCase):
                 }
             ]
             with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                checkpoint = self.reporter.parse_checkpoint_comments(comments)[0][0]
+                legacy_capture = self.reporter.load_capture(checkpoint, "owner/repo", 42)
                 detail = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
                 mismatch = self.reporter.collect_detail(
                     [
@@ -446,7 +448,14 @@ class CheckpointReporterTest(unittest.TestCase):
                 )
                 (run_dir / "rejections.tsv").unlink()
                 without_rejections = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
+                (run_dir / "decisions.tsv").write_text(
+                    "1\trejected\tRecorded decision.\n", encoding="utf-8"
+                )
+                decision_capture = self.reporter.load_capture(checkpoint, "owner/repo", 42)
+                decision_detail = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
 
+        self.assertTrue(legacy_capture.rejection_file_present)
+        self.assertFalse(legacy_capture.decision_file_present)
         self.assertEqual(detail["linkage_status"], "linked")
         self.assertEqual(detail["findings"][0]["reason_status"], "not recorded")
         self.assertEqual(detail["findings"][0]["rejection_reason"], None)
@@ -460,6 +469,11 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(without_rejections["linkage_status"], "linked")
         self.assertFalse(without_rejections["no_linked_data"])
         self.assertIn("rejection reasons are not recorded", without_rejections["message"])
+        self.assertFalse(decision_capture.rejection_file_present)
+        self.assertTrue(decision_capture.decision_file_present)
+        self.assertEqual(decision_detail["message"], "linked capture loaded")
+        self.assertEqual(decision_detail["findings"][0]["disposition"], "rejected")
+        self.assertEqual(decision_detail["findings"][0]["rejection_reason"], "Recorded decision.")
 
     def test_details_rejects_missing_marker_or_invalid_capture_without_empty_success(self) -> None:
         comments = [
@@ -654,9 +668,35 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(round_result["references"][0]["finding_id"], 2)
         self.assertEqual(len(round_result["references"]), 1)
 
-    def test_rejections_count_requires_positive_integer(self) -> None:
-        with self.assertRaises(self.reporter.argparse.ArgumentTypeError):
-            self.reporter.parse_positive_limit("0")
+    def test_round_count_requires_positive_integer(self) -> None:
+        for value in ("0", "invalid"):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    self.reporter.argparse.ArgumentTypeError,
+                    "^count must be a positive integer$",
+                ),
+            ):
+                self.reporter.parse_positive_limit(value)
+
+        for flag in ("--rounds", "--rejections"):
+            stderr = io.StringIO()
+            with (
+                self.subTest(flag=flag),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["reporter", "--repo", "owner/repo", "--pr", "42", flag, "0"],
+                ),
+                redirect_stderr(stderr),
+                self.assertRaisesRegex(SystemExit, "2"),
+            ):
+                self.reporter.parse_args()
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    f"reporter: error: argument {flag}: count must be a positive integer\n"
+                )
+            )
 
     def test_hosted_reviews_are_saved_by_actual_id_without_owner_checkpoint(self) -> None:
         reviews = [

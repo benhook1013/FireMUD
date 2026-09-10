@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -291,7 +291,7 @@ def pull_request_merge_base(root: Path, metadata: PullRequestMetadata) -> str:
 
 
 @contextmanager
-def snapshot_worktree(root: Path, revision: str) -> Iterable[Path]:
+def snapshot_worktree(root: Path, revision: str) -> Iterator[Path]:
     temp_root = Path(tempfile.mkdtemp(prefix="firemud-cloc-snapshot-"))
     snapshot = temp_root / "worktree"
     added = False

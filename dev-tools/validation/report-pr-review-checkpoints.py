@@ -129,9 +129,9 @@ def parse_positive_limit(value: str) -> int:
     try:
         limit = int(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("rejections must be a positive integer") from exc
+        raise argparse.ArgumentTypeError("count must be a positive integer") from exc
     if limit <= 0:
-        raise argparse.ArgumentTypeError("rejections must be a positive integer")
+        raise argparse.ArgumentTypeError("count must be a positive integer")
     return limit
 
 
@@ -974,7 +974,16 @@ def load_capture(checkpoint: Checkpoint, repo: str, pr_number: int) -> CaptureDa
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is not None:
         decisions, unlinked, present = _read_decisions(decision_path, list(range(1, len(findings) + 1)))
-        return CaptureData(metadata, findings, {}, [], present, decisions, unlinked, present)
+        return CaptureData(
+            metadata=metadata,
+            findings=findings,
+            reasons={},
+            unlinked_rejections=[],
+            rejection_file_present=False,
+            decisions=decisions,
+            unlinked_decisions=unlinked,
+            decision_file_present=present,
+        )
     rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
     if rejection_path is None:
         return CaptureData(metadata, findings, {}, [], False)
@@ -1047,7 +1056,7 @@ def collect_detail(comments: list[dict[str, Any]], comment_id: int, repo: str, p
             "no_linked_data": False,
             "message": (
                 "linked capture loaded"
-                if capture.rejection_file_present
+                if capture.decision_file_present or capture.rejection_file_present
                 else "linked capture loaded; rejection reasons are not recorded"
             ),
             "run_id": checkpoint.run_id,
