@@ -110,6 +110,16 @@ def parse_comment_id(value: str) -> int:
     return comment_id
 
 
+def parse_positive_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("rejections must be a positive integer") from exc
+    if limit <= 0:
+        raise argparse.ArgumentTypeError("rejections must be a positive integer")
+    return limit
+
+
 def _comment_run_id(body: str) -> str | None:
     marker_lines = []
     for line in body.splitlines()[1:]:
@@ -539,6 +549,60 @@ def collect_detail(comments: list[dict[str, Any]], comment_id: int, repo: str, p
     return result
 
 
+def collect_rejections(comments: list[dict[str, Any]], count: int, repo: str, pr_number: int) -> dict[str, Any]:
+    checkpoints, _ = parse_checkpoint_comments(comments)
+    cli_checkpoints = sorted(
+        (checkpoint for checkpoint in checkpoints if checkpoint.type == "CLI"),
+        key=lambda checkpoint: checkpoint.created_at,
+    )
+    selected = cli_checkpoints[-count:]
+    rounds: list[dict[str, Any]] = []
+    for checkpoint in selected:
+        round_result: dict[str, Any] = {
+            "comment_id": checkpoint.comment_id,
+            "created_at": checkpoint.created_at,
+            "reviewed_sha": checkpoint.reviewed_sha,
+            "raw_found": checkpoint.raw_found,
+            "accepted": checkpoint.accepted,
+            "file_count": checkpoint.file_count,
+            "run_id": checkpoint.run_id,
+            "rejections": [],
+        }
+        try:
+            capture = load_capture(checkpoint, repo, pr_number)
+        except CaptureUnavailable as exc:
+            round_result.update({"status": "unavailable", "message": str(exc)})
+            rounds.append(round_result)
+            continue
+        except CaptureInvalid as exc:
+            round_result.update({"status": "invalid", "message": str(exc)})
+            rounds.append(round_result)
+            continue
+        round_result["status"] = "linked"
+        round_result["message"] = (
+            "linked capture loaded"
+            if capture.rejection_file_present
+            else "linked capture loaded; rejection reasons are not recorded"
+        )
+        round_result["rejections"] = [
+            {
+                "ordinal": ordinal,
+                "finding": capture.findings[ordinal - 1],
+                "reason": reason,
+            }
+            for ordinal, reason in sorted(capture.reasons.items())
+        ]
+        round_result["references"] = list(capture.unlinked_rejections)
+        rounds.append(round_result)
+    return {
+        "matched_cli_rounds": len(cli_checkpoints),
+        "returned_rounds": len(rounds),
+        "omitted_rounds": len(cli_checkpoints) - len(rounds),
+        "requested_rounds": count,
+        "rounds": rounds,
+    }
+
+
 def format_marker(value: str | int | None) -> str:
     return "-" if value is None else str(value)
 
@@ -585,6 +649,30 @@ def emit_detail_text(detail: dict[str, Any]) -> None:
         print(f"unlinked_rejection reference={rejection['reference']} reason={rejection['reason']}")
 
 
+def emit_rejections_text(report: dict[str, Any]) -> None:
+    print(
+        "matched_cli={matched_cli_rounds} returned={returned_rounds} "
+        "omitted={omitted_rounds} requested={requested_rounds}".format(**report)
+    )
+    for round_result in report["rounds"]:
+        print(
+            f"round comment_id={format_marker(round_result['comment_id'])} "
+            f"posted_at_utc={round_result['created_at']} "
+            f"sha={format_marker(round_result['reviewed_sha'])} "
+            f"run_id={format_marker(round_result.get('run_id'))} "
+            f"status={round_result['status']}"
+        )
+        print(f"  {round_result['message']}")
+        for rejection in round_result["rejections"]:
+            finding = rejection["finding"]
+            print(
+                f"  rejected finding[{rejection['ordinal']}] "
+                f"file={finding.get('fileName', '-')} reason={rejection['reason']}"
+            )
+        for reference in round_result.get("references", []):
+            print(f"  rejected reference={reference['reference']} reason={reference['reason']}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract posted Hosted and CLI review checkpoint comments.")
     parser.add_argument("--repo", required=True, help="GitHub repository in OWNER/REPO form")
@@ -595,11 +683,18 @@ def parse_args() -> argparse.Namespace:
         default=20,
         help="Number of newest checkpoints to return; 0 returns all (default: 20)",
     )
-    parser.add_argument(
+    detail_or_rejections = parser.add_mutually_exclusive_group()
+    detail_or_rejections.add_argument(
         "--details",
         type=parse_comment_id,
         metavar="COMMENT_ID",
         help="Show findings and local evidence for one checkpoint comment",
+    )
+    detail_or_rejections.add_argument(
+        "--rejections",
+        type=parse_positive_limit,
+        metavar="N",
+        help="Show recorded rejections from the latest N CLI checkpoints",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     return parser.parse_args()
@@ -614,6 +709,8 @@ def main() -> int:
         comments = fetch_comments(args.repo, args.pr)
         if args.details is not None:
             detail = collect_detail(comments, args.details, args.repo, args.pr)
+        elif args.rejections is not None:
+            report = collect_rejections(comments, args.rejections, args.repo, args.pr)
         else:
             report = collect_report(comments, args.limit)
     except (CheckpointError, RuntimeError) as exc:
@@ -624,6 +721,11 @@ def main() -> int:
             print(json.dumps(detail, indent=2, sort_keys=True))
         else:
             emit_detail_text(detail)
+    elif args.rejections is not None:
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            emit_rejections_text(report)
     elif args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:

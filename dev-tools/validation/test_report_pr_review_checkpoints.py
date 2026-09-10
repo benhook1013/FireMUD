@@ -368,6 +368,67 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertTrue(detail["no_linked_data"])
         self.assertIn("no firemud-cli-run marker", detail["message"])
 
+    def test_rejections_selects_latest_cli_rounds_and_keeps_missing_links(self) -> None:
+        comments = [
+            {
+                "id": 801,
+                "body": "**CLI: 1 found / 0 accepted** · `abc1234`",
+                "created_at": "2026-09-10T01:00:00Z",
+                "updated_at": "2026-09-10T01:00:00Z",
+            },
+            {
+                "id": 802,
+                "body": "**CLI: 2 found / 1 accepted** · `def5678`",
+                "created_at": "2026-09-10T02:00:00Z",
+                "updated_at": "2026-09-10T02:00:00Z",
+            },
+            {
+                "id": 803,
+                "body": "**Hosted: 3 found / 2 accepted**",
+                "created_at": "2026-09-10T03:00:00Z",
+                "updated_at": "2026-09-10T03:00:00Z",
+            },
+        ]
+
+        report = self.reporter.collect_rejections(comments, 2, "owner/repo", 42)
+
+        self.assertEqual([round_result["comment_id"] for round_result in report["rounds"]], [801, 802])
+        self.assertTrue(all(round_result["status"] == "unavailable" for round_result in report["rounds"]))
+        self.assertEqual(report["omitted_rounds"], 0)
+
+    def test_rejections_render_only_recorded_findings_and_legacy_references(self) -> None:
+        comment = {
+            "id": 804,
+            "body": "**CLI: 2 found / 1 accepted** · `abc1234`\n<!-- firemud-cli-run: run.A1b2C3 -->",
+            "created_at": "2026-09-10T04:00:00Z",
+            "updated_at": "2026-09-10T04:00:00Z",
+        }
+        capture = self.reporter.CaptureData(
+            metadata={},
+            findings=[
+                {"type": "finding", "fileName": "a.txt"},
+                {"type": "finding", "fileName": "b.txt"},
+            ],
+            reasons={1: "Recorded rejection."},
+            unlinked_rejections=[
+                {"format": "legacy", "reference": "b.txt:4", "reason": "Legacy rejection."},
+                {"format": "ordinal", "ordinal": 2, "reference": "b.txt:4", "reason": "not recorded"},
+            ],
+            rejection_file_present=True,
+        )
+        with patch.object(self.reporter, "load_capture", return_value=capture):
+            report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42)
+
+        round_result = report["rounds"][0]
+        self.assertEqual(len(round_result["rejections"]), 1)
+        self.assertEqual(round_result["rejections"][0]["reason"], "Recorded rejection.")
+        self.assertEqual(round_result["references"][0]["format"], "legacy")
+        self.assertEqual(round_result["references"][1]["reason"], "not recorded")
+
+    def test_rejections_count_requires_positive_integer(self) -> None:
+        with self.assertRaises(self.reporter.argparse.ArgumentTypeError):
+            self.reporter.parse_positive_limit("0")
+
     def test_future_rejections_use_one_based_finding_ordinal(self) -> None:
         finding = {
             "fileName": "a.txt",
