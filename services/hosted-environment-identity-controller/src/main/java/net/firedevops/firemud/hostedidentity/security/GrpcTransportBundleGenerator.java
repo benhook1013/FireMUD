@@ -20,6 +20,7 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -109,7 +110,9 @@ public class GrpcTransportBundleGenerator {
     boolean trustAnchorChanged =
         !normalizeFingerprint(expectedTrustAnchorSha256)
             .equals(SecretMaterialValidator.trustAnchorFingerprint(existing));
-    if (!trustAnchorChanged && !renewalRequired(existing, renewBefore, now)) {
+    if (!trustAnchorChanged
+        && leafDnsNamesMatch(existing, plan)
+        && !renewalRequired(existing, renewBefore, now)) {
       return existing;
     }
     String existingResourceVersion = existing.getMetadata().getResourceVersion();
@@ -308,6 +311,32 @@ public class GrpcTransportBundleGenerator {
     issuanceGeneration(secret);
     return !leafNotAfter(secret)
         .isAfter(plus(now, renewBefore, "gRPC renewal threshold is out of range"));
+  }
+
+  private static boolean leafDnsNamesMatch(Secret secret, EnvironmentIdentityPlan plan) {
+    try {
+      X509Certificate certificate =
+          parseCertificate(
+              requiredData(secret, "tls.crt", "gRPC source leaf Secret"),
+              "gRPC source leaf Secret");
+      Collection<List<?>> subjectAlternativeNames = certificate.getSubjectAlternativeNames();
+      if (subjectAlternativeNames == null) {
+        return false;
+      }
+      List<String> actualDnsNames = new java.util.ArrayList<>();
+      for (List<?> subjectAlternativeName : subjectAlternativeNames) {
+        if (subjectAlternativeName == null
+            || subjectAlternativeName.size() != 2
+            || !Integer.valueOf(2).equals(subjectAlternativeName.get(0))
+            || !(subjectAlternativeName.get(1) instanceof String name)) {
+          return false;
+        }
+        actualDnsNames.add(name.toLowerCase(Locale.ROOT));
+      }
+      return actualDnsNames.stream().distinct().sorted().toList().equals(grpcDnsNames(plan));
+    } catch (Exception exception) {
+      throw new IllegalStateException("gRPC source has invalid leaf certificate", exception);
+    }
   }
 
   static void validateAcceptedGeneration(long currentGeneration, long acceptedGeneration) {

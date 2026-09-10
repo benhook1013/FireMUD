@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -59,7 +60,7 @@ class SecretMaterialValidatorTest {
   private static final KeyPair FIXTURE_CA_KEY_PAIR = generateRsaKeyPair();
 
   @Test
-  void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() {
+  void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret source = new GrpcTransportBundleGenerator().generate(plan);
@@ -73,6 +74,21 @@ class SecretMaterialValidatorTest {
                 true,
                 trustAnchor);
 
+    X509Certificate leaf = certificate(source.getData().get("tls.crt"));
+    var subjectAlternativeNames = leaf.getSubjectAlternativeNames();
+    assertTrue(subjectAlternativeNames != null);
+    assertTrue(
+        subjectAlternativeNames.stream()
+            .allMatch(
+                subjectAlternativeName ->
+                    subjectAlternativeName.size() == 2
+                        && Integer.valueOf(2).equals(subjectAlternativeName.get(0))));
+    assertEquals(
+        GrpcTransportBundleGenerator.grpcDnsNames(plan),
+        subjectAlternativeNames.stream()
+            .map(subjectAlternativeName -> (String) subjectAlternativeName.get(1))
+            .sorted()
+            .toList());
     assertEquals(64, summary.certificateFingerprint().length());
     assertEquals(64, summary.spkiSha256().length());
     assertEquals(1, GrpcTransportBundleGenerator.issuanceGeneration(source));
@@ -480,6 +496,65 @@ class SecretMaterialValidatorTest {
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  void ensureRepairsCurrentBundleWhenLeafDnsNamesDoNotMatch() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    EnvironmentIdentityPlan wrongDnsPlan = withGrpcConsumers(plan, "unexpected-service");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(wrongDnsPlan, ca, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion("7");
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+    assertNotEquals(
+        GrpcTransportBundleGenerator.grpcDnsNames(plan),
+        GrpcTransportBundleGenerator.grpcDnsNames(wrongDnsPlan));
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
+        mock(NonNamespaceOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> controlSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> existingResource = mock(Resource.class);
+    Resource<Secret> caResource = mock(Resource.class);
+    Resource<Secret> replacementResource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.identityNamespace())).thenReturn(identitySecrets);
+    when(secrets.inNamespace(plan.controlNamespace())).thenReturn(controlSecrets);
+    when(identitySecrets.withName(plan.grpcSecretName())).thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(controlSecrets.withName(plan.caSecretName())).thenReturn(caResource);
+    when(caResource.get()).thenReturn(ca);
+    Secret[] replacementHolder = new Secret[1];
+    when(identitySecrets.resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenAnswer(
+            invocation -> {
+              replacementHolder[0] = invocation.getArgument(0, Secret.class);
+              return replacementResource;
+            });
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacementHolder[0]);
+
+    Secret repaired = generator.ensure(client, plan, 4L, renewBefore, trustAnchor);
+
+    verify(identitySecrets).resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
+    assertNotSame(existing, repaired);
+    assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
+    assertEquals(
+        GrpcTransportBundleGenerator.grpcDnsNames(plan),
+        certificate(repaired.getData().get("tls.crt")).getSubjectAlternativeNames().stream()
+            .map(subjectAlternativeName -> (String) subjectAlternativeName.get(1))
+            .sorted()
+            .toList());
+  }
+
   @ParameterizedTest
   @NullAndEmptySource
   @SuppressWarnings("unchecked")
@@ -851,6 +926,33 @@ class SecretMaterialValidatorTest {
 
   private static String relabel(String encoded, String oldLabel, String newLabel) {
     return encode(pemText(encoded).replace(oldLabel, newLabel));
+  }
+
+  private static EnvironmentIdentityPlan withGrpcConsumers(
+      EnvironmentIdentityPlan plan, String... consumers) {
+    return new EnvironmentIdentityPlan(
+        plan.name(),
+        plan.controlNamespace(),
+        plan.identityNamespace(),
+        plan.runtimeNamespace(),
+        plan.hostname(),
+        plan.ingressCertificateName(),
+        plan.ingressSecretName(),
+        plan.telnetCertificateName(),
+        plan.telnetSecretName(),
+        plan.gatewayInternalWsCertificateName(),
+        plan.gatewayInternalWsSecretName(),
+        plan.gatewayInternalWsDnsName(),
+        plan.tcpProxyBridgeCertificateName(),
+        plan.tcpProxyBridgeSecretName(),
+        plan.tcpProxyBridgeUriSan(),
+        plan.grpcCertificateName(),
+        plan.grpcSecretName(),
+        plan.ingressIssuer(),
+        plan.telnetIssuer(),
+        plan.grpcIssuer(),
+        plan.caSecretName(),
+        java.util.List.of(consumers));
   }
 
   private static X509Certificate certificate(String encoded) throws Exception {

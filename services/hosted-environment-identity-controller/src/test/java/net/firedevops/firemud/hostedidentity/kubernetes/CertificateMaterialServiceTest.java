@@ -1133,12 +1133,10 @@ class CertificateMaterialServiceTest {
     }
     Secret ownedGrpc =
         ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());
-    Secret unownedGrpc =
-        new SecretBuilder(ownedGrpc).editMetadata().withLabels(Map.of()).endMetadata().build();
     Resource<Secret> grpcSourceResource = mock(Resource.class);
     when(secretClient.identitySecrets().withName(plan.grpcSecretName()))
         .thenReturn(grpcSourceResource);
-    when(grpcSourceResource.get()).thenReturn(ownedGrpc, unownedGrpc);
+    when(grpcSourceResource.get()).thenReturn(ownedGrpc);
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     when(validator.validateIdentity(
             org.mockito.ArgumentMatchers.any(Secret.class),

@@ -251,12 +251,12 @@ if projection_waiter.count("deadline=$((SECONDS + timeout_seconds))") != 1:
     raise SystemExit("projection waiter must preserve one shared deadline")
 
 reconcile_steps = reconciler["jobs"]["reconcile-dev-demo"]["steps"]
-reconcile_run = next(
+reconcile_step_run = next(
     step["run"]
     for step in reconcile_steps
     if step.get("name") == "Dispatch dev-demo deploy when stale or missing"
 )
-if "bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh" not in reconcile_run:
+if "bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh" not in reconcile_step_run:
     raise SystemExit("workflow must invoke the extracted reconciler script")
 reconcile_run = reconcile_script
 for required in (
@@ -1304,6 +1304,18 @@ case "$TEST_SCENARIO:$page" in
         display_title:("Develop Dev Demo Environment deploy head-" + $head)
       }]}'
     ;;
+  nonterminal-before-anchor:1)
+    jq -nc --arg other "$TEST_OTHER_HEAD_SHA" \
+      '{workflow_runs:[range(0;100) as $index | {
+        id:(800 + $index), head_sha:$other, status:"requested", conclusion:null,
+        created_at:"2026-09-09T04:59:00Z",
+        display_title:("Develop Dev Demo Environment deploy head-" + $other)
+      }]}'
+    ;;
+  nonterminal-before-anchor:*)
+    echo "unexpected history page after anchor cutoff" >&2
+    exit 2
+    ;;
   other-titles:*|nonterminal-old:*)
     empty_runs
     ;;
@@ -1379,6 +1391,16 @@ run_reconcile_fixture() {
       exit 1
     fi
   fi
+  if [[ "$scenario" == nonterminal-before-anchor ]]; then
+    expected_trace=$'anchor\nruns status=all page=1\nruns status=all page=1'
+    actual_trace="$(<"$trace_log")"
+    if [[ "$actual_trace" != "$expected_trace" ]]; then
+      echo "reconciler fixture $scenario crossed the history anchor" >&2
+      printf 'expected trace:\n%s\nactual trace:\n%s\n' "$expected_trace" "$actual_trace" >&2
+      cat "$output" >&2
+      exit 1
+    fi
+  fi
 }
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
@@ -1391,4 +1413,5 @@ run_reconcile_fixture successful-unaligned 0 1 "Redispatching successful dev-dem
 run_reconcile_fixture successful-unaligned-budget 1 0 "Dev-demo alignment retry budget exhausted"
 run_reconcile_fixture successful-aligned 0 0 "already aligned to successful develop head" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
+run_reconcile_fixture nonterminal-before-anchor 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

@@ -143,6 +143,11 @@ public class ServedEnvironmentProbe {
           : new ProbeResult(true, successReason);
     } catch (IllegalArgumentException exception) {
       return new ProbeResult(false, "material-or-configuration-invalid");
+    } catch (IllegalStateException exception) {
+      if ("gRPC endpoint did not negotiate HTTP/2".equals(exception.getMessage())) {
+        return new ProbeResult(false, "handshake-policy-rejected");
+      }
+      return new ProbeResult(false, "connection-failed");
     } catch (Exception exception) {
       return new ProbeResult(false, "connection-failed");
     }

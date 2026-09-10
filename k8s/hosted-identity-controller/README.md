@@ -20,6 +20,7 @@ Controller-managed resources carry these stable labels:
 
 - `app.kubernetes.io/name=hosted-environment-identity-controller` where the object is owned by this controller;
 - `firemud.dev/managed-by=hosted-identity-controller`;
+- `firemud.dev/retention=retained`;
 - `firemud.dev/identity-name=<dev-demo|pr-N>`; and
 - `firemud.dev/role=ingress|telnet|gateway-internal-ws|tcp-proxy-bridge|grpc` for identity material.
 

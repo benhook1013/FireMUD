@@ -878,7 +878,14 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
         fail(
             "prepared preview render must contain exactly one Service/tcp-proxy-service"
         )
-    service_ports = tcp_proxy_services[0].get("spec", {}).get("ports", [])
+    service_spec = _require_mapping(
+        tcp_proxy_services[0].get("spec"),
+        "Service/tcp-proxy-service.spec",
+    )
+    service_ports = _require_mapping_list(
+        service_spec.get("ports"),
+        "Service/tcp-proxy-service.spec.ports",
+    )
     declared_ports = [
         (index, port)
         for index, port in enumerate(service_ports)

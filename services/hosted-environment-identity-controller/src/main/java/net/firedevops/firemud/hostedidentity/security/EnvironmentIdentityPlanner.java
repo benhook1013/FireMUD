@@ -57,7 +57,7 @@ public class EnvironmentIdentityPlanner {
     } catch (IllegalStateException exception) {
       throw new IllegalArgumentException(exception.getMessage(), exception);
     }
-    String materialPrefix = DEV_DEMO_NAME.equals(name) ? runtimeNamespace : name;
+    String materialPrefix = runtimeNamespace;
     return new EnvironmentIdentityPlan(
         name,
         properties.getControlNamespace(),

@@ -21,9 +21,7 @@ import org.yaml.snakeyaml.Yaml;
 class EnvironmentIdentityPlannerTest {
   private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
       Pattern.compile(
-          "r\\.apiGroups == \\[\\'apps\\'\\] && r\\.resources == \\[\\'deployments\\'\\] && r\\.resourceNames == \\[([^\\]]+)]");
-  private static final Pattern RUNTIME_DEPLOYMENT_VERBS =
-      Pattern.compile("r\\.verbs == \\[([^\\]]+)]");
+          "r\\.apiGroups == \\[\\'apps\\'\\] && r\\.resources == \\[\\'deployments\\'\\] && r\\.resourceNames == \\[([^\\]]+)] && r\\.verbs == \\[([^\\]]+)]");
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
@@ -142,13 +140,8 @@ class EnvironmentIdentityPlannerTest {
 
     assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
     assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
+    assertEquals("'get', 'update', 'patch'", resourceNames.group(2));
     assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
-    Matcher verbs = RUNTIME_DEPLOYMENT_VERBS.matcher(runtimeScopePolicy);
-    boolean expectedVerbs = false;
-    while (verbs.find()) {
-      expectedVerbs |= "'get', 'update', 'patch'".equals(verbs.group(1));
-    }
-    assertTrue(expectedVerbs, "runtime deployment verbs rule must exist");
   }
 
   @Test

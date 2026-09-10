@@ -126,6 +126,22 @@ class ServedEnvironmentProbeTest {
                 },
                 "mtls-handshake")
             .reason());
+    assertEquals(
+        "handshake-policy-rejected",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  throw new IllegalStateException("gRPC endpoint did not negotiate HTTP/2");
+                },
+                "mtls-handshake")
+            .reason());
+    assertEquals(
+        "connection-failed",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  throw new IllegalStateException("other state failure");
+                },
+                "mtls-handshake")
+            .reason());
   }
 
   @Test

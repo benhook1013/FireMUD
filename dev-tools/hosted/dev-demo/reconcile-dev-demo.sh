@@ -140,6 +140,10 @@ while (( page <= max_history_pages )); do
   if (( page_size < 100 )); then
     break
   fi
+  oldest_page_created_at="$(jq -r '.workflow_runs[-1].created_at // empty' <<<"${run_page}")"
+  if [[ -z "$oldest_page_created_at" || "$oldest_page_created_at" < "$history_not_before" ]]; then
+    break
+  fi
   ((page += 1))
 done
 if (( page > max_history_pages )); then
