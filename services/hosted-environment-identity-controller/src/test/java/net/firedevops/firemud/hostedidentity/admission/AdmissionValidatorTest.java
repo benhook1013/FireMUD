@@ -33,8 +33,7 @@ class AdmissionValidatorTest {
 
   @Test
   void nullMetadataIsRejectedBeforePlanning() {
-    assertRejectedBeforePlanning(
-        resource -> resource.setMetadata(null), METADATA_REQUIRED_MESSAGE);
+    assertRejectedBeforePlanning(resource -> resource.setMetadata(null), METADATA_REQUIRED_MESSAGE);
   }
 
   @Test

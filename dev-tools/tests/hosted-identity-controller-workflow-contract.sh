@@ -222,6 +222,7 @@ contains "$dev_demo" 'uses: ./.github/actions/resolve-certificate-identity-mode'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'hosted-controller'"
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Active'
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal workflow interpolation.
 contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'

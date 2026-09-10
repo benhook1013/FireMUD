@@ -78,11 +78,7 @@ public class ServedEnvironmentProbe {
         (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
         (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
         (hostname, port) ->
-            bridge(
-                hostname,
-                port,
-                tcpProxyBridgeMaterial,
-                expectedGatewayInternalWsLeafSha256),
+            bridge(hostname, port, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
         (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256));
   }
 

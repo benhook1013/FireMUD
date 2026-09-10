@@ -24,8 +24,7 @@ class EnvironmentIdentityPlannerTest {
       Pattern.compile(
           "r\\.apiGroups\\s*==\\s*\\['apps']\\s*&&\\s*r\\.resources\\s*==\\s*\\['deployments']\\s*&&\\s*r\\.resourceNames\\s*==\\s*\\[([^\\]]+)]\\s*&&\\s*r\\.verbs\\s*==\\s*\\[([^\\]]+)]");
   private static final Pattern RUNTIME_SCOPE_MARKER =
-      Pattern.compile(
-          "\\(object\\.metadata\\.name\\s*==\\s*'firemud-hosted-runtime-scope'");
+      Pattern.compile("\\(object\\.metadata\\.name\\s*==\\s*'firemud-hosted-runtime-scope'");
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
@@ -228,6 +227,9 @@ class EnvironmentIdentityPlannerTest {
       Path candidate = directory.resolve(relativePath);
       if (Files.isRegularFile(candidate)) {
         return candidate;
+      }
+      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
+        break;
       }
       directory = directory.getParent();
     }

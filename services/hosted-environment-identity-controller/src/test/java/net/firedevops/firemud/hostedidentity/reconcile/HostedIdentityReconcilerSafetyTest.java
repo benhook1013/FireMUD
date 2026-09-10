@@ -62,8 +62,10 @@ import net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityScopeServi
 import net.firedevops.firemud.hostedidentity.kubernetes.ResourceContexts;
 import net.firedevops.firemud.hostedidentity.kubernetes.RuntimeProfileService;
 import net.firedevops.firemud.hostedidentity.kubernetes.SecretProjectionService;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.model.HostedCondition;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
+import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus;
 import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
@@ -593,11 +595,7 @@ class HostedIdentityReconcilerSafetyTest {
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
             properties);
     HostedEnvironmentIdentity resource = resource();
-    resource
-        .getSpec()
-        .setDesiredState(
-            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                .Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
 
     UpdateControl<HostedEnvironmentIdentity> published = reconciler.reconcile(resource, context);
 
@@ -659,11 +657,7 @@ class HostedIdentityReconcilerSafetyTest {
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
             properties);
     HostedEnvironmentIdentity resource = resource();
-    resource
-        .getSpec()
-        .setDesiredState(
-            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                .Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
     HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
     HostedEnvironmentIdentityStatus.RuntimeProfile priorProfile =
         new HostedEnvironmentIdentityStatus.RuntimeProfile();
@@ -716,11 +710,7 @@ class HostedIdentityReconcilerSafetyTest {
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
             properties);
     HostedEnvironmentIdentity resource = resource();
-    resource
-        .getSpec()
-        .setDesiredState(
-            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                .Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
 
     UpdateControl<HostedEnvironmentIdentity> result =
         reconciler.reconcile(resource, mock(Context.class));
@@ -754,11 +744,7 @@ class HostedIdentityReconcilerSafetyTest {
             new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
             properties);
     HostedEnvironmentIdentity resource = resource();
-    resource
-        .getSpec()
-        .setDesiredState(
-            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                .Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
 
     UpdateControl<HostedEnvironmentIdentity> result =
         reconciler.reconcile(resource, mock(Context.class));
@@ -777,14 +763,9 @@ class HostedIdentityReconcilerSafetyTest {
             new RuntimeProfileService.RuntimeProfile(
                 "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true),
             RuntimeProfileService.RuntimeProfile.absent());
-    when(fixture.identityNamespace.get())
-        .thenReturn(fixture.identityNamespace(false), null, null);
+    when(fixture.identityNamespace.get()).thenReturn(fixture.identityNamespace(false), null, null);
     HostedEnvironmentIdentity resource = resource();
-    resource
-        .getSpec()
-        .setDesiredState(
-            net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                .Retired);
+    resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
     HostedEnvironmentIdentityStatus priorStatus = new HostedEnvironmentIdentityStatus();
     HostedEnvironmentIdentityStatus.RuntimeProfile priorProfile =
         new HostedEnvironmentIdentityStatus.RuntimeProfile();
@@ -1373,7 +1354,7 @@ class HostedIdentityReconcilerSafetyTest {
     private final KubernetesClient client = mock(KubernetesClient.class);
     private final HostedIdentityProperties properties;
     private final EnvironmentIdentityPlanner planner;
-    private final net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan;
+    private final EnvironmentIdentityPlan plan;
     private final CertificateMaterialService certificates = mock(CertificateMaterialService.class);
     private final SecretProjectionService projections = mock(SecretProjectionService.class);
     private final HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
@@ -1440,13 +1421,8 @@ class HostedIdentityReconcilerSafetyTest {
               .withGeneration(1L)
               .withFinalizers(HostedIdentityContract.FINALIZER)
               .build());
-      resource.setSpec(
-          new net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec());
-      resource
-          .getSpec()
-          .setDesiredState(
-              net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                  .Active);
+      resource.setSpec(new HostedEnvironmentIdentitySpec());
+      resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Active);
     }
 
     private UpdateControl<HostedEnvironmentIdentity> reconcile() {
@@ -1454,14 +1430,12 @@ class HostedIdentityReconcilerSafetyTest {
     }
 
     private static CertificateMaterialService.RoleMaterial material(
-        net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
-        String role,
-        String fingerprintDigit) {
+        EnvironmentIdentityPlan plan, String role, String fingerprintDigit) {
       return material(plan, role, fingerprintDigit, SOURCE_READY);
     }
 
     private static CertificateMaterialService.RoleMaterial material(
-        net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
+        EnvironmentIdentityPlan plan,
         String role,
         String fingerprintDigit,
         CertificateMaterialService.RoleMaterialState state) {
@@ -1628,11 +1602,7 @@ class HostedIdentityReconcilerSafetyTest {
 
     private UpdateControl<HostedEnvironmentIdentity> retire() {
       HostedEnvironmentIdentity resource = resource();
-      resource
-          .getSpec()
-          .setDesiredState(
-              net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec.DesiredState
-                  .Retired);
+      resource.getSpec().setDesiredState(HostedEnvironmentIdentitySpec.DesiredState.Retired);
       return reconciler.reconcile(resource, mock(Context.class));
     }
   }
@@ -1656,8 +1626,7 @@ class HostedIdentityReconcilerSafetyTest {
             .withNamespace("firemud-system")
             .withGeneration(1L)
             .build());
-    resource.setSpec(
-        new net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec());
+    resource.setSpec(new HostedEnvironmentIdentitySpec());
     return resource;
   }
 }

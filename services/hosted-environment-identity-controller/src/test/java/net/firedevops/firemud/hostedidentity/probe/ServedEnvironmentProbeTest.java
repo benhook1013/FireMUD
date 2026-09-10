@@ -104,13 +104,7 @@ class ServedEnvironmentProbeTest {
         };
 
     new ServedEnvironmentProbe(properties)
-        .probe(
-            plan,
-            32001,
-            recordingProbe,
-            recordingProbe,
-            recordingProbe,
-            recordingProbe);
+        .probe(plan, 32001, recordingProbe, recordingProbe, recordingProbe, recordingProbe);
 
     assertEquals(
         List.of(

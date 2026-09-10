@@ -72,6 +72,8 @@ public class HostedIdentityProperties implements InitializingBean {
         "preview", previewRequestedHeadAnnotation, previewDeployedHeadAnnotation);
     requireDistinctHeadAnnotations(
         "dev-demo", devDemoRequestedHeadAnnotation, devDemoHeadAnnotation);
+    requireNonBlank("preview Telnet port annotation", previewTelnetPortAnnotation);
+    requireNonBlank("dev-demo Telnet port annotation", devDemoTelnetPortAnnotation);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(

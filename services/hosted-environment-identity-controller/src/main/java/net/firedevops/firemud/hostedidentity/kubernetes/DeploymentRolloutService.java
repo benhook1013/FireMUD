@@ -20,8 +20,7 @@ import org.springframework.stereotype.Component;
 public class DeploymentRolloutService {
   static final String GATEWAY_DEPLOYMENT = "spring-cloud-gateway";
   static final String TCP_PROXY_DEPLOYMENT = "tcp-proxy-service";
-  static final List<String> BRIDGE_DEPLOYMENTS =
-      List.of(GATEWAY_DEPLOYMENT, TCP_PROXY_DEPLOYMENT);
+  static final List<String> BRIDGE_DEPLOYMENTS = List.of(GATEWAY_DEPLOYMENT, TCP_PROXY_DEPLOYMENT);
 
   public RolloutResult sync(
       KubernetesClient client,

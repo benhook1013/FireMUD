@@ -34,6 +34,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -61,7 +62,20 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 public class SecretMaterialValidatorTest {
   private static final AtomicLong CA_SERIAL = new AtomicLong(1);
-  private static final KeyPair FIXTURE_CA_KEY_PAIR = generateRsaKeyPair();
+  private static final List<KeyPair> RSA_KEY_FIXTURES =
+      List.of(
+          generateRsaKeyPair(),
+          generateRsaKeyPair(),
+          generateRsaKeyPair(),
+          generateRsaKeyPair(),
+          generateRsaKeyPair(),
+          generateRsaKeyPair());
+  private static final KeyPair FIXTURE_CA_KEY_PAIR = RSA_KEY_FIXTURES.get(0);
+  private static final KeyPair DISTINCT_CA_KEY_PAIR_ONE = RSA_KEY_FIXTURES.get(1);
+  private static final KeyPair DISTINCT_CA_KEY_PAIR_TWO = RSA_KEY_FIXTURES.get(2);
+  private static final KeyPair CHAIN_ROOT_KEY_PAIR = RSA_KEY_FIXTURES.get(3);
+  private static final KeyPair CHAIN_INTERMEDIATE_KEY_PAIR = RSA_KEY_FIXTURES.get(4);
+  private static final KeyPair CHAIN_LEAF_KEY_PAIR = RSA_KEY_FIXTURES.get(5);
 
   @Test
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() throws Exception {
@@ -111,11 +125,15 @@ public class SecretMaterialValidatorTest {
 
   @Test
   void trustAnchorFingerprintRequiresExactlyOneCertificate() throws Exception {
-    Secret singleCertificate = generatedCaWithDistinctKeyPair(Instant.now(), Duration.ofDays(60));
+    Secret singleCertificate =
+        generatedCaWithDistinctKeyPair(
+            Instant.now(), Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(singleCertificate);
     assertEquals(64, fingerprint.length());
 
-    Secret secondCertificate = generatedCaWithDistinctKeyPair(Instant.now(), Duration.ofDays(60));
+    Secret secondCertificate =
+        generatedCaWithDistinctKeyPair(
+            Instant.now(), Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_TWO);
     Map<String, String> multiCertificateData = new LinkedHashMap<>(singleCertificate.getData());
     multiCertificateData.put(
         "ca.crt",
@@ -485,7 +503,8 @@ public class SecretMaterialValidatorTest {
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
     String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
-    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret rotatedCa =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
 
     IdentityClient identityClient = identityClient(plan, existing, rotatedCa);
 
@@ -554,26 +573,14 @@ public class SecretMaterialValidatorTest {
         GrpcTransportBundleGenerator.grpcDnsNames(wrongDnsPlan));
 
     IdentityClient identityClient = identityClient(plan, existing, ca);
-    Resource<Secret> replacementResource = mock(Resource.class);
-    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
-    Secret[] replacementHolder = new Secret[1];
-    when(identityClient
-            .identitySecrets()
-            .resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenAnswer(
-            invocation -> {
-              replacementHolder[0] = invocation.getArgument(0, Secret.class);
-              return replacementResource;
-            });
-    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
-    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacementHolder[0]);
+    Replacement replacement = stubReplacement(identityClient, "7");
 
     Secret repaired = generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
 
     verify(identityClient.identitySecrets())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
-    verify(replacementResource).lockResourceVersion("7");
-    verify(lockedReplacementResource).replace();
+    verify(replacement.resource()).lockResourceVersion("7");
+    verify(replacement.lockedResource()).replace();
     assertNotSame(existing, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
     assertEquals(
@@ -593,10 +600,12 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
-    Secret oldCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret oldCa =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion(resourceVersion);
-    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret rotatedCa =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_TWO);
     String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
 
     IdentityClient identityClient = identityClient(plan, existing, rotatedCa);
@@ -620,38 +629,28 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
-    Secret oldCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret oldCa =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
     String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
-    Secret rotatedCa = generatedCaWithDistinctKeyPair(now, Duration.ofDays(60));
+    Secret rotatedCa =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_TWO);
     String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
     assertFalse(GrpcTransportBundleGenerator.renewalRequired(existing, renewBefore, Instant.now()));
     assertNotEquals(rotatedTrustAnchor, SecretMaterialValidator.trustAnchorFingerprint(existing));
 
     IdentityClient identityClient = identityClient(plan, existing, rotatedCa);
-    Resource<Secret> replacementResource = mock(Resource.class);
-    ReplaceDeletable<Secret> lockedReplacementResource = mock(ReplaceDeletable.class);
-    Secret[] replacementHolder = new Secret[1];
-    when(identityClient
-            .identitySecrets()
-            .resource(org.mockito.ArgumentMatchers.any(Secret.class)))
-        .thenAnswer(
-            invocation -> {
-              replacementHolder[0] = invocation.getArgument(0, Secret.class);
-              return replacementResource;
-            });
-    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
-    when(lockedReplacementResource.replace()).thenAnswer(invocation -> replacementHolder[0]);
+    Replacement replacement = stubReplacement(identityClient, "7");
 
     Secret repaired =
         generator.ensure(identityClient.client(), plan, 4L, renewBefore, rotatedTrustAnchor);
 
     verify(identityClient.identitySecrets())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
-    verify(replacementResource).lockResourceVersion("7");
-    verify(lockedReplacementResource).replace();
-    Secret rotated = replacementHolder[0];
+    verify(replacement.resource()).lockResourceVersion("7");
+    verify(replacement.lockedResource()).replace();
+    Secret rotated = replacement.holder()[0];
     assertSame(rotated, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));
     assertEquals("7", rotated.getMetadata().getResourceVersion());
@@ -1011,6 +1010,26 @@ public class SecretMaterialValidatorTest {
       KubernetesClient client,
       NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets) {}
 
+  @SuppressWarnings("unchecked")
+  private static Replacement stubReplacement(
+      IdentityClient identityClient, String resourceVersion) {
+    Resource<Secret> resource = mock(Resource.class);
+    ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
+    Secret[] holder = new Secret[1];
+    when(identityClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
+        .thenAnswer(
+            invocation -> {
+              holder[0] = invocation.getArgument(0, Secret.class);
+              return resource;
+            });
+    when(resource.lockResourceVersion(resourceVersion)).thenReturn(lockedResource);
+    when(lockedResource.replace()).thenAnswer(invocation -> holder[0]);
+    return new Replacement(resource, lockedResource, holder);
+  }
+
+  private record Replacement(
+      Resource<Secret> resource, ReplaceDeletable<Secret> lockedResource, Secret[] holder) {}
+
   private static String pemText(String encoded) {
     return new String(Base64.getDecoder().decode(encoded), StandardCharsets.US_ASCII);
   }
@@ -1025,9 +1044,9 @@ public class SecretMaterialValidatorTest {
 
   private static Secret generatedPresentedChain(int rootPathLength) throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
-    KeyPair rootKeyPair = generateRsaKeyPair();
-    KeyPair intermediateKeyPair = generateRsaKeyPair();
-    KeyPair leafKeyPair = generateRsaKeyPair();
+    KeyPair rootKeyPair = CHAIN_ROOT_KEY_PAIR;
+    KeyPair intermediateKeyPair = CHAIN_INTERMEDIATE_KEY_PAIR;
+    KeyPair leafKeyPair = CHAIN_LEAF_KEY_PAIR;
     X500Name rootName = new X500Name("CN=FireMUD path root, O=FireMUD");
     X500Name intermediateName = new X500Name("CN=FireMUD path intermediate, O=FireMUD");
     X500Name leafName = new X500Name("CN=path-limited.pr-42.svc.cluster.local, O=FireMUD");
@@ -1139,13 +1158,10 @@ public class SecretMaterialValidatorTest {
     return generatedCa(now, lifetime, name, FIXTURE_CA_KEY_PAIR);
   }
 
-  private static Secret generatedCaWithDistinctKeyPair(Instant now, Duration lifetime)
-      throws Exception {
+  private static Secret generatedCaWithDistinctKeyPair(
+      Instant now, Duration lifetime, KeyPair keyPair) throws Exception {
     return generatedCa(
-        now,
-        lifetime,
-        new X500Name("CN=FireMUD test transport root, O=FireMUD"),
-        generateRsaKeyPair());
+        now, lifetime, new X500Name("CN=FireMUD test transport root, O=FireMUD"), keyPair);
   }
 
   private static Secret generatedCaWithoutKeyCertSign(Instant now, Duration lifetime)

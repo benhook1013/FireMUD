@@ -8523,7 +8523,9 @@ PY
 
 python3 - <<'PY' "$ROOT_DIR" "$TMP_DIR"
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -8864,6 +8866,35 @@ if (
         "hosted-bridge release identity mismatch result was not explicit: "
         f"{instance_mismatch_result}"
     )
+
+original_projection_wait = module.wait_for_secret_key_requirements
+try:
+    def unexpected_projection_wait(*args, **kwargs):
+        raise SystemExit("operator preflight waited for projections after render failure")
+
+    module.wait_for_secret_key_requirements = unexpected_projection_wait
+    operator_mismatch_output = io.StringIO()
+    with contextlib.redirect_stdout(operator_mismatch_output):
+        operator_mismatch_status = module.hosted_bridge_preflight(
+            mismatched_path,
+            namespace,
+            release,
+            "operator",
+            node_port,
+        )
+    operator_mismatch_result = json.loads(operator_mismatch_output.getvalue())
+    if (
+        operator_mismatch_status != 1
+        or operator_mismatch_result.get("status") != "fail"
+        or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+        not in operator_mismatch_result.get("message", "")
+    ):
+        raise SystemExit(
+            "operator preflight did not return the existing render failure immediately: "
+            f"{operator_mismatch_result}"
+        )
+finally:
+    module.wait_for_secret_key_requirements = original_projection_wait
 
 standalone_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 for document in standalone_documents:

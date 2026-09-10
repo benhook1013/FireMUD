@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
+import io.fabric8.kubernetes.api.model.NamespaceList;
 import io.fabric8.kubernetes.api.model.OwnerReferenceBuilder;
 import io.fabric8.kubernetes.api.model.rbac.PolicyRuleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.Role;
@@ -38,6 +39,28 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class HostedIdentityScopeServiceTest {
+  @Test
+  @SuppressWarnings("unchecked")
+  void missingRuntimeNamespaceDoesNotCreateRetainedIdentityNamespace() {
+    EnvironmentIdentityPlan plan = plan();
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation<Namespace, NamespaceList, Resource<Namespace>> namespaces =
+        mock(NonNamespaceOperation.class);
+    Resource<Namespace> runtimeNamespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(runtimeNamespace);
+    when(runtimeNamespace.get()).thenReturn(null);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new HostedIdentityScopeService().ensure(client, plan));
+
+    assertEquals("runtime Namespace is absent or has no UID", failure.getMessage());
+    verify(namespaces, never()).withName(plan.identityNamespace());
+    verify(namespaces, never()).resource(org.mockito.ArgumentMatchers.any(Namespace.class));
+  }
+
   @Test
   void identityRoleNamesOnlyCoverCertManagerCertificates() {
     EnvironmentIdentityPlan plan = plan();

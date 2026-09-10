@@ -12,6 +12,7 @@ import io.javaoperatorsdk.operator.api.reconciler.ControllerConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.Reconciler;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -225,85 +226,32 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       validateDistinctIdentities(ingress, telnet, gatewayInternalWs, tcpProxyBridge, grpc);
 
       RuntimeProfileService.RuntimeProfile expectedProfile = runtimeProfile;
-      SecretProjectionService.ProjectionResult ingressProjection =
-          project(plan, expectedProfile, ingress, HostedIdentityContract.INGRESS_ROLE);
-      UpdateControl<HostedEnvironmentIdentity> projectionFence =
-          runtimeProfileChangedStatus(
-              resource,
-              runtimeProfile,
-              ingress,
-              telnet,
-              gatewayInternalWs,
-              tcpProxyBridge,
-              grpc,
-              ingressProjection);
-      if (projectionFence != null) {
-        return projectionFence;
-      }
-      SecretProjectionService.ProjectionResult telnetProjection =
-          project(plan, expectedProfile, telnet, HostedIdentityContract.TELNET_ROLE);
-      projectionFence =
-          runtimeProfileChangedStatus(
-              resource,
-              runtimeProfile,
-              ingress,
-              telnet,
-              gatewayInternalWs,
-              tcpProxyBridge,
-              grpc,
-              telnetProjection);
-      if (projectionFence != null) {
-        return projectionFence;
-      }
-      SecretProjectionService.ProjectionResult gatewayInternalWsProjection =
-          project(
-              plan,
-              expectedProfile,
-              gatewayInternalWs,
-              HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
-      projectionFence =
-          runtimeProfileChangedStatus(
-              resource,
-              runtimeProfile,
-              ingress,
-              telnet,
-              gatewayInternalWs,
-              tcpProxyBridge,
-              grpc,
-              gatewayInternalWsProjection);
-      if (projectionFence != null) {
-        return projectionFence;
-      }
-      SecretProjectionService.ProjectionResult tcpProxyBridgeProjection =
-          project(
-              plan, expectedProfile, tcpProxyBridge, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
-      projectionFence =
-          runtimeProfileChangedStatus(
-              resource,
-              runtimeProfile,
-              ingress,
-              telnet,
-              gatewayInternalWs,
-              tcpProxyBridge,
-              grpc,
-              tcpProxyBridgeProjection);
-      if (projectionFence != null) {
-        return projectionFence;
-      }
-      SecretProjectionService.ProjectionResult grpcProjection =
-          project(plan, expectedProfile, grpc, HostedIdentityContract.GRPC_ROLE);
-      projectionFence =
-          runtimeProfileChangedStatus(
-              resource,
-              runtimeProfile,
-              ingress,
-              telnet,
-              gatewayInternalWs,
-              tcpProxyBridge,
-              grpc,
-              grpcProjection);
-      if (projectionFence != null) {
-        return projectionFence;
+      List<RoleMaterialBinding> rolePipeline =
+          List.of(
+              new RoleMaterialBinding(HostedIdentityContract.INGRESS_ROLE, ingress),
+              new RoleMaterialBinding(HostedIdentityContract.TELNET_ROLE, telnet),
+              new RoleMaterialBinding(
+                  HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE, gatewayInternalWs),
+              new RoleMaterialBinding(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, tcpProxyBridge),
+              new RoleMaterialBinding(HostedIdentityContract.GRPC_ROLE, grpc));
+      Map<String, SecretProjectionService.ProjectionResult> projections = new LinkedHashMap<>();
+      for (RoleMaterialBinding binding : rolePipeline) {
+        SecretProjectionService.ProjectionResult projection =
+            project(plan, expectedProfile, binding.material(), binding.role());
+        projections.put(binding.role(), projection);
+        UpdateControl<HostedEnvironmentIdentity> projectionFence =
+            runtimeProfileChangedStatus(
+                resource,
+                runtimeProfile,
+                ingress,
+                telnet,
+                gatewayInternalWs,
+                tcpProxyBridge,
+                grpc,
+                projection);
+        if (projectionFence != null) {
+          return projectionFence;
+        }
       }
       ReadinessStatus deploymentHead = deploymentHeadStatus(runtimeProfile);
       if (!deploymentHead.ready()) {
@@ -341,8 +289,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           deploymentRolloutService.sync(
               client,
               plan,
-              telnetProjection.revision(),
-              grpcProjection.revision(),
+              projections.get(HostedIdentityContract.TELNET_ROLE).revision(),
+              projections.get(HostedIdentityContract.GRPC_ROLE).revision(),
               () -> assertRuntimeProfileCurrent(plan, expectedProfile, "rollout mutation"));
       ServedEnvironmentProbe.ProbeResult probes;
       if (rollout.ready()) {
@@ -382,140 +330,38 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       runtimeProfile = beforeAcknowledgement.profile();
       RuntimeProfileService.RuntimeProfile acknowledgementProfile = runtimeProfile;
       if (rollout.ready() && probes.ready()) {
-        ingressProjection =
-            projectionService.acknowledge(
-                client,
-                plan,
-                HostedIdentityContract.INGRESS_ROLE,
-                ingressProjection.revision(),
-                ingress.sourceGeneration(),
-                ingress.sourceObjectGeneration(),
-                ingress.summary().spkiSha256(),
-                () ->
-                    assertRuntimeProfileCurrent(
-                        plan, acknowledgementProfile, "projection acknowledgement"));
-        UpdateControl<HostedEnvironmentIdentity> acknowledgementFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                ingressProjection);
-        if (acknowledgementFence != null) {
-          return acknowledgementFence;
-        }
-        telnetProjection =
-            projectionService.acknowledge(
-                client,
-                plan,
-                HostedIdentityContract.TELNET_ROLE,
-                telnetProjection.revision(),
-                telnet.sourceGeneration(),
-                telnet.sourceObjectGeneration(),
-                telnet.summary().spkiSha256(),
-                () ->
-                    assertRuntimeProfileCurrent(
-                        plan, acknowledgementProfile, "projection acknowledgement"));
-        acknowledgementFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                telnetProjection);
-        if (acknowledgementFence != null) {
-          return acknowledgementFence;
-        }
-        gatewayInternalWsProjection =
-            projectionService.acknowledge(
-                client,
-                plan,
-                HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
-                gatewayInternalWsProjection.revision(),
-                gatewayInternalWs.sourceGeneration(),
-                gatewayInternalWs.sourceObjectGeneration(),
-                gatewayInternalWs.summary().spkiSha256(),
-                () ->
-                    assertRuntimeProfileCurrent(
-                        plan, acknowledgementProfile, "projection acknowledgement"));
-        acknowledgementFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                gatewayInternalWsProjection);
-        if (acknowledgementFence != null) {
-          return acknowledgementFence;
-        }
-        tcpProxyBridgeProjection =
-            projectionService.acknowledge(
-                client,
-                plan,
-                HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
-                tcpProxyBridgeProjection.revision(),
-                tcpProxyBridge.sourceGeneration(),
-                tcpProxyBridge.sourceObjectGeneration(),
-                tcpProxyBridge.summary().spkiSha256(),
-                () ->
-                    assertRuntimeProfileCurrent(
-                        plan, acknowledgementProfile, "projection acknowledgement"));
-        acknowledgementFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                tcpProxyBridgeProjection);
-        if (acknowledgementFence != null) {
-          return acknowledgementFence;
-        }
-        grpcProjection =
-            projectionService.acknowledge(
-                client,
-                plan,
-                HostedIdentityContract.GRPC_ROLE,
-                grpcProjection.revision(),
-                grpc.sourceGeneration(),
-                grpc.sourceObjectGeneration(),
-                grpc.summary().spkiSha256(),
-                () ->
-                    assertRuntimeProfileCurrent(
-                        plan, acknowledgementProfile, "projection acknowledgement"));
-        acknowledgementFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                grpcProjection);
-        if (acknowledgementFence != null) {
-          return acknowledgementFence;
+        for (RoleMaterialBinding binding : rolePipeline) {
+          SecretProjectionService.ProjectionResult acknowledged =
+              projectionService.acknowledge(
+                  client,
+                  plan,
+                  binding.role(),
+                  projections.get(binding.role()).revision(),
+                  binding.material().sourceGeneration(),
+                  binding.material().sourceObjectGeneration(),
+                  binding.material().summary().spkiSha256(),
+                  () ->
+                      assertRuntimeProfileCurrent(
+                          plan, acknowledgementProfile, "projection acknowledgement"));
+          projections.put(binding.role(), acknowledged);
+          UpdateControl<HostedEnvironmentIdentity> acknowledgementFence =
+              runtimeProfileChangedStatus(
+                  resource,
+                  runtimeProfile,
+                  ingress,
+                  telnet,
+                  gatewayInternalWs,
+                  tcpProxyBridge,
+                  grpc,
+                  acknowledged);
+          if (acknowledgementFence != null) {
+            return acknowledgementFence;
+          }
         }
       }
       ReadinessStatus readiness =
           readinessStatus(
-              List.of(
-                  ingressProjection,
-                  telnetProjection,
-                  gatewayInternalWsProjection,
-                  tcpProxyBridgeProjection,
-                  grpcProjection),
+              rolePipeline.stream().map(binding -> projections.get(binding.role())).toList(),
               rollout,
               probes);
       return status(
@@ -648,6 +494,15 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
   record ReadinessStatus(
       HostedEnvironmentIdentityStatus.Phase phase, String reason, String message, boolean ready) {}
+
+  private record RoleMaterialBinding(
+      String role, CertificateMaterialService.RoleMaterial material) {
+    private RoleMaterialBinding {
+      if (material == null || !role.equals(material.role())) {
+        throw new IllegalArgumentException("identity role does not match its material");
+      }
+    }
+  }
 
   private record RuntimeProfileValidation(
       RuntimeProfileService.RuntimeProfile profile,

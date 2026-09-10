@@ -84,8 +84,7 @@ class HostedIdentityPropertiesTest {
     IllegalStateException previewFailure =
         assertThrows(IllegalStateException.class, preview::afterPropertiesSet);
     assertEquals(
-        "preview requested and deployed head annotations must differ",
-        previewFailure.getMessage());
+        "preview requested and deployed head annotations must differ", previewFailure.getMessage());
 
     HostedIdentityProperties devDemo = new HostedIdentityProperties();
     devDemo.setDevDemoHeadAnnotation(devDemo.getDevDemoRequestedHeadAnnotation());
@@ -94,6 +93,27 @@ class HostedIdentityPropertiesTest {
     assertEquals(
         "dev-demo requested and deployed head annotations must differ",
         devDemoFailure.getMessage());
+  }
+
+  @Test
+  void requiresNonblankTelnetPortAnnotations() {
+    assertBlankTelnetPortAnnotationRejected(
+        "preview Telnet port annotation", HostedIdentityProperties::setPreviewTelnetPortAnnotation);
+    assertBlankTelnetPortAnnotationRejected(
+        "dev-demo Telnet port annotation",
+        HostedIdentityProperties::setDevDemoTelnetPortAnnotation);
+  }
+
+  private static void assertBlankTelnetPortAnnotationRejected(
+      String propertyName, BiConsumer<HostedIdentityProperties, String> setter) {
+    for (String invalid : new String[] {null, "", " \t "}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      setter.accept(properties, invalid);
+
+      IllegalStateException failure =
+          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      assertEquals(propertyName + " must not be blank", failure.getMessage());
+    }
   }
 
   @Test

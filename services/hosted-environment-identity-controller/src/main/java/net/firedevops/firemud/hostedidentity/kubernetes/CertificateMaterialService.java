@@ -144,8 +144,7 @@ public class CertificateMaterialService {
             "Opaque",
             properties.getGrpcTrustAnchorSha256());
     RoleMaterial selected =
-        selectedRoleMaterial(
-            client, plan, HostedIdentityContract.GRPC_ROLE, expectation, batch);
+        selectedRoleMaterial(client, plan, HostedIdentityContract.GRPC_ROLE, expectation, batch);
     if (selected != null) {
       return selected;
     }
@@ -347,11 +346,7 @@ public class CertificateMaterialService {
   private RotationObservation rotationObservation(
       KubernetesClient client, EnvironmentIdentityPlan plan, String role) {
     Secret projection =
-        client
-            .secrets()
-            .inNamespace(plan.runtimeNamespace())
-            .withName(plan.secretName(role))
-            .get();
+        client.secrets().inNamespace(plan.runtimeNamespace()).withName(plan.secretName(role)).get();
     if (projection == null) {
       return new RotationObservation(
           new RotationState(role, false, false, true, false), null, null, false);
@@ -894,6 +889,8 @@ public class CertificateMaterialService {
       if (!(existing instanceof Collection<?> existingCollection)) {
         return false;
       }
+      // Collection cardinality is controlled value drift. The exact comparison below repairs it;
+      // this pass only rejects unknown nested shape.
       var desiredIterator = desiredCollection.iterator();
       var existingIterator = existingCollection.iterator();
       while (desiredIterator.hasNext() && existingIterator.hasNext()) {
@@ -966,7 +963,7 @@ public class CertificateMaterialService {
     if (path.isEmpty() && "revisionHistoryLimit".equals(key)) {
       return equivalentNumber(value, 1);
     }
-    return "/privateKey".equals(path) && "size".equals(key) && equivalentNumber(value, 2048);
+    return false;
   }
 
   private static boolean equivalentNumber(Object value, int expected) {

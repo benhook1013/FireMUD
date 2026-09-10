@@ -439,12 +439,7 @@ class SecretProjectionServiceTest {
     SecretClient secretClient = secretClient(plan);
     Map<String, String> sourceShapedData =
         Map.of(
-            "tls.crt",
-            encoded("certificate"),
-            "tls.key",
-            encoded("key"),
-            "ca.crt",
-            encoded("ca"));
+            "tls.crt", encoded("certificate"), "tls.key", encoded("key"), "ca.crt", encoded("ca"));
     String revision =
         SecretProjectionService.revisionForRole(HostedIdentityContract.GRPC_ROLE, sourceShapedData);
     Map<String, String> pendingAnnotations = new LinkedHashMap<>();

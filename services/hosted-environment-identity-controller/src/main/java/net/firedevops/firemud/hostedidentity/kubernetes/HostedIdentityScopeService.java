@@ -28,8 +28,8 @@ public class HostedIdentityScopeService {
   private static final String CONTROLLER_SERVICE_ACCOUNT = "firemud-hosted-identity-controller";
 
   public void ensure(KubernetesClient client, EnvironmentIdentityPlan plan) {
-    ensureIdentityNamespace(client, plan);
     requireNamespace(client.namespaces().withName(plan.runtimeNamespace()).get(), "runtime");
+    ensureIdentityNamespace(client, plan);
     ensureIdentity(client, plan);
     ensureRuntime(client, plan);
   }

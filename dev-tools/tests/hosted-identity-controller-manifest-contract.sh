@@ -358,6 +358,11 @@ assert len(binding_policy_names) == len(set(binding_policy_names))
 assert len(binding_policy_names) == len(policy_names)
 assert set(binding_policy_names) == policy_names
 break_glass = "request.userInfo.groups.exists(group, group == 'system:masters')"
+namespace_controller = "system:serviceaccount:kube-system:namespace-controller"
+namespace_delete_break_glass = (
+    f"(request.userInfo.username == '{namespace_controller}' && "
+    "request.operation == 'DELETE')"
+)
 callers = {
     "firemud-hosted-identity-main": "firemud-hosted-identity-requester",
     "firemud-hosted-identity-subresources": "firemud-hosted-identity-controller",
@@ -384,6 +389,7 @@ delete_expression = next(
     if "oldObject.status.phase == 'Retired'" in expression
 )
 assert delete_expression == (
+    f"{break_glass} || {namespace_delete_break_glass} || "
     "request.operation != 'DELETE' || "
     "(has(oldObject.status) && has(oldObject.status.phase) && "
     "oldObject.spec.desiredState == 'Retired' && "
@@ -398,6 +404,7 @@ controller = (
     "system:serviceaccount:firemud-system:firemud-hosted-identity-controller"
 )
 assert controller in main_authorization
+assert namespace_delete_break_glass in main_authorization
 controller_finalizer_expression = next(
     expression
     for expression in main_expressions

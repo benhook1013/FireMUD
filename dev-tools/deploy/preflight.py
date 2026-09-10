@@ -6625,7 +6625,7 @@ def hosted_bridge_preflight(
         *release_identity_issues,
         *label_bridge_validation_issues(gateway_issues, telnet_issues),
     ]
-    if context == "operator" and not release_identity_issues:
+    if context == "operator" and not issues:
         try:
             secret_ready_timeout_seconds = hosted_bridge_secret_ready_timeout_seconds()
             secret_ready_attempts = hosted_bridge_secret_ready_attempts(

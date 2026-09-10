@@ -32,8 +32,8 @@ spec:
     - expression: "(request.operation == 'DELETE' ? request.name : object.metadata.name).matches('^(dev-demo|pr-[1-9][0-9]*)$')"
       message: HostedEnvironmentIdentity name must be dev-demo or pr-N
       reason: Invalid
-    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
-      message: only system:masters, the fixed hosted-identity requester, or the controller's exact finalizer update may change an identity
+    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' && request.operation == 'DELETE') || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-requester' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'"
+      message: only system:masters, the namespace controller during DELETE, the fixed hosted-identity requester, or the controller's exact finalizer update may change an identity
       reason: Forbidden
     - expression: >-
         request.userInfo.groups.exists(group, group == 'system:masters') ||
@@ -74,8 +74,8 @@ spec:
     - expression: "request.operation != 'UPDATE' || object.spec.desiredState == oldObject.spec.desiredState || (oldObject.spec.desiredState == 'Active' && object.spec.desiredState == 'Retired')"
       message: desiredState is monotonic; Active may transition only to Retired
       reason: Invalid
-    - expression: "request.operation != 'DELETE' || (has(oldObject.status) && has(oldObject.status.phase) && oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
-      message: an identity may be deleted only after the controller reports Retired
+    - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' && request.operation == 'DELETE') || request.operation != 'DELETE' || (has(oldObject.status) && has(oldObject.status.phase) && oldObject.spec.desiredState == 'Retired' && oldObject.status.phase == 'Retired')"
+      message: an identity may be deleted only after the controller reports Retired or through authorized break-glass teardown
       reason: Forbidden
     - expression: "request.userInfo.groups.exists(group, group == 'system:masters') || request.operation == 'DELETE' || request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' || ((!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (((request.operation == 'UPDATE') && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)) || (request.operation == 'CREATE' && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0))) && (!has(object.metadata.labels) || object.metadata.labels.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))) && (!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('firemud.dev/') && !k.startsWith('firemud.io/'))))"
       message: requester metadata may not claim controller ownership or reserved firemud labels
