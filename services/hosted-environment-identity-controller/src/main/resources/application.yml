@@ -20,7 +20,8 @@ management:
 
 firemud:
   hosted-identity:
-    # This checked-in default is paused. Active mode requires replacing the gRPC
+    # This checked-in default is paused. Active mode requires nonblank
+    # ingress-leaf-sha256 and telnet-leaf-sha256 values, plus replacing the gRPC
     # pin below with the lowercase 64-hex SHA-256 of firemud-grpc-ca's DER ca.crt.
     activation-mode: paused
     control-namespace: firemud-system

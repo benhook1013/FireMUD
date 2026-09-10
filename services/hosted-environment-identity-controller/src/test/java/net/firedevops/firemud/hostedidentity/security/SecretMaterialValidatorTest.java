@@ -125,12 +125,11 @@ class SecretMaterialValidatorTest {
         assertThrows(
             IllegalArgumentException.class,
             () -> SecretMaterialValidator.trustAnchorFingerprint(multiCertificate));
-    assertEquals(
-        "Secret ca.crt must contain exactly one X.509 certificate", failure.getMessage());
+    assertEquals("Secret ca.crt must contain exactly one X.509 certificate", failure.getMessage());
   }
 
   @Test
-  void websocketIdentityValidationRequiresExactSanAndEkuProfiles() {
+  void grpcTransportIdentityValidationRequiresExactSanAndEkuProfiles() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret grpc = new GrpcTransportBundleGenerator().generate(plan);

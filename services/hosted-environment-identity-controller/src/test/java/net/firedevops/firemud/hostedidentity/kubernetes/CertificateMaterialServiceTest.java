@@ -2,10 +2,8 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -942,7 +940,8 @@ class CertificateMaterialServiceTest {
         "spec",
         Map.of(
             "issuerRef",
-            Map.of("name", plan.grpcIssuer(), "kind", "ClusterIssuer", "group", "cert-manager.io")));
+            Map.of(
+                "name", plan.grpcIssuer(), "kind", "ClusterIssuer", "group", "cert-manager.io")));
     wrong.setAdditionalProperties(properties);
     stubCertificateRequests(
         fixture.secretClient().client(),
@@ -1349,7 +1348,8 @@ class CertificateMaterialServiceTest {
             Map.of(
                 "issuerRef",
                 Map.of(
-                    "name", issuerFor(plan, certificateName),
+                    "name",
+                    issuerFor(plan, certificateName),
                     "kind",
                     "ClusterIssuer",
                     "group",

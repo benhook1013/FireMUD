@@ -338,8 +338,7 @@ public class SecretProjectionService {
           .sorted(Map.Entry.comparingByKey())
           .forEach(
               entry -> {
-                updateLengthPrefixed(
-                    digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
+                updateLengthPrefixed(digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
                 updateLengthPrefixed(digest, Base64.getDecoder().decode(entry.getValue()));
               });
       StringBuilder result = new StringBuilder("sha256:");

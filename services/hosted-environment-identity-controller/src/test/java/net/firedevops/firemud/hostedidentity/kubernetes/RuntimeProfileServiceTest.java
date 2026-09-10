@@ -353,7 +353,8 @@ class RuntimeProfileServiceTest {
             .withUid("runtime-uid")
             .withLabels(
                 Map.of(
-                    "firemud.dev/dev-demo", "true",
+                    "firemud.dev/dev-demo",
+                    "true",
                     "firemud.dev/environment-class",
                     HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
             .addToAnnotations("firemud.dev/last-dev-demo-telnet-port", "32016");

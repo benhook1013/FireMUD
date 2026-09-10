@@ -170,8 +170,7 @@ class CertificateResourceFactoryTest {
     Map<?, ?> issuerRef = (Map<?, ?>) certificateSpec.get("issuerRef");
     assertEquals("ClusterIssuer", issuerRef.get("kind"));
     assertEquals("cert-manager.io", issuerRef.get("group"));
-    assertEquals(
-        "Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
+    assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
     assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
   }
 
@@ -182,5 +181,4 @@ class CertificateResourceFactoryTest {
         "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
         failure.getMessage());
   }
-
 }

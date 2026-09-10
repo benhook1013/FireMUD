@@ -126,9 +126,12 @@ class HostedIdentityScopeServiceTest {
             .withName("dev-identity")
             .withLabels(
                 Map.of(
-                    "firemud.dev/managed-by", "hosted-identity-controller",
-                    "firemud.dev/identity-name", "dev-demo",
-                    "firemud.dev/retention", "retained",
+                    "firemud.dev/managed-by",
+                    "hosted-identity-controller",
+                    "firemud.dev/identity-name",
+                    "dev-demo",
+                    "firemud.dev/retention",
+                    "retained",
                     "firemud.dev/environment-class",
                     HostedIdentityContract.DEV_DEMO_ENVIRONMENT_CLASS))
             .endMetadata()
@@ -173,9 +176,12 @@ class HostedIdentityScopeServiceTest {
             .withName("pr-42-identity")
             .withLabels(
                 Map.of(
-                    "firemud.dev/managed-by", "hosted-identity-controller",
-                    "firemud.dev/identity-name", "pr-42",
-                    "firemud.dev/retention", "retained",
+                    "firemud.dev/managed-by",
+                    "hosted-identity-controller",
+                    "firemud.dev/identity-name",
+                    "pr-42",
+                    "firemud.dev/retention",
+                    "retained",
                     "firemud.dev/environment-class",
                     HostedIdentityContract.PREVIEW_ENVIRONMENT_CLASS))
             .endMetadata()

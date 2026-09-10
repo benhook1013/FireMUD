@@ -416,19 +416,6 @@ class SecretProjectionServiceTest {
     verify(currentResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
   @Test
   void acceptedRevisionRequiresTheCanonicalAlgorithmPrefixAndFullDigest() {
     SecretProjectionService service = new SecretProjectionService();
@@ -467,7 +454,6 @@ class SecretProjectionServiceTest {
         () -> SecretProjectionService.validateAdvancement(2, 4, second, 1, 5, first));
   }
 
-
   @Test
   void secretOwnershipRequiresTheRetainedBoundary() {
     var secret =
@@ -493,14 +479,6 @@ class SecretProjectionServiceTest {
     assertEquals(
         true, SecretProjectionService.owned(secret, "pr-42", HostedIdentityContract.INGRESS_ROLE));
   }
-
-
-
-
-
-
-
-
 
   @Test
   void unacceptedProjectionPinsItsMaterialUntilAcceptanceThenAdvancesOnRestart() {
@@ -592,16 +570,6 @@ class SecretProjectionServiceTest {
     assertEquals("source-ready", advanced.state());
     assertEquals(replacement, advanced.source().getData());
   }
-
-
-
-
-
-
-
-
-
-
 
   @Test
   void replacementProjectionRetainsAcceptedSnapshotAndKeepsRotationSerialized() {
@@ -1473,7 +1441,6 @@ class SecretProjectionServiceTest {
     assertEquals(fixture.ingressSource().getData(), candidate.getValue().getData());
   }
 
-
   private static String encoded(String value) {
     return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
   }
@@ -1590,7 +1557,8 @@ class SecretProjectionServiceTest {
             Map.of(
                 "issuerRef",
                 Map.of(
-                    "name", issuerFor(plan, certificateName),
+                    "name",
+                    issuerFor(plan, certificateName),
                     "kind",
                     "ClusterIssuer",
                     "group",

@@ -406,11 +406,11 @@ public class SecretMaterialValidator {
   /**
    * Summary of validated identity material.
    *
-   * <p>{@code trustAnchorFingerprint} intentionally has two related meanings: for retained
-   * {@code Opaque} transport material it is the fingerprint of the exactly-one {@code ca.crt}
-   * certificate; for cert-manager TLS material that omits {@code ca.crt}, it is the fingerprint
-   * of the terminal certificate in the presented chain, whose external trust is proved separately
-   * by the served-system probe.
+   * <p>{@code trustAnchorFingerprint} intentionally has two related meanings: for retained {@code
+   * Opaque} transport material it is the fingerprint of the exactly-one {@code ca.crt} certificate;
+   * for cert-manager TLS material that omits {@code ca.crt}, it is the fingerprint of the terminal
+   * certificate in the presented chain, whose external trust is proved separately by the
+   * served-system probe.
    */
   public record MaterialSummary(
       String certificateFingerprint,
