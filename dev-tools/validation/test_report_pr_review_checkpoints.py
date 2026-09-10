@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import stat
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,22 @@ class CheckpointReporterTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.reporter = load_reporter()
+
+    def _arguments(self, **overrides):
+        arguments = {
+            "repo": "owner/repo",
+            "pr": 42,
+            "limit": 20,
+            "details": None,
+            "rejections": None,
+            "rounds": None,
+            "hosted": None,
+            "source": "cli",
+            "disposition": "all",
+            "json": False,
+        }
+        arguments.update(overrides)
+        return self.reporter.argparse.Namespace(**arguments)
 
     def test_parses_standard_legacy_zero_and_correction_shapes(self) -> None:
         comments = [
@@ -288,6 +305,13 @@ class CheckpointReporterTest(unittest.TestCase):
             [("scope_change", 202), ("checkpoint", 203)],
         )
         self.assertIn("Earlier counts cover the previous scope.", report["timeline"][0]["description"])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn(
+            "202 2026-09-10T02:00:00Z scope_change validator cleanup moved to #2731.",
+            output.getvalue(),
+        )
 
     def test_scope_marker_count_normalizes_whitespace_and_rejects_duplicates(self) -> None:
         created_at = "2026-09-10T00:00:00Z"
@@ -513,18 +537,7 @@ class CheckpointReporterTest(unittest.TestCase):
                 self.reporter._contained_file(linked_run_dir, "decisions.tsv")
 
     def test_details_unknown_comment_id_fails_in_command_mode(self) -> None:
-        arguments = self.reporter.argparse.Namespace(
-            repo="owner/repo",
-            pr=42,
-            limit=20,
-            details=999,
-            rejections=None,
-            rounds=None,
-            hosted=None,
-            source="cli",
-            disposition="all",
-            json=False,
-        )
+        arguments = self._arguments(details=999)
         stderr = io.StringIO()
         with (
             patch.object(self.reporter, "parse_args", return_value=arguments),
@@ -546,18 +559,7 @@ class CheckpointReporterTest(unittest.TestCase):
                 (None, "error: --disposition requires --rounds\n"),
             ):
                 with self.subTest(disposition=disposition, rejections=rejections):
-                    arguments = self.reporter.argparse.Namespace(
-                        repo="owner/repo",
-                        pr=42,
-                        limit=20,
-                        details=None,
-                        rejections=rejections,
-                        rounds=None,
-                        hosted=None,
-                        source="cli",
-                        disposition=disposition,
-                        json=False,
-                    )
+                    arguments = self._arguments(rejections=rejections, disposition=disposition)
                     stderr = io.StringIO()
                     with (
                         patch.object(self.reporter, "parse_args", return_value=arguments),
@@ -570,18 +572,7 @@ class CheckpointReporterTest(unittest.TestCase):
                     self.assertEqual(stderr.getvalue(), message)
 
     def test_hosted_source_rejects_cli_rejections_shorthand_before_fetching(self) -> None:
-        arguments = self.reporter.argparse.Namespace(
-            repo="owner/repo",
-            pr=42,
-            limit=20,
-            details=None,
-            rejections=2,
-            rounds=None,
-            hosted=None,
-            source="hosted",
-            disposition="all",
-            json=False,
-        )
+        arguments = self._arguments(rejections=2, source="hosted")
         stderr = io.StringIO()
         with (
             patch.object(self.reporter, "parse_args", return_value=arguments),
@@ -936,6 +927,104 @@ class CheckpointReporterTest(unittest.TestCase):
                 with self.assertRaisesRegex(self.reporter.CaptureInvalid, "escapes|symbolic link"):
                     self.reporter._load_hosted_snapshot(decisions / "snapshot.json", "owner/repo", 42, 906)
 
+    def test_hosted_snapshot_failure_leaves_no_final_or_temporary_file(self) -> None:
+        review = {
+            "id": 910,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "c" * 40,
+            "body": "Hosted review summary",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            snapshot_dir = log_root / "hosted-review.910"
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter.json, "dumps", side_effect=ValueError("serialize failed")),
+                self.assertRaises(ValueError),
+            ):
+                self.reporter._save_hosted_snapshot("owner/repo", 42, review, [])
+            self.assertFalse((snapshot_dir / "snapshot.json").exists())
+            self.assertEqual(list(snapshot_dir.iterdir()) if snapshot_dir.exists() else [], [])
+
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter.tempfile, "NamedTemporaryFile", side_effect=FileExistsError("temp exists")),
+                self.assertRaises(self.reporter.CaptureUnavailable),
+            ):
+                self.reporter._save_hosted_snapshot("owner/repo", 42, {**review, "id": 911}, [])
+            temporary_dir = log_root / "hosted-review.911"
+            self.assertFalse((temporary_dir / "snapshot.json").exists())
+            self.assertEqual(list(temporary_dir.iterdir()) if temporary_dir.exists() else [], [])
+
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter.os, "fsync", side_effect=OSError("write failed")),
+                self.assertRaises(self.reporter.CaptureUnavailable),
+            ):
+                self.reporter._save_hosted_snapshot("owner/repo", 42, {**review, "id": 912}, [])
+            write_dir = log_root / "hosted-review.912"
+            self.assertFalse((write_dir / "snapshot.json").exists())
+            self.assertEqual(list(write_dir.iterdir()) if write_dir.exists() else [], [])
+
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter.os, "link", side_effect=OSError("publish failed")),
+                self.assertRaises(self.reporter.CaptureUnavailable),
+            ):
+                self.reporter._save_hosted_snapshot("owner/repo", 42, {**review, "id": 913}, [])
+            publication_dir = log_root / "hosted-review.913"
+            self.assertFalse((publication_dir / "snapshot.json").exists())
+            self.assertEqual(list(publication_dir.iterdir()) if publication_dir.exists() else [], [])
+
+    def test_hosted_snapshot_existing_winner_is_unchanged_and_loser_temp_is_cleaned(self) -> None:
+        review = {
+            "id": 914,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "d" * 40,
+            "body": "Winner snapshot",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            snapshot_dir = log_root / "hosted-review.914"
+            snapshot_dir.mkdir(mode=0o700)
+            snapshot_path = snapshot_dir / "snapshot.json"
+            winner = b'{"winner": true}\n'
+
+            def competing_link(_temporary_path, destination):
+                Path(destination).write_bytes(winner)
+                raise FileExistsError
+
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter.os, "link", side_effect=competing_link),
+            ):
+                saved = self.reporter._save_hosted_snapshot("owner/repo", 42, review, [])
+            self.assertEqual(saved, snapshot_path)
+            self.assertEqual(snapshot_path.read_bytes(), winner)
+            self.assertEqual(list(snapshot_dir.iterdir()), [snapshot_path])
+
+    def test_hosted_snapshot_success_is_loadable_and_leaves_no_temporary_file(self) -> None:
+        review = {
+            "id": 915,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "e" * 40,
+            "body": "Hosted review summary",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                snapshot = self.reporter._save_hosted_snapshot("owner/repo", 42, review, [])
+                capture = self.reporter._load_hosted_snapshot(snapshot, "owner/repo", 42, 915)
+            self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
+            self.assertEqual(capture.review["id"], 915)
+            self.assertEqual(list(snapshot.parent.iterdir()), [snapshot])
+
     def test_hosted_detail_rejects_checkpoint_sha_mismatch(self) -> None:
         checkpoint = {
             "id": 906,
@@ -1052,18 +1141,7 @@ class CheckpointReporterTest(unittest.TestCase):
         ):
             self.reporter.fetch_comments("owner/repo", 42)
 
-        arguments = self.reporter.argparse.Namespace(
-            repo="owner/repo",
-            pr=42,
-            limit=20,
-            details=None,
-            rejections=None,
-            rounds=None,
-            hosted=None,
-            source="cli",
-            disposition="all",
-            json=False,
-        )
+        arguments = self._arguments()
         stderr = io.StringIO()
         with (
             patch.object(self.reporter, "parse_args", return_value=arguments),

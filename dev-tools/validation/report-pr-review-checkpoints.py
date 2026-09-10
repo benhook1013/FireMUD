@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -506,14 +508,35 @@ def _save_hosted_snapshot(repo: str, pr_number: int, review: dict[str, Any], com
         snapshot_path = snapshot_dir / "snapshot.json"
         if snapshot_path.is_symlink():
             raise CaptureInvalid("hosted review snapshot is a symbolic link")
-        try:
-            with snapshot_path.open("x", encoding="utf-8") as snapshot_file:
-                json.dump(
-                    _hosted_snapshot_payload(repo, pr_number, review, comments), snapshot_file, indent=2, sort_keys=True
-                )
-                snapshot_file.write("\n")
-        except FileExistsError:
+        if snapshot_path.exists():
             return snapshot_path
+        snapshot_text = json.dumps(
+            _hosted_snapshot_payload(repo, pr_number, review, comments), indent=2, sort_keys=True
+        ) + "\n"
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=snapshot_dir,
+                prefix=".snapshot.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                os.fchmod(temporary_file.fileno(), 0o600)
+                temporary_file.write(snapshot_text)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            try:
+                os.link(temporary_path, snapshot_path)
+            except FileExistsError:
+                if snapshot_path.is_symlink():
+                    raise CaptureInvalid("hosted review snapshot is a symbolic link") from None
+                return snapshot_path
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
     except OSError as exc:
         raise CaptureUnavailable("hosted review snapshot cannot be saved") from exc
     return snapshot_path
