@@ -1317,10 +1317,10 @@ def main() -> int:
         print("error: --source requires --rounds or --rejections", file=sys.stderr)
         return 2
     if args.rounds is None and args.disposition != "all":
-        print("error: --disposition requires --rounds", file=sys.stderr)
-        return 2
-    if args.rejections is not None and args.disposition != "all":
-        print("error: --rejections cannot be combined with --disposition", file=sys.stderr)
+        if args.rejections is not None:
+            print("error: --rejections cannot be combined with --disposition", file=sys.stderr)
+        else:
+            print("error: --disposition requires --rounds", file=sys.stderr)
         return 2
     try:
         if args.hosted is not None:

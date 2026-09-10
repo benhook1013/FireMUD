@@ -393,6 +393,38 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("not a parsed checkpoint", stderr.getvalue())
 
+    def test_disposition_validation_distinguishes_rejections_conflict_from_missing_rounds(
+        self,
+    ) -> None:
+        for disposition in ("accepted", "rejected"):
+            for rejections, message in (
+                (2, "error: --rejections cannot be combined with --disposition\n"),
+                (None, "error: --disposition requires --rounds\n"),
+            ):
+                with self.subTest(disposition=disposition, rejections=rejections):
+                    arguments = self.reporter.argparse.Namespace(
+                        repo="owner/repo",
+                        pr=42,
+                        limit=20,
+                        details=None,
+                        rejections=rejections,
+                        rounds=None,
+                        hosted=None,
+                        source="cli",
+                        disposition=disposition,
+                        json=False,
+                    )
+                    stderr = io.StringIO()
+                    with (
+                        patch.object(self.reporter, "parse_args", return_value=arguments),
+                        redirect_stdout(io.StringIO()),
+                        redirect_stderr(stderr),
+                    ):
+                        result = self.reporter.main()
+
+                    self.assertEqual(result, 2)
+                    self.assertEqual(stderr.getvalue(), message)
+
     def test_rejections_selects_latest_cli_rounds_and_keeps_missing_links(self) -> None:
         comments = [
             {
