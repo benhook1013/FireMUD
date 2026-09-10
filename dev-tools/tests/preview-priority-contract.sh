@@ -2024,7 +2024,7 @@ test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq
 test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
 test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
-grep -q 'resolve-certificate-identity-mode.py' "$janitor_workflow"
+grep -q 'uses: ./.github/actions/resolve-certificate-identity-mode' "$janitor_workflow"
 grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"
 grep -q 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert the explicit hosted-controller retirement branch.

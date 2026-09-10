@@ -59,7 +59,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-class SecretMaterialValidatorTest {
+public class SecretMaterialValidatorTest {
   private static final AtomicLong CA_SERIAL = new AtomicLong(1);
   private static final KeyPair FIXTURE_CA_KEY_PAIR = generateRsaKeyPair();
 
@@ -1133,29 +1133,16 @@ class SecretMaterialValidatorTest {
 
   private static EnvironmentIdentityPlan withGrpcConsumers(
       EnvironmentIdentityPlan plan, String... consumers) {
-    return new EnvironmentIdentityPlan(
-        plan.name(),
-        plan.controlNamespace(),
-        plan.identityNamespace(),
-        plan.runtimeNamespace(),
-        plan.hostname(),
-        plan.ingressCertificateName(),
-        plan.ingressSecretName(),
-        plan.telnetCertificateName(),
-        plan.telnetSecretName(),
-        plan.gatewayInternalWsCertificateName(),
-        plan.gatewayInternalWsSecretName(),
-        plan.gatewayInternalWsDnsName(),
-        plan.tcpProxyBridgeCertificateName(),
-        plan.tcpProxyBridgeSecretName(),
-        plan.tcpProxyBridgeUriSan(),
-        plan.grpcCertificateName(),
-        plan.grpcSecretName(),
-        plan.ingressIssuer(),
-        plan.telnetIssuer(),
-        plan.grpcIssuer(),
-        plan.caSecretName(),
-        java.util.List.of(consumers));
+    return plan.withGrpcConsumers(java.util.List.of(consumers));
+  }
+
+  /** Compile-time test seam for cross-package probe coverage of generated transport material. */
+  public static final class GrpcMaterialFixture {
+    private GrpcMaterialFixture() {}
+
+    public static Secret generate(EnvironmentIdentityPlan plan) {
+      return new GrpcTransportBundleGenerator().generate(plan);
+    }
   }
 
   private static X509Certificate certificate(String encoded) throws Exception {

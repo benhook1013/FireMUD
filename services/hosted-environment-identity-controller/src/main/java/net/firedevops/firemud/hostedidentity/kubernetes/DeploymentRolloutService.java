@@ -18,8 +18,10 @@ import org.springframework.stereotype.Component;
 /** Applies one deterministic pod-template revision to the Telnet proxy and all gRPC consumers. */
 @Component
 public class DeploymentRolloutService {
+  static final String GATEWAY_DEPLOYMENT = "spring-cloud-gateway";
+  static final String TCP_PROXY_DEPLOYMENT = "tcp-proxy-service";
   static final List<String> BRIDGE_DEPLOYMENTS =
-      List.of("spring-cloud-gateway", "tcp-proxy-service");
+      List.of(GATEWAY_DEPLOYMENT, TCP_PROXY_DEPLOYMENT);
 
   public RolloutResult sync(
       KubernetesClient client,
@@ -38,7 +40,7 @@ public class DeploymentRolloutService {
     }
     Map<String, Map<String, String>> revisionsByDeployment = new LinkedHashMap<>();
     revisionsByDeployment
-        .computeIfAbsent("tcp-proxy-service", ignored -> new LinkedHashMap<>())
+        .computeIfAbsent(TCP_PROXY_DEPLOYMENT, ignored -> new LinkedHashMap<>())
         .put(HostedIdentityContract.TELNET_REVISION_ANNOTATION, telnetRevision);
     for (String consumer : plan.grpcConsumers()) {
       revisionsByDeployment
@@ -59,7 +61,7 @@ public class DeploymentRolloutService {
         break;
       }
     }
-    boolean telnetReady = readinessByDeployment.getOrDefault("tcp-proxy-service", false);
+    boolean telnetReady = readinessByDeployment.getOrDefault(TCP_PROXY_DEPLOYMENT, false);
     boolean grpcReady =
         plan.grpcConsumers().stream()
             .allMatch(consumer -> readinessByDeployment.getOrDefault(consumer, false));
@@ -80,11 +82,10 @@ public class DeploymentRolloutService {
       throw new IllegalArgumentException("runtime profile guard is required");
     }
     StopOneResult gateway =
-        stopOne(client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(0), runtimeProfileCurrent);
+        stopOne(client, plan.runtimeNamespace(), GATEWAY_DEPLOYMENT, runtimeProfileCurrent);
     StopOneResult proxy =
         gateway.guardPassed()
-            ? stopOne(
-                client, plan.runtimeNamespace(), BRIDGE_DEPLOYMENTS.get(1), runtimeProfileCurrent)
+            ? stopOne(client, plan.runtimeNamespace(), TCP_PROXY_DEPLOYMENT, runtimeProfileCurrent)
             : new StopOneResult(false, false);
     boolean gatewayStopped = gateway.stopped();
     boolean proxyStopped = proxy.stopped();

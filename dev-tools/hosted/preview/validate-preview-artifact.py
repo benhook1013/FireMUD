@@ -534,6 +534,8 @@ def _validate_image_reference(
 ) -> None:
     if value in INFRASTRUCTURE_IMAGES:
         return
+    if "@" in value:
+        fail(f"{location} uses a digest image reference; tagged images are required")
 
     repository, separator, tag = value.rpartition(":")
     if not separator or not repository or not tag:
@@ -544,7 +546,7 @@ def _validate_image_reference(
             fail(f"{location} uses an unapproved service image repository")
         if tag != expected_image_tag:
             fail(f"{location} uses image tag {tag!r}, expected {expected_image_tag!r}")
-    elif value not in INFRASTRUCTURE_IMAGES:
+    else:
         fail(f"{location} uses an unapproved image")
 
 

@@ -71,12 +71,13 @@ public class RuntimeProfileService {
     int port;
     try {
       port = Integer.parseInt(portValue);
-      if (!isValidTelnetPort(plan, port)) {
-        throw new NumberFormatException("out of range");
-      }
     } catch (NumberFormatException exception) {
-      throw new IllegalStateException(
-          "runtime Namespace has an invalid Telnet port identity: " + portValue, exception);
+      throw invalidTelnetPortIdentity(portValue, exception);
+    }
+    if (!isValidTelnetPort(plan, port)) {
+      throw invalidTelnetPortIdentity(
+          portValue,
+          new IllegalArgumentException("parsed Telnet port is outside the configured allocation"));
     }
     return new RuntimeProfile(
         namespace.getMetadata().getUid(), requestedHead, deployedHead, port, true);
@@ -143,6 +144,12 @@ public class RuntimeProfileService {
       throw new IllegalStateException("runtime Namespace has an invalid canonical " + identity);
     }
     return head == null ? null : head.toLowerCase(Locale.ROOT);
+  }
+
+  private static IllegalStateException invalidTelnetPortIdentity(
+      String portValue, RuntimeException cause) {
+    return new IllegalStateException(
+        "runtime Namespace has an invalid Telnet port identity: " + portValue, cause);
   }
 
   boolean isValidTelnetPort(EnvironmentIdentityPlan plan, int port) {

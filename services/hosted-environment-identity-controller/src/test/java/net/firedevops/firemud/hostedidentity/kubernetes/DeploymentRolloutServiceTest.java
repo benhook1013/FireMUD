@@ -679,8 +679,12 @@ class DeploymentRolloutServiceTest {
 
   @Test
   void explicitRetirementScalesBothBridgeEndpointsToZeroAndWaitsForObservedShutdown() {
+    assertEquals("spring-cloud-gateway", DeploymentRolloutService.GATEWAY_DEPLOYMENT);
+    assertEquals("tcp-proxy-service", DeploymentRolloutService.TCP_PROXY_DEPLOYMENT);
     assertEquals(
-        java.util.List.of("spring-cloud-gateway", "tcp-proxy-service"),
+        java.util.List.of(
+            DeploymentRolloutService.GATEWAY_DEPLOYMENT,
+            DeploymentRolloutService.TCP_PROXY_DEPLOYMENT),
         DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     var deployment =
         new DeploymentBuilder()
@@ -765,28 +769,6 @@ class DeploymentRolloutServiceTest {
   private static EnvironmentIdentityPlan planWithConsumers(String... consumers) {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    return new EnvironmentIdentityPlan(
-        plan.name(),
-        plan.controlNamespace(),
-        plan.identityNamespace(),
-        plan.runtimeNamespace(),
-        plan.hostname(),
-        plan.ingressCertificateName(),
-        plan.ingressSecretName(),
-        plan.telnetCertificateName(),
-        plan.telnetSecretName(),
-        plan.gatewayInternalWsCertificateName(),
-        plan.gatewayInternalWsSecretName(),
-        plan.gatewayInternalWsDnsName(),
-        plan.tcpProxyBridgeCertificateName(),
-        plan.tcpProxyBridgeSecretName(),
-        plan.tcpProxyBridgeUriSan(),
-        plan.grpcCertificateName(),
-        plan.grpcSecretName(),
-        plan.ingressIssuer(),
-        plan.telnetIssuer(),
-        plan.grpcIssuer(),
-        plan.caSecretName(),
-        List.of(consumers));
+    return plan.withGrpcConsumers(List.of(consumers));
   }
 }

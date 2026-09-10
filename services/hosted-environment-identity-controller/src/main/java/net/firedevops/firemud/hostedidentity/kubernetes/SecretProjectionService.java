@@ -43,7 +43,7 @@ public class SecretProjectionService {
     }
     Map<String, String> data = projectedData(role, source.getData());
     String revision = revisionForData(data);
-    String name = targetName(plan, role);
+    String name = plan.secretName(role);
     if (!guardPassed(runtimeProfileCurrent)) {
       return guardFailed(revision);
     }
@@ -167,7 +167,7 @@ public class SecretProjectionService {
       return guardFailed(expectedRevision);
     }
     var operation =
-        client.secrets().inNamespace(plan.runtimeNamespace()).withName(targetName(plan, role));
+        client.secrets().inNamespace(plan.runtimeNamespace()).withName(plan.secretName(role));
     Secret current = operation.get();
     if (current == null) {
       return ProjectionResult.awaiting("projection-absent", expectedRevision);
@@ -464,17 +464,6 @@ public class SecretProjectionService {
         && role.equals(labels.get(HostedIdentityContract.ROLE_LABEL))
         && HostedIdentityContract.RETAINED.equals(
             labels.get(HostedIdentityContract.RETENTION_LABEL));
-  }
-
-  private static String targetName(EnvironmentIdentityPlan plan, String role) {
-    return switch (role) {
-      case HostedIdentityContract.INGRESS_ROLE -> plan.ingressSecretName();
-      case HostedIdentityContract.TELNET_ROLE -> plan.telnetSecretName();
-      case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
-      case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
-      case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> throw new IllegalArgumentException("unsupported identity role: " + role);
-    };
   }
 
   private static String value(Map<String, String> annotations, String key) {

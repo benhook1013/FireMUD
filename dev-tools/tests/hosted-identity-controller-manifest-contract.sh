@@ -905,8 +905,8 @@ assert (
     "((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
 ) in normalized_profile_expression
 assert (
-    "object.metadata.labels['firemud.dev/role'] != 'ingress' && "
-    "object.metadata.labels['firemud.dev/role'] != 'telnet' || "
+    "(object.metadata.labels['firemud.dev/role'] != 'ingress' && "
+    "object.metadata.labels['firemud.dev/role'] != 'telnet') || "
     "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']"
 ) in normalized_profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
@@ -1596,6 +1596,17 @@ def assert_rejected(call, expected):
         assert str(error) == expected, (str(error), expected)
     else:
         raise AssertionError(f"validator accepted malformed artifact: {expected}")
+
+
+image_location = "Deployment/account-service.spec.template.spec.containers[0].image"
+assert_rejected(
+    lambda: validator._validate_image_reference(
+        image_location,
+        f"ghcr.io/benhook1013/account-service@sha256:{'a' * 64}",
+        "pr-42-test",
+    ),
+    f"{image_location} uses a digest image reference; tagged images are required",
+)
 
 
 internal_policies = {

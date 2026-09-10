@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
+import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
@@ -184,6 +185,30 @@ class EnvironmentIdentityPlannerTest {
     assertEquals("sentinel-telnet-issuer", plan.telnetIssuer());
     assertEquals("sentinel-grpc-issuer", plan.grpcIssuer());
     assertEquals("sentinel-grpc-ca-secret", plan.caSecretName());
+  }
+
+  @Test
+  void mapsEveryIdentityRoleToItsSecretAndCopiesOnlyGrpcConsumers() {
+    var plan = planner.plan("pr-42");
+
+    assertEquals(plan.ingressSecretName(), plan.secretName(HostedIdentityContract.INGRESS_ROLE));
+    assertEquals(plan.telnetSecretName(), plan.secretName(HostedIdentityContract.TELNET_ROLE));
+    assertEquals(
+        plan.gatewayInternalWsSecretName(),
+        plan.secretName(HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE));
+    assertEquals(
+        plan.tcpProxyBridgeSecretName(),
+        plan.secretName(HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE));
+    assertEquals(plan.grpcSecretName(), plan.secretName(HostedIdentityContract.GRPC_ROLE));
+    assertThrows(IllegalArgumentException.class, () -> plan.secretName("unsupported"));
+
+    List<String> consumers = new ArrayList<>(List.of("account-service"));
+    var copy = plan.withGrpcConsumers(consumers);
+    consumers.add("tcp-proxy-service");
+
+    assertEquals(List.of("account-service"), copy.grpcConsumers());
+    assertEquals(plan, copy.withGrpcConsumers(plan.grpcConsumers()));
+    assertTrue(plan.grpcConsumers().size() > copy.grpcConsumers().size());
   }
 
   @Test

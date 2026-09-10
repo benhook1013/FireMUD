@@ -254,7 +254,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.runtimeNamespace())
-            .withName(secretName(plan, candidate.role()))
+            .withName(plan.secretName(candidate.role()))
             .get();
     requireOwned(projection, plan, candidate.role(), "runtime projection Secret");
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
@@ -341,7 +341,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.runtimeNamespace())
-            .withName(secretName(plan, role))
+            .withName(plan.secretName(role))
             .get();
     if (projection == null) {
       return new RotationObservation(
@@ -385,7 +385,7 @@ public class CertificateMaterialService {
         client
             .secrets()
             .inNamespace(plan.identityNamespace())
-            .withName(secretName(plan, role))
+            .withName(plan.secretName(role))
             .get();
     if (source != null) {
       requireIdentitySourceBinding(source, plan, role);
@@ -408,7 +408,7 @@ public class CertificateMaterialService {
       EnvironmentIdentityPlan plan,
       String role,
       RoleExpectation expectation) {
-    String name = secretName(plan, role);
+    String name = plan.secretName(role);
     Secret current = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
     requireOwned(current, plan, role, "runtime projection Secret");
     Map<String, String> annotations = current.getMetadata().getAnnotations();
@@ -546,17 +546,6 @@ public class CertificateMaterialService {
     } catch (RuntimeException exception) {
       throw new IllegalStateException("accepted projection generation is invalid", exception);
     }
-  }
-
-  private static String secretName(EnvironmentIdentityPlan plan, String role) {
-    return switch (role) {
-      case HostedIdentityContract.INGRESS_ROLE -> plan.ingressSecretName();
-      case HostedIdentityContract.TELNET_ROLE -> plan.telnetSecretName();
-      case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
-      case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
-      case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> throw new IllegalArgumentException("unsupported identity role: " + role);
-    };
   }
 
   private static String certificateName(EnvironmentIdentityPlan plan, String role) {

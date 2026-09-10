@@ -6,6 +6,7 @@ python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
+mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
 workflow="$ROOT_DIR/.github/workflows/dev-demo.yml"
 reconciler="$ROOT_DIR/.github/workflows/dev-demo-reconciler.yml"
 reconcile_step="$ROOT_DIR/dev-tools/hosted/dev-demo/reconcile-dev-demo.sh"
@@ -61,7 +62,7 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: standalon
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: true\n'
 expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controller\n'
 
-python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$reconcile_step" <<'PY'
+python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$reconcile_step" "$mode_action" <<'PY'
 from __future__ import annotations
 
 import os
@@ -72,7 +73,7 @@ from pathlib import Path
 
 import yaml
 
-workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, reconcile_script_path = map(
+workflow_path, reconciler_path, requester_path, waiter_path, annotator_path, reconcile_script_path, mode_action_path = map(
     Path, sys.argv[1:]
 )
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
@@ -81,6 +82,18 @@ requester = requester_path.read_text(encoding="utf-8")
 waiter = waiter_path.read_text(encoding="utf-8")
 annotator = annotator_path.read_text(encoding="utf-8")
 reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
+mode_action = yaml.safe_load(mode_action_path.read_text(encoding="utf-8"))
+
+expected_mode_step = {
+    "name": "Resolve certificate identity mode",
+    "id": "certificate-identity",
+    "uses": "./.github/actions/resolve-certificate-identity-mode",
+    "with": {
+        "values-file": "k8s/helm/firemud/values-hosted-shared.example.yaml",
+    },
+}
+if mode_action["outputs"]["mode"]["value"] != "${{ steps.resolve.outputs.mode }}":
+    raise SystemExit("certificate identity action does not expose its validated mode")
 
 if workflow["concurrency"] != {
     "group": "dev-demo-${{ github.workflow }}",
@@ -160,17 +173,8 @@ if derived_outputs.get("image_tag") != normalized_fixture_head:
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
-deploy_mode_run = deploy_by_name["Resolve certificate identity mode"]["run"]
-if 'case "$mode" in' not in deploy_mode_run:
-    raise SystemExit("dev-demo deploy mode output lacks an explicit allowlist")
-if "standalone|hosted-controller) ;;" not in deploy_mode_run:
-    raise SystemExit("dev-demo deploy mode output allowlist is incomplete")
-if "Resolver output must be exactly standalone or hosted-controller." not in deploy_mode_run:
-    raise SystemExit("dev-demo deploy mode output lacks a fail-closed diagnostic")
-if deploy_mode_run.index('case "$mode" in') >= deploy_mode_run.index(
-    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
-):
-    raise SystemExit("dev-demo deploy mode output is published before validation")
+if deploy_by_name["Resolve certificate identity mode"] != expected_mode_step:
+    raise SystemExit("dev-demo deploy must use the shared certificate identity action exactly")
 ordered = (
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
@@ -258,17 +262,8 @@ for required in ("success()", "steps.smoke.outcome == 'success'"):
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
 destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, dict)]
-destroy_mode_run = destroy_by_name["Resolve certificate identity mode"]["run"]
-if 'case "$mode" in' not in destroy_mode_run:
-    raise SystemExit("dev-demo destroy mode output lacks an explicit allowlist")
-if "standalone|hosted-controller) ;;" not in destroy_mode_run:
-    raise SystemExit("dev-demo destroy mode output allowlist is incomplete")
-if "Resolver output must be exactly standalone or hosted-controller." not in destroy_mode_run:
-    raise SystemExit("dev-demo destroy mode output lacks a fail-closed diagnostic")
-if destroy_mode_run.index('case "$mode" in') >= destroy_mode_run.index(
-    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
-):
-    raise SystemExit("dev-demo destroy mode output is published before validation")
+if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
+    raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
@@ -1513,7 +1508,7 @@ run_reconcile_fixture() {
       TEST_GH_LOG="$command_log" \
       TEST_GH_TRACE="$trace_log" \
       TEST_ACTIVE_MARKER="$active_marker" \
-      TEST_REPAIR_MARKER="$fixture_dir/${scenario}-repair-seen" \
+      TEST_REPAIR_MARKER="$repair_marker" \
       bash "$reconcile_step"
   ) >"$output" 2>&1
   actual_status=$?

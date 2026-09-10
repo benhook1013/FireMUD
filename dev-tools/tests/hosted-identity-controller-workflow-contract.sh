@@ -16,6 +16,7 @@ controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller
 bootstrap="$ROOT_DIR/dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh"
 waiter="$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"
 mode_resolver="$ROOT_DIR/dev-tools/hosted/shared/resolve-certificate-identity-mode.py"
+mode_action="$ROOT_DIR/.github/actions/resolve-certificate-identity-mode/action.yml"
 requester="$ROOT_DIR/dev-tools/hosted/shared/request-hosted-identity.sh"
 artifact_validator="$ROOT_DIR/dev-tools/hosted/preview/validate-preview-artifact.py"
 render_preview_values="$ROOT_DIR/dev-tools/hosted/preview/render-preview-values.py"
@@ -213,7 +214,7 @@ contains "$runtime_rollout_waiter" 'This bound applies independently to each dep
 
 # Dev-demo is the prerequisite's only active consumer integration. It preserves
 # standalone operation and gates controller requests/waits on resolved mode.
-contains "$dev_demo" 'resolve-certificate-identity-mode.py'
+contains "$dev_demo" 'uses: ./.github/actions/resolve-certificate-identity-mode'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'hosted-controller'"
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Active'
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
@@ -222,7 +223,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" <<'PY'
 import sys
 from pathlib import Path
 
@@ -234,6 +235,41 @@ preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
+mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
+
+expected_mode_step = {
+    "name": "Resolve certificate identity mode",
+    "id": "certificate-identity",
+    "uses": "./.github/actions/resolve-certificate-identity-mode",
+    "with": {
+        "values-file": "k8s/helm/firemud/values-hosted-shared.example.yaml",
+    },
+}
+
+
+def assert_mode_step(step: dict, owner: str) -> None:
+    assert step == expected_mode_step, (owner, step)
+
+
+assert set(mode_action["inputs"]) == {"values-file"}
+assert mode_action["inputs"]["values-file"]["required"] is True
+assert set(mode_action["outputs"]) == {"mode"}
+assert mode_action["outputs"]["mode"]["value"] == "${{ steps.resolve.outputs.mode }}"
+assert mode_action["runs"]["using"] == "composite"
+assert len(mode_action["runs"]["steps"]) == 1
+resolve_step = mode_action["runs"]["steps"][0]
+assert resolve_step["id"] == "resolve"
+assert resolve_step["shell"] == "bash"
+assert resolve_step["env"] == {"VALUES_FILE": "${{ inputs['values-file'] }}"}
+resolve_run = resolve_step["run"]
+assert '[[ -n "$VALUES_FILE" ]]' in resolve_run
+assert "resolve-certificate-identity-mode.py" in resolve_run
+assert 'case "$mode" in' in resolve_run
+assert "standalone|hosted-controller) ;;" in resolve_run
+assert "Resolver output must be exactly standalone or hosted-controller." in resolve_run
+assert resolve_run.index('case "$mode" in') < resolve_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+)
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
@@ -265,14 +301,7 @@ assert validate_job["outputs"]["certificate_identity_mode"] == (
 mode_step = next(
     step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
 )
-mode_run = mode_step["run"]
-assert mode_run.count("resolve-certificate-identity-mode.py") == 1
-assert 'case "$mode" in' in mode_run
-assert "standalone|hosted-controller) ;;" in mode_run
-assert "Resolver output must be exactly standalone or hosted-controller." in mode_run
-assert mode_run.index('case "$mode" in') < mode_run.index(
-    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
-)
+assert_mode_step(mode_step, "hosted identity request")
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 assert "Unsupported lifecycle event" in target_step["run"]
 for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
@@ -352,14 +381,7 @@ janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["step
 janitor_mode_step = next(
     step for step in janitor_steps if step.get("id") == "certificate-identity"
 )
-janitor_mode_run = janitor_mode_step["run"]
-assert janitor_mode_run.count("resolve-certificate-identity-mode.py") == 1
-assert 'case "$mode" in' in janitor_mode_run
-assert "standalone|hosted-controller) ;;" in janitor_mode_run
-assert "Resolver output must be exactly standalone or hosted-controller." in janitor_mode_run
-assert janitor_mode_run.index('case "$mode" in') < janitor_mode_run.index(
-    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
-)
+assert_mode_step(janitor_mode_step, "preview janitor")
 janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
@@ -681,14 +703,14 @@ preview_mode_step = next(
     if step.get("name") == "Resolve certificate identity mode"
 )
 assert preview_mode_step["id"] == "certificate-identity"
-preview_mode_run = preview_mode_step["run"]
-assert "resolve-certificate-identity-mode.py" in preview_mode_run
-assert 'case "$mode" in' in preview_mode_run
-assert "standalone|hosted-controller) ;;" in preview_mode_run
-assert "Resolver output must be exactly standalone or hosted-controller." in preview_mode_run
-assert preview_mode_run.index('case "$mode" in') < preview_mode_run.index(
-    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
-)
+assert_mode_step(preview_mode_step, "preview deploy")
+for job_name in ("dev-demo-deploy", "dev-demo-destroy"):
+    dev_demo_mode_step = next(
+        step
+        for step in dev_demo_workflow["jobs"][job_name]["steps"]
+        if step.get("id") == "certificate-identity"
+    )
+    assert_mode_step(dev_demo_mode_step, job_name)
 preview_ensure_step = next(
     step
     for step in preview_steps

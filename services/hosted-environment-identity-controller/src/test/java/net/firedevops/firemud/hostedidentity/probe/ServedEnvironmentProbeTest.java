@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import io.fabric8.kubernetes.api.model.Secret;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
@@ -27,7 +26,7 @@ import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
-import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
+import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidatorTest;
 import org.junit.jupiter.api.Test;
 
 class ServedEnvironmentProbeTest {
@@ -291,38 +290,12 @@ class ServedEnvironmentProbeTest {
   }
 
   private static Secret generatedMaterial(EnvironmentIdentityPlan plan) throws Exception {
-    Method generate =
-        GrpcTransportBundleGenerator.class.getDeclaredMethod(
-            "generate", EnvironmentIdentityPlan.class);
-    generate.setAccessible(true);
-    return (Secret) generate.invoke(new GrpcTransportBundleGenerator(), plan);
+    return SecretMaterialValidatorTest.GrpcMaterialFixture.generate(plan);
   }
 
   private static EnvironmentIdentityPlan withConsumers(
       EnvironmentIdentityPlan plan, String... consumers) {
-    return new EnvironmentIdentityPlan(
-        plan.name(),
-        plan.controlNamespace(),
-        plan.identityNamespace(),
-        plan.runtimeNamespace(),
-        plan.hostname(),
-        plan.ingressCertificateName(),
-        plan.ingressSecretName(),
-        plan.telnetCertificateName(),
-        plan.telnetSecretName(),
-        plan.gatewayInternalWsCertificateName(),
-        plan.gatewayInternalWsSecretName(),
-        plan.gatewayInternalWsDnsName(),
-        plan.tcpProxyBridgeCertificateName(),
-        plan.tcpProxyBridgeSecretName(),
-        plan.tcpProxyBridgeUriSan(),
-        plan.grpcCertificateName(),
-        plan.grpcSecretName(),
-        plan.ingressIssuer(),
-        plan.telnetIssuer(),
-        plan.grpcIssuer(),
-        plan.caSecretName(),
-        List.of(consumers));
+    return plan.withGrpcConsumers(List.of(consumers));
   }
 
   private static int readStatus(String statusLine) throws Exception {
