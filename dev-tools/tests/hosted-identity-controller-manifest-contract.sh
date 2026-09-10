@@ -1403,17 +1403,19 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   -out "$bootstrap_ca_cert" \
   -days 1 \
   -subj '/CN=firemud-grpc-ca' \
-  >/dev/null 2>&1
+  >/dev/null 2>&1 || fail "could not generate the RSA gRPC CA fixture"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
-  -out "$bootstrap_mismatched_ca_key" >/dev/null 2>&1
+  -out "$bootstrap_mismatched_ca_key" >/dev/null 2>&1 || \
+  fail "could not generate the mismatched RSA CA key fixture"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout "$bootstrap_ec_ca_key" \
   -out "$bootstrap_ec_ca_cert" \
   -days 1 \
   -subj '/CN=firemud-grpc-ca' \
-  >/dev/null 2>&1
+  >/dev/null 2>&1 || fail "could not generate the EC gRPC CA fixture"
 openssl rsa -in "$bootstrap_ca_key" -traditional \
-  -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1
+  -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1 || \
+  fail "could not generate the PKCS#1 gRPC CA key fixture"
 bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 bootstrap_fingerprint="$(
   openssl x509 -in "$bootstrap_ca_cert" -outform DER |

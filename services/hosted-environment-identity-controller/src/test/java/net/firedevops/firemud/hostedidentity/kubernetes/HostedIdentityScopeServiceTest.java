@@ -29,6 +29,7 @@ import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.RbacAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
@@ -70,30 +71,18 @@ class HostedIdentityScopeServiceTest {
     EnvironmentIdentityPlan plan = plan();
 
     assertEquals(
-        java.util.List.of(
+        List.of(
             "pr-42-tls", "pr-42-telnet-tls", "pr-42-gateway-internal-ws", "pr-42-tcp-proxy-bridge"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 
   @Test
   void runtimeRoleCoversBothBridgeDeploymentsAndEveryGrpcConsumer() {
-    EnvironmentIdentityPlan plan = plan();
+    EnvironmentIdentityPlan plan = plan().withGrpcConsumers(List.of("independent-grpc-consumer"));
 
     assertEquals(
-        java.util.Set.of(
-            "spring-cloud-gateway",
-            "tcp-proxy-service",
-            "account-service",
-            "automation-scripting-service",
-            "entity-management-service",
-            "game-design-service",
-            "game-logic-service",
-            "game-session-service",
-            "logging-admin-service",
-            "social-groups-service",
-            "world-management-service"),
-        new java.util.HashSet<>(HostedIdentityScopeService.requiredDeploymentNames(plan)));
-    assertEquals(plan.grpcConsumers(), HostedIdentityScopeService.requiredDeploymentNames(plan));
+        List.of("independent-grpc-consumer", "spring-cloud-gateway", "tcp-proxy-service"),
+        HostedIdentityScopeService.requiredDeploymentNames(plan));
   }
 
   private static final Map<String, String> ROLE_LABELS =
