@@ -325,6 +325,8 @@ spec:
              ((request.namespace == 'dev-identity') ? 'dev' :
               request.namespace.substring(0, request.namespace.size() - 9)) + '-') &&
            object.spec.secretName == object.metadata.name &&
+           has(object.spec.isCA) &&
+           object.spec.isCA == false &&
            ((object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] &&
              object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net'] &&
              object.spec.issuerRef.name == 'letsencrypt-prod') ||

@@ -17,6 +17,7 @@ concurrency:
 jobs:
   reconcile-previews:
     name: Reconcile Open PR Previews
+    timeout-minutes: 60
     runs-on:
       - self-hosted
       - preview

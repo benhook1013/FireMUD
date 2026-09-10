@@ -171,6 +171,7 @@ class CertificateResourceFactoryTest {
     assertEquals(2048, privateKey.get("size"));
     assertEquals("PKCS8", privateKey.get("encoding"));
     assertEquals("Always", privateKey.get("rotationPolicy"));
+    assertEquals(false, certificateSpec.get("isCA"));
     assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
   }
 

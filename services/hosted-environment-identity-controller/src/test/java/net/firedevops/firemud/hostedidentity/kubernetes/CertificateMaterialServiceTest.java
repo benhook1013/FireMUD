@@ -105,15 +105,27 @@ class CertificateMaterialServiceTest {
     verify(replacementResource).lockResourceVersion("7");
     verify(lockedReplacementResource).replace();
 
-    existingSpec.put("isCA", true);
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
-    existingSpec.remove("isCA");
     existingSpec.put(
         "secretName",
         ((Map<String, Object>) desired.getAdditionalProperties().get("spec")).get("secretName"));
+    existingSpec.put("isCA", true);
+    clearInvocations(replacementResource, lockedReplacementResource);
+
+    CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
+
+    existingSpec.put("isCA", false);
+    existingSpec.put("commonName", "unexpected.example.test");
+    IllegalStateException unknownSpec =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                CertificateMaterialService.applyCertificate(
+                    client, plan.identityNamespace(), desired));
+    assertEquals("owned Certificate spec has unknown drift", unknownSpec.getMessage());
+    existingSpec.remove("commonName");
     existing.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
     assertDoesNotThrow(
         () ->
@@ -805,8 +817,8 @@ class CertificateMaterialServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
-            "encodeUsagesInRequest",
-            true,
+            "encodeUsagesInRequest", true,
+            "isCA", false,
             "privateKey",
             Map.of("algorithm", "RSA", "size", 2048),
             "dnsNames",
@@ -815,8 +827,8 @@ class CertificateMaterialServiceTest {
         Map.of(
             "secretName",
             "pr-42-tls",
-            "encodeUsagesInRequest",
-            true,
+            "encodeUsagesInRequest", true,
+            "isCA", false,
             "revisionHistoryLimit",
             1L,
             "privateKey",
@@ -1390,7 +1402,7 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
-  void grpcUsesTheAcceptedProjectionWithoutReadingADeferredSource() {
+  void grpcUsesTheAcceptedProjectionWithoutRereadingTheDeferredSource() {
     EnvironmentIdentityPlan plan = plan();
     SecretClient secretClient = secretClient(plan);
     KubernetesClient client = secretClient.client();

@@ -36,6 +36,8 @@ import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
@@ -54,6 +56,7 @@ public class ServedEnvironmentProbe {
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";
+  private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
   private final HostedIdentityProperties properties;
 
   @SuppressFBWarnings(
@@ -105,6 +108,10 @@ public class ServedEnvironmentProbe {
     try {
       grpc = grpcProbe.check(grpcHostname(plan), GRPC_PORT);
     } catch (IllegalArgumentException exception) {
+      LOGGER.debug(
+          "gRPC probe rejected material or configuration for runtime Namespace {}",
+          plan.runtimeNamespace(),
+          exception);
       return new ProbeResult(false, "grpc-material-or-configuration-invalid");
     }
     return grpc.ready()
@@ -126,7 +133,8 @@ public class ServedEnvironmentProbe {
                 expectedFingerprint,
                 material,
                 properties.getGrpcTrustAnchorSha256()),
-        "mtls-handshake");
+        "mtls-handshake",
+        "bridge endpoint " + hostname + ":" + port);
   }
 
   ProbeResult grpc(String hostname, int port, Secret material, String expectedFingerprint) {
@@ -142,19 +150,28 @@ public class ServedEnvironmentProbe {
                 expectedFingerprint,
                 material,
                 properties.getGrpcTrustAnchorSha256()),
-        "mtls-handshake");
+        "mtls-handshake",
+        "gRPC endpoint " + hostname + ":" + port);
   }
 
   static ProbeResult internalTlsProbe(InternalTlsSocketOpener opener, String successReason) {
+    return internalTlsProbe(opener, successReason, "internal TLS endpoint");
+  }
+
+  private static ProbeResult internalTlsProbe(
+      InternalTlsSocketOpener opener, String successReason, String context) {
     try (SSLSocket socket = opener.open()) {
       return socket == null
           ? new ProbeResult(false, "leaf-fingerprint-mismatch")
           : new ProbeResult(true, successReason);
     } catch (IllegalArgumentException exception) {
+      LOGGER.debug("{} rejected material or configuration", context, exception);
       return new ProbeResult(false, "material-or-configuration-invalid");
     } catch (HandshakePolicyRejectedException exception) {
+      LOGGER.debug("{} rejected the required handshake policy", context, exception);
       return new ProbeResult(false, "handshake-policy-rejected");
     } catch (Exception exception) {
+      LOGGER.debug("{} connection failed", context, exception);
       return new ProbeResult(false, "connection-failed");
     }
   }
@@ -382,6 +399,7 @@ public class ServedEnvironmentProbe {
           ? new ProbeResult(true, "http-" + code)
           : new ProbeResult(false, "http-" + code);
     } catch (Exception exception) {
+      LOGGER.debug("HTTPS probe connection failed for {}:{}", hostname, port, exception);
       return new ProbeResult(false, "connection-failed");
     }
   }
@@ -444,6 +462,7 @@ public class ServedEnvironmentProbe {
           ? new ProbeResult(false, "leaf-fingerprint-mismatch")
           : new ProbeResult(true, "tls-handshake");
     } catch (Exception exception) {
+      LOGGER.debug("Telnet probe connection failed for {}:{}", hostname, port, exception);
       return new ProbeResult(false, "connection-failed");
     }
   }

@@ -879,6 +879,8 @@ controller_non_delete_expression = certificate_expressions[0].split(
 )[0]
 assert "firemud-grpc-tls" not in controller_non_delete_expression
 assert "'grpc'" not in controller_non_delete_expression
+assert "has(object.spec.isCA)" in controller_non_delete_expression
+assert "object.spec.isCA == false" in controller_non_delete_expression
 cert_manager_status_expression = certificate_expressions[0].split(
     "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
     1,

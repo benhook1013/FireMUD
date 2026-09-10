@@ -107,6 +107,7 @@ public class CertificateResourceFactory {
 
     Map<String, Object> spec = new LinkedHashMap<>();
     spec.put("secretName", secretName);
+    spec.put("isCA", false);
     Map<String, Object> secretTemplateMetadata = new LinkedHashMap<>();
     secretTemplateMetadata.put("labels", HostedIdentityContract.managedLabels(plan.name(), role));
     secretTemplateMetadata.put(

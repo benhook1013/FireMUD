@@ -749,6 +749,13 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         true);
   }
 
+  /**
+   * Confirms that the runtime profile still matches the expected mutation boundary.
+   *
+   * @return {@code true} when the runtime profile is current; this method never returns {@code
+   *     false}
+   * @throws RuntimeProfileFenceException when the profile is malformed, absent, or changed
+   */
   private boolean assertRuntimeProfileCurrent(
       EnvironmentIdentityPlan plan,
       RuntimeProfileService.RuntimeProfile expectedProfile,
