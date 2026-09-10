@@ -293,14 +293,14 @@ class SecretMaterialValidatorTest {
     Secret source = generatedGrpcBundle(plan);
     Map<String, String> missingLeafData = new LinkedHashMap<>(source.getData());
     missingLeafData.remove("tls.crt");
-    source.setData(missingLeafData);
+    Secret missingLeaf = new SecretBuilder(source).withData(missingLeafData).build();
 
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
             () ->
                 GrpcTransportBundleGenerator.renewalRequired(
-                    source, Duration.ofDays(7), Instant.now()));
+                    missingLeaf, Duration.ofDays(7), Instant.now()));
 
     assertEquals("gRPC source has invalid leaf certificate", failure.getMessage());
     assertEquals(
