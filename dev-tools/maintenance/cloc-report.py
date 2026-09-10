@@ -294,6 +294,7 @@ def snapshot_worktree(root: Path, revision: str) -> Iterable[Path]:
     temp_root = Path(tempfile.mkdtemp(prefix="firemud-cloc-snapshot-"))
     snapshot = temp_root / "worktree"
     added = False
+    original_error: BaseException | None = None
     try:
         run_command(
             (
@@ -310,21 +311,36 @@ def snapshot_worktree(root: Path, revision: str) -> Iterable[Path]:
         )
         added = True
         yield snapshot
+    except BaseException as error:
+        original_error = error
+        raise
     finally:
+        cleanup_errors: list[Exception] = []
         if added:
-            run_command(
-                (
-                    "git",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(snapshot),
-                ),
-                root,
-            )
-        shutil.rmtree(temp_root, ignore_errors=False)
+            try:
+                run_command(
+                    (
+                        "git",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(snapshot),
+                    ),
+                    root,
+                )
+            except (OSError, ReportError) as error:
+                cleanup_errors.append(error)
+        try:
+            shutil.rmtree(temp_root, ignore_errors=False)
+        except OSError as error:
+            cleanup_errors.append(error)
+
+        if original_error is None and cleanup_errors:
+            if len(cleanup_errors) == 1:
+                raise cleanup_errors[0]
+            raise cleanup_errors[-1] from cleanup_errors[0]
 
 
 def scan_cloc(root: Path, inventory: Iterable[str]) -> list[FileStats]:

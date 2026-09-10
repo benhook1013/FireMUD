@@ -520,7 +520,9 @@ def _completed_hosted_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, A
     for review in reviews:
         if not isinstance(review, dict):
             raise CaptureInvalid("hosted review list contains a non-object")
-        if not _is_coderabbit_login(_hosted_review_login(review)):
+        user = review.get("user")
+        login = user.get("login") if isinstance(user, dict) else None
+        if not _is_coderabbit_login(login):
             continue
         if review.get("state") in {"PENDING", "DISMISSED"} or not isinstance(review.get("submitted_at"), str):
             continue

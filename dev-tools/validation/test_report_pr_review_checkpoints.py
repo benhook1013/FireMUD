@@ -521,6 +521,38 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(second["review_id"], 902)
         self.assertEqual(second["inline_findings"][0]["id"], 7003)
 
+    def test_hosted_discovery_ignores_unidentified_authors_and_validates_coderabbit(self) -> None:
+        completed = {
+            "id": 903,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T07:00:00Z",
+            "commit_id": "b" * 40,
+        }
+        reviews = [
+            {"id": 900, "state": "COMMENTED", "submitted_at": "2026-09-10T04:00:00Z"},
+            {"id": 901, "user": None, "state": "COMMENTED", "submitted_at": "2026-09-10T05:00:00Z"},
+            {
+                "id": 902,
+                "user": {},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T05:30:00Z",
+            },
+            {
+                "id": 905,
+                "user": {"login": 42},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T06:00:00Z",
+            },
+            completed,
+        ]
+
+        self.assertEqual(self.reporter._completed_hosted_reviews(reviews), [completed])
+
+        malformed_coderabbit = {**completed, "id": 904, "commit_id": None}
+        with self.assertRaisesRegex(self.reporter.CaptureInvalid, "valid reviewed commit"):
+            self.reporter._completed_hosted_reviews([malformed_coderabbit])
+
     def test_hosted_rejections_join_by_inline_comment_id_and_report_missing_decisions(self) -> None:
         review = {
             "id": 903,
