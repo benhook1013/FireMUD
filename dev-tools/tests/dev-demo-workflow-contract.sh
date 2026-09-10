@@ -295,6 +295,14 @@ if "jq is required for dev-demo reconciliation." not in reconcile_run:
     raise SystemExit("dev-demo reconciler jq prerequisite lacks a clear diagnostic")
 if reconcile_run.index("command -v jq") >= reconcile_run.index("jq -"):
     raise SystemExit("dev-demo reconciler uses jq before checking the prerequisite")
+if '[[ -n "${GITHUB_REPOSITORY:-}" ]]' not in reconcile_run:
+    raise SystemExit("dev-demo reconciler must require GITHUB_REPOSITORY")
+if "GITHUB_REPOSITORY must be non-empty for dev-demo reconciliation." not in reconcile_run:
+    raise SystemExit("dev-demo reconciler repository prerequisite lacks a clear diagnostic")
+if reconcile_run.index('[[ -n "${GITHUB_REPOSITORY:-}" ]]') >= reconcile_run.index(
+    'gh api "repos/${GITHUB_REPOSITORY}/branches/develop"'
+):
+    raise SystemExit("dev-demo reconciler uses GITHUB_REPOSITORY before checking it")
 for required in (
     "set -euo pipefail",
     "export LC_ALL=C",

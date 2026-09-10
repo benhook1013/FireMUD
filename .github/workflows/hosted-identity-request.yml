@@ -339,6 +339,10 @@ jobs:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
+      - name: Remove requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+
       - name: Wait for all controller identity projections
         env:
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -792,3 +796,7 @@ jobs:
             --retired "$IDENTITY_NAME" 600
           kubectl -n firemud-system delete hostedenvironmentidentity "$IDENTITY_NAME" \
             --wait=true --timeout=180s
+
+      - name: Remove requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"

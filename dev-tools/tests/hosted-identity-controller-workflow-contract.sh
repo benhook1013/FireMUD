@@ -379,6 +379,14 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
+deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
+assert deploy_requester_cleanup["if"] == "${{ always() }}"
+assert deploy_requester_cleanup["run"] == (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+)
+assert deploy_steps.index(deploy_by_name["Restore preview runtime kubeconfig"]) < (
+    deploy_steps.index(deploy_requester_cleanup)
+)
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -716,6 +724,18 @@ retired_request = next(
 assert retired_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Retired'
 )
+retire_steps = jobs["retire-identity"]["steps"]
+retire_by_name = {
+    step.get("name"): step for step in retire_steps if isinstance(step, dict)
+}
+retire_requester_cleanup = retire_by_name["Remove requester kubeconfig"]
+assert retire_requester_cleanup["if"] == "${{ always() }}"
+assert retire_requester_cleanup["run"] == (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+)
+assert retire_steps.index(
+    retire_by_name["Observe terminal retirement and delete request"]
+) < retire_steps.index(retire_requester_cleanup)
 
 credential_step = next(
     step

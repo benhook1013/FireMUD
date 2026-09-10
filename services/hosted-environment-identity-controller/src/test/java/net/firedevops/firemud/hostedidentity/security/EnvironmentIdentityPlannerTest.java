@@ -141,18 +141,20 @@ class EnvironmentIdentityPlannerTest {
     Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
     List<?> validations = (List<?>) spec.get("validations");
     String runtimeScopeMarker = "(object.metadata.name == 'firemud-hosted-runtime-scope'";
-    String scopeRoleExpression =
+    List<String> runtimeScopeExpressions =
         validations.stream()
             .map(Map.class::cast)
             .map(validation -> validation.get("expression"))
             .filter(String.class::isInstance)
             .map(String.class::cast)
             .filter(expression -> expression.contains(runtimeScopeMarker))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("runtime-scope admission branch must exist"));
-    int runtimeScopeStart =
-        scopeRoleExpression.lastIndexOf(runtimeScopeMarker);
-    assertTrue(runtimeScopeStart >= 0, "runtime-scope admission branch must exist");
+            .toList();
+    assertEquals(
+        1,
+        runtimeScopeExpressions.size(),
+        "exactly one runtime-scope admission branch must exist");
+    String scopeRoleExpression = runtimeScopeExpressions.get(0);
+    int runtimeScopeStart = scopeRoleExpression.indexOf(runtimeScopeMarker);
     String runtimeScopePolicy =
         scopeRoleExpression.substring(runtimeScopeStart).replaceAll("\\s+", " ");
 
