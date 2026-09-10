@@ -47,6 +47,7 @@ PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
+GITHUB_PR_BODY_MAX_CHARACTERS = 65_536
 
 
 class ReportError(RuntimeError):
@@ -877,14 +878,24 @@ def render_pr_report(report: dict[str, object]) -> str:
     return "\n".join(output)
 
 
+def validated_pr_body(body: str) -> str:
+    body_length = len(body)
+    if body_length > GITHUB_PR_BODY_MAX_CHARACTERS:
+        raise ReportError(
+            f"updated PR body is {body_length} characters; GitHub allows at most "
+            f"{GITHUB_PR_BODY_MAX_CHARACTERS} characters"
+        )
+    return body
+
+
 def replace_pr_report_block(body: str, snippet: str) -> str:
     start_count = body.count(PR_REPORT_START)
     end_count = body.count(PR_REPORT_END)
     if start_count == 0 and end_count == 0:
         if not body:
-            return snippet
+            return validated_pr_body(snippet)
         separator = "" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n"
-        return f"{body}{separator}{snippet}"
+        return validated_pr_body(f"{body}{separator}{snippet}")
     if start_count != 1 or end_count != 1:
         raise ReportError("PR body must contain exactly one complete LOC marker block")
     start = body.find(PR_REPORT_START)
@@ -892,7 +903,7 @@ def replace_pr_report_block(body: str, snippet: str) -> str:
     if end < start:
         raise ReportError("PR body LOC markers are reversed")
     end += len(PR_REPORT_END)
-    return f"{body[:start]}{snippet}{body[end:]}"
+    return validated_pr_body(f"{body[:start]}{snippet}{body[end:]}")
 
 
 def pull_request_update_state(root: Path, number: int, repository: str) -> tuple[str, str, str]:

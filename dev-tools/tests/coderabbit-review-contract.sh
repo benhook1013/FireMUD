@@ -569,6 +569,44 @@ cat >"$TMP_DIR/quoted-rate-limit.json" <<'JSON'
 }
 JSON
 
+cat >"$TMP_DIR/blockquote-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/blockquote-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReview completed.",
+              "createdAt": "2099-07-03T02:40:02Z",
+              "url": "https://example.test/blockquote-completion"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "> Review rate limited",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/blockquote-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
 cat >"$TMP_DIR/automatic-review-rate-limited.json" <<'JSON'
 {
   "data": {
@@ -1065,10 +1103,14 @@ actionable_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/Fire
 grep -q "latest_review_request_rate_limited=false" <<<"$actionable_quoted_rate_limit_output"
 grep -q "retrigger_review_allowed=true" <<<"$actionable_quoted_rate_limit_output"
 
-expect_failure_output "$TMP_DIR/quoted-rate-limit.json" "$TMP_DIR/quoted-rate-limit.out"
-[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
-grep -q "latest_review_request_rate_limited=false" "$TMP_DIR/quoted-rate-limit.out"
-grep -q "retrigger_review_allowed=true" "$TMP_DIR/quoted-rate-limit.out"
+quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_rate_limit_output"
+grep -q "ok=true" <<<"$quoted_rate_limit_output"
+
+blockquote_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/blockquote-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$blockquote_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$blockquote_quoted_rate_limit_output"
 
 expect_failure_output "$TMP_DIR/automatic-review-rate-limited.json" "$TMP_DIR/automatic-review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

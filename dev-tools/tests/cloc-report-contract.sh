@@ -725,6 +725,29 @@ assert replaced_body.startswith("prefix\n")
 assert replaced_body.endswith("\nsuffix")
 assert replaced_body.count(cloc_report.PR_REPORT_START) == 1
 assert cloc_report.replace_pr_report_block(replaced_body, impact_snippet) == replaced_body
+body_limit = cloc_report.GITHUB_PR_BODY_MAX_CHARACTERS
+append_snippet = "report"
+exact_append_body = "a" * (body_limit - len(append_snippet) - 2)
+assert len(cloc_report.replace_pr_report_block(exact_append_body, append_snippet)) == body_limit
+replacement_snippet = "replacement"
+exact_replacement_body = (
+    "r" * (body_limit - len(replacement_snippet))
+    + cloc_report.PR_REPORT_START
+    + "old"
+    + cloc_report.PR_REPORT_END
+)
+assert len(cloc_report.replace_pr_report_block(exact_replacement_body, replacement_snippet)) == body_limit
+for oversized_body, oversized_snippet in (
+    (exact_append_body + "a", append_snippet),
+    ("r" + exact_replacement_body, replacement_snippet),
+):
+    try:
+        cloc_report.replace_pr_report_block(oversized_body, oversized_snippet)
+    except cloc_report.ReportError as error:
+        assert f"{body_limit + 1} characters" in str(error)
+        assert f"at most {body_limit} characters" in str(error)
+    else:
+        raise AssertionError("PR bodies over GitHub's character limit must fail closed")
 for malformed_body in (
     cloc_report.PR_REPORT_START,
     cloc_report.PR_REPORT_END,
@@ -761,6 +784,38 @@ try:
         assert "base or head changed" in str(error)
     else:
         raise AssertionError("changed PR revisions must block body update")
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
+oversized_update_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_oversized_body_command(args, _root, *, timeout=None):
+    oversized_update_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+    if args[:3] != ("gh", "pr", "view"):
+        raise AssertionError("oversized PR body must prevent a second read or edit")
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {
+                "baseRefOid": "a" * 40,
+                "headRefOid": "b" * 40,
+                "body": "x" * cloc_report.GITHUB_PR_BODY_MAX_CHARACTERS,
+            }
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_oversized_body_command
+try:
+    try:
+        cloc_report.update_pull_request_body(repo, 2736, impact)
+    except cloc_report.ReportError as error:
+        assert "GitHub allows at most 65536 characters" in str(error)
+    else:
+        raise AssertionError("oversized PR body update must fail before the second read")
+    assert len(oversized_update_calls) == 1
 finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
