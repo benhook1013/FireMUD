@@ -262,15 +262,16 @@ class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    Map<String, String> invalidLeafData = new LinkedHashMap<>(generated.getData());
+    invalidLeafData.put(
+        "tls.crt",
+        Base64.getEncoder()
+            .encodeToString("not a certificate".getBytes(StandardCharsets.US_ASCII)));
     Secret source =
         new SecretBuilder()
             .withType("Opaque")
             .withMetadata(generated.getMetadata())
-            .withData(
-                Map.of(
-                    "tls.crt",
-                    Base64.getEncoder()
-                        .encodeToString("not a certificate".getBytes(StandardCharsets.US_ASCII))))
+            .withData(invalidLeafData)
             .build();
 
     IllegalStateException failure =
@@ -281,7 +282,8 @@ class SecretMaterialValidatorTest {
                     source, Duration.ofDays(7), Instant.now()));
 
     assertEquals("gRPC source has invalid leaf certificate", failure.getMessage());
-    assertTrue(failure.getCause().getMessage().contains("gRPC source leaf Secret"));
+    assertEquals(
+        "gRPC source leaf Secret must use CERTIFICATE PEM", failure.getCause().getMessage());
   }
 
   @Test
@@ -829,12 +831,19 @@ class SecretMaterialValidatorTest {
                     matchingCa.getData().get("ca.key")))
             .build();
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.validateCa(fallbackShape, fingerprint));
-    assertThrows(
-        IllegalStateException.class,
-        () -> GrpcTransportBundleGenerator.validateCa(mismatchedKey, fingerprint));
+    IllegalStateException fallbackFailure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> GrpcTransportBundleGenerator.validateCa(fallbackShape, fingerprint));
+    assertEquals(
+        "configured gRPC CA Secret must be Opaque and contain exactly ca.crt and ca.key",
+        fallbackFailure.getMessage());
+    IllegalStateException mismatchedKeyFailure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> GrpcTransportBundleGenerator.validateCa(mismatchedKey, fingerprint));
+    assertEquals(
+        "configured gRPC CA certificate and key do not match", mismatchedKeyFailure.getMessage());
     var wrongPemException =
         assertThrows(
             IllegalStateException.class,

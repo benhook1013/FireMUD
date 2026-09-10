@@ -1,5 +1,5 @@
 name: Write kubeconfig
-description: Write a validated kubeconfig to a private runner file and export KUBECONFIG
+description: Write a validated kubeconfig to a private runner file and write KUBECONFIG to GITHUB_ENV as the default for subsequent job steps unless a later step overrides it
 inputs:
   content:
     description: Kubeconfig content supplied by the caller's protected secret

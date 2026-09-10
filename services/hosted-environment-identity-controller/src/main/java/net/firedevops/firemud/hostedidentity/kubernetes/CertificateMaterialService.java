@@ -887,7 +887,22 @@ public class CertificateMaterialService {
       }
       return true;
     }
-    return !(desired instanceof Collection<?>) || existing instanceof Collection<?>;
+    if (desired instanceof Collection<?> desiredCollection) {
+      if (!(existing instanceof Collection<?> existingCollection)
+          || desiredCollection.size() != existingCollection.size()) {
+        return false;
+      }
+      var desiredIterator = desiredCollection.iterator();
+      var existingIterator = existingCollection.iterator();
+      while (desiredIterator.hasNext()) {
+        if (!hasOnlyDesiredShape(
+            desiredIterator.next(), existingIterator.next(), path + "[]")) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return !(existing instanceof Map<?, ?>) && !(existing instanceof Collection<?>);
   }
 
   static boolean containsDesiredLabels(Map<String, String> existing, Map<String, String> desired) {

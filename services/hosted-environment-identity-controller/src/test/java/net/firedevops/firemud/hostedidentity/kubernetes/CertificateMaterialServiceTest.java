@@ -114,6 +114,59 @@ class CertificateMaterialServiceTest {
 
   @Test
   @SuppressWarnings("unchecked")
+  void certificateShapeRejectsUnknownNestedCollectionFields() {
+    EnvironmentIdentityPlan plan = plan();
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    Map<String, Object> desiredSpec =
+        (Map<String, Object>) desired.getAdditionalProperties().get("spec");
+    desiredSpec.put("additionalOutputFormats", List.of(Map.of("type", "CombinedPEM")));
+
+    GenericKubernetesResource existing = new GenericKubernetesResource();
+    existing.setApiVersion("cert-manager.io/v1");
+    existing.setKind("Certificate");
+    existing.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(desired.getMetadata().getName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(desired.getMetadata().getLabels())
+            .withResourceVersion("7")
+            .build());
+    Map<String, Object> existingSpec = new LinkedHashMap<>(desiredSpec);
+    existingSpec.put(
+        "additionalOutputFormats",
+        List.of(Map.of("type", "CombinedPEM", "unexpected", "value")));
+    existing.setAdditionalProperties(Map.of("spec", existingSpec));
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(desired.getMetadata().getName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                CertificateMaterialService.applyCertificate(
+                    client, plan.identityNamespace(), desired));
+
+    assertEquals("owned Certificate spec has unknown drift", failure.getMessage());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
   void certificateRepairTreatsConflictAsTransientButPropagatesOtherFailures() {
     EnvironmentIdentityPlan plan = plan();
     GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);

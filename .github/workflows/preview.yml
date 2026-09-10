@@ -251,7 +251,14 @@ jobs:
           set -euo pipefail
           mode="$(python3 ./dev-tools/hosted/shared/resolve-certificate-identity-mode.py \
             k8s/helm/firemud/values-hosted-shared.example.yaml)"
-          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          case "$mode" in
+            standalone|hosted-controller) ;;
+            *)
+              echo "::error title=Invalid certificate identity mode::Resolver output must be exactly standalone or hosted-controller." >&2
+              exit 1
+              ;;
+          esac
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
 
       - name: Publish preview lifecycle state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9

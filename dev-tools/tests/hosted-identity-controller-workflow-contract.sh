@@ -62,6 +62,7 @@ fi
 # The shared kubeconfig action is the only workflow credential-file writer.
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
+  'description: Write a validated kubeconfig to a private runner file and write KUBECONFIG to GITHUB_ENV as the default for subsequent job steps unless a later step overrides it' \
   'using: composite' \
   'umask 077' \
   '[[ -n "$KUBECONFIG_CONTENT" ]]' \
@@ -594,7 +595,14 @@ preview_mode_step = next(
     if step.get("name") == "Resolve certificate identity mode"
 )
 assert preview_mode_step["id"] == "certificate-identity"
-assert "resolve-certificate-identity-mode.py" in preview_mode_step["run"]
+preview_mode_run = preview_mode_step["run"]
+assert "resolve-certificate-identity-mode.py" in preview_mode_run
+assert 'case "$mode" in' in preview_mode_run
+assert "standalone|hosted-controller) ;;" in preview_mode_run
+assert "Resolver output must be exactly standalone or hosted-controller." in preview_mode_run
+assert preview_mode_run.index('case "$mode" in') < preview_mode_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+)
 preview_ensure_step = next(
     step
     for step in preview_steps
