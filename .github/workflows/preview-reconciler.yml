@@ -90,7 +90,8 @@ jobs:
                 (.metadata.annotations // {}) as $annotations
                 | [
                     annotation($annotations; "firemud.dev/last-preview-head-sha"),
-                    annotation($annotations; "firemud.dev/requested-preview-head-sha")
+                    annotation($annotations; "firemud.dev/requested-preview-head-sha"),
+                    (.metadata.resourceVersion // "")
                   ]
                 | join("|")
               end
@@ -142,7 +143,7 @@ jobs:
                 echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} snapshot." >&2
                 continue
               fi
-              IFS='|' read -r current_head_sha requested_head_sha <<<"${namespace_heads}"
+              IFS='|' read -r current_head_sha requested_head_sha _ <<<"${namespace_heads}"
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
@@ -159,7 +160,7 @@ jobs:
                   echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
                   continue
                 else
-                  IFS='|' read -r fresh_head_sha fresh_requested_head_sha <<<"${fresh_namespace_heads}"
+                  IFS='|' read -r fresh_head_sha fresh_requested_head_sha fresh_namespace_resource_version <<<"${fresh_namespace_heads}"
                   if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
                     echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
                     continue
@@ -172,7 +173,8 @@ jobs:
                   else
                     if ! kubectl annotate namespace "${namespace}" \
                       "firemud.dev/requested-preview-head-sha=${head_sha}" \
-                      --overwrite >/dev/null; then
+                      --overwrite \
+                      --resource-version "${fresh_namespace_resource_version}" >/dev/null; then
                       if ! annotation_failure_namespace_json="$(
                         kubectl get namespace "${namespace}" --ignore-not-found -o json
                       )"; then

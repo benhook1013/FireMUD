@@ -31,17 +31,11 @@ contains() {
   }
 }
 
-contains "$runtime" 'hosted-environment-identity-controller'
 contains "$runtime" 'services/hosted-environment-identity-controller/**'
-contains "$publisher" 'hosted-environment-identity-controller'
 # shellcheck disable=SC2016 # These assertions intentionally match literal publisher shell.
 contains "$publisher" 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal publisher shell.
 contains "$publisher" 'Required source artifact image for $service is missing: $image.'
-if grep -Fq -- 'Optional controller image unavailable' "$publisher"; then
-  echo "$publisher must require the controller image" >&2
-  exit 1
-fi
 contains "$build_gradle" '"buildHostedEnvironmentIdentityControllerImage"'
 python3 - "$build_gradle" <<'PY'
 import sys
@@ -73,12 +67,12 @@ steps = workflow["jobs"]["pr-local-smoke"]["steps"]
 steps_by_name = {
     step.get("name"): step for step in steps if isinstance(step, dict)
 }
-build_step = steps_by_name["Build controller image for the trusted publisher"]
+build_step = steps_by_name["Build controller image for credential-free local validation"]
 smoke_step = steps_by_name["Smoke controller image entrypoint and paused health"]
 export_step = steps_by_name["Export fixed-tag preview image artifact"]
 assert steps.index(build_step) < steps.index(smoke_step) < steps.index(export_step)
 assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
-    "ghcr.io/benhook1013/hosted-environment-identity-controller:"
+    "firemud-hosted-identity-controller-local:"
     "${{ needs.image-meta.outputs.image_tag }}"
 )
 smoke_run = smoke_step["run"]
@@ -94,6 +88,9 @@ for required in (
 ):
     assert required in smoke_run, required
 assert "--entrypoint" not in smoke_run
+export_run = export_step["run"]
+assert "hosted-environment-identity-controller" not in export_run
+assert "account-service" in export_run
 PY
 
 # The shared kubeconfig action is the only workflow credential-file writer.
@@ -228,7 +225,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
 import sys
 from pathlib import Path
 
@@ -241,6 +238,7 @@ dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8")
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
+runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
 
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
@@ -377,12 +375,86 @@ assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
 ) == 1
 for obsolete_optional_controller_fragment in (
+    "hosted-environment-identity-controller; do",
+    "hosted-environment-identity-controller\\n",
     'if [[ "$service" == hosted-environment-identity-controller ]]; then',
     "Optional controller image unavailable",
     "firemud-hosted-identity-controller-image-unavailable",
     "Source artifact does not contain optional",
 ):
     assert obsolete_optional_controller_fragment not in publisher_script
+
+runtime_jobs = runtime_workflow["jobs"]
+trusted_build = runtime_jobs["build-runtime-images"]
+base_job = runtime_jobs["build-base-image"]
+base_build_steps = [
+    step for step in base_job["steps"]
+    if step.get("uses", "").startswith("docker/build-push-action@")
+]
+assert len(base_build_steps) == 2
+assert all(step["with"].get("push") is True for step in base_build_steps)
+assert base_build_steps[0]["id"] == "build_base_image_first"
+assert base_build_steps[1]["id"] == "build_base_image_retry"
+assert "digest" in base_job["outputs"]
+digest_capture_steps = [
+    step for step in base_job["steps"]
+    if "build_base_image_first.outputs.digest" in str(step)
+    or "build_base_image_retry.outputs.digest" in str(step)
+]
+assert digest_capture_steps
+assert any("sha256:[0-9a-f]" in str(step) for step in digest_capture_steps)
+digest_selector = next(step for step in base_job["steps"] if step.get("id") == "select_base_image_digest")
+digest_selector_run = digest_selector["run"]
+assert "published_digests" in digest_selector_run
+assert "FIRST_DIGEST" in digest_selector["env"]
+assert "RETRY_DIGEST" in digest_selector["env"]
+assert "sha256:[0-9a-f]" in digest_selector_run
+assert "${#published_digests[@]}" in digest_selector_run
+assert 'echo "digest=' in digest_selector_run
+assert "github.event_name != 'pull_request'" in trusted_build["if"]
+matrix_entries = trusted_build["strategy"]["matrix"]["service"]
+assert "hosted-environment-identity-controller" not in matrix_entries
+controller_job = runtime_jobs["build-hosted-identity-controller"]
+assert "build-base-image" in controller_job["needs"]
+assert all(token in controller_job["if"] for token in (
+    "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
+))
+assert controller_job["permissions"] == {
+    "contents": "read",
+    "packages": "write",
+    "id-token": "write",
+    "attestations": "write",
+}
+controller_steps = controller_job["steps"]
+checkout = next(step for step in controller_steps if step.get("uses", "").startswith("actions/checkout@"))
+assert checkout["with"]["persist-credentials"] is False
+assert checkout["with"]["ref"] == "${{ needs.image-meta.outputs.checkout_ref }}"
+assert controller_job["env"]["CONTROLLER_IMAGE"] == (
+    "ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}"
+)
+build_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Build controller JAR and image locally")
+smoke_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Smoke exact controller image")
+login_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Login to GHCR")
+publish_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Publish exact smoke-tested controller image")
+assert build_index < smoke_index < login_index < publish_index
+assert "--tag \"$CONTROLLER_IMAGE\"" in controller_steps[build_index]["run"]
+assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_steps[build_index]["run"]
+assert 'docker push "$CONTROLLER_IMAGE"' in controller_steps[publish_index]["run"]
+publish_run = controller_steps[publish_index]["run"]
+assert "docker manifest inspect" not in publish_run
+assert "current_image_id" in publish_run
+assert "pushed_digest" in publish_run
+attest_step = next(step for step in controller_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
+assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
+assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
+assert controller_steps.index(attest_step) > publish_index
+assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
+assert attest_step["with"]["push-to-registry"] is True
+assert attest_step["with"]["create-storage-record"] is False
+assert controller_steps[publish_index]["id"] == "publish"
+assert "pushed_digest" in publish_run
+assert "sha256:[0-9a-f]" in publish_run
+assert "hosted-environment-identity-controller" not in publisher_script
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
 janitor_mode_step = next(
     step for step in janitor_steps if step.get("id") == "certificate-identity"

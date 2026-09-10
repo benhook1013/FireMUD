@@ -152,6 +152,8 @@ public class HostedIdentityScopeService {
                     List.of("secrets"),
                     identitySecretNames,
                     List.of("update", "patch", "delete")),
+                // Kubernetes ignores resourceNames for CREATE, so Secret creation cannot be
+                // restricted to the named identity Secrets.
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create"))));
     ensureRole(client, plan.identityNamespace(), desired);
     ensureBinding(client, plan.identityNamespace(), ROLE_NAME, labels(plan), ROLE_NAME, plan);
@@ -174,6 +176,8 @@ public class HostedIdentityScopeService {
                         plan.tcpProxyBridgeSecretName(),
                         plan.grpcSecretName()),
                     List.of("get", "update", "patch", "delete")),
+                // Kubernetes ignores resourceNames for CREATE, so Secret creation cannot be
+                // restricted to the named runtime Secrets.
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create")),
                 rule(List.of("apps"), List.of("deployments"), List.of(), List.of("list", "watch")),
                 rule(

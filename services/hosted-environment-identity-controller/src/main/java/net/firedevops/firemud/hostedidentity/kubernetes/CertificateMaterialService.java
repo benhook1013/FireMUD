@@ -402,7 +402,7 @@ public class CertificateMaterialService {
   private static String runtimeProjectionRevision(String role, Secret projection) {
     try {
       return SecretProjectionService.revisionForRole(role, projection.getData());
-    } catch (RuntimeException exception) {
+    } catch (IllegalArgumentException exception) {
       return null;
     }
   }
@@ -1026,7 +1026,12 @@ public class CertificateMaterialService {
     }
   }
 
-  /** Lazily materializes roles against one memoized rotation-selection snapshot. */
+  /**
+   * Lazily materializes roles against one memoized rotation-selection snapshot.
+   *
+   * <p>Each batch belongs to one reconciliation and must be used by only one thread; callers must
+   * not share a batch concurrently.
+   */
   public final class MaterializationBatch {
     private final KubernetesClient client;
     private final EnvironmentIdentityPlan plan;

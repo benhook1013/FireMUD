@@ -25,7 +25,7 @@ fail() {
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: bootstrap-hosted-identity-controller.sh --image ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:<64 hex> [options]
+Usage: bootstrap-hosted-identity-controller.sh --image ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:<64 hex> [options]
 
 Options:
   --activation-mode MODE  paused (default), observe, or active
@@ -74,7 +74,7 @@ done
 [[ "${FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR:-}" == "1" ]] || \
   fail "set FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 from a trusted operator context"
 [[ -n "$IMAGE_REF" ]] || fail "an immutable --image is required"
-[[ "$IMAGE_REF" =~ ^ghcr\.io/benhook1013/hosted-environment-identity-controller@sha256:[0-9a-f]{64}$ ]] || \
+[[ "$IMAGE_REF" =~ ^ghcr\.io/benhook1013/firemud-hosted-identity-controller@sha256:[0-9a-f]{64}$ ]] || \
   fail "--image must be the approved controller repository pinned by a 64-hex sha256 digest"
 [[ "$GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$ ]] || \
   fail "--grpc-trust-anchor-sha256 or FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256 must be a 64-hex fingerprint"
@@ -95,18 +95,42 @@ if ! [[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
   fail "--wait-seconds must be an integer between 1 and 3600"
 fi
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
+command -v gh >/dev/null 2>&1 || fail "gh is required to verify controller image provenance"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
 umask 077
 
 temporary_manifest="$(mktemp)"
 temporary_rendered_manifest=""
+namespace_guard_policy_manifest="$(mktemp)"
+namespace_guard_binding_manifest="$(mktemp)"
 cleanup() {
-  rm -f "$temporary_manifest"
+  rm -f "$temporary_manifest" "$namespace_guard_policy_manifest" "$namespace_guard_binding_manifest"
   if [[ -n "$temporary_rendered_manifest" ]]; then
     rm -f "$temporary_rendered_manifest"
   fi
 }
 trap cleanup EXIT
+
+# The default verifier predicate is SLSA build provenance. Verify the exact OCI
+# digest against this repository, signer workflow, hosted runner, and one of the
+# two trusted publication refs before invoking kubectl for any operation.
+controller_attestation_verified=false
+for trusted_source_ref in refs/heads/develop refs/heads/main; do
+  if gh attestation verify "oci://$IMAGE_REF" \
+    --repo benhook1013/FireMUD \
+    --bundle-from-oci \
+    --signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml \
+    --source-ref "$trusted_source_ref" \
+    --cert-identity "https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@$trusted_source_ref" \
+    --predicate-type https://slsa.dev/provenance/v1 \
+    --deny-self-hosted-runners \
+    >/dev/null 2>&1; then
+    controller_attestation_verified=true
+    break
+  fi
+done
+[[ "$controller_attestation_verified" == true ]] || \
+  fail "controller image lacks trusted develop/main runtime-images.yml provenance"
 
 replace_manifest() {
   temporary_rendered_manifest="$(mktemp)"
@@ -115,12 +139,55 @@ replace_manifest() {
   temporary_rendered_manifest=""
 }
 
+extract_named_yaml_document() {
+  local source_path="$1"
+  local expected_kind="$2"
+  local expected_name="$3"
+  local destination_path="$4"
+  awk -v expected_kind="$expected_kind" -v expected_name="$expected_name" '
+    function reset_document() {
+      document = ""
+      document_kind = ""
+      document_name = ""
+    }
+    function emit_matching_document() {
+      if (document_kind == expected_kind && document_name == expected_name) {
+        matches++
+        printf "%s", document
+      }
+    }
+    BEGIN { reset_document() }
+    /^---[[:space:]]*$/ {
+      emit_matching_document()
+      reset_document()
+      next
+    }
+    {
+      document = document $0 ORS
+      if ($0 ~ /^kind:[[:space:]]*/) {
+        document_kind = $0
+        sub(/^kind:[[:space:]]*/, "", document_kind)
+      } else if ($0 ~ /^  name:[[:space:]]*/) {
+        document_name = $0
+        sub(/^  name:[[:space:]]*/, "", document_name)
+      }
+    }
+    END {
+      emit_matching_document()
+      if (matches != 1) {
+        exit 1
+      }
+    }
+  ' "$source_path" > "$destination_path" || \
+    fail "expected exactly one $expected_kind/$expected_name in the rendered manifest"
+}
+
 # Render privately so the checked-in base cannot silently acquire a mutable
 # image tag or an activation mode.  Server-side apply below remains the only
 # cluster write path.
 kubectl kustomize "$MANIFEST_DIR" >"$temporary_manifest"
 replace_manifest \
-  -e "s#ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__#$IMAGE_REF#g" \
+  -e "s#ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__#$IMAGE_REF#g" \
   -e "s#value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__#value: $GRPC_TRUST_ANCHOR_SHA256#g" \
   -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
@@ -133,6 +200,34 @@ if grep -Fq -- "__IMAGE_DIGEST_REQUIRED__" "$temporary_manifest" || \
    grep -Fq -- "__ACTIVATION_MODE_REQUIRED__" "$temporary_manifest"; then
   fail "rendered manifests still contain a required-input marker"
 fi
+
+# Install and observe the exact namespace lifecycle admission boundary before
+# the full apply can grant
+# ClusterRoleBinding/firemud-hosted-identity-controller-namespace-lifecycle.
+extract_named_yaml_document "$temporary_manifest" ValidatingAdmissionPolicy \
+  firemud-hosted-system-namespace-guard "$namespace_guard_policy_manifest"
+extract_named_yaml_document "$temporary_manifest" ValidatingAdmissionPolicyBinding \
+  firemud-hosted-system-namespace-guard "$namespace_guard_binding_manifest"
+kubectl apply \
+  --server-side \
+  --field-manager="$FIELD_MANAGER" \
+  -f "$namespace_guard_policy_manifest"
+kubectl apply \
+  --server-side \
+  --field-manager="$FIELD_MANAGER" \
+  -f "$namespace_guard_binding_manifest"
+namespace_guard_failure_policy="$(kubectl get validatingadmissionpolicy \
+  firemud-hosted-system-namespace-guard \
+  -o jsonpath='{.spec.failurePolicy}{"\n"}')" || \
+  fail "namespace guard admission policy lookup failed before namespace lifecycle grant"
+[[ "$namespace_guard_failure_policy" == "Fail" ]] || \
+  fail "namespace guard admission policy is missing failurePolicy=Fail before namespace lifecycle grant"
+namespace_guard_binding_actions="$(kubectl get validatingadmissionpolicybinding \
+  firemud-hosted-system-namespace-guard \
+  -o jsonpath='{.spec.validationActions[*]}{"\n"}')" || \
+  fail "namespace guard admission policy binding lookup failed before namespace lifecycle grant"
+[[ "$namespace_guard_binding_actions" == "Deny" ]] || \
+  fail "namespace guard admission policy binding must contain exactly validationActions Deny before namespace lifecycle grant"
 
 kubectl apply \
   --server-side \

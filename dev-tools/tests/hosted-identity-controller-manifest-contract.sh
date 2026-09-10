@@ -247,6 +247,9 @@ assert hostname["maxLength"] == 253
 assert hostname["pattern"] == (
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
+status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
+assert status_properties["requestedHeadSha"]["maxLength"] == 40
+assert status_properties["deployedHeadSha"]["maxLength"] == 40
 PY
 
 for text_value in \
@@ -1046,6 +1049,7 @@ done
 
 for text_value in \
   "serviceAccountName: firemud-hosted-identity-controller" \
+  "ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__" \
   "@sha256:__IMAGE_DIGEST_REQUIRED__" \
   "runAsNonRoot: true" \
   "readOnlyRootFilesystem: true" \
@@ -1069,6 +1073,10 @@ for text_value in \
   "sizeLimit: 64Mi"; do
   require_literal "$DEPLOYMENT" "$text_value"
 done
+forbidden_image_repository="ghcr.io/benhook1013/hosted-environment-identity-controller"
+forbid_literal "$DEPLOYMENT" "$forbidden_image_repository"
+forbid_literal "$BOOTSTRAP" "$forbidden_image_repository"
+require_literal "$BOOTSTRAP" "ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:"
 DEPLOYMENT="$DEPLOYMENT" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -1161,6 +1169,13 @@ assert {
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \
+  'gh attestation verify' \
+  '--deny-self-hosted-runners' \
+  '--predicate-type' \
+  'https://slsa.dev/provenance/v1' \
+  '--repo' \
+  '--signer-workflow' \
+  '--cert-identity' \
   --server-side \
   --field-manager \
   'kubectl kustomize' \
@@ -1173,6 +1188,24 @@ for text_value in \
   '@sha256:[0-9a-f]{64}'; do
   require_literal "$BOOTSTRAP" "$text_value"
 done
+BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
+import os
+from pathlib import Path
+
+source = Path(os.environ["BOOTSTRAP"]).read_text(encoding="utf-8")
+verify = source.index("gh attestation verify")
+assert "--deny-self-hosted-runners" in source[verify:]
+assert "--predicate-type" in source[verify:]
+assert "--repo" in source[verify:]
+assert "--signer-workflow" in source[verify:]
+assert "--cert-identity" in source[verify:]
+assert "@sha256:" in source[verify:]
+policy_apply = source.index('-f "$namespace_guard_policy_manifest"')
+binding_apply = source.index('-f "$namespace_guard_binding_manifest"', policy_apply)
+policy_read = source.index("namespace_guard_failure_policy=", binding_apply)
+full_apply = source.index('-f "$temporary_manifest"', policy_read)
+assert policy_apply < binding_apply < policy_read < full_apply
+PY
 for admission_name in \
   firemud-hosted-identity-main \
   firemud-hosted-identity-subresources \
@@ -1296,12 +1329,28 @@ spec:
     spec:
       containers:
         - name: controller
-          image: ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
+          image: ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
           env:
             - name: FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256
               value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__
             - name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
               value: __ACTIVATION_MODE_REQUIRED__
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-system-namespace-guard
+spec:
+  failurePolicy: Fail
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-hosted-system-namespace-guard
+spec:
+  policyName: firemud-hosted-system-namespace-guard
+  validationActions:
+    - Deny
 YAML
   exit 0
 fi
@@ -1315,6 +1364,16 @@ if [[ "${1:-}" == "apply" ]]; then
     previous="$argument"
   done
   [[ -n "$manifest" ]] || exit 2
+  if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
+    grep -q '^kind: ValidatingAdmissionPolicy$' "$manifest"; then
+    [[ "${FAKE_EVENT_LOG:-}" == *active-events ]] || record_event guard-policy
+    exit 0
+  fi
+  if [[ "$(grep -c '^kind:' "$manifest")" == 1 ]] &&
+    grep -q '^kind: ValidatingAdmissionPolicyBinding$' "$manifest"; then
+    [[ "${FAKE_EVENT_LOG:-}" == *active-events ]] || record_event guard-binding
+    exit 0
+  fi
   activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$manifest")"
   record_event "apply:${activation_mode}"
   exit 0
@@ -1392,6 +1451,25 @@ printf 'unexpected fake kubectl invocation: %s\n' "$*" >&2
 exit 2
 SH
 chmod +x "$bootstrap_test_dir/kubectl"
+cat >"$bootstrap_test_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
+  printf '%s\n' "$*" >>"${FAKE_ATTESTATION_LOG:?}"
+  if [[ "$*" == *"--source-ref refs/heads/develop"* && "${FAKE_ATTESTATION_DEVELOP_FAIL:-0}" == 1 ]]; then
+    exit 1
+  fi
+  [[ "${FAKE_ATTESTATION_FAIL:-0}" != 1 ]] || exit 1
+  printf '%s\n' "${FAKE_ATTESTATION_OUTPUT:-verified}"
+  exit 0
+fi
+printf 'unexpected fake gh invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$bootstrap_test_dir/gh"
+attestation_log="$bootstrap_test_dir/attestation-events"
+export PATH="$bootstrap_test_dir:$PATH"
+export FAKE_ATTESTATION_LOG="$attestation_log"
 bootstrap_ca_cert="$bootstrap_test_dir/ca.crt"
 bootstrap_ca_key="$bootstrap_test_dir/ca.key"
 bootstrap_mismatched_ca_key="$bootstrap_test_dir/mismatched-ca.key"
@@ -1416,7 +1494,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
 openssl rsa -in "$bootstrap_ca_key" -traditional \
   -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1 || \
   fail "could not generate the PKCS#1 gRPC CA key fixture"
-bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+bootstrap_image='ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 bootstrap_fingerprint="$(
   openssl x509 -in "$bootstrap_ca_cert" -outform DER |
     sha256sum |
@@ -1424,6 +1502,8 @@ bootstrap_fingerprint="$(
 )"
 [[ "$bootstrap_fingerprint" =~ ^[0-9a-f]{64}$ ]] || \
   fail "could not compute the fixture gRPC CA fingerprint"
+legacy_bootstrap_events="$bootstrap_test_dir/legacy-events"
+legacy_bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
   bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
@@ -1431,6 +1511,60 @@ if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH"
   fail "bootstrap rejected expected auth can-i no results: $(cat "$bootstrap_error")"
 fi
 require_literal "$bootstrap_output" "activation=paused"
+legacy_attestation_count="$(wc -l <"$attestation_log")"
+if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 FAKE_EVENT_LOG="$legacy_bootstrap_events" \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$legacy_bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a legacy controller image repository"
+fi
+require_literal "$bootstrap_error" "--image must be the approved controller repository"
+[[ ! -e "$legacy_bootstrap_events" ]] || fail "legacy controller image reached kubectl"
+[[ "$(wc -l <"$attestation_log")" == "$legacy_attestation_count" ]] || \
+  fail "legacy controller image reached gh attestation verification"
+attestation_event="$(head -n 1 "$attestation_log")"
+for attestation_argument in \
+  "attestation verify oci://$bootstrap_image" \
+  "--repo benhook1013/FireMUD" \
+  "--bundle-from-oci" \
+  "--signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml" \
+  "--source-ref refs/heads/develop" \
+  "--cert-identity https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@refs/heads/develop" \
+  "--predicate-type https://slsa.dev/provenance/v1" \
+  "--deny-self-hosted-runners"; do
+  [[ "$attestation_event" == *"$attestation_argument"* ]] || \
+    fail "bootstrap attestation verification omitted $attestation_argument"
+done
+develop_failure_events="$bootstrap_test_dir/develop-failure-events"
+if ! FAKE_ATTESTATION_DEVELOP_FAIL=1 FAKE_EVENT_LOG="$develop_failure_events" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap rejected a valid main attestation after develop failure"
+fi
+grep -Fq -- "--source-ref refs/heads/main" "$attestation_log" || \
+  fail "bootstrap did not try the trusted main source ref after develop failure"
+both_failure_events="$bootstrap_test_dir/both-failure-events"
+if FAKE_ATTESTATION_FAIL=1 FAKE_EVENT_LOG="$both_failure_events" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted when both trusted attestations failed"
+fi
+[[ ! -e "$both_failure_events" ]] || fail "attestation failure reached kubectl"
+no_gh_dir="$bootstrap_test_dir/no-gh"
+mkdir -p "$no_gh_dir"
+ln -s "$bootstrap_test_dir/kubectl" "$no_gh_dir/kubectl"
+missing_gh_events="$bootstrap_test_dir/missing-gh-events"
+if FAKE_EVENT_LOG="$missing_gh_events" FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$no_gh_dir:/usr/bin:/bin" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a missing gh attestation verifier"
+fi
+[[ ! -e "$missing_gh_events" ]] || fail "missing gh reached kubectl"
 if FAKE_MISSING_POLICY=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \

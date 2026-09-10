@@ -99,6 +99,8 @@ jobs:
     needs: [image-meta]
     if: ${{ github.event_name != 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.select_base_image_digest.outputs.digest }}
     permissions:
       # This job publishes the shared runtime base image to GHCR.
       contents: read
@@ -143,6 +145,7 @@ jobs:
             type=gha,mode=max
 
       - name: Retry build and push runtime base image
+        id: build_base_image_retry
         if: ${{ steps.build_base_image_first.outcome == 'failure' }}
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
         with:
@@ -157,6 +160,34 @@ jobs:
           cache-to: |
             type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
             type=gha,mode=max
+
+      - name: Select exact published runtime base digest
+        id: select_base_image_digest
+        if: ${{ !cancelled() }}
+        env:
+          FIRST_OUTCOME: ${{ steps.build_base_image_first.outcome }}
+          FIRST_DIGEST: ${{ steps.build_base_image_first.outputs.digest }}
+          RETRY_OUTCOME: ${{ steps.build_base_image_retry.outcome }}
+          RETRY_DIGEST: ${{ steps.build_base_image_retry.outputs.digest }}
+        run: |
+          set -euo pipefail
+          published_digests=()
+          if [[ "$FIRST_OUTCOME" == "success" ]]; then
+            published_digests+=("$FIRST_DIGEST")
+          fi
+          if [[ "$RETRY_OUTCOME" == "success" ]]; then
+            published_digests+=("$RETRY_DIGEST")
+          fi
+          if ((${#published_digests[@]} != 1)); then
+            echo "Expected exactly one successful runtime base-image publication digest." >&2
+            exit 1
+          fi
+          base_image_digest="${published_digests[0]}"
+          [[ "$base_image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Runtime base-image publisher returned an invalid sha256 digest." >&2
+            exit 1
+          }
+          echo "digest=$base_image_digest" >> "$GITHUB_OUTPUT"
 
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
@@ -182,7 +213,6 @@ jobs:
           - spring-cloud-gateway
           - tcp-proxy-service
           - world-management-service
-          - hosted-environment-identity-controller
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -263,6 +293,149 @@ jobs:
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
             type=gha,mode=max
 
+  build-hosted-identity-controller:
+    name: Build Trusted Hosted Identity Controller
+    needs: [image-meta, build-base-image]
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.build-base-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      CONTROLLER_IMAGE_NAME: ghcr.io/benhook1013/firemud-hosted-identity-controller
+      CONTROLLER_IMAGE: ghcr.io/benhook1013/firemud-hosted-identity-controller:${{ needs.image-meta.outputs.image_tag }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted branch commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: false
+
+      - name: Build controller JAR and image locally
+        run: |
+          set -euo pipefail
+          ./gradlew :hosted-environment-identity-controller:bootJar
+          docker build \
+            --file services/hosted-environment-identity-controller/Dockerfile \
+            --build-arg BASE_IMAGE="ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" \
+            --tag "$CONTROLLER_IMAGE" \
+            services/hosted-environment-identity-controller/build/libs
+
+      - name: Smoke exact controller image
+        id: smoke
+        run: |
+          set -euo pipefail
+          container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm --force "$container_name" >/dev/null 2>&1 || true' EXIT
+
+          docker run --detach \
+            --name "$container_name" \
+            --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
+            "$CONTROLLER_IMAGE"
+
+          healthy=false
+          for _ in {1..300}; do
+            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
+              docker logs "$container_name"
+              echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
+              exit 1
+            fi
+            if health="$(docker exec "$container_name" \
+              curl --fail --silent --show-error \
+                http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
+              && [[ "$health" == *'"status":"UP"'* ]]; then
+              healthy=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$healthy" != true ]]; then
+            docker logs "$container_name"
+            echo "Hosted identity controller paused-mode health check timed out." >&2
+            exit 1
+          fi
+          smoked_image_id="$(docker inspect --format '{{.Image}}' "$container_name")"
+          local_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
+          [[ "$smoked_image_id" == "$local_image_id" ]] || {
+            echo "Controller smoke did not execute the exact locally tagged image." >&2
+            exit 1
+          }
+          echo "image_id=$local_image_id" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish exact smoke-tested controller image
+        id: publish
+        env:
+          SMOKED_IMAGE_ID: ${{ steps.smoke.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          current_image_id="$(docker image inspect --format '{{.Id}}' "$CONTROLLER_IMAGE")"
+          [[ "$current_image_id" == "$SMOKED_IMAGE_ID" ]] || {
+            echo "Controller image changed after its smoke proof; refusing publication." >&2
+            exit 1
+          }
+
+          push_output="$(mktemp)"
+          trap 'rm -f "$push_output"' EXIT
+          max_push_attempts=3
+          push_attempt=1
+          while true; do
+            if docker push "$CONTROLLER_IMAGE" 2>&1 | tee "$push_output"; then
+              break
+            fi
+            if ((push_attempt >= max_push_attempts)); then
+              echo "Failed to publish $CONTROLLER_IMAGE after ${push_attempt} attempts." >&2
+              exit 1
+            fi
+            backoff_seconds=$((5 * 2 ** (push_attempt - 1)))
+            echo "Transient push failure for $CONTROLLER_IMAGE; retrying in ${backoff_seconds}s (attempt $((push_attempt + 1))/${max_push_attempts})."
+            sleep "$backoff_seconds"
+            push_attempt=$((push_attempt + 1))
+          done
+
+          pushed_digest="$(sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\) size:.*$/\1/p' "$push_output")"
+          [[ "$pushed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Registry did not return an exact sha256 digest for $CONTROLLER_IMAGE." >&2
+            exit 1
+          }
+          echo "digest=$pushed_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest trusted controller image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.CONTROLLER_IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
   pr-local-smoke:
     name: PR Full-Stack Smoke
     needs: [image-meta]
@@ -312,21 +485,21 @@ jobs:
       - name: Run credential-free full-stack smoke
         run: bash ./dev-tools/verify-smoke-images.sh
 
-      - name: Build controller image for the trusted publisher
+      - name: Build controller image for credential-free local validation
         env:
-          CONTROLLER_IMAGE_TAG: ${{ needs.image-meta.outputs.image_tag }}
+          CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
         run: |
           set -euo pipefail
           ./gradlew :hosted-environment-identity-controller:bootJar
           docker build \
             --file services/hosted-environment-identity-controller/Dockerfile \
-            --build-arg BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${CONTROLLER_IMAGE_TAG}" \
-            --tag "ghcr.io/benhook1013/hosted-environment-identity-controller:${CONTROLLER_IMAGE_TAG}" \
+            --build-arg BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${SMOKE_IMAGE_TAG}" \
+            --tag "$CONTROLLER_IMAGE" \
             services/hosted-environment-identity-controller/build/libs
 
       - name: Smoke controller image entrypoint and paused health
         env:
-          CONTROLLER_IMAGE: ghcr.io/benhook1013/hosted-environment-identity-controller:${{ needs.image-meta.outputs.image_tag }}
+          CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
         run: |
           set -euo pipefail
           container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -370,8 +543,7 @@ jobs:
             social-groups-service \
             spring-cloud-gateway \
             tcp-proxy-service \
-            world-management-service \
-            hosted-environment-identity-controller; do
+            world-management-service; do
             images+=("ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}")
           done
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
@@ -401,7 +573,7 @@ jobs:
             echo "- Built and smoke-tested PR merge SHA: \`${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads that successful artifact under the fixed PR head-SHA tag used by preview deployment."
+            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment. The locally validated hosted identity controller image is excluded from the artifact."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure

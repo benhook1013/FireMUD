@@ -40,7 +40,7 @@ spec:
         - name: controller
           # The trusted bootstrap helper must replace this fail-closed marker
           # with an operator-supplied ghcr.io/...@sha256:<64 hex> reference.
-          image: ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
+          image: ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__
           imagePullPolicy: IfNotPresent
           env:
             - name: FIREMUD_HOSTED_IDENTITY_CONTROL_NAMESPACE

@@ -91,8 +91,7 @@ jobs:
             social-groups-service \
             spring-cloud-gateway \
             tcp-proxy-service \
-            world-management-service \
-            hosted-environment-identity-controller; do
+            world-management-service; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             if ! docker image inspect "$image" >/dev/null 2>&1; then
               echo "Required source artifact image for $service is missing: $image." >&2
