@@ -410,11 +410,14 @@ class CheckpointReporterTest(unittest.TestCase):
                 {"type": "finding", "fileName": "b.txt"},
             ],
             reasons={1: "Recorded rejection."},
-            unlinked_rejections=[
-                {"format": "legacy", "reference": "b.txt:4", "reason": "Legacy rejection."},
-                {"format": "ordinal", "ordinal": 2, "reference": "b.txt:4", "reason": "not recorded"},
-            ],
+            unlinked_rejections=[],
             rejection_file_present=True,
+            decisions={1: ("rejected", "Recorded rejection.")},
+            unlinked_decisions=[
+                {"finding_id": 2, "disposition": "rejected", "reason": "Legacy rejection."},
+                {"finding_id": 3, "disposition": "accepted", "reason": "not recorded"},
+            ],
+            decision_file_present=True,
         )
         with patch.object(self.reporter, "load_capture", return_value=capture):
             report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42)
@@ -422,25 +425,252 @@ class CheckpointReporterTest(unittest.TestCase):
         round_result = report["rounds"][0]
         self.assertEqual(len(round_result["rejections"]), 1)
         self.assertEqual(round_result["rejections"][0]["reason"], "Recorded rejection.")
-        self.assertEqual(round_result["references"][0]["format"], "legacy")
-        self.assertEqual(round_result["references"][1]["reason"], "not recorded")
+        self.assertEqual(round_result["references"][0]["finding_id"], 2)
+        self.assertEqual(len(round_result["references"]), 1)
 
     def test_rejections_count_requires_positive_integer(self) -> None:
         with self.assertRaises(self.reporter.argparse.ArgumentTypeError):
             self.reporter.parse_positive_limit("0")
 
-    def test_future_rejections_use_one_based_finding_ordinal(self) -> None:
-        finding = {
-            "fileName": "a.txt",
-            "codegenInstructions": "In @a.txt around lines 5 - 7, fix it.",
-        }
+    def test_hosted_reviews_are_saved_by_actual_id_without_owner_checkpoint(self) -> None:
+        reviews = [
+            {
+                "id": 901,
+                "user": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T05:00:00Z",
+                "commit_id": "a" * 40,
+                "body": "Hosted review summary A",
+            },
+            {
+                "id": 902,
+                "user": {"login": "coderabbitai"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T06:00:00Z",
+                "commit_id": "a" * 40,
+                "body": "Hosted review summary B",
+            },
+        ]
+        comments_a = [
+            {
+                "id": 7001,
+                "user": {"login": "coderabbitai[bot]"},
+                "pull_request_review_id": 901,
+                "path": "a.txt",
+                "line": 5,
+                "body": "Finding A",
+            },
+            {"id": 7002, "user": {"login": "reviewer"}, "path": "a.txt", "line": 6, "body": "Other comment"},
+        ]
+        comments_b = [
+            {
+                "id": 7003,
+                "user": {"login": "coderabbitai"},
+                "pull_request_review_id": 902,
+                "path": "b.txt",
+                "line": 8,
+                "body": "Finding B",
+            }
+        ]
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "rejections.tsv"
-            path.write_text("1\ta.txt:5\tRejected by owner.\n", encoding="utf-8")
-            reasons, unlinked = self.reporter._read_rejections(path, [finding])
+            log_root = Path(directory)
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(
+                    self.reporter,
+                    "fetch_api_endpoint",
+                    side_effect=[reviews, comments_a, reviews, comments_b],
+                ),
+            ):
+                first = self.reporter.collect_hosted("owner/repo", 42, 901)
+                second = self.reporter.collect_hosted("owner/repo", 42, 902)
+            self.assertTrue((log_root / "hosted-review.901" / "snapshot.json").is_file())
+            self.assertTrue((log_root / "hosted-review.902" / "snapshot.json").is_file())
 
-        self.assertEqual(reasons, {1: "Rejected by owner."})
+        self.assertEqual(first["review_id"], 901)
+        self.assertTrue(first["snapshot_path"].endswith("hosted-review.901/snapshot.json"))
+        self.assertEqual(first["summary_body"], "Hosted review summary A")
+        self.assertEqual([comment["id"] for comment in first["inline_findings"]], [7001])
+        self.assertNotIn("raw_comments", first)
+        self.assertEqual(second["review_id"], 902)
+        self.assertEqual(second["inline_findings"][0]["id"], 7003)
+
+    def test_hosted_rejections_join_by_inline_comment_id_and_report_missing_decisions(self) -> None:
+        review = {
+            "id": 903,
+            "user": {"login": "coderabbitai"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T07:00:00Z",
+            "commit_id": "b" * 40,
+            "body": "Hosted review summary",
+        }
+        comments = [
+            {
+                "id": 7004,
+                "user": {"login": "coderabbitai[bot]"},
+                "pull_request_review_id": 903,
+                "path": "c.txt",
+                "line": 9,
+                "body": "Finding C",
+            },
+            {
+                "id": 7005,
+                "user": {"login": "coderabbitai[bot]"},
+                "pull_request_review_id": 903,
+                "in_reply_to_id": 7004,
+                "path": "c.txt",
+                "line": 9,
+                "body": "Reply C",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter, "fetch_api_endpoint", side_effect=[[review], comments]),
+            ):
+                self.reporter.collect_hosted("owner/repo", 42, 903)
+            decision_path = log_root / "hosted-review.903" / "decisions.tsv"
+            decision_path.write_text("7004\trejected\tRecorded Hosted reason.\n9999\trejected\t\n", encoding="utf-8")
+            with (
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+                patch.object(self.reporter, "fetch_api_endpoint", return_value=[review]),
+            ):
+                report = self.reporter.collect_rejections([], 1, "owner/repo", 42, source="hosted")
+
+        round_result = report["rounds"][0]
+        self.assertEqual(round_result["status"], "linked")
+        self.assertEqual(round_result["rejections"][0]["comment_id"], 7004)
+        self.assertEqual(round_result["rejections"][0]["reason"], "Recorded Hosted reason.")
+        self.assertEqual(round_result["references"][0]["finding_id"], 9999)
+
+    def test_future_decisions_use_one_based_finding_ordinal_and_unknown_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "decisions.tsv"
+            path.write_text("1\trejected\tRejected by owner.\n", encoding="utf-8")
+            decisions, unlinked, present = self.reporter._read_decisions(path, [1, 2])
+
+        self.assertEqual(decisions, {1: ("rejected", "Rejected by owner.")})
         self.assertEqual(unlinked, [])
+        self.assertTrue(present)
+
+    def test_rounds_filter_after_selecting_latest_and_keeps_unknown_findings(self) -> None:
+        comment = {
+            "id": 805,
+            "body": "**CLI: 2 found / 1 accepted** · `abc1234`\n<!-- firemud-cli-run: run.A1b2C3 -->",
+            "created_at": "2026-09-10T05:00:00Z",
+            "updated_at": "2026-09-10T05:00:00Z",
+        }
+        capture = self.reporter.CaptureData(
+            metadata={},
+            findings=[
+                {"fileName": "a.txt", "codegenInstructions": "Use the canonical helper."},
+                {"fileName": "b.txt"},
+            ],
+            reasons={},
+            unlinked_rejections=[],
+            rejection_file_present=False,
+            decisions={1: ("accepted", "")},
+            unlinked_decisions=[{"finding_id": 9, "disposition": "rejected", "reason": "Recorded separately."}],
+            decision_file_present=True,
+        )
+        with patch.object(self.reporter, "load_capture", return_value=capture):
+            report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42, disposition="all")
+            accepted = self.reporter.collect_rejections([comment], 1, "owner/repo", 42, disposition="accepted")
+
+        self.assertEqual([row["disposition"] for row in report["rounds"][0]["findings"]], ["accepted", "unknown"])
+        self.assertEqual(len(accepted["rounds"][0]["findings"]), 1)
+        self.assertEqual(accepted["rounds"][0]["findings"][0]["ordinal"], 1)
+        self.assertEqual(report["rounds"][0]["coverage_gap"], 1)
+        self.assertEqual(accepted["rounds"][0]["references"], [])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_rejections_text(accepted)
+        self.assertIn("details=Use the canonical helper.", output.getvalue())
+
+    def test_hosted_capture_rejects_mismatched_review_comment_and_snapshot_symlink(self) -> None:
+        review = {
+            "id": 904,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "c" * 40,
+            "body": "Hosted review summary",
+        }
+        bad_comments = [{"id": 7010, "pull_request_review_id": 999, "user": {"login": "coderabbitai"}}]
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                snapshot = self.reporter._save_hosted_snapshot("owner/repo", 42, review, bad_comments)
+                with self.assertRaisesRegex(self.reporter.CaptureInvalid, "different review"):
+                    self.reporter._load_hosted_snapshot(snapshot, "owner/repo", 42, 904)
+
+                malformed_review = {**review, "id": 905, "commit_id": None}
+                malformed_snapshot = self.reporter._save_hosted_snapshot("owner/repo", 42, malformed_review, [])
+                with self.assertRaisesRegex(self.reporter.CaptureInvalid, "valid reviewed commit"):
+                    self.reporter._load_hosted_snapshot(malformed_snapshot, "owner/repo", 42, 905)
+
+                outside = log_root.parent / "outside.tsv"
+                outside.write_text("1\taccepted\t\n", encoding="utf-8")
+                decisions = log_root / "hosted-review.906"
+                decisions.mkdir()
+                (decisions / "snapshot.json").write_text(
+                    json.dumps(self.reporter._hosted_snapshot_payload("owner/repo", 42, {**review, "id": 906}, [])),
+                    encoding="utf-8",
+                )
+                (decisions / "decisions.tsv").symlink_to(outside)
+                with self.assertRaisesRegex(self.reporter.CaptureInvalid, "escapes|symbolic link"):
+                    self.reporter._load_hosted_snapshot(decisions / "snapshot.json", "owner/repo", 42, 906)
+
+    def test_hosted_detail_rejects_checkpoint_sha_mismatch(self) -> None:
+        checkpoint = {
+            "id": 906,
+            "body": "**Hosted: 1 found / 0 accepted** · `abc1234`\n<!-- firemud-hosted-review: 904 -->",
+            "created_at": "2026-09-10T09:00:00Z",
+            "updated_at": "2026-09-10T09:00:00Z",
+        }
+        hosted = self.reporter.HostedCapture(
+            "owner/repo",
+            42,
+            {
+                "id": 904,
+                "user": {"login": "coderabbitai[bot]"},
+                "state": "COMMENTED",
+                "submitted_at": "2026-09-10T08:00:00Z",
+                "commit_id": "d" * 40,
+                "body": "summary",
+            },
+            [],
+            {},
+            [],
+            False,
+        )
+        with patch.object(self.reporter, "load_hosted_capture", return_value=hosted):
+            detail = self.reporter.collect_detail([checkpoint], 906, "owner/repo", 42)
+
+        self.assertEqual(detail["linkage_status"], "invalid")
+        self.assertIn("commit does not match", detail["message"])
+
+    def test_hosted_text_shows_main_prose_without_details_boilerplate(self) -> None:
+        report = {
+            "review_id": 904,
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "c" * 40,
+            "summary_body": "Summary prose\n<details><summary>AI prompt</summary>hidden boilerplate</details>",
+            "inline_findings": [
+                {"id": 7010, "path": "a.txt", "line": 3, "body": "Finding prose\n<details>hidden chain</details>"}
+            ],
+            "limitations": ["summary-only items are not normalized"],
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_hosted_text(report)
+
+        self.assertIn("summary=Summary prose", output.getvalue())
+        self.assertIn("finding=Finding prose", output.getvalue())
+        self.assertNotIn("hidden boilerplate", output.getvalue())
+        self.assertNotIn("hidden chain", output.getvalue())
+        self.assertIn("checkpoint_marker=<!-- firemud-hosted-review: 904 -->", output.getvalue())
 
     def test_malformed_capture_stdout_is_invalid_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
