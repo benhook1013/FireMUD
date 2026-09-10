@@ -452,6 +452,7 @@ class CheckpointReporterTest(unittest.TestCase):
 
         self.assertIn("posted_at_nz=2026-06-01 12:00:00 NZST", output.getvalue())
         self.assertIn("submitted_at_nz=2026-01-01 13:00:00 NZDT", output.getvalue())
+        self.assertIn("unparsed=0", output.getvalue())
         self.assertEqual(rounds["rounds"][0]["created_at"], "2026-06-01T00:00:00Z")
         self.assertEqual(rounds["rounds"][1]["submitted_at"], "2026-01-01T00:00:00Z")
 
@@ -490,6 +491,26 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertIn("safe red link next\nrow\tcell", rendered)
         self.assertEqual(report["timeline"][0]["description"], description)
         self.assertEqual(self.reporter.display_prose("\x1b[31m\x1b[0m"), "-")
+
+    def test_main_reports_human_timestamp_errors_without_a_traceback(self) -> None:
+        comments = [
+            {
+                "id": 1,
+                "body": "**CLI: 0 found / 0 accepted**",
+                "created_at": "2026-01-01T00:00:00",
+            }
+        ]
+        stderr = io.StringIO()
+        with (
+            patch.object(self.reporter, "parse_args", return_value=self._arguments()),
+            patch.object(self.reporter, "fetch_comments", return_value=comments),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            result = self.reporter.main()
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr.getvalue(), "error: review timestamp has no timezone\n")
 
     def test_scope_marker_count_normalizes_whitespace_and_rejects_duplicates(self) -> None:
         created_at = "2026-09-10T00:00:00Z"
@@ -1187,6 +1208,7 @@ class CheckpointReporterTest(unittest.TestCase):
                 report = self.reporter.collect_rejections([], 1, "owner/repo", 42, source="hosted")
 
         round_result = report["rounds"][0]
+        self.assertEqual(report["unparsed_candidates"], 0)
         self.assertEqual(round_result["status"], "linked")
         self.assertEqual(round_result["findings"][0]["comment_id"], 7004)
         self.assertEqual(round_result["findings"][0]["reason"], "Recorded Hosted reason.")
@@ -1256,6 +1278,13 @@ class CheckpointReporterTest(unittest.TestCase):
             "created_at": "2026-09-10T05:00:00Z",
             "updated_at": "2026-09-10T05:00:00Z",
         }
+        malformed = {
+            "id": 806,
+            "body": "**CLI: malformed**",
+            "created_at": "2026-09-10T06:00:00Z",
+            "updated_at": "2026-09-10T06:00:00Z",
+        }
+        comments = [comment, malformed]
         capture = self.reporter.CaptureData(
             metadata={},
             findings=[
@@ -1270,9 +1299,16 @@ class CheckpointReporterTest(unittest.TestCase):
             decision_file_present=True,
         )
         with patch.object(self.reporter, "load_capture", return_value=capture):
-            report = self.reporter.collect_rejections([comment], 1, "owner/repo", 42, disposition="all")
-            accepted = self.reporter.collect_rejections([comment], 1, "owner/repo", 42, disposition="accepted")
+            report = self.reporter.collect_rejections(comments, 1, "owner/repo", 42, disposition="all")
+            accepted = self.reporter.collect_rejections(
+                comments, 1, "owner/repo", 42, disposition="accepted"
+            )
 
+        self.assertEqual(report["matched_cli_rounds"], 1)
+        self.assertEqual(report["returned_rounds"], 1)
+        self.assertEqual(report["omitted_rounds"], 0)
+        self.assertEqual(report["unparsed_candidates"], 1)
+        self.assertEqual(json.loads(json.dumps(report))["unparsed_candidates"], 1)
         self.assertEqual([row["disposition"] for row in report["rounds"][0]["findings"]], ["accepted", "unknown"])
         self.assertEqual(len(accepted["rounds"][0]["findings"]), 1)
         self.assertEqual(accepted["rounds"][0]["findings"][0]["ordinal"], 1)
@@ -1281,6 +1317,7 @@ class CheckpointReporterTest(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             self.reporter.emit_rejections_text(accepted)
+        self.assertIn("matched=1 returned=1 omitted=0 requested=1 unparsed=1", output.getvalue())
         self.assertIn("details=Use the canonical helper.", output.getvalue())
 
     def test_hosted_capture_rejects_mismatched_review_comment_and_snapshot_symlink(self) -> None:

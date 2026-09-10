@@ -1130,10 +1130,12 @@ def collect_rejections(
     if disposition not in {"all", "accepted", "rejected"}:
         raise CheckpointError("disposition must be all, accepted, or rejected")
     if source == "hosted":
-        return collect_hosted_rounds(repo, pr_number, count, disposition)
+        report = collect_hosted_rounds(repo, pr_number, count, disposition)
+        report["unparsed_candidates"] = 0
+        return report
     if source != "cli":
         raise CheckpointError("source must be cli or hosted")
-    checkpoints, _ = parse_checkpoint_comments(comments)
+    checkpoints, unparsed_candidates = parse_checkpoint_comments(comments)
     cli_checkpoints = sorted(
         (checkpoint for checkpoint in checkpoints if checkpoint.type == "CLI"),
         key=lambda checkpoint: checkpoint.created_at,
@@ -1170,6 +1172,7 @@ def collect_rejections(
         "requested_rounds": count,
         "source": "cli",
         "disposition": disposition,
+        "unparsed_candidates": unparsed_candidates,
         "rounds": rounds,
     }
 
@@ -1324,6 +1327,7 @@ def emit_rejections_text(report: dict[str, Any]) -> None:
         f"matched={report[matched_key]} returned={report['returned_rounds' if 'returned_rounds' in report else 'returned_reviews']} "
         f"omitted={report['omitted_rounds' if 'omitted_rounds' in report else 'omitted_reviews']} "
         f"requested={report['requested_rounds' if 'requested_rounds' in report else 'requested_reviews']} "
+        f"unparsed={report.get('unparsed_candidates', 0)} "
         f"disposition={report['disposition']}"
     )
     for round_result in report["rounds"]:
@@ -1461,28 +1465,28 @@ def main() -> int:
                     return 1
             else:
                 report = collect_report(comments, args.limit)
+        if args.hosted is not None:
+            if args.json:
+                print(json.dumps(hosted, indent=2, sort_keys=True))
+            else:
+                emit_hosted_text(hosted)
+        elif args.details is not None:
+            if args.json:
+                print(json.dumps(detail, indent=2, sort_keys=True))
+            else:
+                emit_detail_text(detail)
+        elif args.rounds is not None or args.rejections is not None:
+            if args.json:
+                print(json.dumps(report, indent=2, sort_keys=True))
+            else:
+                emit_rejections_text(report)
+        elif args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            emit_text(report)
     except (CheckpointError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    if args.hosted is not None:
-        if args.json:
-            print(json.dumps(hosted, indent=2, sort_keys=True))
-        else:
-            emit_hosted_text(hosted)
-    elif args.details is not None:
-        if args.json:
-            print(json.dumps(detail, indent=2, sort_keys=True))
-        else:
-            emit_detail_text(detail)
-    elif args.rounds is not None or args.rejections is not None:
-        if args.json:
-            print(json.dumps(report, indent=2, sort_keys=True))
-        else:
-            emit_rejections_text(report)
-    elif args.json:
-        print(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        emit_text(report)
     return 0
 
 

@@ -855,6 +855,30 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+crlf_body = "prefix\r\n\r\n" + impact_snippet.replace("\n", "\r\n") + "\r\nsuffix"
+crlf_update_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_crlf_unchanged_body_command(args, _root, *, timeout=None):
+    crlf_update_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+    if args[:3] != ("gh", "pr", "view"):
+        raise AssertionError("unchanged CRLF PR body must not be edited")
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": crlf_body}
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_crlf_unchanged_body_command
+try:
+    assert cloc_report.update_pull_request_body(repo, 2736, impact) is False
+    assert len(crlf_update_calls) == 1
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 original_main_functions = (
     cloc_report.repository_root,
     cloc_report.build_pr_report,

@@ -941,7 +941,7 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
         raise ReportError("PR base or head changed while the LOC report was being generated; refusing body update")
 
     updated_body = replace_pr_report_block(body, render_pr_report(report))
-    if updated_body == body:
+    if updated_body.replace("\r\n", "\n") == body.replace("\r\n", "\n"):
         return False
     body_path: Path | None = None
     try:

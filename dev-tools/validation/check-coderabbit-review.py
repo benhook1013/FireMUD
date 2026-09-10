@@ -34,7 +34,9 @@ SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
 PLAN_REVIEW_SKIP_MARKER = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
 REVIEW_LIMIT_MESSAGE = "More reviews will be available in"
-REVIEW_LIMIT_STATUS_PATTERN = re.compile(r"\breview\s+rate\s+limited\b", re.IGNORECASE)
+REVIEW_LIMIT_STATUS_PATTERN = re.compile(
+    r"^[ \t]*(?:[*_>`#-]+[ \t]*)*review\s+rate\s+limited\b", re.IGNORECASE
+)
 REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
     r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
     r"|more\s+reviews\s+will\s+be\s+available\s+in"
