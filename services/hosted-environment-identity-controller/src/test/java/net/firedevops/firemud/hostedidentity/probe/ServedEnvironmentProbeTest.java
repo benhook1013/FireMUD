@@ -62,6 +62,15 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
+  void httpStatusCodeMustBeWithinTheStandardThreeDigitRange() throws Exception {
+    assertEquals(-1, readStatus("HTTP/1.1 000 OK\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 099 OK\r\n"));
+    assertEquals(100, readStatus("HTTP/1.1 100 Continue\r\n"));
+    assertEquals(599, readStatus("HTTP/1.1 599 Error\r\n"));
+    assertEquals(-1, readStatus("HTTP/1.1 600 Error\r\n"));
+  }
+
+  @Test
   void readinessProbeRequiresBridgeAndInternalGrpcAcceptanceAfterPublicEndpoints() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
