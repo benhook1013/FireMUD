@@ -99,6 +99,11 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]]; then
     exit 0
   fi
+  if [[ "${FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL:-false}" == true ]] ||
+    [[ "${FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL:-false}" == true && "$count" -gt 1 ]]; then
+    printf '%s' '{"metadata":{"annotations":[]}}'
+    exit 0
+  fi
   if [[ -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}" ]]; then
     rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
     if [[ "${FAKE_ANNOTATE_CONFIRMATION_ERROR:-false}" == true ]]; then
@@ -595,6 +600,8 @@ reset_case() {
   unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD
   export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
+  export FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=false
+  export FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL=false
   export FAKE_ANNOTATE_ERROR=false
   export FAKE_ANNOTATE_CONFIRMATION_ERROR=false
   export FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE=false
@@ -1590,6 +1597,42 @@ grep -q 'Unable to inspect namespace pr-901' "$reconciler_namespace_error_output
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
+
+reset_case
+reconciler_namespace_parse_output="$TEMP_DIR/reconciler-namespace-parse.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_namespace_parse_output" 2>&1
+grep -qx 'Skipping PR #901: unable to parse namespace pr-901 snapshot.' \
+  "$reconciler_namespace_parse_output"
+grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+  "$reconciler_namespace_parse_output"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_namespace_recheck_parse_output="$TEMP_DIR/reconciler-namespace-recheck-parse.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_NAMESPACE_SNAPSHOT_RECHECK_PARSE_FAIL=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_namespace_recheck_parse_output" 2>&1
+grep -qx 'Skipping PR #901: unable to parse namespace pr-901 recheck.' \
+  "$reconciler_namespace_recheck_parse_output"
+grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+  "$reconciler_namespace_recheck_parse_output"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"

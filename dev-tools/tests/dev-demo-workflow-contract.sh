@@ -64,8 +64,10 @@ expect_invalid_mode $'previewStack:\n  certificateIdentity:\n    mode: controlle
 python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$reconcile_step" <<'PY'
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -113,6 +115,47 @@ for required in (
 ):
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")
+normalization = 'HEAD_SHA="${HEAD_SHA,,}"'
+image_tag_default = 'IMAGE_TAG="${HEAD_SHA}"'
+head_validation = '[[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]'
+head_output = 'echo "head_sha=${HEAD_SHA}"'
+for required in (normalization, image_tag_default, head_validation, head_output):
+    if required not in derive_run:
+        raise SystemExit(f"dev-demo plan lacks normalized head handling: {required}")
+if not (
+    derive_run.index(normalization)
+    < derive_run.index(image_tag_default)
+    < derive_run.index(head_validation)
+    < derive_run.index(head_output)
+):
+    raise SystemExit("dev-demo head normalization must precede tag derivation, validation, and output")
+
+with tempfile.NamedTemporaryFile() as output:
+    derive_fixture = derive_run.replace(
+        "${{ github.event_name }}", "workflow_dispatch"
+    ).replace("${{ github.sha }}", "f" * 40)
+    fixture_env = os.environ.copy()
+    fixture_env.update(
+        {
+            "INPUT_ACTION": "deploy",
+            "INPUT_HEAD_SHA": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+            "INPUT_HOSTNAME": "dev.preview.firedevops.net",
+            "INPUT_TELNET_PORT": "32016",
+            "INPUT_IMAGE_TAG": "",
+            "GITHUB_SHA": "f" * 40,
+            "GITHUB_OUTPUT": output.name,
+        }
+    )
+    subprocess.run(["bash", "-c", derive_fixture], check=True, env=fixture_env)
+    output.seek(0)
+    derived_outputs = dict(
+        line.decode("utf-8").rstrip("\n").split("=", 1) for line in output
+    )
+normalized_fixture_head = "abcdef1234567890abcdef1234567890abcdef12"
+if derived_outputs.get("head_sha") != normalized_fixture_head:
+    raise SystemExit("dev-demo plan did not normalize an uppercase dispatch head")
+if derived_outputs.get("image_tag") != normalized_fixture_head:
+    raise SystemExit("dev-demo default image tag did not use the normalized dispatch head")
 
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
@@ -165,6 +208,13 @@ if "always()" not in restore_condition:
     raise SystemExit("dev-demo runtime kubeconfig restore must run after earlier step failures")
 if "steps.cluster-access.outputs.available == 'true'" not in restore_condition:
     raise SystemExit("dev-demo runtime kubeconfig restore lost its cluster-access guard")
+restore_run = deploy_by_name["Restore dev-demo runtime kubeconfig"]["run"]
+if '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]' not in restore_run:
+    raise SystemExit("dev-demo runtime kubeconfig restore does not reject an uninitialized path")
+if restore_run.index('[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]') >= restore_run.index(
+    'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
+):
+    raise SystemExit("dev-demo runtime kubeconfig restore publishes the path before validation")
 deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
 if deploy_requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")

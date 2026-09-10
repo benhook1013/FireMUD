@@ -58,6 +58,38 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
+python3 - "$runtime" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = workflow["jobs"]["pr-local-smoke"]["steps"]
+steps_by_name = {
+    step.get("name"): step for step in steps if isinstance(step, dict)
+}
+build_step = steps_by_name["Build controller image for the trusted publisher"]
+smoke_step = steps_by_name["Smoke controller image entrypoint and paused health"]
+export_step = steps_by_name["Export fixed-tag preview image artifact"]
+assert steps.index(build_step) < steps.index(smoke_step) < steps.index(export_step)
+assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
+    "ghcr.io/benhook1013/hosted-environment-identity-controller:"
+    "${{ needs.image-meta.outputs.image_tag }}"
+)
+smoke_run = smoke_step["run"]
+for required in (
+    'trap cleanup EXIT',
+    'docker run --detach',
+    '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
+    '"$CONTROLLER_IMAGE"',
+    "http://127.0.0.1:8081/actuator/health/liveness",
+    "[[ \"$health\" == *'\"status\":\"UP\"'* ]]",
+    'docker rm --force "$container_name"',
+):
+    assert required in smoke_run, required
+assert "--entrypoint" not in smoke_run
+PY
 
 # The shared kubeconfig action is the only workflow credential-file writer.
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
@@ -389,12 +421,18 @@ active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
 )
+deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
+assert deploy_runtime_restore["if"] == "${{ always() }}"
+assert deploy_runtime_restore["run"] == (
+    'echo "KUBECONFIG=$RUNNER_TEMP/preview-runtime.kubeconfig" >> "$GITHUB_ENV"'
+)
+assert "uses" not in deploy_runtime_restore
 deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
 assert deploy_requester_cleanup["if"] == "${{ always() }}"
 assert deploy_requester_cleanup["run"] == (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 )
-assert deploy_steps.index(deploy_by_name["Restore preview runtime kubeconfig"]) < (
+assert deploy_steps.index(deploy_runtime_restore) < (
     deploy_steps.index(deploy_requester_cleanup)
 )
 assert "Set up Helm" not in deploy_by_name
@@ -576,7 +614,7 @@ assert '"$RUNNER_TEMP/dev-demo-runtime.kubeconfig"' in dev_demo_kubeconfig_step[
 assert 'echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
     dev_demo_kubeconfig_step["run"]
 )
-assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' == (
+assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in (
     dev_demo_by_name["Restore dev-demo runtime kubeconfig"]["run"]
 )
 assert dev_demo_render_step["env"]["CERTIFICATE_IDENTITY_MODE"] == (

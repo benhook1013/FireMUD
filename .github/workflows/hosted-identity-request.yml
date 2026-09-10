@@ -334,10 +334,8 @@ jobs:
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active
 
       - name: Restore preview runtime kubeconfig
-        uses: ./.github/actions/write-kubeconfig
-        with:
-          content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
-          path: ${{ runner.temp }}/preview-runtime.kubeconfig
+        if: ${{ always() }}
+        run: echo "KUBECONFIG=$RUNNER_TEMP/preview-runtime.kubeconfig" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}

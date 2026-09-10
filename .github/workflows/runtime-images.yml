@@ -324,6 +324,41 @@ jobs:
             --tag "ghcr.io/benhook1013/hosted-environment-identity-controller:${CONTROLLER_IMAGE_TAG}" \
             services/hosted-environment-identity-controller/build/libs
 
+      - name: Smoke controller image entrypoint and paused health
+        env:
+          CONTROLLER_IMAGE: ghcr.io/benhook1013/hosted-environment-identity-controller:${{ needs.image-meta.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm --force "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --detach \
+            --name "$container_name" \
+            --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
+            "$CONTROLLER_IMAGE"
+
+          for _ in {1..30}; do
+            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
+              docker logs "$container_name"
+              echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2
+              exit 1
+            fi
+            if health="$(docker exec "$container_name" \
+              curl --fail --silent --show-error \
+                http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
+              && [[ "$health" == *'"status":"UP"'* ]]; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs "$container_name"
+          echo "Hosted identity controller paused-mode health check timed out." >&2
+          exit 1
+
       - name: Export fixed-tag preview image artifact
         run: |
           images=()

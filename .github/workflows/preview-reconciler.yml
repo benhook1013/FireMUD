@@ -138,8 +138,8 @@ jobs:
             if [[ -n "${namespace_json}" ]]; then
               namespace_exists=true
               if ! namespace_heads="$(parse_namespace_heads "${namespace_json}")"; then
-                echo "Unable to parse namespace ${namespace} snapshot; refusing preview reconcile." >&2
-                exit 1
+                echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} snapshot." >&2
+                continue
               fi
               IFS='|' read -r current_head_sha requested_head_sha <<<"${namespace_heads}"
             fi
@@ -155,8 +155,8 @@ jobs:
                 if [[ -z "${fresh_namespace_json}" ]]; then
                   namespace_exists=false
                 elif ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
-                  echo "Unable to parse namespace ${namespace} recheck; refusing annotation repair." >&2
-                  exit 1
+                  echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
+                  continue
                 else
                   IFS='|' read -r fresh_head_sha fresh_requested_head_sha <<<"${fresh_namespace_heads}"
                   if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then

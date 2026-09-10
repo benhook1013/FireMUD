@@ -90,6 +90,7 @@ jobs:
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"
           fi
+          HEAD_SHA="${HEAD_SHA,,}"
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
@@ -244,7 +245,13 @@ jobs:
         # The requester kubeconfig is needed only for the identity request;
         # subsequent runtime waits must use the restored runtime credentials.
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
-        run: echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing dev-demo runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
+          fi
+          echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}
