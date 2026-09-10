@@ -614,7 +614,10 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if (
             REVIEW_LIMIT_MARKER not in body
             and REVIEW_LIMIT_MESSAGE not in body
-            and REVIEW_LIMIT_STATUS_PATTERN.search(body) is None
+            and (
+                REVIEW_LIMIT_STATUS_PATTERN.search(body) is None
+                or SUBSTANTIVE_REVIEW_MARKER in body
+            )
             and REVIEW_LIMIT_WINDOW_PATTERN.search(body) is None
         ):
             continue

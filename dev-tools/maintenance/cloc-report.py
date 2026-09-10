@@ -937,6 +937,9 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
             body_path = Path(body_file.name)
             body_file.write(updated_body)
+        latest_state = pull_request_update_state(root, number, repository)
+        if latest_state != (body, current_base, current_head):
+            raise ReportError("PR body, base, or head changed before the LOC report update; refusing body update")
         run_command(
             (
                 "gh",

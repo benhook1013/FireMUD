@@ -379,7 +379,7 @@ class CheckpointReporterTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
-            timeout=self.reporter.GH_TIMEOUT_SECONDS,
+            timeout=self.reporter.SUBPROCESS_TIMEOUT_SECONDS,
         )
 
     def test_details_preserves_legacy_reason_separately_from_raw_findings(self) -> None:
@@ -697,6 +697,38 @@ class CheckpointReporterTest(unittest.TestCase):
                     f"reporter: error: argument {flag}: count must be a positive integer\n"
                 )
             )
+
+    def test_hosted_argument_uses_review_id_validation_and_preserves_latest_sentinel(self) -> None:
+        for value in ("0", "invalid"):
+            stderr = io.StringIO()
+            with (
+                self.subTest(value=value),
+                patch.object(
+                    sys,
+                    "argv",
+                    ["reporter", "--repo", "owner/repo", "--pr", "42", "--hosted", value],
+                ),
+                redirect_stderr(stderr),
+                self.assertRaisesRegex(SystemExit, "2"),
+            ):
+                self.reporter.parse_args()
+            self.assertTrue(
+                stderr.getvalue().endswith(
+                    "reporter: error: argument --hosted: review ID must be a positive integer\n"
+                )
+            )
+
+        with patch.object(
+            sys,
+            "argv",
+            ["reporter", "--repo", "owner/repo", "--pr", "42", "--hosted"],
+        ):
+            self.assertEqual(self.reporter.parse_args().hosted, -1)
+        with self.assertRaisesRegex(
+            self.reporter.argparse.ArgumentTypeError,
+            "^comment ID must be a positive integer$",
+        ):
+            self.reporter.parse_comment_id("0")
 
     def test_hosted_reviews_are_saved_by_actual_id_without_owner_checkpoint(self) -> None:
         reviews = [
@@ -1174,7 +1206,7 @@ class CheckpointReporterTest(unittest.TestCase):
         ):
             self.reporter.fetch_comments("owner/repo", 42)
 
-        timeout = subprocess.TimeoutExpired("gh api", self.reporter.GH_TIMEOUT_SECONDS)
+        timeout = subprocess.TimeoutExpired("gh api", self.reporter.SUBPROCESS_TIMEOUT_SECONDS)
         with (
             patch.object(self.reporter.subprocess, "run", side_effect=timeout),
             self.assertRaisesRegex(RuntimeError, "gh api timed out after 30 seconds"),
@@ -1193,6 +1225,34 @@ class CheckpointReporterTest(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertEqual(stderr.getvalue(), "error: gh api timed out after 30 seconds\n")
+
+    def test_git_log_root_bounds_subprocess_and_normalizes_failures(self) -> None:
+        response = subprocess.CompletedProcess([], 0, ".git\n", "")
+        with patch.object(self.reporter.subprocess, "run", return_value=response) as run:
+            log_root = self.reporter._git_log_root()
+
+        self.assertEqual(log_root.name, "coderabbit-review-logs")
+        run.assert_called_once_with(
+            ["git", "rev-parse", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=self.reporter.SUBPROCESS_TIMEOUT_SECONDS,
+        )
+
+        for error in (
+            subprocess.TimeoutExpired("git rev-parse", self.reporter.SUBPROCESS_TIMEOUT_SECONDS),
+            subprocess.CalledProcessError(1, "git rev-parse"),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(self.reporter.subprocess, "run", side_effect=error),
+                self.assertRaisesRegex(
+                    self.reporter.CaptureUnavailable,
+                    "^could not resolve the shared Git common directory$",
+                ),
+            ):
+                self.reporter._git_log_root()
 
     def test_negative_limit_is_rejected(self) -> None:
         with self.assertRaises(self.reporter.argparse.ArgumentTypeError):

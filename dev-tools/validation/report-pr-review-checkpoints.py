@@ -26,7 +26,7 @@ CHECKPOINT_SUFFIX = re.compile(
 CHECKPOINT_CANDIDATE = re.compile(r"^\*\*(?:Correction — )?(?:Hosted|CLI):")
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
-GH_TIMEOUT_SECONDS = 30
+SUBPROCESS_TIMEOUT_SECONDS = 30
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
@@ -123,6 +123,16 @@ def parse_comment_id(value: str) -> int:
     if comment_id <= 0:
         raise argparse.ArgumentTypeError("comment ID must be a positive integer")
     return comment_id
+
+
+def parse_review_id(value: str) -> int:
+    try:
+        review_id = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("review ID must be a positive integer") from exc
+    if review_id <= 0:
+        raise argparse.ArgumentTypeError("review ID must be a positive integer")
+    return review_id
 
 
 def parse_positive_limit(value: str) -> int:
@@ -273,12 +283,12 @@ def fetch_api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             check=True,
             capture_output=True,
             text=True,
-            timeout=GH_TIMEOUT_SECONDS,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"gh api timed out after {GH_TIMEOUT_SECONDS} seconds") from exc
+        raise RuntimeError(f"gh api timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() if exc.stderr else "gh api failed"
         raise RuntimeError(detail) from exc
@@ -825,8 +835,9 @@ def _git_log_root() -> Path:
             check=True,
             capture_output=True,
             text=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise CaptureUnavailable("could not resolve the shared Git common directory") from exc
     common_dir = Path(completed.stdout.strip())
     if not common_dir.is_absolute():
@@ -1330,7 +1341,7 @@ def parse_args() -> argparse.Namespace:
         "--hosted",
         nargs="?",
         const=-1,
-        type=parse_comment_id,
+        type=parse_review_id,
         metavar="REVIEW_ID",
         help="Fetch one completed CodeRabbit Hosted review, or the latest when omitted",
     )

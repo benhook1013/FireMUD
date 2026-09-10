@@ -726,6 +726,72 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+stable_update_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_stable_update_command(args, _root):
+    stable_update_calls.append(args)
+    if args[:3] == ("gh", "pr", "view"):
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"}
+            ).encode(),
+            stderr=b"",
+        )
+    if args[:3] == ("gh", "pr", "edit"):
+        assert Path(args[-1]).read_text(encoding="utf-8") == cloc_report.replace_pr_report_block(
+            "existing", impact_snippet
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+    raise AssertionError(f"unexpected stable update command: {args}")
+cloc_report.run_command = fake_stable_update_command
+try:
+    assert cloc_report.update_pull_request_body(repo, 2736, impact) is True
+    assert [args[:3] for args in stable_update_calls] == [
+        ("gh", "pr", "view"),
+        ("gh", "pr", "view"),
+        ("gh", "pr", "edit"),
+    ]
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
+for changed_state, change_name in (
+    ({"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "concurrent"}, "body"),
+    ({"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}, "revision"),
+):
+    conflict_calls = []
+    update_states = iter(
+        (
+            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": "existing"},
+            changed_state,
+        )
+    )
+    cloc_report.require_tool = lambda _name: None
+    def fake_conflicting_update_command(args, _root):
+        conflict_calls.append(args)
+        if args[:3] != ("gh", "pr", "view"):
+            raise AssertionError(f"{change_name} conflict must prevent PR edit")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(next(update_states)).encode(),
+            stderr=b"",
+        )
+    cloc_report.run_command = fake_conflicting_update_command
+    try:
+        try:
+            cloc_report.update_pull_request_body(repo, 2736, impact)
+        except cloc_report.ReportError as error:
+            assert "body, base, or head changed" in str(error)
+        else:
+            raise AssertionError(f"second-read {change_name} change must block body update")
+        assert len(conflict_calls) == 2
+    finally:
+        cloc_report.require_tool = original_require_tool
+        cloc_report.run_command = original_run_command
+
 update_calls = []
 cloc_report.require_tool = lambda _name: None
 def fake_unchanged_body_command(args, _root):
@@ -902,7 +968,7 @@ assert "summary" in help_output
 assert "scope" in help_output
 assert "modules" in help_output
 assert "diff" in help_output
-assert "pr" in help_output
+assert cloc_report.PR_COMMAND_DESCRIPTION in help_output
 assert "classify" in help_output
 pr_help_output = subprocess.check_output(
     [*script, "pr", "--help"], cwd=repo, env=help_env, text=True
