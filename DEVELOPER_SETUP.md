@@ -7,10 +7,10 @@ This guide explains how to configure a local development environment for the Fir
 Install the following tools before building the services:
 
 - **Java 21+** – required for all Spring Boot microservices.
-- **Node.js** (latest LTS) – needed if you plan to build the React frontend.
+- **Node.js 24 LTS** – needed if you plan to build the React frontend. Use Node 24; the Gradle-managed version is declared in [`build.gradle.kts`](build.gradle.kts) and the CI version in the [CI workflow](.github/workflows/ci.yml), which are the exact-version authorities.
 - **Docker** and **Docker Compose** – run the full stack locally.
 - **Git** – version control for cloning and contributing.
-- **Gradle** – optional; only needed if you must regenerate the wrapper.
+- **Gradle** – optional; only needed for an intentional wrapper upgrade.
 
 ## Optional Developer Tooling
 
@@ -52,23 +52,23 @@ The repository ships with a root Gradle wrapper. In normal use, run tasks with `
 
 ### SQL Persistence Direction
 
-For SQL-backed services, the repo’s canonical persistence stack is `jOOQ + Flyway`. Flyway is the schema authority, and SQL-backed services now use generated/executed explicit SQL rather than a mixed ORM runtime. New persistence work should therefore:
+For SQL-backed services, use the repo’s canonical `jOOQ + Flyway` persistence stack. Flyway is the schema authority, and SQL-backed services use generated/executed explicit SQL rather than a mixed ORM runtime. New persistence work should therefore:
 
 - assume `jOOQ + Flyway` is the house style for SQL-backed services;
 - keep schema authority in Flyway rather than introducing service-local schema side channels;
 - reuse the shared `jOOQ` code generation and runtime helpers instead of inventing one-off service-local repository patterns.
 
-The shared `jOOQ` foundation now exposes a canonical generation task:
+The shared `jOOQ` foundation provides a canonical generation task:
 
 ```bash
 ./gradlew :automation-scripting-service:generateJooq
 ```
 
-Later migrated services should follow that same `:service:generateJooq` pattern through the shared `net.firedevops.firemud.jooq-conventions` plugin rather than inventing service-local codegen tasks.
+Services should follow that same `:service:generateJooq` pattern through the shared `net.firedevops.firemud.jooq-conventions` plugin rather than inventing service-local codegen tasks.
 
 ### Durable Workflow Direction
 
-For long-running control-plane workflows, the repo’s target durable workflow substrate is Temporal. The shared foundation now lives in `services/common-temporal`, and adopter services should opt in through the shared Gradle plugin:
+For long-running control-plane workflows, the repo’s target durable workflow substrate is Temporal. The shared foundation is in `services/common-temporal`, and adopter services should opt in through the shared Gradle plugin:
 
 ```kotlin
 plugins {
@@ -86,18 +86,15 @@ The shared foundation exposes these core properties:
 
 Workflow-hosting services should use `TemporalTaskQueueResolver`, `FiremudWorkflowIds`, and `TemporalWorkerRegistrar` from the shared package rather than inventing service-local worker startup or workflow-id formatting.
 
-Until the first real Temporal adopters land, most contributors do **not** need a local Temporal cluster just to work in the repo. The shared foundation is intentionally minimal and the first adopter slices will carry the heavier local runtime/bootstrap guidance when those workflows become executable end to end.
+Compose does not bundle a Temporal server. Most contributors do **not** need a local Temporal cluster for routine repository work. When working on an enabled Temporal adopter, set `firemud.temporal.enabled=true` and configure `firemud.temporal.target` to a reachable Temporal endpoint, then follow the adopter service's workflow guidance. See [Temporal Control-Plane Workflows](design/architecture/system-architecture-temporal-workflows.md) for the canonical boundary and current adopter status.
 
-If the wrapper JAR is missing and you need to regenerate it, run:
+If `gradle/wrapper/gradle-wrapper.jar` is missing, recover the tracked JAR from the current checkout revision:
 
 ```bash
-gradle wrapper --gradle-version 8.14.3 --distribution-type bin
+git show HEAD:gradle/wrapper/gradle-wrapper.jar > gradle/wrapper/gradle-wrapper.jar
 ```
 
-Run this command any time the wrapper JAR is missing. It downloads the
-required `gradle-wrapper.jar` into `gradle/wrapper/`.
-
-This recreates `gradlew`, `gradlew.bat`, and the wrapper JAR under `gradle/wrapper/`.
+The wrapper distribution is declared in `gradle/wrapper/gradle-wrapper.properties`. Change that file and the tracked wrapper files together only for an intentional wrapper upgrade.
 
 Build all modules with:
 
@@ -120,7 +117,7 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 
 ### Spring Profiles for Testing
 
-The only maintained alternate Spring profile is `test`, and Gradle test tasks default to it when no profile is provided. `bootRun` no longer forces a local runtime profile automatically; if you want an in-memory test-style run, set `SPRING_PROFILES_ACTIVE=test` explicitly. If you want the real runtime topology, use the canonical Docker Compose stack or provide the real Postgres/Redis/downstream endpoints directly.
+Spring profiles select environment-specific settings; they are not separate application implementations. Docker Compose sets `SPRING_PROFILES_ACTIVE=dev`, Kubernetes deployments set it to `prod`, and Gradle test tasks default to `test` when no profile is provided. Direct `bootRun` does not force a profile automatically. Set `SPRING_PROFILES_ACTIVE=test` only for an in-memory test-style run; for the canonical runtime topology, use Docker Compose or provide real Postgres/Redis/downstream endpoints directly. See [Environment Variables & Secrets Management](design/architecture/infrastructure/environment-and-secrets-catalog.md#common-application-settings) for the profile contract.
 
 ### Telnet Proxy Limits in Local Dev
 
@@ -160,11 +157,7 @@ Use the aggregated task to build container images for all services:
 ./gradlew buildDockerImages
 ```
 
-Each invocation runs Spring Boot's `bootBuildImage` for every module and tags the images with `latest`.
-The microservice Dockerfiles extend the shared base image
-`ghcr.io/benhook1013/firemud-base:latest`. If the base image is missing or out of
-date, build it locally with `./gradlew buildBaseImage` or pull the published
-version from GitHub Container Registry.
+Each invocation runs Spring Boot's `bootBuildImage` for every service. Those service image tags use the root Gradle project version from [`gradle.properties`](gradle.properties); the local Compose image references are maintained in [`docker/docker-compose.local-images.override.yml`](docker/docker-compose.local-images.override.yml) and must match that version. The shared base image is tagged `ghcr.io/benhook1013/firemud-base:latest`. If the base image is missing or out of date, build it locally with `./gradlew buildBaseImage` or pull the published version from GitHub Container Registry.
 
 ## Markdown Linting via Gradle
 
@@ -329,9 +322,11 @@ Use `dev-tools/backups/backup-db.sh` to create a snapshot and
 `dev-tools/restores/restore-db.sh` to restore one:
 
 ```bash
-./dev-tools/backups/backup-db.sh             # writes to docker/backups
+./dev-tools/backups/backup-db.sh             # writes to ./backups from the repo root
 ./dev-tools/restores/restore-db.sh backups/<file>
 ```
+
+The local helper creates a custom-format `.dump` file and accepts an optional output-directory argument. This ad hoc `backup-db.sh`/`restore-db.sh` lane is separate from the scheduled Compose backup lane.
 
 ### Automatic Kubernetes Backups
 
@@ -343,7 +338,7 @@ runbooks. Velero schedules back up only Kubernetes manifests.
 
 ### Local Database Cron Backups
 
-The Docker Compose stack includes a `pg-dump-cron` service that runs `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Dumps are written to the `docker/backups/` directory and follow the same 15min/daily/weekly/monthly rotation policy as production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload the files to your object store; custom endpoints also require `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` only when you have provider-specific evidence that conditional immutable publication is enforced.
+The Docker Compose stack includes a `pg-dump-cron` service that runs `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes. Its scheduled plain-SQL `.sql.gz` dumps are written to `docker/backups/` through the Compose bind mount and follow the same 15min/daily/weekly/monthly rotation policy as production. Set `PG_DUMP_BUCKET` and `PG_DUMP_ENDPOINT` to automatically upload the files to your object store; custom endpoints also require `PG_DUMP_ENDPOINT_IF_NONE_MATCH_CONFIRMED=true` only when you have provider-specific evidence that conditional immutable publication is enforced.
 
 ### Optional Redis Persistence
 
@@ -414,30 +409,26 @@ More details on deployment environments and gateway routing can be found in the 
 - [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
 - [Gateway Architecture](design/architecture/system-architecture-gateway.md)
 - [Infrastructure Overview](design/architecture/infrastructure/README.md) – explains TLS/mTLS certificates, multi-tenancy, and network boundaries.
+- [System Architecture Overview](design/architecture/system-architecture-overview.md)
 
 These documents explain how the compose setup differs from production and provide examples of the configuration files.
 
 ### Local development model
 
-- The canonical local path now uses the normal runtime configuration with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
+- The canonical local path uses the normal runtime configuration with the real Postgres, Redis, Gateway, Account, and gameplay-service topology.
 - For end-to-end validation, prefer the repo-owned smoke scripts under `dev-tools/` instead of ad hoc single-service shortcuts:
   - `dev-tools/verify-fresh-bootstrap.sh`
   - `dev-tools/verify-restart-state.sh`
 - Treat local source-built smoke as the primary proof path for gameplay changes. Docker Compose and smoke workflows should exercise the same runtime topology that production-like environments use, not alternate dependency-light modes.
 
+For canonical smoke entrypoints, locked Gradle validation, and diagnostic helpers, see [Dev Tools](dev-tools/README.md) and [Validation and Runtime Proof](design/developer-workflows/validation-and-runtime-proof.md).
+
 ### Running Gradle from WSL
 
-- Running Gradle inside WSL avoids the Windows file-locking issues that can block `build/test-results/**`. Open a WSL shell, `cd` into this repository via the `/mnt/c/.../FireMUD` path, and run the usual `./gradlew …` commands there.
-- You can keep your editor on Windows while letting long-running builds/tests execute on the Linux filesystem by pointing it at the same working tree.
+- Running Gradle inside WSL can avoid Windows file-locking issues when the checkout is on a Linux filesystem. Open a WSL shell, `cd` into a Linux-native checkout such as `/home/<user>/src/FireMUD`, and run the usual `./gradlew …` commands there. A checkout under `/mnt/c/...` remains on a Windows-mounted filesystem and may retain file-locking behavior.
+- You can keep your editor on Windows while pointing it at the WSL checkout and letting long-running builds/tests execute on the Linux filesystem.
 - Use the same rule for frontend and Kubernetes tooling: run `npm` and `kubectl` from the WSL shell with Linux-native installs rather than Windows executables on the mounted drive.
 
 ---
 
 You are now ready to explore the codebase and contribute!
-
-## Related Documentation
-
-- [Infrastructure Overview](design/architecture/infrastructure/README.md)
-- [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)
-- [Gateway Architecture](design/architecture/system-architecture-gateway.md)
-- [System Architecture Overview](design/architecture/system-architecture-overview.md)
