@@ -1095,6 +1095,35 @@ grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/edited-review-rate-l
 grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/edited-review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/edited-review-rate-limited.out"
 
+python3 - "$TMP_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+base = json.loads((root / "quoted-rate-limit.json").read_text())
+comments = base["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+comments[-1]["body"] = "Review completed.\n> Next review available in: 36 minutes"
+(root / "quoted-window-rate-limit.json").write_text(json.dumps(base))
+
+marker = json.loads((root / "edited-review-rate-limited.json").read_text())
+marker_comments = marker["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+marker_comments[-1]["body"] = (
+    "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+    "> Next review available in: 36 minutes"
+)
+(root / "marker-quoted-window-rate-limit.json").write_text(json.dumps(marker))
+PY
+
+quoted_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_window_output"
+
+expect_failure_output "$TMP_DIR/marker-quoted-window-rate-limit.json" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+
 substantive_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-quoted-rate-limit.json")"
 grep -q "latest_review_request_rate_limited=false" <<<"$substantive_quoted_rate_limit_output"
 grep -q "retrigger_review_allowed=true" <<<"$substantive_quoted_rate_limit_output"

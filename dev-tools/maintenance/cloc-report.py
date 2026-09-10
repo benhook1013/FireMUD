@@ -942,14 +942,27 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
     head = report.get("head")
     if not isinstance(repository, str) or not isinstance(base, dict) or not isinstance(head, dict):
         raise ReportError("PR report metadata was malformed before body update")
-    counted_base = base.get("oid")
-    counted_head = head.get("oid")
-    if not isinstance(counted_base, str) or not isinstance(counted_head, str):
-        raise ReportError("PR report revisions were malformed before body update")
+    base_ref = base.get("ref")
+    head_ref = head.get("ref")
+    if not isinstance(base_ref, str) or not base_ref or not isinstance(head_ref, str) or not head_ref:
+        raise ReportError("PR report refs were malformed before body update")
+    counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
+    counted_head = valid_object_id(head.get("oid"), "head")
 
     body, current_base, current_head = pull_request_update_state(root, number, repository)
-    if current_base != counted_base or current_head != counted_head:
-        raise ReportError("PR base or head changed while the LOC report was being generated; refusing body update")
+    if current_head != counted_head:
+        raise ReportError("PR head changed while the LOC report was being generated; refusing body update")
+    current_metadata = PullRequestMetadata(
+        number=number,
+        repository=repository,
+        base_ref=base_ref,
+        base_oid=current_base,
+        head_ref=head_ref,
+        head_oid=current_head,
+    )
+    current_merge_base = pull_request_merge_base(root, current_metadata)
+    if current_merge_base != counted_merge_base:
+        raise ReportError("PR merge-base changed while the LOC report was being generated; refusing body update")
 
     updated_body = replace_pr_report_block(body, render_pr_report(report))
     if updated_body.replace("\r\n", "\n") == body.replace("\r\n", "\n"):

@@ -410,6 +410,10 @@ def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime |
     return created_at + timedelta(**{"minutes" if unit.startswith("minute") else "hours": amount})
 
 
+def unquoted_body(body: str) -> str:
+    return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
+
+
 def is_substantive_review_body(body: str) -> bool:
     return SUBSTANTIVE_REVIEW_MARKER in body or ACTIONABLE_COMMENTS_MARKER in body
 
@@ -615,11 +619,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         body = comment.get("body", "")
         if is_substantive_review_body(body):
             continue
+        detection_body = body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
         if (
-            REVIEW_LIMIT_MARKER not in body
-            and REVIEW_LIMIT_MESSAGE not in body
-            and REVIEW_LIMIT_STATUS_PATTERN.search(body) is None
-            and REVIEW_LIMIT_WINDOW_PATTERN.search(body) is None
+            REVIEW_LIMIT_MARKER not in detection_body
+            and REVIEW_LIMIT_MESSAGE not in detection_body
+            and REVIEW_LIMIT_STATUS_PATTERN.search(detection_body) is None
+            and REVIEW_LIMIT_WINDOW_PATTERN.search(detection_body) is None
         ):
             continue
         effective_at = comment_effective_timestamp(comment) or created_at_dt
@@ -628,7 +633,7 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
             continue
         latest_rate_limit_at_dt = created_at_dt
-        latest_rate_limit_until_dt = parse_review_rate_limit_until(body, effective_at)
+        latest_rate_limit_until_dt = parse_review_rate_limit_until(detection_body, effective_at)
         latest_rate_limit_without_expiry = latest_rate_limit_until_dt is None
 
     for comment in pr["comments"]["nodes"]:
