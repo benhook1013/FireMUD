@@ -14,9 +14,12 @@ command -v jq >/dev/null 2>&1 || {
   echo "::error title=Missing Kubernetes configuration::KUBECONFIG must be non-empty for dev-demo reconciliation." >&2
   exit 1
 }
-desired_head_sha="$(
+if ! desired_head_sha="$(
   gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
-)"
+)"; then
+  echo "::error title=Develop head lookup failed::Unable to resolve the develop head from the GitHub API for ${GITHUB_REPOSITORY}." >&2
+  exit 1
+fi
 [[ "$desired_head_sha" =~ ^[0-9a-f]{40}$ ]] || {
   echo "::error title=Invalid develop head SHA::Expected exactly 40 lowercase hexadecimal characters from the develop branch." >&2
   exit 1
@@ -225,15 +228,13 @@ while (( page <= max_history_pages )); do
       <<<"${exact_page_runs}"
   )"
   failed_attempts=$((failed_attempts + page_failed_attempts))
-  if [[ "${current_head_sha}" != "${desired_head_sha}" ]]; then
-    page_completed_attempts="$(
-      jq -r '[.[] | select(.status == "completed")] | length' \
-        <<<"${exact_page_runs}"
-    )"
-    unaligned_completed_attempts=$((unaligned_completed_attempts + page_completed_attempts))
-    if (( unaligned_completed_attempts >= max_failed_attempts )); then
-      break
-    fi
+  page_completed_attempts="$(
+    jq -r '[.[] | select(.status == "completed")] | length' \
+      <<<"${exact_page_runs}"
+  )"
+  unaligned_completed_attempts=$((unaligned_completed_attempts + page_completed_attempts))
+  if (( unaligned_completed_attempts >= max_failed_attempts )); then
+    break
   fi
   if (( failed_attempts >= max_failed_attempts )); then
     break
@@ -255,6 +256,16 @@ fi
 
 if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
   echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
+  exit 0
+fi
+
+# Close the gap between the initial namespace observation and the final
+# retry/dispatch decision. A deployment may have aligned while history was read.
+current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
+current_requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}')"
+if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
+  repair_requested_head_if_aligned
+  echo "Dev demo already aligned to develop head ${desired_head_sha}; no retry or redispatch required."
   exit 0
 fi
 

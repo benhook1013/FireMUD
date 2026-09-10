@@ -241,14 +241,14 @@ jobs:
           HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
           IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-          HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
         run: |
           python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
             "$ARTIFACT_DIR/preview-metadata.json" \
             "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
             "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
-            "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$HOSTNAME"
+            "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"
 
       - name: Revalidate open PR before privileged deployment
         env:
@@ -652,20 +652,8 @@ jobs:
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
         run: |
-          set -euo pipefail
-          refuse_cleanup() {
-            echo "::error::Refusing trusted preview cleanup for PR #${PR_NUMBER}: $1" >&2
-            exit 1
-          }
-          if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
-            refuse_cleanup "current pull request metadata is unavailable"
-          fi
-          current_state="$(jq -r '.state // empty' <<<"$pull_request_json")"
-          current_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
-          current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
-          [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_cleanup "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
-          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_cleanup "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
       - name: Delete runtime and wait for NotFound
         run: |
           bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
@@ -731,20 +719,8 @@ jobs:
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
         run: |
-          set -euo pipefail
-          refuse_cleanup() {
-            echo "::error::Refusing trusted preview cleanup for PR #${PR_NUMBER}: $1" >&2
-            exit 1
-          }
-          if ! pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"; then
-            refuse_cleanup "current pull request metadata is unavailable"
-          fi
-          current_state="$(jq -r '.state // empty' <<<"$pull_request_json")"
-          current_head_repository="$(jq -r '.head.repo.full_name // empty' <<<"$pull_request_json")"
-          current_head_sha="$(jq -r '.head.sha // empty' <<<"$pull_request_json")"
-          [[ "$current_head_repository" == "$GITHUB_REPOSITORY" ]] || refuse_cleanup "head repository is not trusted (expected=${GITHUB_REPOSITORY}, current=${current_head_repository})"
-          [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || refuse_cleanup "head is stale (expected=${EXPECTED_HEAD_SHA}, current=${current_head_sha})"
-          [[ "$current_state" == closed ]] || refuse_cleanup "pull request is no longer closed (state=${current_state})"
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Check HostedEnvironmentIdentity existence before retirement
         id: identity-existence

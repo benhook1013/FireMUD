@@ -1,5 +1,9 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_IN_FLIGHT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,6 +32,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -150,13 +155,19 @@ class SecretProjectionServiceTest {
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(secretClient.runtimeSecrets()).resource(candidate.capture());
+    Map<String, String> annotations = candidate.getValue().getMetadata().getAnnotations();
     assertEquals(
         HostedIdentityContract.TRANSPORT_PROVENANCE,
-        candidate
-            .getValue()
-            .getMetadata()
-            .getAnnotations()
-            .get(HostedIdentityContract.PROVENANCE_ANNOTATION));
+        annotations.get(HostedIdentityContract.PROVENANCE_ANNOTATION));
+    assertEquals(
+        Set.of(
+            HostedIdentityContract.REVISION_ANNOTATION,
+            HostedIdentityContract.SOURCE_GENERATION_ANNOTATION,
+            HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION,
+            HostedIdentityContract.SPKI_SHA256_ANNOTATION,
+            HostedIdentityContract.PROVENANCE_ANNOTATION,
+            HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION),
+        annotations.keySet());
   }
 
   @Test
@@ -423,6 +434,56 @@ class SecretProjectionServiceTest {
   }
 
   @Test
+  void grpcAcknowledgementUsesTheRoleCanonicalMaterialRevision() {
+    EnvironmentIdentityPlan plan = plan();
+    SecretClient secretClient = secretClient(plan);
+    Map<String, String> sourceShapedData =
+        Map.of(
+            "tls.crt",
+            encoded("certificate"),
+            "tls.key",
+            encoded("key"),
+            "ca.crt",
+            encoded("ca"));
+    String revision =
+        SecretProjectionService.revisionForRole(HostedIdentityContract.GRPC_ROLE, sourceShapedData);
+    Map<String, String> pendingAnnotations = new LinkedHashMap<>();
+    pendingAnnotations.put(HostedIdentityContract.REVISION_ANNOTATION, revision);
+    pendingAnnotations.put(HostedIdentityContract.SOURCE_GENERATION_ANNOTATION, "1");
+    pendingAnnotations.put(HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION, "1");
+    pendingAnnotations.put(HostedIdentityContract.SPKI_SHA256_ANNOTATION, "1".repeat(64));
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    Secret current =
+        ownedSecret(
+            plan,
+            HostedIdentityContract.GRPC_ROLE,
+            plan.grpcSecretName(),
+            sourceShapedData,
+            pendingAnnotations);
+    current.getMetadata().setResourceVersion("7");
+    Resource<Secret> currentResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(plan.grpcSecretName())).thenReturn(currentResource);
+    when(currentResource.get()).thenReturn(current);
+    ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
+    when(currentResource.lockResourceVersion("7")).thenReturn(lockedResource);
+
+    SecretProjectionService.ProjectionResult result =
+        new SecretProjectionService()
+            .acknowledge(
+                secretClient.client(),
+                plan,
+                HostedIdentityContract.GRPC_ROLE,
+                revision,
+                1,
+                1,
+                "1".repeat(64),
+                ALWAYS_CURRENT);
+
+    assertEquals(true, result.isSynced());
+    verify(lockedResource).replace(current);
+  }
+
+  @Test
   void acceptedRevisionRequiresTheCanonicalAlgorithmPrefixAndFullDigest() {
     SecretProjectionService service = new SecretProjectionService();
     assertThrows(
@@ -523,7 +584,7 @@ class SecretProjectionServiceTest {
 
     CertificateMaterialService.RoleMaterial pinned = fixture.batch().ingress();
 
-    assertEquals("serialized-in-flight", pinned.state());
+    assertEquals(SERIALIZED_IN_FLIGHT, pinned.state());
     assertEquals(fixture.acceptedData(), pinned.source().getData());
     SecretProjectionService projections = new SecretProjectionService();
     SecretProjectionService.ProjectionResult pending =
@@ -573,7 +634,7 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.RoleMaterial advanced =
         restarted.beginMaterialization(fixture.secretClient().client(), fixture.plan()).ingress();
 
-    assertEquals("source-ready", advanced.state());
+    assertEquals(SOURCE_READY, advanced.state());
     assertEquals(replacement, advanced.source().getData());
   }
 
@@ -727,7 +788,7 @@ class SecretProjectionServiceTest {
         materialService.beginMaterialization(client, plan).ingress();
 
     assertEquals(HostedIdentityContract.INGRESS_ROLE, continued.role());
-    assertEquals("serialized-in-flight", continued.state());
+    assertEquals(SERIALIZED_IN_FLIGHT, continued.state());
     assertEquals(capturedReplacement, continued.source());
     verify(secretClient.runtimeSecrets(), org.mockito.Mockito.times(1))
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -1187,7 +1248,7 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.RoleMaterial material = fixture.materialization().ingress();
 
     assertEquals(fixture.ingressSource(), material.source());
-    assertEquals("source-ready", material.state());
+    assertEquals(SOURCE_READY, material.state());
     SecretProjectionService projectionService = new SecretProjectionService();
     var repair =
         projectionService.project(
@@ -1217,8 +1278,8 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.RoleMaterial ingress = fixture.materialization().ingress();
     CertificateMaterialService.RoleMaterial telnet = fixture.materialization().telnet();
 
-    assertEquals("source-ready", ingress.state());
-    assertEquals("serialized-deferred-drift", telnet.state());
+    assertEquals(SOURCE_READY, ingress.state());
+    assertEquals(SERIALIZED_DEFERRED_DRIFT, telnet.state());
     assertEquals(true, telnet.projectionDeferred());
     var repair =
         new SecretProjectionService()
@@ -1260,8 +1321,8 @@ class SecretProjectionServiceTest {
             .getData());
     CertificateMaterialService.RoleMaterial telnet = fixture.materialization().telnet();
 
-    assertEquals("source-ready", ingress.state());
-    assertEquals("source-ready", telnet.state());
+    assertEquals(SOURCE_READY, ingress.state());
+    assertEquals(SOURCE_READY, telnet.state());
     SecretProjectionService projectionService = new SecretProjectionService();
     assertEquals(
         "projected",
@@ -1368,9 +1429,9 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.RoleMaterial grpc = materialization.grpc(1L);
 
     assertEquals(selectedGatewaySource, gateway.source());
-    assertEquals("source-ready", gateway.state());
-    assertEquals("serialized-deferred", bridge.state());
-    assertEquals("serialized-deferred", grpc.state());
+    assertEquals(SOURCE_READY, gateway.state());
+    assertEquals(SERIALIZED_DEFERRED, bridge.state());
+    assertEquals(SERIALIZED_DEFERRED, grpc.state());
     verifyNoInteractions(generator);
     var gatewayProjection =
         new SecretProjectionService()
@@ -1413,7 +1474,7 @@ class SecretProjectionServiceTest {
     annotations.remove(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
     telnetProjection.getMetadata().setAnnotations(annotations);
 
-    assertEquals("source-ready", fixture.materialization().ingress().state());
+    assertEquals(SOURCE_READY, fixture.materialization().ingress().state());
     IllegalStateException failure =
         assertThrows(IllegalStateException.class, () -> fixture.materialization().telnet());
 
@@ -1444,7 +1505,7 @@ class SecretProjectionServiceTest {
     CertificateMaterialService.RoleMaterial material = fixture.materialization().ingress();
 
     assertEquals(fixture.ingressSource(), material.source());
-    assertEquals("source-ready", material.state());
+    assertEquals(SOURCE_READY, material.state());
     var repair =
         new SecretProjectionService()
             .project(

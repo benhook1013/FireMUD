@@ -86,7 +86,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       EnvironmentIdentityPlan plan = planner.plan(resource.getMetadata().getName());
       HostedIdentityProperties.ActivationMode activationMode = properties.activationMode();
       if (activationMode != HostedIdentityProperties.ActivationMode.ACTIVE) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             activationMode == HostedIdentityProperties.ActivationMode.PAUSED
                 ? HostedEnvironmentIdentityStatus.Phase.Blocked
@@ -110,7 +110,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       try {
         runtimeProfile = runtimeProfileService.read(client, plan);
       } catch (IllegalStateException exception) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.Blocked,
             "RuntimeProfileInvalid",
@@ -122,7 +122,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             null);
       }
       if (!runtimeProfile.present()) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.RuntimeAbsent,
             "RuntimeAbsent",
@@ -140,11 +140,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
 
       CertificateMaterialService.RoleMaterial ingress = materialization.ingress();
       if (!ingress.ready()) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            ingress.state(),
-            ingress.state(),
+            ingress.state().statusValue(),
+            ingress.state().statusValue(),
             false,
             runtimeProfile,
             ingress,
@@ -154,11 +154,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       validateSourceProgress(ingress, previousRole(resource, HostedIdentityContract.INGRESS_ROLE));
       CertificateMaterialService.RoleMaterial telnet = materialization.telnet();
       if (!telnet.ready()) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            telnet.state(),
-            telnet.state(),
+            telnet.state().statusValue(),
+            telnet.state().statusValue(),
             false,
             runtimeProfile,
             ingress,
@@ -172,8 +172,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         return status(
             resource,
             HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            gatewayInternalWs.state(),
-            gatewayInternalWs.state(),
+            gatewayInternalWs.state().statusValue(),
+            gatewayInternalWs.state().statusValue(),
             false,
             runtimeProfile,
             ingress,
@@ -190,8 +190,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         return status(
             resource,
             HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            tcpProxyBridge.state(),
-            tcpProxyBridge.state(),
+            tcpProxyBridge.state().statusValue(),
+            tcpProxyBridge.state().statusValue(),
             false,
             runtimeProfile,
             ingress,
@@ -211,8 +211,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         return status(
             resource,
             HostedEnvironmentIdentityStatus.Phase.WaitingForCertificate,
-            grpc.state(),
-            grpc.state(),
+            grpc.state().statusValue(),
+            grpc.state().statusValue(),
             false,
             runtimeProfile,
             ingress,
@@ -531,7 +531,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           tcpProxyBridge,
           grpc);
     } catch (RuntimeProfileFenceException exception) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           exception.phase(),
           exception.reason(),
@@ -542,7 +542,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null,
           null);
     } catch (Exception exception) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Blocked,
           "ReconciliationBlocked",
@@ -690,7 +690,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     validateSourceLabels(material.source(), plan, role);
     if (material.projectionDeferred()) {
       return SecretProjectionService.ProjectionResult.awaiting(
-          material.state(), material.revision());
+          material.state().statusValue(), material.revision());
     }
     String provenance =
         HostedIdentityContract.GRPC_ROLE.equals(role)
@@ -734,7 +734,12 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   static void validateDistinctIdentities(CertificateMaterialService.RoleMaterial... materials) {
     java.util.Set<String> publicKeys = new java.util.HashSet<>();
     for (CertificateMaterialService.RoleMaterial material : materials) {
-      if (!publicKeys.add(material.summary().spkiSha256())) {
+      String spkiSha256 = material.summary().spkiSha256();
+      if (spkiSha256 == null) {
+        throw new IllegalStateException(
+            "controller-managed certificate identity has no SPKI digest");
+      }
+      if (!publicKeys.add(spkiSha256)) {
         throw new IllegalStateException(
             "controller-managed certificate identities must use independent keys");
       }
@@ -749,7 +754,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     try {
       runtimeProfile = runtimeProfileService.read(client, plan);
     } catch (IllegalStateException exception) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retiring,
           "RuntimeProfileInvalid",
@@ -765,7 +770,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       RuntimeProfileService.RuntimeProfile observedProfile =
           previouslyObservedRuntimeProfile(resource);
       if (observedProfile == null) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.Retiring,
             "RuntimeIdentityUnproven",
@@ -778,7 +783,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             null);
       }
       if (!RuntimeProfileService.exactlyMatches(observedProfile, runtimeProfile)) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.Retiring,
             "RuntimeIdentityChanged",
@@ -800,7 +805,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 plan,
                 () -> assertRuntimeProfileCurrent(plan, expectedProfile, "bridge shutdown"));
       } catch (RuntimeProfileFenceException exception) {
-        return status(
+        return statusWithoutBridgeRoles(
             resource,
             HostedEnvironmentIdentityStatus.Phase.Retiring,
             exception.reason(),
@@ -811,7 +816,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             null,
             null);
       }
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retiring,
           shutdown.stopped() ? "RuntimePresent" : "BridgeShutdownPending",
@@ -825,7 +830,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null);
     }
     if (!deleteOwnedMaterial(plan)) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retiring,
           "IdentityOwnershipUncertain",
@@ -837,7 +842,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null);
     }
     if (client.namespaces().withName(plan.identityNamespace()).get() != null) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retiring,
           "IdentityCleanupPending",
@@ -849,7 +854,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null);
     }
     if (!retiredStatusIsCurrent(resource)) {
-      return status(
+      return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Retired,
           "Retired",
@@ -979,15 +984,13 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             resource.getMetadata().getGeneration(), resource.getStatus().getObservedGeneration())) {
       return false;
     }
-    return resource.getStatus().getConditions() != null
-        && resource.getStatus().getConditions().stream()
-            .anyMatch(
-                condition ->
-                    "Ready".equals(condition.getType())
-                        && "False".equals(condition.getStatus())
-                        && java.util.Objects.equals(
-                            resource.getMetadata().getGeneration(),
-                            condition.getObservedGeneration()));
+    return resource.getStatus().getConditions().stream()
+        .anyMatch(
+            condition ->
+                "Ready".equals(condition.getType())
+                    && "False".equals(condition.getStatus())
+                    && java.util.Objects.equals(
+                        resource.getMetadata().getGeneration(), condition.getObservedGeneration()));
   }
 
   static UpdateControl<HostedEnvironmentIdentity> finishRetirement(
@@ -1174,7 +1177,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     }
   }
 
-  private UpdateControl<HostedEnvironmentIdentity> status(
+  private UpdateControl<HostedEnvironmentIdentity> statusWithoutBridgeRoles(
       HostedEnvironmentIdentity resource,
       HostedEnvironmentIdentityStatus.Phase phase,
       String reason,
@@ -1234,7 +1237,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
             material.sourceObjectGeneration() < 1 ? null : material.sourceObjectGeneration(),
             material.summary() == null ? null : material.summary().spkiSha256(),
             material.provenance(),
-            material.state());
+            material.state().statusValue());
   }
 
   private static HostedEnvironmentIdentityStatus.RoleStatus previousRole(

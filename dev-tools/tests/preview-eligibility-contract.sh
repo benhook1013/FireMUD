@@ -39,6 +39,14 @@ revalidate_deploy() {
     --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 }
 
+revalidate_cleanup() {
+  local pull_request_json="$1"
+  printf '%s' "$pull_request_json" | python3 "$SCRIPT" \
+    --revalidate-cleanup \
+    --expected-repository example/FireMUD \
+    --expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+}
+
 assert_revalidation_refused() {
   local pull_request_json="$1"
   local expected_reason="$2"
@@ -60,6 +68,19 @@ valid_mixed_case_pull_request='{"state":"open","head":{"sha":"AAAAAAAAAAAAAAAAAA
 revalidate_deploy "$valid_mixed_case_pull_request"
 valid_automation_pull_request='{"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}},"base":{"ref":"develop"},"user":{"login":"github-actions[bot]"},"labels":[]}'
 revalidate_deploy "$valid_automation_pull_request"
+valid_cleanup_pull_request='{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"example/FireMUD"}}}'
+revalidate_cleanup "$valid_cleanup_pull_request"
+if cleanup_refusal="$(revalidate_cleanup "$valid_pull_request")"; then
+  echo "Cleanup revalidation unexpectedly accepted an open pull request" >&2
+  exit 1
+fi
+test "$cleanup_refusal" = 'pull request is not closed (state=open)'
+if cleanup_refusal="$(revalidate_cleanup '{"state":"closed","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"fork/FireMUD"}}}')"; then
+  echo "Cleanup revalidation unexpectedly accepted an untrusted head repository" >&2
+  exit 1
+fi
+test "$cleanup_refusal" = \
+  'head repository is not trusted (expected=example/FireMUD, current=fork/FireMUD)'
 if invalid_expected_output="$(
   printf '%s' "$valid_pull_request" | python3 "$SCRIPT" \
     --revalidate-deploy \
@@ -129,6 +150,7 @@ assert_conflicting_modes_refused() {
 
 assert_conflicting_modes_refused --inspect-labels --revalidate-deploy
 assert_conflicting_modes_refused --revalidate-deploy --inspect-labels
+assert_conflicting_modes_refused --revalidate-deploy --revalidate-cleanup
 
 for malformed_labels in 'null' '{}' '[{"name":1}]' '{not-json'; do
   inspect_malformed="$(python3 "$SCRIPT" --inspect-labels --labels-json "$malformed_labels")"
@@ -247,6 +269,31 @@ grep -Fxq \
 grep -Fxq \
   'Refusing preview deploy for PR #42: current pull request metadata is malformed' \
   "$TEMP_DIR/refused.stderr"
+
+GITHUB_REPOSITORY=example/FireMUD \
+  GH_TOKEN=test-token \
+  FAKE_GH_LOG="$TEMP_DIR/cleanup-gh.log" \
+  FAKE_PULL_REQUEST_JSON="$valid_cleanup_pull_request" \
+  PATH="$TEMP_DIR/bin:$PATH" \
+  bash "$revalidation_helper" --cleanup 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+if GITHUB_REPOSITORY=example/FireMUD \
+  GH_TOKEN=test-token \
+  FAKE_GH_LOG="$TEMP_DIR/reopened-gh.log" \
+  FAKE_PULL_REQUEST_JSON="$valid_pull_request" \
+  PATH="$TEMP_DIR/bin:$PATH" \
+  bash "$revalidation_helper" --cleanup 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  >"$TEMP_DIR/reopened.stdout" \
+  2>"$TEMP_DIR/reopened.stderr"; then
+  echo "revalidate-preview-deploy cleanup mode accepted an open pull request" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error::Refusing preview cleanup for PR #42: pull request is not closed (state=open)' \
+  "$TEMP_DIR/reopened.stdout"
+grep -Fxq \
+  'Refusing preview cleanup for PR #42: pull request is not closed (state=open)' \
+  "$TEMP_DIR/reopened.stderr"
 
 dispatch_metadata_output="$TEMP_DIR/dispatch-metadata.out"
 (

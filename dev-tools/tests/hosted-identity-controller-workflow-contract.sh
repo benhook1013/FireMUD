@@ -37,8 +37,11 @@ contains "$publisher" 'hosted-environment-identity-controller'
 # shellcheck disable=SC2016 # These assertions intentionally match literal publisher shell.
 contains "$publisher" 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal publisher shell.
-contains "$publisher" 'Source artifact does not contain optional $image; skipping publication.'
-contains "$publisher" 'continue'
+contains "$publisher" 'Required source artifact image for $service is missing: $image.'
+if grep -Fq -- 'Optional controller image unavailable' "$publisher"; then
+  echo "$publisher must require the controller image" >&2
+  exit 1
+fi
 contains "$build_gradle" '"buildHostedEnvironmentIdentityControllerImage"'
 python3 - "$build_gradle" <<'PY'
 import sys
@@ -84,6 +87,7 @@ for required in (
     'docker run --detach',
     '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
     '"$CONTROLLER_IMAGE"',
+    'for _ in {1..300}; do',
     "http://127.0.0.1:8081/actuator/health/liveness",
     "[[ \"$health\" == *'\"status\":\"UP\"'* ]]",
     'docker rm --force "$container_name"',
@@ -218,7 +222,7 @@ contains "$dev_demo" 'uses: ./.github/actions/resolve-certificate-identity-mode'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'hosted-controller'"
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Active'
 contains "$dev_demo" 'request-hosted-identity.sh dev-demo Retired'
-contains "$dev_demo" '--projections dev-demo dev 900'
+contains "$dev_demo" '--projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
 contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
@@ -344,6 +348,17 @@ assert jobs["retire-identity"]["permissions"] == {
 for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["timeout-minutes"] == 60, job_name
 assert jobs["deploy-runtime"]["timeout-minutes"] == 90
+for job_name, step_name in (
+    ("destroy-runtime", "Revalidate preview cleanup target before runtime deletion"),
+    ("retire-identity", "Revalidate preview cleanup target before identity retirement"),
+):
+    cleanup_step = next(
+        step for step in jobs[job_name]["steps"] if step.get("name") == step_name
+    )
+    assert cleanup_step["run"].strip() == (
+        "bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \\\n"
+        '  --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+    )
 
 publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
 publisher_script = next(
@@ -352,31 +367,20 @@ publisher_script = next(
     if step.get("name") == "Publish fixed PR image tags"
 )
 missing_image_block = '''if ! docker image inspect "$image" >/dev/null 2>&1; then
-    if [[ "$service" == hosted-environment-identity-controller ]]; then
-      echo "::warning title=Optional controller image unavailable::The optional hosted identity controller image is absent; publication is being skipped." >&2
-      echo "<!-- firemud-hosted-identity-controller-image-unavailable -->" >> "$GITHUB_STEP_SUMMARY"
-      echo "Source artifact does not contain optional $image; skipping publication." >&2
-      continue
-    fi
     echo "Required source artifact image for $service is missing: $image." >&2
     exit 1
   fi'''
 assert missing_image_block in publisher_script
 assert publisher_script.count(
-    'if [[ "$service" == hosted-environment-identity-controller ]]; then'
-) == 1
-assert publisher_script.count(
-    'echo "Source artifact does not contain optional $image; skipping publication." >&2'
-) == 1
-assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
 ) == 1
-assert publisher_script.count(
-    'echo "::warning title=Optional controller image unavailable::The optional hosted identity controller image is absent; publication is being skipped." >&2'
-) == 1
-assert publisher_script.count(
-    'echo "<!-- firemud-hosted-identity-controller-image-unavailable -->" >> "$GITHUB_STEP_SUMMARY"'
-) == 1
+for obsolete_optional_controller_fragment in (
+    'if [[ "$service" == hosted-environment-identity-controller ]]; then',
+    "Optional controller image unavailable",
+    "firemud-hosted-identity-controller-image-unavailable",
+    "Source artifact does not contain optional",
+):
+    assert obsolete_optional_controller_fragment not in publisher_script
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
 janitor_mode_step = next(
     step for step in janitor_steps if step.get("id") == "certificate-identity"
@@ -439,6 +443,16 @@ deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
     step.get("name"): step for step in deploy_steps if isinstance(step, dict)
 }
+artifact_verification = deploy_by_name[
+    "Verify artifact provenance, checksum, and closed object set"
+]
+assert artifact_verification["env"]["PREVIEW_HOSTNAME"] == (
+    "${{ needs.validate-target.outputs.hostname }}"
+)
+assert "HOSTNAME" not in artifact_verification["env"]
+assert '"$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"' in (
+    artifact_verification["run"]
+)
 active_request = deploy_by_name["Apply canonical Active request"]
 assert active_request["run"] == (
     'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active'
@@ -824,6 +838,7 @@ for fragment in (
     'validate_secret_shape firemud-secret',
     'validate_secret_shape minio-credentials',
     'validate_secret_shape jwt-signing-keys',
+    '"expected exactly the canonical keys"',
     'validate_configmap_shape jwt-jwks',
     'validate_diagnostic_jwks "$signing_key_sha256"',
     '[[ "$postgres_user" != firemud ]]',
@@ -842,6 +857,7 @@ for fragment in (
     '--from-file="secretKey=${credential_files_dir}/secretKey"',
     '--from-file="current.key=${credential_files_dir}/current.key"',
     '--from-file="jwks.json=${credential_files_dir}/jwks.json"',
+    'kubectl -n "$RUNTIME_NAMESPACE" apply -f -',
     'signing_key_sha256="$(printf \'%s\' "$signing_key" | sha256sum',
     'jq -nc --arg fingerprint "$signing_key_sha256"',
     'keys:[]',
@@ -849,6 +865,22 @@ for fragment in (
     'sha256:$fingerprint',
 ):
     assert fragment in credential_step, fragment
+for explicit_result_flow in (
+    'firemud_secret_json="$(read_secret_if_present firemud-secret)"',
+    'minio_secret_json="$(read_secret_if_present minio-credentials)"',
+    'jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)"',
+    'jwt_jwks_json="$(read_configmap_if_present jwt-jwks)"',
+    'postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$firemud_secret_json")"',
+    'validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"',
+):
+    assert explicit_result_flow in credential_step, explicit_result_flow
+for ambient_result_flow in (
+    "if read_secret_if_present",
+    "if read_configmap_if_present",
+    'postgres_user="$decoded_secret_value"',
+):
+    assert ambient_result_flow not in credential_step, ambient_result_flow
+assert "canonical non-empty keys" not in credential_step
 for forbidden in (
     '--from-literal',
     '--from-literal=FIREMUD_POSTGRES_PASSWORD=firemud',
@@ -1103,16 +1135,15 @@ cat >"$credential_stub_dir/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+[[ "$1" == -n && "$2" == "${RUNTIME_NAMESPACE:?}" ]]
+namespace="$2"
+shift 2
 if [[ "$1" == apply ]]; then
   [[ "$2" == -f && "$3" == - ]]
   cat >/dev/null
   printf 'apply\n' >>"${CREDENTIAL_KUBECTL_LOG:?}"
   exit 0
 fi
-
-[[ "$1" == -n && "$2" == "${RUNTIME_NAMESPACE:?}" ]]
-namespace="$2"
-shift 2
 validate_from_files() {
   local argument specification key path
   for argument in "$@"; do
@@ -1971,7 +2002,7 @@ expect_rejected(
     lambda current: current[0]["metadata"]["labels"].__setitem__(
         "app.kubernetes.io/instance", "pr-43"
     ),
-    "unsafe Helm metadata labels",
+    "label 'app.kubernetes.io/instance' mismatch: expected 'pr-42', actual 'pr-43'",
 )
 expect_rejected(
     "selector-label",

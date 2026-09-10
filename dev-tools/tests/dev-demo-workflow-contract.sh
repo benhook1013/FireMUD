@@ -265,11 +265,13 @@ destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, 
 if destroy_by_name["Resolve certificate identity mode"] != expected_mode_step:
     raise SystemExit("dev-demo destroy must use the shared certificate identity action exactly")
 destroy_order = (
+    "Write dev-demo runtime kubeconfig",
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
+    "Restore dev-demo runtime kubeconfig after retirement",
     "Remove hosted identity requester kubeconfig",
 )
 destroy_positions = [destroy_names.index(name) for name in destroy_order]
@@ -281,6 +283,14 @@ if "request-hosted-identity.sh dev-demo Retired" not in destroy_by_name[
     "Apply fixed dev-demo Retired request"
 ]["run"]:
     raise SystemExit("dev-demo retirement is not the fixed-shape shared request")
+destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
+if "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" not in destroy_runtime_kubeconfig["run"]:
+    raise SystemExit("dev-demo destroy does not retain its runtime kubeconfig path")
+destroy_restore = destroy_by_name["Restore dev-demo runtime kubeconfig after retirement"]
+if destroy_restore.get("if") != "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}":
+    raise SystemExit("dev-demo destroy runtime kubeconfig restore lost its fail-safe controller gate")
+if 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' not in destroy_restore["run"]:
+    raise SystemExit("dev-demo destroy does not restore runtime credentials after retirement")
 requester_cleanup = destroy_by_name["Remove hosted identity requester kubeconfig"]
 if requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo requester credential cleanup must run after failures")
@@ -360,6 +370,8 @@ for required in (
     "set -euo pipefail",
     "export LC_ALL=C",
     '[[ -n "${KUBECONFIG:-}" ]]',
+    "Develop head lookup failed",
+    "Unable to resolve the develop head from the GitHub API",
     "--ignore-not-found",
     '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]',
     '"${candidate_conclusion}" == success',
@@ -411,6 +423,31 @@ for required in (
 aligned_guard = 'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then'
 if reconcile_run.index(aligned_guard) > reconcile_run.index("develop_push_run="):
     raise SystemExit("dev-demo alignment must short-circuit before retry history is consumed")
+if reconcile_run.count(aligned_guard) != 2:
+    raise SystemExit("dev-demo reconciler must recheck alignment before its final retry decision")
+final_alignment_guard = reconcile_run.rindex(aligned_guard)
+if final_alignment_guard > reconcile_run.index(
+    'if [[ "${current_head_sha}" != "${desired_head_sha}"',
+    final_alignment_guard,
+):
+    raise SystemExit("dev-demo final alignment recheck must precede retry-budget decisions")
+for annotation in (
+    "last-dev-demo-head-sha",
+    "requested-dev-demo-head-sha",
+):
+    if reconcile_run.count(f"annotations.firemud\\.dev/{annotation}") != 2:
+        raise SystemExit(f"dev-demo reconciler must read {annotation} initially and before dispatch")
+completed_count_start = reconcile_run.index(
+    'page_completed_attempts="$(', reconcile_run.index("failed_attempts=0")
+)
+completed_count_end = reconcile_run.index(
+    "if (( failed_attempts >= max_failed_attempts )); then", completed_count_start
+)
+completed_count_block = reconcile_run[completed_count_start:completed_count_end]
+if 'current_head_sha}' in completed_count_block:
+    raise SystemExit("dev-demo completed-attempt counting retained a redundant alignment guard")
+if "unaligned_completed_attempts >= max_failed_attempts" not in completed_count_block:
+    raise SystemExit("dev-demo alignment counting lost its bounded retry budget")
 if reconcile_run.index("export LC_ALL=C") > reconcile_run.index("created_at >= $not_before"):
     raise SystemExit("dev-demo reconciler must set the bytewise locale before timestamp comparisons")
 if "gh run list" in reconcile_run or "--limit" in reconcile_run:
@@ -1138,9 +1175,19 @@ fi
 # The runtime Namespace is absent or has no annotation unless a fixture
 # explicitly supplies the corresponding test value.
 if [[ "$output_format" == "$expected_last_jsonpath" ]]; then
-  printf '%s' "${TEST_CURRENT_HEAD_SHA:-}"
+  if [[ -e "${TEST_LAST_LOOKUP_MARKER:?}" ]]; then
+    printf '%s' "${TEST_REFRESHED_CURRENT_HEAD_SHA:-${TEST_CURRENT_HEAD_SHA:-}}"
+  else
+    : >"$TEST_LAST_LOOKUP_MARKER"
+    printf '%s' "${TEST_CURRENT_HEAD_SHA:-}"
+  fi
 else
-  printf '%s' "${TEST_REQUESTED_HEAD_SHA:-}"
+  if [[ -e "${TEST_REQUESTED_LOOKUP_MARKER:?}" ]]; then
+    printf '%s' "${TEST_REFRESHED_REQUESTED_HEAD_SHA:-${TEST_REQUESTED_HEAD_SHA:-}}"
+  else
+    : >"$TEST_REQUESTED_LOOKUP_MARKER"
+    printf '%s' "${TEST_REQUESTED_HEAD_SHA:-}"
+  fi
 fi
 exit 0
 SH
@@ -1236,6 +1283,10 @@ if [[ "$endpoint" == "$branch_endpoint" ]]; then
     || ${#raw_fields[@]} -ne 0 || ${#typed_fields[@]} -ne 0 ]]; then
     echo "unexpected gh develop branch lookup" >&2
     exit 2
+  fi
+  if [[ "$TEST_SCENARIO" == develop-head-api-failure ]]; then
+    echo "simulated develop branch API failure" >&2
+    exit 3
   fi
   printf '%s\n' "$TEST_HEAD_SHA"
   exit 0
@@ -1387,7 +1438,7 @@ case "$TEST_SCENARIO:$page" in
   successful-unaligned-budget:*)
     empty_runs
     ;;
-  successful-aligned:1)
+  successful-aligned:1|successful-race-aligned:1)
     jq -nc --arg head "$TEST_HEAD_SHA" \
       '{workflow_runs:[{
         id:708,head_sha:$head,status:"completed",conclusion:"success",
@@ -1395,7 +1446,7 @@ case "$TEST_SCENARIO:$page" in
         display_title:("Develop Dev Demo Environment deploy head-" + $head)
       }]}'
     ;;
-  successful-aligned:*)
+  successful-aligned:*|successful-race-aligned:*)
     empty_runs
     ;;
   three-failures:*)
@@ -1482,15 +1533,19 @@ run_reconcile_fixture() {
   local expected_output="$4"
   local current_head_sha="${5:-}"
   local requested_head_sha="${6:-}"
+  local refreshed_current_head_sha="${7:-}"
+  local refreshed_requested_head_sha="${8:-}"
   local command_log="$fixture_dir/${scenario}-gh.log"
   local trace_log="$fixture_dir/${scenario}-gh.trace"
   local active_marker="$fixture_dir/${scenario}-active-seen"
   local repair_marker="$fixture_dir/${scenario}-repair-seen"
+  local last_lookup_marker="$fixture_dir/${scenario}-last-lookup-seen"
+  local requested_lookup_marker="$fixture_dir/${scenario}-requested-lookup-seen"
   local output="$fixture_dir/${scenario}.out"
   local actual_status actual_dispatches
   : >"$command_log"
   : >"$trace_log"
-  rm -f "$active_marker" "$repair_marker"
+  rm -f "$active_marker" "$repair_marker" "$last_lookup_marker" "$requested_lookup_marker"
 
   set +e
   (
@@ -1505,10 +1560,14 @@ run_reconcile_fixture() {
       TEST_OTHER_HEAD_SHA="$test_other_head_sha" \
       TEST_CURRENT_HEAD_SHA="$current_head_sha" \
       TEST_REQUESTED_HEAD_SHA="$requested_head_sha" \
+      TEST_REFRESHED_CURRENT_HEAD_SHA="$refreshed_current_head_sha" \
+      TEST_REFRESHED_REQUESTED_HEAD_SHA="$refreshed_requested_head_sha" \
       TEST_GH_LOG="$command_log" \
       TEST_GH_TRACE="$trace_log" \
       TEST_ACTIVE_MARKER="$active_marker" \
       TEST_REPAIR_MARKER="$repair_marker" \
+      TEST_LAST_LOOKUP_MARKER="$last_lookup_marker" \
+      TEST_REQUESTED_LOOKUP_MARKER="$requested_lookup_marker" \
       bash "$reconcile_step"
   ) >"$output" 2>&1
   actual_status=$?
@@ -1531,7 +1590,8 @@ run_reconcile_fixture() {
     exit 1
   }
   if [[ "$scenario" == aligned-request-repair \
-    || "$scenario" == aligned-failure-budget-repair ]]; then
+    || "$scenario" == aligned-failure-budget-repair \
+    || "$scenario" == successful-race-aligned ]]; then
     [[ -f "$repair_marker" ]] || {
       echo "reconciler did not repair stale requested-head evidence" >&2
       cat "$output" >&2
@@ -1573,6 +1633,7 @@ run_reconcile_fixture() {
 }
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
+run_reconcile_fixture develop-head-api-failure 1 0 "Develop head lookup failed"
 run_reconcile_fixture aligned-no-record 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
 run_reconcile_fixture aligned-request-repair 0 0 "Repaired missing or stale requested dev-demo head annotation" "$test_head_sha" ""
 run_reconcile_fixture aligned-newest-failed 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
@@ -1584,6 +1645,7 @@ run_reconcile_fixture bootstrap-missing-created-at 1 0 "Dev-demo history bootstr
 run_reconcile_fixture successful-unaligned 0 1 "Redispatching successful dev-demo candidate"
 run_reconcile_fixture successful-unaligned-budget 1 0 "Dev-demo alignment retry budget exhausted"
 run_reconcile_fixture successful-aligned 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
+run_reconcile_fixture successful-race-aligned 0 0 "no retry or redispatch required" "" "" "$test_head_sha" ""
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture nonterminal-before-anchor 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

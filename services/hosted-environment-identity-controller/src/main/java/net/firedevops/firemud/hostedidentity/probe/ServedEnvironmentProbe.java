@@ -78,8 +78,12 @@ public class ServedEnvironmentProbe {
         (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
         (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
         (hostname, port) ->
-            bridge(plan, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
-        (hostname, port) -> grpc(plan, grpcMaterial, expectedGrpcLeafSha256));
+            bridge(
+                hostname,
+                port,
+                tcpProxyBridgeMaterial,
+                expectedGatewayInternalWsLeafSha256),
+        (hostname, port) -> grpc(hostname, port, grpcMaterial, expectedGrpcLeafSha256));
   }
 
   ProbeResult probe(
@@ -113,36 +117,35 @@ public class ServedEnvironmentProbe {
   }
 
   private ProbeResult bridge(
-      EnvironmentIdentityPlan plan, Secret material, String expectedFingerprint) {
+      String hostname, int port, Secret material, String expectedFingerprint) {
     if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
     return internalTlsProbe(
         () ->
             openBridgeTlsSocket(
-                plan.gatewayInternalWsDnsName(),
-                443,
+                hostname,
+                hostname,
+                port,
                 expectedFingerprint,
                 material,
                 properties.getGrpcTrustAnchorSha256()),
         "mtls-handshake");
   }
 
-  ProbeResult grpc(EnvironmentIdentityPlan plan, Secret material, String expectedFingerprint) {
+  ProbeResult grpc(String hostname, int port, Secret material, String expectedFingerprint) {
     if (material == null || expectedFingerprint == null || expectedFingerprint.isBlank()) {
       return new ProbeResult(false, "material-or-leaf-fingerprint-missing");
     }
     return internalTlsProbe(
-        () -> {
-          String hostname = grpcHostname(plan);
-          return openGrpcTlsSocket(
-              hostname,
-              hostname,
-              GRPC_PORT,
-              expectedFingerprint,
-              material,
-              properties.getGrpcTrustAnchorSha256());
-        },
+        () ->
+            openGrpcTlsSocket(
+                hostname,
+                hostname,
+                port,
+                expectedFingerprint,
+                material,
+                properties.getGrpcTrustAnchorSha256()),
         "mtls-handshake");
   }
 
@@ -182,6 +185,43 @@ public class ServedEnvironmentProbe {
       Secret material,
       String expectedTrustAnchor)
       throws Exception {
+    return openInternalTlsSocket(
+        connectHost,
+        identityHostname,
+        port,
+        expectedFingerprint,
+        material,
+        expectedTrustAnchor,
+        "h2");
+  }
+
+  static SSLSocket openBridgeTlsSocket(
+      String connectHost,
+      String identityHostname,
+      int port,
+      String expectedFingerprint,
+      Secret material,
+      String expectedTrustAnchor)
+      throws Exception {
+    return openInternalTlsSocket(
+        connectHost,
+        identityHostname,
+        port,
+        expectedFingerprint,
+        material,
+        expectedTrustAnchor,
+        null);
+  }
+
+  private static SSLSocket openInternalTlsSocket(
+      String connectHost,
+      String identityHostname,
+      int port,
+      String expectedFingerprint,
+      Secret material,
+      String expectedTrustAnchor,
+      String requiredApplicationProtocol)
+      throws Exception {
     Socket transport = new Socket();
     SSLSocket socket = null;
     boolean transferred = false;
@@ -196,52 +236,15 @@ public class ServedEnvironmentProbe {
       SSLParameters parameters = socket.getSSLParameters();
       parameters.setEndpointIdentificationAlgorithm("HTTPS");
       parameters.setServerNames(List.of(new SNIHostName(identityHostname)));
-      parameters.setApplicationProtocols(new String[] {"h2"});
+      if (requiredApplicationProtocol != null) {
+        parameters.setApplicationProtocols(new String[] {requiredApplicationProtocol});
+      }
       socket.setSSLParameters(parameters);
       socket.startHandshake();
-      if (!"h2".equals(socket.getApplicationProtocol())) {
+      if (requiredApplicationProtocol != null
+          && !requiredApplicationProtocol.equals(socket.getApplicationProtocol())) {
         throw new HandshakePolicyRejectedException("gRPC endpoint did not negotiate HTTP/2");
       }
-      X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
-      if (!normalize(expectedFingerprint).equals(normalize(fingerprint(leaf)))) {
-        return null;
-      }
-      transferred = true;
-      return socket;
-    } finally {
-      if (!transferred) {
-        if (socket != null) {
-          socket.close();
-        } else {
-          transport.close();
-        }
-      }
-    }
-  }
-
-  static SSLSocket openBridgeTlsSocket(
-      String hostname,
-      int port,
-      String expectedFingerprint,
-      Secret material,
-      String expectedTrustAnchor)
-      throws Exception {
-    Socket transport = new Socket();
-    SSLSocket socket = null;
-    boolean transferred = false;
-    try {
-      transport.connect(new InetSocketAddress(hostname, port), 5000);
-      socket =
-          (SSLSocket)
-              grpcSslContext(material, expectedTrustAnchor)
-                  .getSocketFactory()
-                  .createSocket(transport, hostname, port, true);
-      socket.setSoTimeout(8000);
-      SSLParameters parameters = socket.getSSLParameters();
-      parameters.setEndpointIdentificationAlgorithm("HTTPS");
-      parameters.setServerNames(List.of(new SNIHostName(hostname)));
-      socket.setSSLParameters(parameters);
-      socket.startHandshake();
       X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
       if (!normalize(expectedFingerprint).equals(normalize(fingerprint(leaf)))) {
         return null;

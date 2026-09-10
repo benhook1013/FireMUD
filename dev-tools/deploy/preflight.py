@@ -113,10 +113,10 @@ BRIDGE_WS_SECRET_ITEM_PATHS = {
     "ca.crt": "ca.crt",
 }
 TCP_PROXY_TELNET_SERVICE_PORT = 2323
-TELNET_TLS_PATH_NAMES = (
-    "TCP_PROXY_TLS_CERT",
-    "TCP_PROXY_TLS_KEY",
-)
+TELNET_TLS_REQUIRED_PATHS = {
+    "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
+    "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
+}
 GRPC_TLS_PATH_NAMES = (
     "FIREMUD_GRPC_CERT_CHAIN_PATH",
     "FIREMUD_GRPC_PRIVATE_KEY_PATH",
@@ -4372,9 +4372,8 @@ def validate_hosted_telnet_tls_values(
         container,
         relevant_names={
             "TCP_PROXY_TLS_ENABLED",
-            "TCP_PROXY_TLS_CERT",
-            "TCP_PROXY_TLS_KEY",
             "TCP_PROXY_TELNET_MODE",
+            *TELNET_TLS_REQUIRED_PATHS,
             *GRPC_TLS_PATH_NAMES,
         },
     )
@@ -4383,10 +4382,9 @@ def validate_hosted_telnet_tls_values(
         issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TLS_ENABLED=true")
     if env.get("TCP_PROXY_TELNET_MODE") != "DIRECT_TLS":
         issues.append("hosted TCP Proxy TLS requires TCP_PROXY_TELNET_MODE=DIRECT_TLS")
-    if env.get("TCP_PROXY_TLS_CERT") != "/telnet-tls/tls.crt":
-        issues.append("TCP_PROXY_TLS_CERT must be /telnet-tls/tls.crt")
-    if env.get("TCP_PROXY_TLS_KEY") != "/telnet-tls/tls.key":
-        issues.append("TCP_PROXY_TLS_KEY must be /telnet-tls/tls.key")
+    for path_name, required_path in TELNET_TLS_REQUIRED_PATHS.items():
+        if env.get(path_name) != required_path:
+            issues.append(f"{path_name} must be {required_path}")
     volumes = {
         volume.get("name"): volume
         for volume in pod_spec.get("volumes") or []
@@ -4454,6 +4452,19 @@ def bridge_validation_result(bridge_issues: list[str]) -> tuple[str, str]:
     if bridge_issues:
         return "fail", bridge_validation_failure_message(bridge_issues)
     return "pass", "Gateway bridge and direct Telnet TLS alignment is valid"
+
+
+def hosted_bridge_success_message(context: str) -> str:
+    """Distinguish static manifest proof from live controller-projection proof."""
+    if context == "operator":
+        return (
+            "Gateway bridge and direct Telnet TLS alignment is valid; "
+            "controller-projected Secret readiness is confirmed"
+        )
+    return (
+        "Gateway bridge and direct Telnet TLS alignment is valid; "
+        "ci-static did not check controller-projected Secret readiness"
+    )
 
 
 def primary_containers(document: dict[str, Any]) -> list[tuple[str | None, dict[str, Any], dict[str, str | None]]]:
@@ -6643,6 +6654,8 @@ def hosted_bridge_preflight(
             )
         )
     status, message = bridge_validation_result(issues)
+    if status == "pass":
+        message = hosted_bridge_success_message(context)
     print(
         json.dumps(
             {

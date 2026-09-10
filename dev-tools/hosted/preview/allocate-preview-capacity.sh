@@ -252,7 +252,10 @@ emit_output reclaimed_pr ""
 
 echo "Active preview namespaces excluding ${target_namespace}: ${active_count}"
 echo "Configured preview capacity limit: ${max_active}"
-target_metadata="$(get_pr_state "$target_pr_number")"
+if ! target_metadata="$(get_pr_state "$target_pr_number")"; then
+  echo "Refusing capacity action for target PR #${target_pr_number}: current metadata is unavailable" >&2
+  exit 1
+fi
 IFS=$'\t' read -r target_state current_target_head target_is_priority target_labels_valid <<<"$target_metadata"
 if [[ "$target_labels_valid" != valid ]]; then
   echo "Refusing capacity action for target PR #${target_pr_number}: malformed label metadata" >&2

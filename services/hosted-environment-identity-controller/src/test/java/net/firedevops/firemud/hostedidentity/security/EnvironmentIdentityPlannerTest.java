@@ -22,7 +22,10 @@ import org.yaml.snakeyaml.Yaml;
 class EnvironmentIdentityPlannerTest {
   private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
       Pattern.compile(
-          "r\\.apiGroups == \\[\\'apps\\'\\] && r\\.resources == \\[\\'deployments\\'\\] && r\\.resourceNames == \\[([^\\]]+)] && r\\.verbs == \\[([^\\]]+)]");
+          "r\\.apiGroups\\s*==\\s*\\['apps']\\s*&&\\s*r\\.resources\\s*==\\s*\\['deployments']\\s*&&\\s*r\\.resourceNames\\s*==\\s*\\[([^\\]]+)]\\s*&&\\s*r\\.verbs\\s*==\\s*\\[([^\\]]+)]");
+  private static final Pattern RUNTIME_SCOPE_MARKER =
+      Pattern.compile(
+          "\\(object\\.metadata\\.name\\s*==\\s*'firemud-hosted-runtime-scope'");
   private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
@@ -141,33 +144,29 @@ class EnvironmentIdentityPlannerTest {
     }
     Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
     List<?> validations = (List<?>) spec.get("validations");
-    String runtimeScopeMarker = "(object.metadata.name == 'firemud-hosted-runtime-scope'";
     List<String> runtimeScopeExpressions =
         validations.stream()
             .map(Map.class::cast)
             .map(validation -> validation.get("expression"))
             .filter(String.class::isInstance)
             .map(String.class::cast)
-            .filter(expression -> expression.contains(runtimeScopeMarker))
+            .filter(expression -> RUNTIME_SCOPE_MARKER.matcher(expression).find())
             .toList();
     assertEquals(
         1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
     String scopeRoleExpression = runtimeScopeExpressions.get(0);
-    int runtimeScopeStart = scopeRoleExpression.indexOf(runtimeScopeMarker);
-    String runtimeScopePolicy =
-        scopeRoleExpression.substring(runtimeScopeStart).replaceAll("\\s+", " ");
+    Matcher runtimeScope = RUNTIME_SCOPE_MARKER.matcher(scopeRoleExpression);
+    assertTrue(runtimeScope.find(), "runtime-scope admission branch marker must exist");
+    String runtimeScopePolicy = scopeRoleExpression.substring(runtimeScope.start());
 
     Matcher resourceNames = RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(runtimeScopePolicy);
     assertTrue(resourceNames.find(), "runtime deployment resourceNames rule must exist");
-    Matcher literal = CEL_STRING_LITERAL.matcher(resourceNames.group(1));
-    List<String> admittedConsumers = new ArrayList<>();
-    while (literal.find()) {
-      admittedConsumers.add(literal.group(1));
-    }
+    List<String> admittedConsumers = celStringLiterals(resourceNames.group(1));
+    List<String> admittedVerbs = celStringLiterals(resourceNames.group(2));
 
     assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
     assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
-    assertEquals("'get', 'update', 'patch'", resourceNames.group(2));
+    assertEquals(List.of("get", "update", "patch"), admittedVerbs);
     assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
   }
 
@@ -233,5 +232,14 @@ class EnvironmentIdentityPlannerTest {
       directory = directory.getParent();
     }
     throw new AssertionError("could not locate repository file " + relativePath);
+  }
+
+  private static List<String> celStringLiterals(String expression) {
+    Matcher literal = CEL_STRING_LITERAL.matcher(expression);
+    List<String> values = new ArrayList<>();
+    while (literal.find()) {
+      values.add(literal.group(1));
+    }
+    return values;
   }
 }

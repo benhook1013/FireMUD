@@ -1,5 +1,8 @@
 package net.firedevops.firemud.hostedidentity.reconcile;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -111,7 +114,7 @@ class HostedIdentityReconcilerSafetyTest {
             1,
             1,
             "cert-manager",
-            "serialized-deferred-drift");
+            SERIALIZED_DEFERRED_DRIFT);
 
     SecretProjectionService.ProjectionResult result =
         reconciler.project(
@@ -768,28 +771,14 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retirementWithReplacedLiveRuntimeProfileWithholdsBridgeShutdown() {
-    HostedIdentityProperties properties =
-        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
-    KubernetesClient client = mock(KubernetesClient.class);
-    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
-    when(runtime.read(any(), any()))
+    RetirementDeletionFixture fixture = new RetirementDeletionFixture();
+    when(fixture.runtime.read(any(), any()))
         .thenReturn(
             new RuntimeProfileService.RuntimeProfile(
-                "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true));
-    DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
-    HostedIdentityReconciler reconciler =
-        new HostedIdentityReconciler(
-            client,
-            mock(AdmissionValidator.class),
-            new EnvironmentIdentityPlanner(properties),
-            mock(CertificateMaterialService.class),
-            mock(SecretProjectionService.class),
-            mock(HostedIdentityScopeService.class),
-            runtime,
-            rollout,
-            mock(ServedEnvironmentProbe.class),
-            new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
-            properties);
+                "replacement-uid", "a".repeat(40), "a".repeat(40), 32000, true),
+            RuntimeProfileService.RuntimeProfile.absent());
+    when(fixture.identityNamespace.get())
+        .thenReturn(fixture.identityNamespace(false), null, null);
     HostedEnvironmentIdentity resource = resource();
     resource
         .getSpec()
@@ -806,13 +795,31 @@ class HostedIdentityReconcilerSafetyTest {
     priorStatus.setProfile(priorProfile);
     resource.setStatus(priorStatus);
 
-    UpdateControl<HostedEnvironmentIdentity> result =
-        reconciler.reconcile(resource, mock(Context.class));
+    UpdateControl<HostedEnvironmentIdentity> mismatch =
+        fixture.reconciler.reconcile(resource, mock(Context.class));
 
-    verifyNoInteractions(rollout);
+    verifyNoInteractions(fixture.rollout);
     assertEquals(
         "RuntimeIdentityChanged",
-        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+        mismatch.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
+    HostedEnvironmentIdentityStatus.RuntimeProfile preserved =
+        mismatch.getResource().orElseThrow().getStatus().getProfile();
+    assertEquals("original-uid", preserved.getRuntimeNamespaceUid());
+    assertEquals("a".repeat(40), preserved.getRequestedHeadSha());
+    assertEquals("a".repeat(40), preserved.getDeployedHeadSha());
+    assertEquals(32000, preserved.getTelnetPort());
+
+    UpdateControl<HostedEnvironmentIdentity> runtimeAbsent =
+        fixture.reconciler.reconcile(resource, mock(Context.class));
+
+    verify(fixture.identityNamespace).delete();
+    verifyNoInteractions(fixture.rollout);
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Retired,
+        runtimeAbsent.getResource().orElseThrow().getStatus().getPhase());
+    assertEquals(
+        "Retired",
+        runtimeAbsent.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
   }
 
   @Test
@@ -1154,8 +1161,8 @@ class HostedIdentityReconcilerSafetyTest {
     var unchanged = material(4, 2, priorSpki, "old");
     var advanced = material(5, 3, "2".repeat(64), "new");
     var reusedKey = material(5, 3, priorSpki, "new");
-    var deferredAccepted = material(3, 2, "2".repeat(64), "old", "serialized-deferred");
-    var deferredDrift = material(3, 2, "2".repeat(64), "old", "serialized-deferred-drift");
+    var deferredAccepted = material(3, 2, "2".repeat(64), "old", SERIALIZED_DEFERRED);
+    var deferredDrift = material(3, 2, "2".repeat(64), "old", SERIALIZED_DEFERRED_DRIFT);
 
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(unchanged, previous));
     assertDoesNotThrow(() -> HostedIdentityReconciler.validateSourceProgress(advanced, previous));
@@ -1194,12 +1201,20 @@ class HostedIdentityReconcilerSafetyTest {
         () ->
             HostedIdentityReconciler.validateDistinctIdentities(
                 ingress, telnet, gateway, bridge, material(2, 2, "4".repeat(64), "reused")));
+    assertEquals(
+        "controller-managed certificate identity has no SPKI digest",
+        assertThrows(
+                IllegalStateException.class,
+                () ->
+                    HostedIdentityReconciler.validateDistinctIdentities(
+                        ingress, telnet, gateway, bridge, material(2, 2, null, "missing-spki")))
+            .getMessage());
   }
 
   @Test
   void deferredBridgeDriftUsesAcceptedMaterialWithoutRereadingRuntimeSecret() {
     CertificateMaterialService.RoleMaterial deferred =
-        material(3, 2, "2".repeat(64), "accepted", "serialized-deferred-drift");
+        material(3, 2, "2".repeat(64), "accepted", SERIALIZED_DEFERRED_DRIFT);
     AtomicBoolean runtimeRead = new AtomicBoolean();
 
     Secret selected =
@@ -1286,11 +1301,15 @@ class HostedIdentityReconcilerSafetyTest {
 
   private static CertificateMaterialService.RoleMaterial material(
       long generation, long objectGeneration, String spki, String certificate) {
-    return material(generation, objectGeneration, spki, certificate, "source-ready");
+    return material(generation, objectGeneration, spki, certificate, SOURCE_READY);
   }
 
   private static CertificateMaterialService.RoleMaterial material(
-      long generation, long objectGeneration, String spki, String certificate, String state) {
+      long generation,
+      long objectGeneration,
+      String spki,
+      String certificate,
+      CertificateMaterialService.RoleMaterialState state) {
     return new CertificateMaterialService.RoleMaterial(
         "ingress",
         new SecretBuilder()
@@ -1383,7 +1402,7 @@ class HostedIdentityReconcilerSafetyTest {
                   plan,
                   HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
                   "4",
-                  "serialized-deferred-drift"));
+                  SERIALIZED_DEFERRED_DRIFT));
       when(batch.grpc(any())).thenReturn(material(plan, HostedIdentityContract.GRPC_ROLE, "5"));
       when(projections.project(
               org.mockito.ArgumentMatchers.eq(client),
@@ -1438,14 +1457,14 @@ class HostedIdentityReconcilerSafetyTest {
         net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
         String role,
         String fingerprintDigit) {
-      return material(plan, role, fingerprintDigit, "source-ready");
+      return material(plan, role, fingerprintDigit, SOURCE_READY);
     }
 
     private static CertificateMaterialService.RoleMaterial material(
         net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan,
         String role,
         String fingerprintDigit,
-        String state) {
+        CertificateMaterialService.RoleMaterialState state) {
       Secret source =
           new SecretBuilder()
               .withNewMetadata()
@@ -1476,6 +1495,7 @@ class HostedIdentityReconcilerSafetyTest {
     private final KubernetesClient client = mock(KubernetesClient.class);
     private final Resource<Namespace> identityNamespace = mock(Resource.class);
     private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    private final DeploymentRolloutService rollout = mock(DeploymentRolloutService.class);
     private final Resource<Role> identityRole = mock(Resource.class);
     private final Resource<RoleBinding> identityBinding = mock(Resource.class);
     private final NonNamespaceOperation<Secret, SecretList, Resource<Secret>> identitySecrets =
@@ -1512,7 +1532,7 @@ class HostedIdentityReconcilerSafetyTest {
               mock(SecretProjectionService.class),
               mock(HostedIdentityScopeService.class),
               runtime,
-              mock(DeploymentRolloutService.class),
+              rollout,
               mock(ServedEnvironmentProbe.class),
               new HostedStatusService(new EnvironmentIdentityPlanner(properties)),
               properties);

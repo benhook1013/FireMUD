@@ -73,7 +73,7 @@ public class SecretProjectionService {
               : ProjectionResult.awaiting("awaiting-acceptance", revision);
         }
       } else {
-        if (!materialMatchesRevision(existing, oldRevision)) {
+        if (!materialMatchesRevision(existing, role, oldRevision)) {
           throw new IllegalStateException(
               "runtime projection revision does not match its material");
         }
@@ -106,7 +106,6 @@ public class SecretProjectionService {
         Long.toString(sourceObjectGeneration));
     annotations.put(HostedIdentityContract.SPKI_SHA256_ANNOTATION, spkiSha256);
     annotations.put(HostedIdentityContract.PROVENANCE_ANNOTATION, provenance);
-    annotations.put(HostedIdentityContract.DIGEST_ANNOTATION, revision);
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
     if (existing != null) {
       carryAcceptedSnapshot(existing.getMetadata().getAnnotations(), annotations);
@@ -186,7 +185,7 @@ public class SecretProjectionService {
         || !expectedSpki.equals(spki)) {
       return ProjectionResult.awaiting("projection-tuple-changed", revision);
     }
-    if (!materialMatchesRevision(current, expectedRevision)) {
+    if (!materialMatchesRevision(current, role, expectedRevision)) {
       return ProjectionResult.awaiting("projection-material-changed", revision);
     }
     if (accepted(annotations, revision, sourceGeneration, sourceObjectGeneration, spki))
@@ -365,9 +364,9 @@ public class SecretProjectionService {
     return revisionForData(projectedData(role, data));
   }
 
-  private static boolean materialMatchesRevision(Secret secret, String revision) {
+  private static boolean materialMatchesRevision(Secret secret, String role, String revision) {
     try {
-      return revision.equals(revisionForData(secret.getData()));
+      return revision.equals(revisionForRole(role, secret.getData()));
     } catch (RuntimeException exception) {
       return false;
     }

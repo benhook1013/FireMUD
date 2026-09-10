@@ -470,7 +470,16 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
         **EXPECTED_TOP_LEVEL_LABELS,
         "app.kubernetes.io/instance": expected_namespace,
     }
-    if metadata.get("labels") != expected_labels:
+    actual_labels = metadata.get("labels")
+    if isinstance(actual_labels, dict):
+        for label, expected_value in expected_labels.items():
+            actual_value = actual_labels.get(label)
+            if actual_value != expected_value:
+                fail(
+                    f"{kind}/{name} label {label!r} mismatch: "
+                    f"expected {expected_value!r}, actual {actual_value!r}"
+                )
+    if actual_labels != expected_labels:
         fail(f"{kind}/{name} has unsafe Helm metadata labels")
     namespace = metadata.get("namespace")
     if namespace is not None and namespace != expected_namespace:
@@ -1423,14 +1432,28 @@ def validate_metadata(
 
 
 def main() -> int:
-    if len(sys.argv) == 4 and sys.argv[1] == "sanitize":
+    command = sys.argv[1] if len(sys.argv) > 1 else None
+    if command == "sanitize":
+        if len(sys.argv) != 4:
+            print(
+                "usage: validate-preview-artifact.py sanitize <render> <output>",
+                file=sys.stderr,
+            )
+            return 2
         try:
             sanitize(Path(sys.argv[2]), Path(sys.argv[3]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(sys.argv) == 6 and sys.argv[1] == "inject":
+    if command == "inject":
+        if len(sys.argv) != 6:
+            print(
+                "usage: validate-preview-artifact.py inject "
+                "<render> <output> <namespace> <port>",
+                file=sys.stderr,
+            )
+            return 2
         try:
             inject_telnet_port(
                 Path(sys.argv[2]),
@@ -1442,7 +1465,14 @@ def main() -> int:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(sys.argv) == 5 and sys.argv[1] == "runtime-target":
+    if command == "runtime-target":
+        if len(sys.argv) != 5:
+            print(
+                "usage: validate-preview-artifact.py runtime-target "
+                "<render> <namespace> <port>",
+                file=sys.stderr,
+            )
+            return 2
         try:
             validate_runtime_target(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:

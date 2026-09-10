@@ -33,11 +33,12 @@ reject_existing_secret() {
 }
 read_secret_if_present() {
   local secret_name="$1"
+  local secret_json
   if ! secret_json="$(kubectl -n "$RUNTIME_NAMESPACE" get secret "$secret_name" --ignore-not-found -o json)"; then
     echo "::error::Unable to read Secret ${RUNTIME_NAMESPACE}/${secret_name}; credentials were not changed." >&2
-    exit 1
+    return 1
   fi
-  [[ -n "$secret_json" ]]
+  printf '%s' "$secret_json"
 }
 reject_existing_configmap() {
   local configmap_name="$1"
@@ -47,15 +48,17 @@ reject_existing_configmap() {
 }
 read_configmap_if_present() {
   local configmap_name="$1"
+  local configmap_json
   if ! configmap_json="$(kubectl -n "$RUNTIME_NAMESPACE" get configmap "$configmap_name" --ignore-not-found -o json)"; then
     echo "::error::Unable to read ConfigMap ${RUNTIME_NAMESPACE}/${configmap_name}; credentials were not changed." >&2
-    exit 1
+    return 1
   fi
-  [[ -n "$configmap_json" ]]
+  printf '%s' "$configmap_json"
 }
 validate_secret_shape() {
   local secret_name="$1"
   local expected_keys_json="$2"
+  local secret_json="$3"
   jq -e \
     --arg name "$secret_name" \
     --arg namespace "$RUNTIME_NAMESPACE" \
@@ -68,12 +71,13 @@ validate_secret_shape() {
       (.data | type == "object") and
       ((.data | keys | sort) == ($expected_keys | sort))
     ' <<<"$secret_json" >/dev/null ||
-    reject_existing_secret "$secret_name" "expected exactly the canonical non-empty keys"
+    reject_existing_secret "$secret_name" "expected exactly the canonical keys"
 }
 decode_secret_key() {
   local secret_name="$1"
   local key="$2"
-  local encoded_value canonical_encoded_value
+  local secret_json="$3"
+  local encoded_value decoded_secret_value canonical_encoded_value
   if ! encoded_value="$(jq -er --arg key "$key" '.data[$key] | select(type == "string" and length > 0)' <<<"$secret_json")" ||
     ! decoded_secret_value="$(printf '%s' "$encoded_value" | base64 --decode 2>/dev/null)" ||
     [[ -z "$decoded_secret_value" ]]; then
@@ -85,10 +89,12 @@ decode_secret_key() {
   if [[ "$canonical_encoded_value" != "$encoded_value" ]]; then
     reject_existing_secret "$secret_name" "key ${key} is empty or malformed"
   fi
+  printf '%s' "$decoded_secret_value"
 }
 validate_configmap_shape() {
   local configmap_name="$1"
   local expected_keys_json="$2"
+  local configmap_json="$3"
   jq -e \
     --arg name "$configmap_name" \
     --arg namespace "$RUNTIME_NAMESPACE" \
@@ -105,6 +111,7 @@ validate_configmap_shape() {
 }
 validate_diagnostic_jwks() {
   local expected_fingerprint="$1"
+  local configmap_json="$2"
   local diagnostic_jwks
   if ! diagnostic_jwks="$(jq -er '.data["jwks.json"] | select(type == "string" and length > 0)' <<<"$configmap_json")" ||
     ! jq -e --arg fingerprint "$expected_fingerprint" '
@@ -121,21 +128,19 @@ validate_diagnostic_jwks() {
 }
 
 firemud_secret_exists=false
-if read_secret_if_present firemud-secret; then
+firemud_secret_json="$(read_secret_if_present firemud-secret)"
+if [[ -n "$firemud_secret_json" ]]; then
   firemud_secret_exists=true
   validate_secret_shape firemud-secret \
-    '["FIREMUD_POSTGRES_USER","FIREMUD_POSTGRES_PASSWORD","ASSET_STORE_ACCESS_KEY","ASSET_STORE_SECRET_KEY"]'
-  decode_secret_key firemud-secret FIREMUD_POSTGRES_USER
-  postgres_user="$decoded_secret_value"
+    '["FIREMUD_POSTGRES_USER","FIREMUD_POSTGRES_PASSWORD","ASSET_STORE_ACCESS_KEY","ASSET_STORE_SECRET_KEY"]' \
+    "$firemud_secret_json"
+  postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$firemud_secret_json")"
   if [[ "$postgres_user" != firemud ]]; then
     reject_existing_secret firemud-secret "PostgreSQL user is not canonical"
   fi
-  decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD
-  postgres_password="$decoded_secret_value"
-  decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY
-  asset_store_access_key="$decoded_secret_value"
-  decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY
-  asset_store_secret_key="$decoded_secret_value"
+  postgres_password="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD "$firemud_secret_json")"
+  asset_store_access_key="$(decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY "$firemud_secret_json")"
+  asset_store_secret_key="$(decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY "$firemud_secret_json")"
   if [[ "$postgres_password" == firemud ||
     "$asset_store_access_key" == minio ||
     "$asset_store_secret_key" == minio123 ]]; then
@@ -144,13 +149,12 @@ if read_secret_if_present firemud-secret; then
 fi
 
 minio_secret_exists=false
-if read_secret_if_present minio-credentials; then
+minio_secret_json="$(read_secret_if_present minio-credentials)"
+if [[ -n "$minio_secret_json" ]]; then
   minio_secret_exists=true
-  validate_secret_shape minio-credentials '["accessKey","secretKey"]'
-  decode_secret_key minio-credentials accessKey
-  minio_access_key="$decoded_secret_value"
-  decode_secret_key minio-credentials secretKey
-  minio_secret_key="$decoded_secret_value"
+  validate_secret_shape minio-credentials '["accessKey","secretKey"]' "$minio_secret_json"
+  minio_access_key="$(decode_secret_key minio-credentials accessKey "$minio_secret_json")"
+  minio_secret_key="$(decode_secret_key minio-credentials secretKey "$minio_secret_json")"
   if [[ "$minio_access_key" == minio || "$minio_secret_key" == minio123 ]]; then
     reject_existing_secret minio-credentials "legacy weak credential value"
   fi
@@ -163,20 +167,21 @@ if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]] &&
 fi
 
 jwt_signing_secret_exists=false
-if read_secret_if_present jwt-signing-keys; then
+jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)"
+if [[ -n "$jwt_signing_secret_json" ]]; then
   jwt_signing_secret_exists=true
-  validate_secret_shape jwt-signing-keys '["current.key"]'
-  decode_secret_key jwt-signing-keys current.key
-  signing_key="$decoded_secret_value"
+  validate_secret_shape jwt-signing-keys '["current.key"]' "$jwt_signing_secret_json"
+  signing_key="$(decode_secret_key jwt-signing-keys current.key "$jwt_signing_secret_json")"
   if [[ ! "$signing_key" =~ ^[0-9a-f]{64}$ ]]; then
     reject_existing_secret jwt-signing-keys "current.key is not canonical"
   fi
 fi
 
 jwt_jwks_exists=false
-if read_configmap_if_present jwt-jwks; then
+jwt_jwks_json="$(read_configmap_if_present jwt-jwks)"
+if [[ -n "$jwt_jwks_json" ]]; then
   jwt_jwks_exists=true
-  validate_configmap_shape jwt-jwks '["jwks.json"]'
+  validate_configmap_shape jwt-jwks '["jwks.json"]' "$jwt_jwks_json"
   if [[ "$jwt_signing_secret_exists" != true ]]; then
     reject_existing_configmap jwt-jwks "signing Secret is absent and cannot be reconstructed"
   fi
@@ -200,7 +205,7 @@ signing_key_sha256="$(printf '%s' "$signing_key" | sha256sum | awk '{print $1}')
 diagnostic_jwks="$(jq -nc --arg fingerprint "$signing_key_sha256" \
   '{keys:[],firemudDiagnostic:{purpose:"shared-hmac-secret-path-fingerprint",sha256:$fingerprint}}')"
 if [[ "$jwt_jwks_exists" == true ]]; then
-  validate_diagnostic_jwks "$signing_key_sha256"
+  validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"
 fi
 
 if [[ "$firemud_secret_exists" != true ]]; then
@@ -243,4 +248,5 @@ if [[ "$jwt_jwks_exists" != true ]]; then
     --from-file="jwks.json=${credential_files_dir}/jwks.json"
 fi
 
-kubectl -n "$RUNTIME_NAMESPACE" create serviceaccount firemud-app --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "$RUNTIME_NAMESPACE" create serviceaccount firemud-app --dry-run=client -o yaml |
+  kubectl -n "$RUNTIME_NAMESPACE" apply -f -

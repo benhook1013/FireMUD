@@ -75,6 +75,52 @@ def _display_value(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
+def _revalidate_target(
+    pull_request_json: str,
+    expected_repository: str,
+    expected_head_sha: str,
+    expected_state: str,
+) -> tuple[str | None, dict[str, object] | None]:
+    """Validate immutable identity and state shared by deploy and cleanup targets."""
+
+    try:
+        pull_request = json.loads(pull_request_json)
+    except json.JSONDecodeError:
+        return "current pull request metadata is malformed", None
+    if not isinstance(pull_request, dict):
+        return "current pull request metadata is malformed", None
+
+    state = _nested_value(pull_request, "state")
+    head_sha = _nested_value(pull_request, "head", "sha")
+    head_repository = _nested_value(pull_request, "head", "repo", "full_name")
+    if state != expected_state:
+        return (
+            f"pull request is not {expected_state} (state={_display_value(state)})",
+            None,
+        )
+    if (
+        not isinstance(expected_head_sha, str)
+        or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha)
+    ):
+        return "expected head SHA must be exactly 40 hexadecimal characters", None
+    if (
+        not isinstance(head_sha, str)
+        or not GIT_COMMIT_SHA_RE.fullmatch(head_sha)
+        or head_sha.lower() != expected_head_sha.lower()
+    ):
+        return (
+            f"head is stale (expected={expected_head_sha}, current={_display_value(head_sha)})",
+            None,
+        )
+    if head_repository != expected_repository:
+        reason = (
+            "head repository is not trusted "
+            f"(expected={expected_repository}, current={_display_value(head_repository)})"
+        )
+        return reason, None
+    return None, pull_request
+
+
 def revalidate_deploy(
     pull_request_json: str,
     expected_repository: str,
@@ -82,34 +128,14 @@ def revalidate_deploy(
 ) -> str | None:
     """Return the fail-closed refusal reason for a current deploy target, if any."""
 
-    try:
-        pull_request = json.loads(pull_request_json)
-    except json.JSONDecodeError:
-        return "current pull request metadata is malformed"
-    if not isinstance(pull_request, dict):
-        return "current pull request metadata is malformed"
-
-    state = _nested_value(pull_request, "state")
-    head_sha = _nested_value(pull_request, "head", "sha")
-    head_repository = _nested_value(pull_request, "head", "repo", "full_name")
-    if state != "open":
-        return f"pull request is not open (state={_display_value(state)})"
-    if (
-        not isinstance(expected_head_sha, str)
-        or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha)
-    ):
-        return "expected head SHA must be exactly 40 hexadecimal characters"
-    if (
-        not isinstance(head_sha, str)
-        or not GIT_COMMIT_SHA_RE.fullmatch(head_sha)
-        or head_sha.lower() != expected_head_sha.lower()
-    ):
-        return f"head is stale (expected={expected_head_sha}, current={_display_value(head_sha)})"
-    if head_repository != expected_repository:
-        return (
-            "head repository is not trusted "
-            f"(expected={expected_repository}, current={_display_value(head_repository)})"
-        )
+    refusal_reason, pull_request = _revalidate_target(
+        pull_request_json,
+        expected_repository,
+        expected_head_sha,
+        "open",
+    )
+    if refusal_reason is not None or pull_request is None:
+        return refusal_reason
 
     labels = pull_request.get("labels")
     labels_json = json.dumps(labels, separators=(",", ":"))
@@ -123,7 +149,7 @@ def revalidate_deploy(
         return "current pull request metadata is malformed (user.login must be a non-empty string)"
     eligible, reason, _ = evaluate(
         "deploy",
-        _display_value(state),
+        "open",
         _display_value(base_ref),
         author,
         labels_json,
@@ -133,11 +159,28 @@ def revalidate_deploy(
     return None
 
 
+def revalidate_cleanup(
+    pull_request_json: str,
+    expected_repository: str,
+    expected_head_sha: str,
+) -> str | None:
+    """Return the fail-closed refusal reason for a closed cleanup target, if any."""
+
+    refusal_reason, _ = _revalidate_target(
+        pull_request_json,
+        expected_repository,
+        expected_head_sha,
+        "closed",
+    )
+    return refusal_reason
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--inspect-labels", action="store_true")
     mode.add_argument("--revalidate-deploy", action="store_true")
+    mode.add_argument("--revalidate-cleanup", action="store_true")
     parser.add_argument("--operation", choices=("deploy", "destroy", "retain"))
     parser.add_argument("--state")
     parser.add_argument("--base-ref")
@@ -147,7 +190,7 @@ def main() -> int:
     parser.add_argument("--expected-head-sha")
     args = parser.parse_args()
 
-    if args.revalidate_deploy:
+    if args.revalidate_deploy or args.revalidate_cleanup:
         missing = [
             name
             for name, value in (
@@ -158,10 +201,9 @@ def main() -> int:
         ]
         if missing:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
-        refusal_reason = revalidate_deploy(
-            sys.stdin.read(),
-            args.expected_repository,
-            args.expected_head_sha,
+        evaluator = revalidate_cleanup if args.revalidate_cleanup else revalidate_deploy
+        refusal_reason = evaluator(
+            sys.stdin.read(), args.expected_repository, args.expected_head_sha
         )
         if refusal_reason is not None:
             print(refusal_reason)

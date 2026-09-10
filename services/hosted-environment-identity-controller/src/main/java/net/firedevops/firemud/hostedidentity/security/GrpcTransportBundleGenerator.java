@@ -308,6 +308,7 @@ public class GrpcTransportBundleGenerator {
   }
 
   static boolean renewalRequired(Secret secret, Duration renewBefore, Instant now) {
+    // Validate the persisted issuance marker before evaluating certificate lifetime.
     issuanceGeneration(secret);
     return !leafNotAfter(secret)
         .isAfter(plus(now, renewBefore, "gRPC renewal threshold is out of range"));

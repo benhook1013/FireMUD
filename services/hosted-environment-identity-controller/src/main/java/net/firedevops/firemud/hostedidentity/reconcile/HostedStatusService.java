@@ -35,43 +35,16 @@ public class HostedStatusService {
       RuntimeProfileService.RuntimeProfile runtimeProfile,
       RoleStatus ingress,
       RoleStatus telnet,
-      RoleStatus grpc) {
-    HostedEnvironmentIdentityStatus previous = resource.getStatus();
-    return status(
-        resource,
-        phase,
-        reason,
-        message,
-        ready,
-        runtimeProfile,
-        ingress,
-        telnet,
-        previous == null ? null : previous.getGatewayInternalWs(),
-        previous == null ? null : previous.getTcpProxyBridge(),
-        grpc);
-  }
-
-  public HostedEnvironmentIdentityStatus status(
-      HostedEnvironmentIdentity resource,
-      Phase phase,
-      String reason,
-      String message,
-      boolean ready,
-      RuntimeProfileService.RuntimeProfile runtimeProfile,
-      RoleStatus ingress,
-      RoleStatus telnet,
       RoleStatus gatewayInternalWs,
       RoleStatus tcpProxyBridge,
       RoleStatus grpc) {
     HostedEnvironmentIdentityStatus status =
         resource.getStatus() == null ? new HostedEnvironmentIdentityStatus() : resource.getStatus();
     HostedCondition previousReady =
-        status.getConditions() == null
-            ? null
-            : status.getConditions().stream()
-                .filter(condition -> "Ready".equals(condition.getType()))
-                .findFirst()
-                .orElse(null);
+        status.getConditions().stream()
+            .filter(condition -> "Ready".equals(condition.getType()))
+            .findFirst()
+            .orElse(null);
     RuntimeProfile previousProfile = status.getProfile();
     boolean profileChanged = !profileMatches(previousProfile, runtimeProfile);
     boolean identityEvidenceComplete =

@@ -461,6 +461,23 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
     def setUpClass(cls):
         cls.validator = load_validator()
 
+    def _tcp_proxy_service(self, spec, *, namespace=None):
+        metadata = {
+            "name": "tcp-proxy-service",
+            "labels": {
+                **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                "app.kubernetes.io/instance": "pr-42",
+            },
+        }
+        if namespace is not None:
+            metadata["namespace"] = namespace
+        return {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": metadata,
+            "spec": spec,
+        }
+
     def test_injection_rejects_missing_namespace_before_reading_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "missing.yaml"
@@ -482,20 +499,9 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertFalse(destination.exists())
 
     def test_injection_accepts_canonical_namespace(self):
-        document = {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {
-                "name": "tcp-proxy-service",
-                "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
-                    "app.kubernetes.io/instance": "pr-42",
-                },
-            },
-            "spec": {
-                "ports": [{"name": "tcp-2323", "port": 2323}],
-            },
-        }
+        document = self._tcp_proxy_service(
+            {"ports": [{"name": "tcp-2323", "port": 2323}]}
+        )
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "source.yaml"
             destination = Path(directory) / "destination.yaml"
@@ -507,25 +513,37 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
             self.assertEqual(prepared["metadata"]["namespace"], "pr-42")
             self.assertEqual(prepared["spec"]["ports"][0]["nodePort"], 32000)
 
+    def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
+        expected_labels = {
+            **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+            "app.kubernetes.io/instance": "pr-42",
+        }
+        for label, expected_value in expected_labels.items():
+            document = self._tcp_proxy_service({})
+            document["metadata"]["labels"] = {
+                **expected_labels,
+                label: "unexpected-value",
+                "unexpected-label": "unexpected-value",
+            }
+            with self.subTest(label=label), self.assertRaisesRegex(
+                ValueError,
+                re.escape(
+                    f"Service/tcp-proxy-service label {label!r} mismatch: "
+                    f"expected {expected_value!r}, actual 'unexpected-value'"
+                ),
+            ):
+                self.validator._validate_object_metadata(document, "pr-42")
+
     def test_runtime_target_finds_declared_telnet_port_without_relying_on_index(self):
-        document = {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {
-                "name": "tcp-proxy-service",
-                "namespace": "pr-42",
-                "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
-                    "app.kubernetes.io/instance": "pr-42",
-                },
-            },
-            "spec": {
+        document = self._tcp_proxy_service(
+            {
                 "ports": [
                     {"name": "metrics", "port": 8080},
                     {"name": "tcp-2323", "port": 2323, "nodePort": 32001},
-                ],
+                ]
             },
-        }
+            namespace="pr-42",
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepared.yaml"
             path.write_text(yaml.safe_dump(document), encoding="utf-8")
@@ -540,19 +558,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 "Service/tcp-proxy-service.spec.ports is not a list of objects",
             ),
         ):
-            document = {
-                "apiVersion": "v1",
-                "kind": "Service",
-                "metadata": {
-                    "name": "tcp-proxy-service",
-                    "namespace": "pr-42",
-                    "labels": {
-                        **self.validator.EXPECTED_TOP_LEVEL_LABELS,
-                        "app.kubernetes.io/instance": "pr-42",
-                    },
-                },
-                "spec": spec,
-            }
+            document = self._tcp_proxy_service(spec, namespace="pr-42")
             with self.subTest(spec=spec), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "prepared.yaml"
                 path.write_text(yaml.safe_dump(document), encoding="utf-8")
@@ -581,18 +587,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 "Service/tcp-proxy-service.spec.ports is not a list of objects",
             ),
         ):
-            document = {
-                "apiVersion": "v1",
-                "kind": "Service",
-                "metadata": {
-                    "name": "tcp-proxy-service",
-                    "labels": {
-                        **self.validator.EXPECTED_TOP_LEVEL_LABELS,
-                        "app.kubernetes.io/instance": "pr-42",
-                    },
-                },
-                "spec": spec,
-            }
+            document = self._tcp_proxy_service(spec)
             with tempfile.TemporaryDirectory() as directory:
                 source = Path(directory) / "source.yaml"
                 destination = Path(directory) / "destination.yaml"
@@ -600,6 +595,43 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     self.validator.inject_telnet_port(source, destination, 32000, "pr-42")
                 self.assertFalse(destination.exists())
+
+
+class PreviewArtifactCommandLineTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+
+    def test_subcommand_wrong_arity_reports_subcommand_usage(self):
+        cases = (
+            (
+                "sanitize",
+                "usage: validate-preview-artifact.py sanitize <render> <output>\n",
+            ),
+            (
+                "inject",
+                (
+                    "usage: validate-preview-artifact.py inject "
+                    "<render> <output> <namespace> <port>\n"
+                ),
+            ),
+            (
+                "runtime-target",
+                (
+                    "usage: validate-preview-artifact.py runtime-target "
+                    "<render> <namespace> <port>\n"
+                ),
+            ),
+        )
+        for command, expected_usage in cases:
+            stderr = io.StringIO()
+            with (
+                self.subTest(command=command),
+                patch.object(self.validator.sys, "argv", [str(SCRIPT), command]),
+                patch.object(self.validator.sys, "stderr", stderr),
+            ):
+                self.assertEqual(self.validator.main(), 2)
+            self.assertEqual(stderr.getvalue(), expected_usage)
 
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):

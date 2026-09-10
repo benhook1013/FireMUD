@@ -8712,12 +8712,57 @@ if valid.returncode != 0:
 valid_result = json.loads(valid.stdout)
 if valid_result != {
     "category": "apply-blocking",
-    "message": "Gateway bridge and direct Telnet TLS alignment is valid",
+    "message": (
+        "Gateway bridge and direct Telnet TLS alignment is valid; "
+        "ci-static did not check controller-projected Secret readiness"
+    ),
     "policyId": "PREFLIGHT-BRIDGE-001",
     "required": True,
     "status": "pass",
 }:
     raise SystemExit(f"hosted-bridge did not emit its canonical pass result: {valid_result}")
+if module.hosted_bridge_success_message("operator") != (
+    "Gateway bridge and direct Telnet TLS alignment is valid; "
+    "controller-projected Secret readiness is confirmed"
+):
+    raise SystemExit("hosted-bridge operator success does not confirm projection readiness")
+
+required_telnet_tls_paths = {
+    "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
+    "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",
+}
+if module.TELNET_TLS_REQUIRED_PATHS != required_telnet_tls_paths:
+    raise SystemExit(
+        "hosted-bridge Telnet TLS path contract drifted: "
+        f"{module.TELNET_TLS_REQUIRED_PATHS}"
+    )
+for path_name, required_path in required_telnet_tls_paths.items():
+    mismatched_path_documents = list(
+        yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+    )
+    tcp_proxy_deployment = next(
+        document
+        for document in mismatched_path_documents
+        if document.get("kind") == "Deployment"
+        and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    )
+    path_entry = next(
+        entry
+        for entry in tcp_proxy_deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        if entry.get("name") == path_name
+    )
+    path_entry["value"] = f"/wrong/{path_name.lower()}"
+    path_issues = module.validate_hosted_telnet_tls_values(
+        mismatched_path_documents,
+        required_identity_mode="hosted-controller",
+        expected_hosted_telnet_node_port=node_port,
+        target_namespace=namespace,
+    )
+    expected_issue = f"{path_name} must be {required_path}"
+    if expected_issue not in path_issues:
+        raise SystemExit(
+            f"hosted-bridge accepted mismatched {path_name}: {path_issues}"
+        )
 
 maximum_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 maximum_service = next(

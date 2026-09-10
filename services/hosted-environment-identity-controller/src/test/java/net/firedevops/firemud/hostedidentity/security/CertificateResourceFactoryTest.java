@@ -116,6 +116,9 @@ class CertificateResourceFactoryTest {
     var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     var factory = new CertificateResourceFactory();
 
+    assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, null));
+    assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, null));
+
     for (Duration invalidRenewBefore :
         java.util.List.of(
             Duration.ofMinutes(5).minusNanos(1),

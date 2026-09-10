@@ -141,10 +141,6 @@ public class SecretMaterialValidator {
         throw new MaterialValidationException("configured certificate trust anchor is invalid");
       }
       String chainFingerprint = validateChain(data.get("ca.crt"), presentedChain, expectedAnchor);
-      if (!expectedAnchor.isBlank() && !expectedAnchor.equals(normalize(chainFingerprint))) {
-        throw new MaterialValidationException(
-            "certificate chain trust anchor fingerprint mismatch");
-      }
       return new MaterialSummary(
           sha256(certificate.getEncoded()),
           sha256(certificate.getPublicKey().getEncoded()),
@@ -290,6 +286,7 @@ public class SecretMaterialValidator {
 
   static boolean caKeyUsageAllowsSigning(X509Certificate certificate) {
     boolean[] usage = certificate.getKeyUsage();
+    // An omitted extension is accepted; when present, it must allow certificate signing.
     return usage == null || (usage.length > 5 && usage[5]);
   }
 
@@ -306,21 +303,7 @@ public class SecretMaterialValidator {
     List<X509Certificate> candidates = new ArrayList<>(presentedChain);
     candidates.addAll(anchors);
     for (int depth = 0; depth <= candidates.size(); depth++) {
-      X509Certificate next = null;
-      for (X509Certificate candidate : candidates) {
-        String fingerprint = sha256(candidate.getEncoded());
-        if (used.contains(fingerprint)
-            || !current.getIssuerX500Principal().equals(candidate.getSubjectX500Principal())) {
-          continue;
-        }
-        try {
-          current.verify(candidate.getPublicKey());
-          next = candidate;
-          break;
-        } catch (Exception ignored) {
-          // A matching issuer name is not sufficient; the signature must verify.
-        }
-      }
+      X509Certificate next = verifiedIssuer(current, candidates, used);
       if (next == null) {
         break;
       }
@@ -331,7 +314,7 @@ public class SecretMaterialValidator {
               .anyMatch(certificate -> fingerprint.equals(sha256Unchecked(certificate)));
       if (isConfiguredAnchor
           && ((!expectedAnchor.isBlank() && expectedAnchor.equals(fingerprint))
-              || (expectedAnchor.isBlank() && !hasVerifiableIssuer(next, candidates, used)))) {
+              || (expectedAnchor.isBlank() && verifiedIssuer(next, candidates, used) == null))) {
         anchor = next;
         break;
       }
@@ -383,7 +366,7 @@ public class SecretMaterialValidator {
     return certificate.getSubjectX500Principal().equals(certificate.getIssuerX500Principal());
   }
 
-  private static boolean hasVerifiableIssuer(
+  private static X509Certificate verifiedIssuer(
       X509Certificate certificate, List<X509Certificate> candidates, Set<String> used)
       throws Exception {
     for (X509Certificate candidate : candidates) {
@@ -394,12 +377,12 @@ public class SecretMaterialValidator {
       }
       try {
         certificate.verify(candidate.getPublicKey());
-        return true;
+        return candidate;
       } catch (Exception ignored) {
         // A matching issuer name is not sufficient; the signature must verify.
       }
     }
-    return false;
+    return null;
   }
 
   private static String sha256Unchecked(X509Certificate certificate) {
@@ -435,7 +418,7 @@ public class SecretMaterialValidator {
   /**
    * Summary of validated identity material.
    *
-   * <p>{@code trustAnchorFingerprint} intentionally has two related meanings: for retained {@code
+   * <p>{@code chainRootFingerprint} intentionally has two related meanings: for retained {@code
    * Opaque} transport material it is the fingerprint of the exactly-one {@code ca.crt} certificate;
    * for cert-manager TLS material that omits {@code ca.crt}, it is the fingerprint of the terminal
    * certificate in the presented chain, whose external trust is proved separately by the
@@ -446,7 +429,7 @@ public class SecretMaterialValidator {
       String spkiSha256,
       Instant notBefore,
       Instant notAfter,
-      String trustAnchorFingerprint) {
+      String chainRootFingerprint) {
     public boolean isCurrent(Instant now) {
       return notBefore().isBefore(now) && notAfter().isAfter(now);
     }

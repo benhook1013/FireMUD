@@ -253,7 +253,7 @@ jobs:
         run: |
           echo "DEV_DEMO_STAGE=identity-projections" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-            --projections dev-demo dev 900
+            --projections dev-demo "${{ needs.dev-demo-plan.outputs.namespace }}" 900
 
       - name: Ensure GHCR pull secret exists
         if: ${{ steps.cluster-access.outputs.available == 'true' }}
@@ -886,13 +886,15 @@ jobs:
       - name: Set up Helm
         uses: ./.github/actions/setup-helm
 
-      - name: Write preview kubeconfig
+      - name: Write dev-demo runtime kubeconfig
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
-          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh \
+            "$RUNNER_TEMP/dev-demo-runtime.kubeconfig")"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          echo "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete dev-demo namespace and release
@@ -931,6 +933,16 @@ jobs:
             --retired dev-demo 600
           kubectl -n firemud-system delete hostedenvironmentidentity dev-demo \
             --wait=true --timeout=180s
+
+      - name: Restore dev-demo runtime kubeconfig after retirement
+        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing dev-demo runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
+          fi
+          echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove hosted identity requester kubeconfig
         if: ${{ always() }}

@@ -30,7 +30,6 @@ public final class HostedIdentityContract {
       "firemud.dev/source-object-generation";
   public static final String SPKI_SHA256_ANNOTATION = "firemud.dev/spki-sha256";
   public static final String PROVENANCE_ANNOTATION = "firemud.dev/provenance";
-  public static final String DIGEST_ANNOTATION = "firemud.dev/digest";
   public static final String ACCEPTED_REVISION_ANNOTATION = "firemud.dev/accepted-revision";
   public static final String ACCEPTED_SOURCE_GENERATION_ANNOTATION =
       "firemud.dev/accepted-source-generation";

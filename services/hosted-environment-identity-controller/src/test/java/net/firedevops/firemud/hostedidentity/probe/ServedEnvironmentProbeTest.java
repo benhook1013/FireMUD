@@ -16,6 +16,7 @@ import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
@@ -89,6 +90,35 @@ class ServedEnvironmentProbeTest {
     assertEquals(
         "served-bridge-and-grpc-accepted",
         probe.probe(plan, 32001, ready, ready, ready, ready).reason());
+  }
+
+  @Test
+  void readinessProbeSuppliesEachDerivedEndpointToItsProbeSeam() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    List<String> endpoints = new ArrayList<>();
+    ServedEnvironmentProbe.EndpointProbe recordingProbe =
+        (hostname, port) -> {
+          endpoints.add(hostname + ":" + port);
+          return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+        };
+
+    new ServedEnvironmentProbe(properties)
+        .probe(
+            plan,
+            32001,
+            recordingProbe,
+            recordingProbe,
+            recordingProbe,
+            recordingProbe);
+
+    assertEquals(
+        List.of(
+            "pr-42.preview.firedevops.net:443",
+            "pr-42.preview.firedevops.net:32001",
+            "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
+            "account-service.pr-42.svc.cluster.local:6565"),
+        endpoints);
   }
 
   @Test
@@ -169,22 +199,6 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
-  void missingFixedGrpcProbeConsumerFailsAsInvalidConfiguration() throws Exception {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    EnvironmentIdentityPlan missingProbeConsumer = withConsumers(plan, "tcp-proxy-service");
-
-    Secret material = generatedMaterial(plan);
-    properties.setGrpcTrustAnchorSha256(fingerprint(material.getData().get("ca.crt")));
-    ServedEnvironmentProbe.ProbeResult result =
-        new ServedEnvironmentProbe(properties)
-            .grpc(missingProbeConsumer, material, fingerprint(material.getData().get("tls.crt")));
-
-    assertEquals(false, result.ready());
-    assertEquals("material-or-configuration-invalid", result.reason());
-  }
-
-  @Test
   void internalGrpcProbeCompletesMutualTlsWithFixedCaHostnameAndLeafPin() throws Exception {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
@@ -222,6 +236,58 @@ class ServedEnvironmentProbeTest {
               trustAnchor)) {
         assertNotNull(client);
       }
+      accepted.get(10, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
+  void internalBridgeProbeDoesNotRequireAnApplicationProtocol() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    String identityHostname = "account-service.pr-42.svc.cluster.local";
+
+    try (SSLServerSocket server = mutualTlsServer(material, trustAnchor)) {
+      CompletableFuture<Void> accepted = acceptOne(server);
+      try (SSLSocket client =
+          ServedEnvironmentProbe.openBridgeTlsSocket(
+              InetAddress.getLoopbackAddress().getHostAddress(),
+              identityHostname,
+              server.getLocalPort(),
+              leaf,
+              material,
+              trustAnchor)) {
+        assertNotNull(client);
+      }
+      accepted.get(10, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
+  void internalGrpcProbeRejectsAHandshakeWithoutHttp2() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret material = generatedMaterial(plan);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+    String leaf = fingerprint(material.getData().get("tls.crt"));
+    String identityHostname = "account-service.pr-42.svc.cluster.local";
+
+    try (SSLServerSocket server = mutualTlsServer(material, trustAnchor)) {
+      CompletableFuture<Void> accepted = acceptOne(server);
+      ServedEnvironmentProbe.HandshakePolicyRejectedException failure =
+          assertThrows(
+              ServedEnvironmentProbe.HandshakePolicyRejectedException.class,
+              () ->
+                  ServedEnvironmentProbe.openGrpcTlsSocket(
+                      InetAddress.getLoopbackAddress().getHostAddress(),
+                      identityHostname,
+                      server.getLocalPort(),
+                      leaf,
+                      material,
+                      trustAnchor));
+      assertEquals("gRPC endpoint did not negotiate HTTP/2", failure.getMessage());
       accepted.get(10, TimeUnit.SECONDS);
     }
   }
@@ -291,6 +357,28 @@ class ServedEnvironmentProbeTest {
 
   private static Secret generatedMaterial(EnvironmentIdentityPlan plan) throws Exception {
     return SecretMaterialValidatorTest.GrpcMaterialFixture.generate(plan);
+  }
+
+  private static SSLServerSocket mutualTlsServer(Secret material, String trustAnchor)
+      throws Exception {
+    SSLServerSocket server =
+        (SSLServerSocket)
+            ServedEnvironmentProbe.grpcSslContext(material, trustAnchor)
+                .getServerSocketFactory()
+                .createServerSocket(0, 1, InetAddress.getLoopbackAddress());
+    server.setNeedClientAuth(true);
+    return server;
+  }
+
+  private static CompletableFuture<Void> acceptOne(SSLServerSocket server) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try (SSLSocket peer = (SSLSocket) server.accept()) {
+            peer.startHandshake();
+          } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+          }
+        });
   }
 
   private static EnvironmentIdentityPlan withConsumers(

@@ -1,5 +1,11 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.CERTIFICATE_PENDING;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.MATERIALIZATION_PENDING;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SERIALIZED_IN_FLIGHT;
+import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -41,6 +47,16 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 
 class CertificateMaterialServiceTest {
+  @Test
+  void roleMaterialStatesRetainCanonicalStatusValues() {
+    assertEquals("source-ready", SOURCE_READY.statusValue());
+    assertEquals("certificate-pending", CERTIFICATE_PENDING.statusValue());
+    assertEquals("materialization-pending", MATERIALIZATION_PENDING.statusValue());
+    assertEquals("serialized-in-flight", SERIALIZED_IN_FLIGHT.statusValue());
+    assertEquals("serialized-deferred", SERIALIZED_DEFERRED.statusValue());
+    assertEquals("serialized-deferred-drift", SERIALIZED_DEFERRED_DRIFT.statusValue());
+  }
+
   @Test
   @SuppressWarnings("unchecked")
   void controlledCertificateFieldsAreRepairedButUnknownDriftIsRejected() {
@@ -436,6 +452,46 @@ class CertificateMaterialServiceTest {
     verifyNoInteractions(validator);
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  void normalGrpcMaterializationReportsAnAbsentOrMetadataLessGeneratorResultPrecisely() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> runtimeSecret = mock(Resource.class);
+    when(client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(runtimeSecrets.withName(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(runtimeSecret);
+    when(runtimeSecret.get()).thenReturn(null);
+    GrpcTransportBundleGenerator generator = mock(GrpcTransportBundleGenerator.class);
+    Secret metadataLess = new SecretBuilder().withType("Opaque").build();
+    when(generator.ensure(
+            client,
+            plan,
+            1L,
+            properties.getGrpcRenewBefore(),
+            properties.getGrpcTrustAnchorSha256()))
+        .thenReturn(null, metadataLess);
+    SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
+    CertificateMaterialService service =
+        new CertificateMaterialService(
+            mock(CertificateResourceFactory.class), validator, generator, properties);
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+      IllegalStateException failure =
+          assertThrows(
+              IllegalStateException.class,
+              () -> service.beginMaterialization(client, plan).grpc(1L));
+
+      assertEquals("identity source Secret is absent or has no metadata", failure.getMessage());
+    }
+    verifyNoInteractions(validator);
+  }
+
   @ParameterizedTest(name = "normal cert-manager materialization rejects invalid {0}")
   @EnumSource(CertManagerSourceMutation.class)
   @SuppressWarnings("unchecked")
@@ -487,7 +543,7 @@ class CertificateMaterialServiceTest {
     IssuanceObservation observation = materializeIngress(1, oldData, newData);
 
     assertEquals(false, observation.material().ready());
-    assertEquals("materialization-pending", observation.material().state());
+    assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
     verify(observation.runtimeSecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -503,7 +559,7 @@ class CertificateMaterialServiceTest {
     IssuanceObservation observation = materializeIngress(2, newData, oldData);
 
     assertEquals(false, observation.material().ready());
-    assertEquals("materialization-pending", observation.material().state());
+    assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
     verify(observation.runtimeSecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -517,7 +573,7 @@ class CertificateMaterialServiceTest {
     IssuanceObservation observation = materializeIngress(2, data, data);
 
     assertEquals(true, observation.material().ready());
-    assertEquals("source-ready", observation.material().state());
+    assertEquals(SOURCE_READY, observation.material().state());
     assertEquals(2, observation.material().sourceGeneration());
     assertEquals(2, observation.material().sourceObjectGeneration());
     verify(observation.validator())
@@ -547,7 +603,7 @@ class CertificateMaterialServiceTest {
     IssuanceObservation observation = materializeIngress(2, requestData, secretData);
 
     assertEquals(true, observation.material().ready());
-    assertEquals("source-ready", observation.material().state());
+    assertEquals(SOURCE_READY, observation.material().state());
   }
 
   @Test
@@ -558,7 +614,7 @@ class CertificateMaterialServiceTest {
     IssuanceObservation observation = materializeIngress(2, data, data, 3);
 
     assertEquals(false, observation.material().ready());
-    assertEquals("materialization-pending", observation.material().state());
+    assertEquals(MATERIALIZATION_PENDING, observation.material().state());
     verifyNoInteractions(observation.validator());
   }
 
@@ -583,7 +639,7 @@ class CertificateMaterialServiceTest {
         service.beginMaterialization(secretClient.client(), plan).ingress();
 
     assertEquals(false, ingress.ready());
-    assertEquals("certificate-pending", ingress.state());
+    assertEquals(CERTIFICATE_PENDING, ingress.state());
     verify(secretClient.runtimeSecrets(), org.mockito.Mockito.atLeastOnce())
         .withName(org.mockito.ArgumentMatchers.anyString());
     verify(secretClient.identitySecrets(), never())
@@ -604,7 +660,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals("serialized-in-flight", material.state());
+    assertEquals(SERIALIZED_IN_FLIGHT, material.state());
     assertSame(projection, material.source());
   }
 
@@ -618,7 +674,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial ingress = fixture.batch().ingress();
 
-    assertEquals("serialized-deferred", ingress.state());
+    assertEquals(SERIALIZED_DEFERRED, ingress.state());
     assertEquals(fixture.acceptedData(), ingress.source().getData());
     verify(fixture.secretClient().client(), never())
         .genericKubernetesResources(ResourceContexts.CERTIFICATES);
@@ -830,7 +886,7 @@ class CertificateMaterialServiceTest {
         1,
         fixture.acceptedData());
 
-    assertEquals("source-ready", fixture.batch().ingress().state());
+    assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
     Map<String, String> telnetReplacement =
         Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
@@ -860,12 +916,13 @@ class CertificateMaterialServiceTest {
             HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
             fixture.plan().gatewayInternalWsSecretName(),
             gatewayReplacement);
+    Resource<Secret> gatewaySourceResource = mock(Resource.class);
     when(fixture
             .secretClient()
             .identitySecrets()
-            .withName(fixture.plan().gatewayInternalWsSecretName())
-            .get())
-        .thenReturn(gatewaySource);
+            .withName(fixture.plan().gatewayInternalWsSecretName()))
+        .thenReturn(gatewaySourceResource);
+    when(gatewaySourceResource.get()).thenReturn(gatewaySource);
     stubCertificate(
         fixture.secretClient().client(),
         fixture.plan(),
@@ -873,13 +930,17 @@ class CertificateMaterialServiceTest {
         true,
         2,
         gatewayReplacement);
+    clearInvocations(fixture.secretClient().client(), gatewaySourceResource);
 
     CertificateMaterialService.RoleMaterial gateway = fixture.batch().gatewayInternalWs();
 
-    assertEquals("source-ready", telnet.state());
+    assertEquals(SOURCE_READY, telnet.state());
     assertEquals(telnetReplacement, telnet.source().getData());
-    assertEquals("serialized-deferred", gateway.state());
+    assertEquals(SERIALIZED_DEFERRED, gateway.state());
     assertEquals(fixture.acceptedData(), gateway.source().getData());
+    verifyNoInteractions(gatewaySourceResource);
+    verify(fixture.secretClient().client(), never())
+        .genericKubernetesResources(ResourceContexts.CERTIFICATES);
   }
 
   @Test
@@ -892,7 +953,7 @@ class CertificateMaterialServiceTest {
         true,
         1,
         fixture.acceptedData());
-    assertEquals("source-ready", fixture.batch().ingress().state());
+    assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
     Map<String, String> telnetReplacement =
         Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
@@ -910,7 +971,7 @@ class CertificateMaterialServiceTest {
         true,
         2,
         telnetReplacement);
-    assertEquals("source-ready", fixture.batch().telnet().state());
+    assertEquals(SOURCE_READY, fixture.batch().telnet().state());
 
     Map<String, String> grpcReplacement =
         Map.of(
@@ -940,7 +1001,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial grpc = fixture.batch().grpc(1L);
 
-    assertEquals("serialized-deferred", grpc.state());
+    assertEquals(SERIALIZED_DEFERRED, grpc.state());
     assertEquals(fixture.acceptedData(), grpc.source().getData());
     verifyNoInteractions(fixture.grpcGenerator());
   }
@@ -962,7 +1023,7 @@ class CertificateMaterialServiceTest {
         true,
         1,
         fixture.acceptedData());
-    assertEquals("source-ready", fixture.batch().ingress().state());
+    assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
     Map<String, String> telnetReplacement =
         Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
@@ -983,7 +1044,7 @@ class CertificateMaterialServiceTest {
         true,
         2,
         telnetReplacement);
-    assertEquals("source-ready", fixture.batch().telnet().state());
+    assertEquals(SOURCE_READY, fixture.batch().telnet().state());
 
     stubCertificate(
         fixture.secretClient().client(),
@@ -995,7 +1056,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial gateway = fixture.batch().gatewayInternalWs();
 
-    assertEquals("source-ready", gateway.state());
+    assertEquals(SOURCE_READY, gateway.state());
     assertEquals(fixture.acceptedData(), gateway.source().getData());
   }
 
@@ -1022,7 +1083,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals("source-ready", material.state());
+    assertEquals(SOURCE_READY, material.state());
   }
 
   @Test
@@ -1164,7 +1225,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals("materialization-pending", material.state());
+    assertEquals(MATERIALIZATION_PENDING, material.state());
   }
 
   @Test
@@ -1195,7 +1256,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals("materialization-pending", material.state());
+    assertEquals(MATERIALIZATION_PENDING, material.state());
   }
 
   @Test
@@ -1219,7 +1280,7 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals("materialization-pending", material.state());
+    assertEquals(MATERIALIZATION_PENDING, material.state());
     assertEquals(false, material.ready());
   }
 
@@ -1316,7 +1377,7 @@ class CertificateMaterialServiceTest {
         service.beginMaterialization(client, plan);
     CertificateMaterialService.RoleMaterial grpc = materialization.grpc(1L);
 
-    assertEquals("serialized-deferred", grpc.state());
+    assertEquals(SERIALIZED_DEFERRED, grpc.state());
     verify(grpcSourceResource, org.mockito.Mockito.times(1)).get();
   }
 

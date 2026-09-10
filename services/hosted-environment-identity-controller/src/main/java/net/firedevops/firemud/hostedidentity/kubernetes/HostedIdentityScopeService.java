@@ -254,6 +254,8 @@ public class HostedIdentityScopeService {
   }
 
   static void ensureRole(KubernetesClient client, String namespace, Role desired) {
+    // Managed metadata drift fails closed. Recover by deleting the affected controller-owned Role;
+    // reconciliation then recreates it from the canonical plan.
     var operation =
         client.rbac().roles().inNamespace(namespace).withName(desired.getMetadata().getName());
     Role current = operation.get();
@@ -273,6 +275,8 @@ public class HostedIdentityScopeService {
       Map<String, String> labels,
       String roleName,
       EnvironmentIdentityPlan plan) {
+    // Managed metadata or roleRef drift fails closed. Recover by deleting the affected
+    // controller-owned RoleBinding; reconciliation then recreates it from the canonical plan.
     var operation = client.rbac().roleBindings().inNamespace(namespace).withName(name);
     RoleBinding desired =
         new RoleBindingBuilder()

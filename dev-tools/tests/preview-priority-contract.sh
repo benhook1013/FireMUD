@@ -352,6 +352,9 @@ case "$resource" in
         '{state: $state, head: {sha: $head, repo: {full_name: $repository}}, base: {ref: $base}, user: {login: $author}, labels: $labels}'
       exit 0
     fi
+    if [[ "${FAKE_TARGET_JQ_QUERY_FAIL:-false}" == true ]]; then
+      exit 1
+    fi
     count=0
     if [[ -f "$FAKE_TARGET_CALLS" ]]; then
       count="$(<"$FAKE_TARGET_CALLS")"
@@ -575,6 +578,7 @@ reset_case() {
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
   export FAKE_TARGET_RAW_QUERY_FAIL=false
+  export FAKE_TARGET_JQ_QUERY_FAIL=false
   export FAKE_TARGET_STATE=open
   export FAKE_TARGET_REPOSITORY=example/FireMUD
   export FAKE_TARGET_BASE_REF=develop
@@ -1041,11 +1045,18 @@ for target_contract_case in repository head base author metadata; do
     head) expected_target_head=other-head ;;
     base) export FAKE_TARGET_BASE_REF=feature/stack ;;
     author) export FAKE_TARGET_AUTHOR='renovate[bot]' ;;
-    metadata) export FAKE_TARGET_RAW_QUERY_FAIL=true ;;
+    metadata) export FAKE_TARGET_JQ_QUERY_FAIL=true ;;
   esac
-  if bash "$ALLOCATOR" pr-900 3 900 "${expected_target_head:-$FAKE_TARGET_HEAD}"; then
+  target_contract_output="$TEMP_DIR/target-${target_contract_case}.output"
+  if bash "$ALLOCATOR" pr-900 3 900 "${expected_target_head:-$FAKE_TARGET_HEAD}" \
+    >"$target_contract_output" 2>&1; then
     echo "allocator accepted invalid live target ${target_contract_case} metadata" >&2
     exit 1
+  fi
+  if [[ "$target_contract_case" == metadata ]]; then
+    grep -Fxq \
+      'Refusing capacity action for target PR #900: current metadata is unavailable' \
+      "$target_contract_output"
   fi
   test ! -e "$FAKE_DELETE_LOG"
   unset expected_target_head
@@ -1925,12 +1936,17 @@ grep -q -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow"
 grep -q 'malformed-label-metadata' "$eligibility_script"
 # shellcheck disable=SC2016 # Assert centralized exact-label inspection in trusted workflow source.
 test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow")" -eq 1
-test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 5
+test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 7
+# shellcheck disable=SC2016 # Assert literal cleanup helper arguments.
+test "$(grep -Fc -- '--cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"' "$trusted_workflow")" -eq 2
 test "$(grep -Fc -- '--revalidate-deploy' "$trusted_workflow")" -eq 0
 test "$(grep -Fc -- '--operation deploy' "$trusted_workflow")" -eq 0
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
 test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
-test "$(grep -Fc -- '--revalidate-deploy' "$revalidation_helper")" -eq 1
+# shellcheck disable=SC2016 # Assert literal helper mode selection.
+grep -Fq -- 'revalidation_mode="--revalidate-${mode}"' "$revalidation_helper"
+# shellcheck disable=SC2016 # Assert literal evaluator argument forwarding.
+grep -Fq -- '"$revalidation_mode"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
 grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.

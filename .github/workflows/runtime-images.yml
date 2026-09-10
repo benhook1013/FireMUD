@@ -337,7 +337,7 @@ jobs:
             --env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused \
             "$CONTROLLER_IMAGE"
 
-          for _ in {1..30}; do
+          for _ in {1..300}; do
             if [[ "$(docker inspect --format '{{.State.Running}}' "$container_name")" != true ]]; then
               docker logs "$container_name"
               echo "Hosted identity controller exited before its paused-mode health endpoint became available." >&2

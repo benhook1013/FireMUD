@@ -176,7 +176,7 @@ class DeploymentRolloutServiceTest {
     assertEquals(true, second.telnetReady());
     assertEquals(true, second.grpcReady());
     verify(lockedProxy, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -219,7 +219,7 @@ class DeploymentRolloutServiceTest {
     verify(proxy).lockResourceVersion("rv-3");
     verify(lockedProxy).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(account).get();
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).lockResourceVersion(anyString());
     InOrder order = inOrder(proxy, lockedProxy, account);
     order.verify(proxy).get();
     order.verify(proxy).lockResourceVersion("rv-3");

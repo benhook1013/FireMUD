@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.function.BiConsumer;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,39 @@ class HostedIdentityPropertiesTest {
     properties.afterPropertiesSet();
     properties.setCaSecretName("other-ca");
     assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+  }
+
+  @Test
+  void requiresNonblankDistinctRequestedAndDeployedHeadAnnotations() {
+    List<BiConsumer<HostedIdentityProperties, String>> annotationSetters =
+        List.of(
+            HostedIdentityProperties::setPreviewRequestedHeadAnnotation,
+            HostedIdentityProperties::setPreviewDeployedHeadAnnotation,
+            HostedIdentityProperties::setDevDemoRequestedHeadAnnotation,
+            HostedIdentityProperties::setDevDemoHeadAnnotation);
+    for (BiConsumer<HostedIdentityProperties, String> setter : annotationSetters) {
+      for (String invalid : new String[] {null, "", " \t "}) {
+        HostedIdentityProperties properties = new HostedIdentityProperties();
+        setter.accept(properties, invalid);
+        assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      }
+    }
+
+    HostedIdentityProperties preview = new HostedIdentityProperties();
+    preview.setPreviewDeployedHeadAnnotation(preview.getPreviewRequestedHeadAnnotation());
+    IllegalStateException previewFailure =
+        assertThrows(IllegalStateException.class, preview::afterPropertiesSet);
+    assertEquals(
+        "preview requested and deployed head annotations must differ",
+        previewFailure.getMessage());
+
+    HostedIdentityProperties devDemo = new HostedIdentityProperties();
+    devDemo.setDevDemoHeadAnnotation(devDemo.getDevDemoRequestedHeadAnnotation());
+    IllegalStateException devDemoFailure =
+        assertThrows(IllegalStateException.class, devDemo::afterPropertiesSet);
+    assertEquals(
+        "dev-demo requested and deployed head annotations must differ",
+        devDemoFailure.getMessage());
   }
 
   @Test

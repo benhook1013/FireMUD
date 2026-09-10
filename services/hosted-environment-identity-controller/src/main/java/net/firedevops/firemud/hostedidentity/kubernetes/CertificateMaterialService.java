@@ -143,16 +143,11 @@ public class CertificateMaterialService {
             true,
             "Opaque",
             properties.getGrpcTrustAnchorSha256());
-    RoleMaterial pinned =
-        batch.pinnedUnacceptedMaterial(HostedIdentityContract.GRPC_ROLE, expectation);
-    if (pinned != null) {
-      return pinned;
-    }
-    if (batch.deferBehindSelectedRotation(HostedIdentityContract.GRPC_ROLE)) {
-      return acceptedMaterial(client, plan, HostedIdentityContract.GRPC_ROLE, expectation);
-    }
-    if (batch.deferBehindPostSnapshotRotation(HostedIdentityContract.GRPC_ROLE)) {
-      return acceptedMaterial(client, plan, HostedIdentityContract.GRPC_ROLE, expectation);
+    RoleMaterial selected =
+        selectedRoleMaterial(
+            client, plan, HostedIdentityContract.GRPC_ROLE, expectation, batch);
+    if (selected != null) {
+      return selected;
     }
     Secret source =
         grpcBundleGenerator.ensure(
@@ -182,7 +177,7 @@ public class CertificateMaterialService {
             issuanceGeneration,
             issuanceGeneration,
             HostedIdentityContract.TRANSPORT_PROVENANCE,
-            "source-ready"),
+            RoleMaterialState.SOURCE_READY),
         expectation,
         batch);
   }
@@ -225,17 +220,14 @@ public class CertificateMaterialService {
       String secretName,
       RoleExpectation expectation,
       MaterializationBatch batch) {
-    RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
-    if (pinned != null) {
-      return pinned;
-    }
-    if (batch.deferBehindSelectedRotation(role)) {
-      return acceptedMaterial(client, plan, role, expectation);
+    RoleMaterial selected = selectedRoleMaterial(client, plan, role, expectation, batch);
+    if (selected != null) {
+      return selected;
     }
     ReadyCertificate readyCertificate =
         readyCertificateRevision(client, plan.identityNamespace(), certificate);
     if (readyCertificate == null) {
-      return RoleMaterial.pending(role, "certificate-pending");
+      return RoleMaterial.pending(role, RoleMaterialState.CERTIFICATE_PENDING);
     }
     return serialize(
         client,
@@ -243,6 +235,22 @@ public class CertificateMaterialService {
         materializeSource(client, plan, role, secretName, expectation, readyCertificate),
         expectation,
         batch);
+  }
+
+  private RoleMaterial selectedRoleMaterial(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String role,
+      RoleExpectation expectation,
+      MaterializationBatch batch) {
+    RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
+    if (pinned != null) {
+      return pinned;
+    }
+    if (batch.deferBehindSelectedRotation(role) || batch.deferBehindPostSnapshotRotation(role)) {
+      return acceptedMaterial(client, plan, role, expectation);
+    }
+    return null;
   }
 
   private RoleMaterial pendingMaterial(
@@ -279,7 +287,8 @@ public class CertificateMaterialService {
     if (!pendingProjectionOwnsRotation(pending, projectionRevision, candidateRevision)) {
       return candidate;
     }
-    return projectionMaterial(projection, candidate.role(), expectation, "serialized-in-flight");
+    return projectionMaterial(
+        projection, candidate.role(), expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
   }
 
   static boolean pendingProjectionOwnsRotation(
@@ -464,7 +473,9 @@ public class CertificateMaterialService {
         acceptedGeneration,
         acceptedObjectGeneration,
         provenance,
-        drifted ? "serialized-deferred-drift" : "serialized-deferred");
+        drifted
+            ? RoleMaterialState.SERIALIZED_DEFERRED_DRIFT
+            : RoleMaterialState.SERIALIZED_DEFERRED);
   }
 
   private SecretMaterialValidator.MaterialSummary validateAcceptedMaterial(
@@ -502,7 +513,7 @@ public class CertificateMaterialService {
   }
 
   private RoleMaterial projectionMaterial(
-      Secret projection, String role, RoleExpectation expectation, String state) {
+      Secret projection, String role, RoleExpectation expectation, RoleMaterialState state) {
     Map<String, String> annotations = projection.getMetadata().getAnnotations();
     long sourceGeneration =
         positiveAnnotation(annotations, HostedIdentityContract.SOURCE_GENERATION_ANNOTATION);
@@ -527,6 +538,9 @@ public class CertificateMaterialService {
 
   private static void requireOwned(
       Secret secret, EnvironmentIdentityPlan plan, String role, String kind) {
+    if (secret == null || secret.getMetadata() == null) {
+      throw new IllegalStateException(kind + " is absent or has no metadata");
+    }
     if (!SecretProjectionService.owned(secret, plan.name(), role)) {
       throw new IllegalStateException(kind + " is not controller-owned");
     }
@@ -607,15 +621,15 @@ public class CertificateMaterialService {
     Secret source =
         client.secrets().inNamespace(plan.identityNamespace()).withName(secretName).get();
     if (source == null) {
-      return RoleMaterial.pending(role, "materialization-pending");
+      return RoleMaterial.pending(role, RoleMaterialState.MATERIALIZATION_PENDING);
     }
     requireCertManagerSourceBinding(source, plan, role, readyCertificate);
     if (!certificateRequestMatchesSource(
         client, plan.identityNamespace(), readyCertificate, source)) {
-      return RoleMaterial.pending(role, "materialization-pending");
+      return RoleMaterial.pending(role, RoleMaterialState.MATERIALIZATION_PENDING);
     }
     if (!certificateSnapshotStillCurrent(client, plan.identityNamespace(), readyCertificate)) {
-      return RoleMaterial.pending(role, "materialization-pending");
+      return RoleMaterial.pending(role, RoleMaterialState.MATERIALIZATION_PENDING);
     }
     SecretMaterialValidator.MaterialSummary summary =
         materialValidator.validateIdentity(
@@ -633,7 +647,7 @@ public class CertificateMaterialService {
         readyCertificate.revision(),
         readyCertificate.objectGeneration(),
         "cert-manager",
-        "source-ready");
+        RoleMaterialState.SOURCE_READY);
   }
 
   private static boolean certificateRequestMatchesSource(
@@ -1055,7 +1069,7 @@ public class CertificateMaterialService {
         return null;
       }
       return projectionMaterial(
-          observation.projection(), role, expectation, "serialized-in-flight");
+          observation.projection(), role, expectation, RoleMaterialState.SERIALIZED_IN_FLIGHT);
     }
 
     private boolean initializing(String role) {
@@ -1138,8 +1152,12 @@ public class CertificateMaterialService {
       long sourceGeneration,
       long sourceObjectGeneration,
       String provenance,
-      String state) {
-    static RoleMaterial pending(String role, String state) {
+      RoleMaterialState state) {
+    public RoleMaterial {
+      Objects.requireNonNull(state, "state");
+    }
+
+    static RoleMaterial pending(String role, RoleMaterialState state) {
       return new RoleMaterial(role, null, null, 0, 0, "", state);
     }
 
@@ -1148,15 +1166,36 @@ public class CertificateMaterialService {
     }
 
     public boolean projectionDeferred() {
-      return "serialized-deferred-drift".equals(state);
+      return state == RoleMaterialState.SERIALIZED_DEFERRED_DRIFT;
     }
 
     public boolean acceptedSnapshotDeferred() {
-      return "serialized-deferred".equals(state) || projectionDeferred();
+      return state == RoleMaterialState.SERIALIZED_DEFERRED || projectionDeferred();
     }
 
     public String revision() {
       return summary == null ? null : summary.certificateFingerprint();
+    }
+  }
+
+  /** Closed controller-internal lifecycle states for one role's materialization attempt. */
+  public enum RoleMaterialState {
+    SOURCE_READY("source-ready"),
+    CERTIFICATE_PENDING("certificate-pending"),
+    MATERIALIZATION_PENDING("materialization-pending"),
+    SERIALIZED_IN_FLIGHT("serialized-in-flight"),
+    SERIALIZED_DEFERRED("serialized-deferred"),
+    SERIALIZED_DEFERRED_DRIFT("serialized-deferred-drift");
+
+    private final String statusValue;
+
+    RoleMaterialState(String statusValue) {
+      this.statusValue = statusValue;
+    }
+
+    /** Returns the stable value persisted in role status and surfaced in reconciliation output. */
+    public String statusValue() {
+      return statusValue;
     }
   }
 }

@@ -68,6 +68,10 @@ public class HostedIdentityProperties implements InitializingBean {
     requireNonBlank("gRPC issuer", grpcIssuer);
     requireValidHostname("preview domain", previewDomain);
     requireValidHostname("dev-demo hostname", devDemoHostname);
+    requireDistinctHeadAnnotations(
+        "preview", previewRequestedHeadAnnotation, previewDeployedHeadAnnotation);
+    requireDistinctHeadAnnotations(
+        "dev-demo", devDemoRequestedHeadAnnotation, devDemoHeadAnnotation);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(
@@ -105,6 +109,16 @@ public class HostedIdentityProperties implements InitializingBean {
   private static void requireNonBlank(String propertyName, String value) {
     if (value == null || value.isBlank()) {
       throw new IllegalStateException(propertyName + " must not be blank");
+    }
+  }
+
+  private static void requireDistinctHeadAnnotations(
+      String lifecycle, String requestedAnnotation, String deployedAnnotation) {
+    requireNonBlank(lifecycle + " requested head annotation", requestedAnnotation);
+    requireNonBlank(lifecycle + " deployed head annotation", deployedAnnotation);
+    if (requestedAnnotation.equals(deployedAnnotation)) {
+      throw new IllegalStateException(
+          lifecycle + " requested and deployed head annotations must differ");
     }
   }
 

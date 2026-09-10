@@ -122,6 +122,8 @@ class HostedStatusServiceTest {
         changed,
         null,
         null,
+        null,
+        null,
         null);
 
     assertEquals("False", resource.getStatus().getConditions().get(0).getStatus());
@@ -152,6 +154,8 @@ class HostedStatusServiceTest {
             "served",
             true,
             observed,
+            null,
+            null,
             null,
             null,
             null);
@@ -194,6 +198,8 @@ class HostedStatusServiceTest {
         null,
         null,
         null,
+        null,
+        null,
         null);
     assertEquals("uid-recorded", resource.getStatus().getProfile().getRuntimeNamespaceUid());
     assertEquals("head-recorded", resource.getStatus().getProfile().getRequestedHeadSha());
@@ -207,6 +213,8 @@ class HostedStatusServiceTest {
         "absent",
         false,
         RuntimeProfileService.RuntimeProfile.absent(),
+        null,
+        null,
         null,
         null,
         null);
@@ -346,6 +354,8 @@ class HostedStatusServiceTest {
         runtimeProfile,
         null,
         null,
+        null,
+        null,
         null);
     assertEquals(
         "2026-01-01T00:00:00Z",
@@ -360,6 +370,8 @@ class HostedStatusServiceTest {
         runtimeProfile,
         null,
         null,
+        null,
+        null,
         null);
     assertEquals(
         "2026-01-01T00:00:00Z",
@@ -372,6 +384,8 @@ class HostedStatusServiceTest {
         "still not ready",
         false,
         runtimeProfile,
+        null,
+        null,
         null,
         null,
         null);
