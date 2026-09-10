@@ -277,6 +277,10 @@ public class ServedEnvironmentProbe {
     if (expectedTrustAnchor == null) {
       throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
     }
+    String normalizedAnchor = normalize(expectedTrustAnchor);
+    if (!normalizedAnchor.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
+    }
     if (material == null || material.getData() == null) {
       throw new IllegalArgumentException("gRPC probe material is absent");
     }
@@ -284,10 +288,6 @@ public class ServedEnvironmentProbe {
     PrivateKey privateKey = privateKey(requiredData(material, "tls.key"));
     requireMatchingPrivateKey(chain.get(0), privateKey);
     List<X509Certificate> anchors = certificates(requiredData(material, "ca.crt"));
-    String normalizedAnchor = normalize(expectedTrustAnchor);
-    if (!normalizedAnchor.matches("[0-9a-f]{64}")) {
-      throw new IllegalArgumentException("configured gRPC trust anchor is invalid");
-    }
     X509Certificate anchor =
         anchors.stream()
             .filter(

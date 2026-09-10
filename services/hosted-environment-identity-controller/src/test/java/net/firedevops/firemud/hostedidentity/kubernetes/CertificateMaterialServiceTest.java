@@ -570,6 +570,28 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void certificateCreateConflictRereadsAndValidatesTheWinningCertificate() {
+    Map<String, String> data = Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+
+    IssuanceObservation observation =
+        materializeIngress(2, data, data, 2, new KubernetesClientException("conflict", 409, null));
+
+    assertEquals(SOURCE_READY, observation.material().state());
+    assertEquals(true, observation.material().ready());
+  }
+
+  @Test
+  void certificateCreatePropagatesNonConflictFailure() {
+    Map<String, String> data = Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+
+    assertSame(
+        failure,
+        assertThrows(
+            KubernetesClientException.class, () -> materializeIngress(2, data, data, 2, failure)));
+  }
+
+  @Test
   void initialMaterializationAllowsBestEffortCaToBeAbsentFromRequestStatus() {
     Map<String, String> requestData =
         Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key"));
@@ -1356,7 +1378,7 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
-  void multipleValidCertificateRequestsKeepsMaterializationPending() {
+  void multipleValidCertificateRequestsFailClosed() {
     StableBatchFixture fixture = stableBatchFixture();
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
@@ -1381,9 +1403,11 @@ class CertificateMaterialServiceTest {
                 sourceData,
                 true)));
 
-    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
 
-    assertEquals(MATERIALIZATION_PENDING, material.state());
+    assertEquals(
+        "multiple CertificateRequests match the identity source Secret", failure.getMessage());
   }
 
   @Test
@@ -1566,6 +1590,15 @@ class CertificateMaterialServiceTest {
       Map<String, String> requestData,
       Map<String, String> sourceData,
       long finalCertificateRevision) {
+    return materializeIngress(revision, requestData, sourceData, finalCertificateRevision, null);
+  }
+
+  private static IssuanceObservation materializeIngress(
+      long revision,
+      Map<String, String> requestData,
+      Map<String, String> sourceData,
+      long finalCertificateRevision,
+      KubernetesClientException createFailure) {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     SecretClient secretClient = secretClient(plan);
@@ -1580,7 +1613,8 @@ class CertificateMaterialServiceTest {
             plan.ingressCertificateName(),
             true,
             revision,
-            requestData);
+            requestData,
+            createFailure);
     when(certificate.get())
         .thenReturn(
             null,
@@ -1644,6 +1678,19 @@ class CertificateMaterialServiceTest {
       boolean readyAfterCreate,
       long revision,
       Map<String, String> sourceData) {
+    return stubCertificate(
+        client, plan, certificateName, readyAfterCreate, revision, sourceData, null);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Resource<GenericKubernetesResource> stubCertificate(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String certificateName,
+      boolean readyAfterCreate,
+      long revision,
+      Map<String, String> sourceData,
+      KubernetesClientException createFailure) {
     MixedOperation<
             GenericKubernetesResource,
             GenericKubernetesResourceList,
@@ -1655,12 +1702,16 @@ class CertificateMaterialServiceTest {
             Resource<GenericKubernetesResource>>
         identityCertificates = mock(NonNamespaceOperation.class);
     Resource<GenericKubernetesResource> certificate = mock(Resource.class);
+    Resource<GenericKubernetesResource> createOperation = mock(Resource.class);
     when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
     when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
     when(identityCertificates.withName(certificateName)).thenReturn(certificate);
     when(identityCertificates.resource(
             org.mockito.ArgumentMatchers.any(GenericKubernetesResource.class)))
-        .thenReturn(mock(Resource.class));
+        .thenReturn(createOperation);
+    if (createFailure != null) {
+      org.mockito.Mockito.doThrow(createFailure).when(createOperation).create();
+    }
     if (readyAfterCreate) {
       GenericKubernetesResource ready = readyCertificate(plan, certificateName, revision);
       when(certificate.get()).thenReturn(null, ready);

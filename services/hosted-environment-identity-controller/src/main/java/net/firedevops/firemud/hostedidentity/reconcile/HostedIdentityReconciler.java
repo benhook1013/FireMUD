@@ -577,6 +577,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         };
     assertRuntimeProfileCurrent(plan, expectedProfile, "runtime projection read");
     Secret secret = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name).get();
+    if (secret == null) {
+      return null;
+    }
     validateSourceLabels(secret, plan, role);
     return secret;
   }

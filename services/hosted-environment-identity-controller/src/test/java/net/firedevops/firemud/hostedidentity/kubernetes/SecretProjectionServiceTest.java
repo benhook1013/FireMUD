@@ -115,9 +115,12 @@ class SecretProjectionServiceTest {
             () ->
                 SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, null));
     assertEquals("material data is required", missingRoleData.getMessage());
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));
+    IllegalArgumentException malformed =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));
+    assertEquals("unable to calculate material revision", malformed.getMessage());
+    assertTrue(malformed.getCause() instanceof IllegalArgumentException);
   }
 
   @Test

@@ -44,6 +44,7 @@ import org.bouncycastle.asn1.DERPrintableString;
 import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
 import org.bouncycastle.asn1.x509.Extension;
@@ -51,7 +52,10 @@ import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
+import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
@@ -93,6 +97,19 @@ public class SecretMaterialValidatorTest {
                 trustAnchor);
 
     X509Certificate leaf = certificate(source.getData().get("tls.crt"));
+    X509Certificate root = certificate(source.getData().get("ca.crt"));
+    JcaX509ExtensionUtils extensionUtils = new JcaX509ExtensionUtils();
+    byte[] rootSubjectKeyIdentifier = subjectKeyIdentifier(root);
+    byte[] leafSubjectKeyIdentifier = subjectKeyIdentifier(leaf);
+    assertArrayEquals(
+        extensionUtils.createSubjectKeyIdentifier(root.getPublicKey()).getKeyIdentifier(),
+        rootSubjectKeyIdentifier);
+    assertArrayEquals(rootSubjectKeyIdentifier, authorityKeyIdentifier(root));
+    assertArrayEquals(
+        extensionUtils.createSubjectKeyIdentifier(leaf.getPublicKey()).getKeyIdentifier(),
+        leafSubjectKeyIdentifier);
+    assertArrayEquals(rootSubjectKeyIdentifier, authorityKeyIdentifier(leaf));
+    assertFalse(java.util.Arrays.equals(rootSubjectKeyIdentifier, leafSubjectKeyIdentifier));
     var subjectAlternativeNames = leaf.getSubjectAlternativeNames();
     assertTrue(subjectAlternativeNames != null);
     assertTrue(
@@ -1216,6 +1233,22 @@ public class SecretMaterialValidatorTest {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")
             .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(encoded)));
+  }
+
+  private static byte[] subjectKeyIdentifier(X509Certificate certificate) throws Exception {
+    Extension extension =
+        new X509CertificateHolder(certificate.getEncoded())
+            .getExtension(Extension.subjectKeyIdentifier);
+    assertTrue(extension != null);
+    return SubjectKeyIdentifier.getInstance(extension.getParsedValue()).getKeyIdentifier();
+  }
+
+  private static byte[] authorityKeyIdentifier(X509Certificate certificate) throws Exception {
+    Extension extension =
+        new X509CertificateHolder(certificate.getEncoded())
+            .getExtension(Extension.authorityKeyIdentifier);
+    assertTrue(extension != null);
+    return AuthorityKeyIdentifier.getInstance(extension.getParsedValue()).getKeyIdentifier();
   }
 
   private static Secret generatedCa(Instant now, Duration lifetime) throws Exception {

@@ -294,7 +294,8 @@ class HostedIdentityPropertiesTest {
   }
 
   private static void assertInvalidPin(BiConsumer<HostedIdentityProperties, String> setter) {
-    for (String invalidPin : new String[] {"A".repeat(64), "g".repeat(64)}) {
+    for (String invalidPin :
+        new String[] {"A".repeat(64), "g".repeat(64), "a".repeat(63), "a".repeat(65)}) {
       HostedIdentityProperties properties = new HostedIdentityProperties();
       setter.accept(properties, invalidPin);
       assertThrows(IllegalStateException.class, properties::afterPropertiesSet);

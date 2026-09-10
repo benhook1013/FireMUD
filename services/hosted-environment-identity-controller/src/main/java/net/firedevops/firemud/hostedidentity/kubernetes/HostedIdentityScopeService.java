@@ -13,6 +13,7 @@ import io.fabric8.kubernetes.api.model.rbac.RoleBuilder;
 import io.fabric8.kubernetes.api.model.rbac.RoleRefBuilder;
 import io.fabric8.kubernetes.api.model.rbac.SubjectBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,8 +35,7 @@ public class HostedIdentityScopeService {
     ensureRuntime(client, plan);
   }
 
-  private static void ensureIdentityNamespace(
-      KubernetesClient client, EnvironmentIdentityPlan plan) {
+  static void ensureIdentityNamespace(KubernetesClient client, EnvironmentIdentityPlan plan) {
     var operation = client.namespaces().withName(plan.identityNamespace());
     Namespace current = operation.get();
     if (current == null) {
@@ -46,8 +46,19 @@ public class HostedIdentityScopeService {
               .withLabels(identityNamespaceLabels(plan))
               .endMetadata()
               .build();
-      client.namespaces().resource(desired).create();
-      return;
+      try {
+        client.namespaces().resource(desired).create();
+        return;
+      } catch (KubernetesClientException exception) {
+        if (exception.getCode() != 409) {
+          throw exception;
+        }
+        current = operation.get();
+        if (current == null) {
+          throw new IllegalStateException(
+              "identity Namespace create conflict winner is absent", exception);
+        }
+      }
     }
     if (!isExpectedIdentityNamespace(current, plan)) {
       throw new IllegalStateException("identity Namespace ownership or labels drifted");
@@ -248,8 +259,21 @@ public class HostedIdentityScopeService {
         client.rbac().roles().inNamespace(namespace).withName(desired.getMetadata().getName());
     Role current = operation.get();
     if (current == null) {
-      client.rbac().roles().inNamespace(namespace).resource(desired).create();
-    } else if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
+      try {
+        client.rbac().roles().inNamespace(namespace).resource(desired).create();
+        return;
+      } catch (KubernetesClientException exception) {
+        if (exception.getCode() != 409) {
+          throw exception;
+        }
+        current = operation.get();
+        if (current == null) {
+          throw new IllegalStateException(
+              "hosted identity scope Role create conflict winner is absent", exception);
+        }
+      }
+    }
+    if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
       throw new IllegalStateException("hosted identity scope Role drifted");
     } else if (!roleRulesEquivalent(current, desired)) {
       operation.edit(resource -> applyDesiredRoleSpec(resource, desired));
@@ -289,8 +313,21 @@ public class HostedIdentityScopeService {
             .build();
     RoleBinding current = operation.get();
     if (current == null) {
-      client.rbac().roleBindings().inNamespace(namespace).resource(desired).create();
-    } else if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
+      try {
+        client.rbac().roleBindings().inNamespace(namespace).resource(desired).create();
+        return;
+      } catch (KubernetesClientException exception) {
+        if (exception.getCode() != 409) {
+          throw exception;
+        }
+        current = operation.get();
+        if (current == null) {
+          throw new IllegalStateException(
+              "hosted identity scope RoleBinding create conflict winner is absent", exception);
+        }
+      }
+    }
+    if (!managedMetadataEquivalent(current.getMetadata(), desired.getMetadata())) {
       throw new IllegalStateException("hosted identity scope RoleBinding drifted");
     } else if (!roleRefEquivalent(current, desired)) {
       throw new IllegalStateException("hosted identity scope RoleBinding roleRef drifted");

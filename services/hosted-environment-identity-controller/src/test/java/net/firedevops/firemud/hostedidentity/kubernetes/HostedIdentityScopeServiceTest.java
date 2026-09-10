@@ -2,8 +2,10 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -24,6 +26,7 @@ import io.fabric8.kubernetes.api.model.rbac.RoleList;
 import io.fabric8.kubernetes.api.model.rbac.RoleRefBuilder;
 import io.fabric8.kubernetes.api.model.rbac.SubjectBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
 import io.fabric8.kubernetes.client.dsl.RbacAPIGroupDSL;
@@ -64,6 +67,58 @@ class HostedIdentityScopeServiceTest {
     assertEquals("runtime Namespace is absent or has no UID", failure.getMessage());
     verify(namespaces, never()).withName(plan.identityNamespace());
     verify(namespaces, never()).resource(org.mockito.ArgumentMatchers.any(Namespace.class));
+  }
+
+  @Test
+  void identityNamespaceCreateConflictAcceptsCanonicalWinner() {
+    EnvironmentIdentityPlan plan = plan();
+    NamespaceClient fixture = namespaceClient(plan);
+    when(fixture.operation().get()).thenReturn(null, identityNamespace(plan));
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    HostedIdentityScopeService.ensureIdentityNamespace(fixture.client(), plan);
+
+    verify(fixture.operation(), times(2)).get();
+  }
+
+  @Test
+  void identityNamespaceCreateConflictRejectsDriftedWinner() {
+    EnvironmentIdentityPlan plan = plan();
+    NamespaceClient fixture = namespaceClient(plan);
+    Namespace drifted =
+        new NamespaceBuilder(identityNamespace(plan))
+            .editMetadata()
+            .addToLabels(HostedIdentityContract.MANAGED_BY_LABEL, "other")
+            .endMetadata()
+            .build();
+    when(fixture.operation().get()).thenReturn(null, drifted);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityScopeService.ensureIdentityNamespace(fixture.client(), plan));
+
+    assertEquals("identity Namespace ownership or labels drifted", failure.getMessage());
+  }
+
+  @Test
+  void identityNamespaceCreatePropagatesNonConflictFailure() {
+    EnvironmentIdentityPlan plan = plan();
+    NamespaceClient fixture = namespaceClient(plan);
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+    when(fixture.operation().get()).thenReturn(null);
+    doThrow(failure).when(fixture.createOperation()).create();
+
+    assertSame(
+        failure,
+        assertThrows(
+            KubernetesClientException.class,
+            () -> HostedIdentityScopeService.ensureIdentityNamespace(fixture.client(), plan)));
   }
 
   @Test
@@ -290,6 +345,58 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
+  void roleCreateConflictAcceptsCanonicalWinner() {
+    RoleClient fixture = roleClient();
+    Role desired = role("get");
+    when(fixture.operation().get()).thenReturn(null, desired);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    HostedIdentityScopeService.ensureRole(fixture.client(), "pr-42", desired);
+
+    verify(fixture.operation(), times(2)).get();
+  }
+
+  @Test
+  void roleCreateConflictRejectsDriftedWinner() {
+    RoleClient fixture = roleClient();
+    Role desired = role("get");
+    Role drifted =
+        new RoleBuilder(desired)
+            .editMetadata()
+            .addToLabels(HostedIdentityContract.MANAGED_BY_LABEL, "other")
+            .endMetadata()
+            .build();
+    when(fixture.operation().get()).thenReturn(null, drifted);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityScopeService.ensureRole(fixture.client(), "pr-42", desired));
+
+    assertEquals("hosted identity scope Role drifted", failure.getMessage());
+  }
+
+  @Test
+  void roleCreatePropagatesNonConflictFailure() {
+    RoleClient fixture = roleClient();
+    Role desired = role("get");
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+    when(fixture.operation().get()).thenReturn(null);
+    doThrow(failure).when(fixture.createOperation()).create();
+
+    assertSame(
+        failure,
+        assertThrows(
+            KubernetesClientException.class,
+            () -> HostedIdentityScopeService.ensureRole(fixture.client(), "pr-42", desired)));
+  }
+
+  @Test
   void roleOwnershipDriftRemainsFailClosed() {
     Role desired = role("get");
     Role wrongOwner =
@@ -395,6 +502,81 @@ class HostedIdentityScopeServiceTest {
     assertEquals("ServiceAccount", created.getSubjects().get(0).getKind());
     assertEquals("firemud-hosted-identity-controller", created.getSubjects().get(0).getName());
     assertEquals(plan.controlNamespace(), created.getSubjects().get(0).getNamespace());
+  }
+
+  @Test
+  void bindingCreateConflictAcceptsCanonicalWinner() {
+    EnvironmentIdentityPlan plan = plan();
+    BindingClient fixture = bindingClient();
+    RoleBinding desired =
+        binding(
+            new RoleRefBuilder()
+                .withApiGroup("rbac.authorization.k8s.io")
+                .withKind("Role")
+                .withName("scope")
+                .build(),
+            new SubjectBuilder()
+                .withKind("ServiceAccount")
+                .withName("firemud-hosted-identity-controller")
+                .withNamespace(plan.controlNamespace())
+                .build());
+    when(fixture.operation().get()).thenReturn(null, desired);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    HostedIdentityScopeService.ensureBinding(
+        fixture.client(), "pr-42", "scope", ROLE_LABELS, "scope", plan);
+
+    verify(fixture.operation(), times(2)).get();
+  }
+
+  @Test
+  void bindingCreateConflictRejectsDriftedWinner() {
+    EnvironmentIdentityPlan plan = plan();
+    BindingClient fixture = bindingClient();
+    RoleBinding drifted =
+        binding(
+            new RoleRefBuilder()
+                .withApiGroup("rbac.authorization.k8s.io")
+                .withKind("Role")
+                .withName("other")
+                .build(),
+            new SubjectBuilder()
+                .withKind("ServiceAccount")
+                .withName("firemud-hosted-identity-controller")
+                .withNamespace(plan.controlNamespace())
+                .build());
+    when(fixture.operation().get()).thenReturn(null, drifted);
+    doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.createOperation())
+        .create();
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                HostedIdentityScopeService.ensureBinding(
+                    fixture.client(), "pr-42", "scope", ROLE_LABELS, "scope", plan));
+
+    assertEquals("hosted identity scope RoleBinding roleRef drifted", failure.getMessage());
+  }
+
+  @Test
+  void bindingCreatePropagatesNonConflictFailure() {
+    EnvironmentIdentityPlan plan = plan();
+    BindingClient fixture = bindingClient();
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+    when(fixture.operation().get()).thenReturn(null);
+    doThrow(failure).when(fixture.createOperation()).create();
+
+    assertSame(
+        failure,
+        assertThrows(
+            KubernetesClientException.class,
+            () ->
+                HostedIdentityScopeService.ensureBinding(
+                    fixture.client(), "pr-42", "scope", ROLE_LABELS, "scope", plan)));
   }
 
   @Test
@@ -608,6 +790,20 @@ class HostedIdentityScopeServiceTest {
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
+  private static NamespaceClient namespaceClient(EnvironmentIdentityPlan plan) {
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation<Namespace, NamespaceList, Resource<Namespace>> namespaces =
+        mock(NonNamespaceOperation.class);
+    Resource<Namespace> operation = mock(Resource.class);
+    Resource<Namespace> createOperation = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.identityNamespace())).thenReturn(operation);
+    when(namespaces.resource(org.mockito.ArgumentMatchers.any(Namespace.class)))
+        .thenReturn(createOperation);
+    return new NamespaceClient(client, operation, createOperation);
+  }
+
+  @SuppressWarnings({"unchecked", "rawtypes"})
   private static RoleClient roleClient() {
     KubernetesClient client = mock(KubernetesClient.class);
     RbacAPIGroupDSL rbac = mock(RbacAPIGroupDSL.class);
@@ -655,4 +851,9 @@ class HostedIdentityScopeServiceTest {
       NonNamespaceOperation<RoleBinding, RoleBindingList, Resource<RoleBinding>> namespaceBindings,
       Resource<RoleBinding> operation,
       Resource<RoleBinding> createOperation) {}
+
+  private record NamespaceClient(
+      KubernetesClient client,
+      Resource<Namespace> operation,
+      Resource<Namespace> createOperation) {}
 }

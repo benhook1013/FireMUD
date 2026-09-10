@@ -674,6 +674,10 @@ public class CertificateMaterialService {
             .filter(request -> certificateRequestMatchesSourceData(request, source))
             .limit(2)
             .count();
+    if (validRequestCount > 1) {
+      throw new IllegalStateException(
+          "multiple CertificateRequests match the identity source Secret");
+    }
     return validRequestCount == 1;
   }
 
@@ -822,11 +826,17 @@ public class CertificateMaterialService {
             .withName(desired.getMetadata().getName());
     GenericKubernetesResource existing = operation.get();
     if (existing == null) {
-      client
-          .genericKubernetesResources(ResourceContexts.CERTIFICATES)
-          .inNamespace(namespace)
-          .resource(desired)
-          .create();
+      try {
+        client
+            .genericKubernetesResources(ResourceContexts.CERTIFICATES)
+            .inNamespace(namespace)
+            .resource(desired)
+            .create();
+      } catch (KubernetesClientException exception) {
+        if (exception.getCode() != 409) {
+          throw exception;
+        }
+      }
     } else {
       if (!"cert-manager.io/v1".equals(existing.getApiVersion())
           || !"Certificate".equals(existing.getKind())

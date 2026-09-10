@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLServerSocket;
@@ -174,6 +176,29 @@ class ServedEnvironmentProbeTest {
                 },
                 "mtls-handshake")
             .reason());
+  }
+
+  @Test
+  void malformedGrpcTrustAnchorIsRejectedBeforeAbsentOrMalformedMaterial() {
+    IllegalArgumentException absentMaterial =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ServedEnvironmentProbe.grpcSslContext(null, "not-a-trust-anchor"));
+    Secret malformedMaterial =
+        new SecretBuilder()
+            .withData(
+                Map.of(
+                    "tls.crt", "not-base64",
+                    "tls.key", "not-base64",
+                    "ca.crt", "not-base64"))
+            .build();
+    IllegalArgumentException unreadableMaterial =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ServedEnvironmentProbe.grpcSslContext(malformedMaterial, "not-a-trust-anchor"));
+
+    assertEquals("configured gRPC trust anchor is invalid", absentMaterial.getMessage());
+    assertEquals("configured gRPC trust anchor is invalid", unreadableMaterial.getMessage());
   }
 
   @Test

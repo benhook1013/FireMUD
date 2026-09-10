@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -132,6 +133,7 @@ class EnvironmentIdentityPlannerTest {
     try (var reader = Files.newBufferedReader(admissionPath)) {
       scopeRolePolicy =
           java.util.stream.StreamSupport.stream(new Yaml().loadAll(reader).spliterator(), false)
+              .filter(Objects::nonNull)
               .map(Map.class::cast)
               .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
               .filter(

@@ -97,6 +97,8 @@ public class SecretMaterialValidator {
     if (secret == null || secret.getData() == null) {
       throw new MaterialValidationException("owned Secret is missing data");
     }
+    // A bound cert-manager predecessor may retain its native TLS type while an Opaque expectation
+    // keeps fixed trust-anchor validation mandatory below.
     if (!expectedType.equals(secret.getType())
         && !("Opaque".equals(expectedType) && "kubernetes.io/tls".equals(secret.getType()))) {
       throw new MaterialValidationException("owned Secret has an unexpected type");

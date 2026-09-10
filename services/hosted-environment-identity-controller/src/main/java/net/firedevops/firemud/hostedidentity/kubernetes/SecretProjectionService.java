@@ -343,6 +343,8 @@ public class SecretProjectionService {
       return "sha256:" + HexFormat.of().formatHex(digest.digest());
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("unable to calculate material revision", exception);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("unable to calculate material revision", exception);
     }
   }
 

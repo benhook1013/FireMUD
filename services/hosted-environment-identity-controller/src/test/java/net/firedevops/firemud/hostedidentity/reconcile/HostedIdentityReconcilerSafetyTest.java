@@ -1258,6 +1258,72 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
+  void absentRuntimeProjectionRemainsProbeLevelMissingMaterial() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> absent = mock(Resource.class);
+    when(fixture.client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(fixture.plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(runtimeSecrets.withName(anyString())).thenReturn(absent);
+    when(absent.get()).thenReturn(null);
+
+    for (String role :
+        java.util.List.of(
+            HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
+            HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE)) {
+      assertEquals(null, fixture.reconciler.runtimeProjection(fixture.plan, expected, role));
+    }
+  }
+
+  @Test
+  void missingBridgeProjectionMapsReconciliationToVerifyingProbeStatus() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.batch.tcpProxyBridge())
+        .thenReturn(
+            DeploymentHeadGateFixture.material(
+                fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> absent = mock(Resource.class);
+    when(fixture.client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(fixture.plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(runtimeSecrets.withName(fixture.plan.tcpProxyBridgeSecretName())).thenReturn(absent);
+    when(absent.get()).thenReturn(null);
+    when(fixture.probes.probe(
+            any(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            org.mockito.ArgumentMatchers.isNull(),
+            anyString(),
+            any(Secret.class),
+            anyString()))
+        .thenReturn(
+            new ServedEnvironmentProbe.ProbeResult(false, "material-or-leaf-fingerprint-missing"));
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    assertEquals(
+        HostedEnvironmentIdentityStatus.Phase.Verifying,
+        result.getResource().orElseThrow().getStatus().getPhase());
+    HostedCondition condition =
+        result.getResource().orElseThrow().getStatus().getConditions().get(0);
+    assertEquals("ServedProbePending", condition.getReason());
+    assertEquals("material-or-leaf-fingerprint-missing", condition.getMessage());
+  }
+
+  @Test
   void runtimeProfileFencePreservesMalformedProfileCause() {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
@@ -1356,6 +1422,8 @@ class HostedIdentityReconcilerSafetyTest {
     private final EnvironmentIdentityPlanner planner;
     private final EnvironmentIdentityPlan plan;
     private final CertificateMaterialService certificates = mock(CertificateMaterialService.class);
+    private final CertificateMaterialService.MaterializationBatch batch =
+        mock(CertificateMaterialService.MaterializationBatch.class);
     private final SecretProjectionService projections = mock(SecretProjectionService.class);
     private final HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
     private final RuntimeProfileService runtime = mock(RuntimeProfileService.class);
@@ -1370,8 +1438,6 @@ class HostedIdentityReconcilerSafetyTest {
       plan = planner.plan("dev-demo");
       when(runtime.read(client, plan)).thenReturn(runtimeProfile);
 
-      CertificateMaterialService.MaterializationBatch batch =
-          mock(CertificateMaterialService.MaterializationBatch.class);
       when(certificates.beginMaterialization(client, plan)).thenReturn(batch);
       when(batch.ingress()).thenReturn(material(plan, HostedIdentityContract.INGRESS_ROLE, "1"));
       when(batch.telnet()).thenReturn(material(plan, HostedIdentityContract.TELNET_ROLE, "2"));
