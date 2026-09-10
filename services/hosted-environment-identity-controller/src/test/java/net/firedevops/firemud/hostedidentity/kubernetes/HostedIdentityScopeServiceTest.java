@@ -292,7 +292,9 @@ class HostedIdentityScopeServiceTest {
     var roundTripped = new RoleBindingBuilder(desired).build();
     roundTripped.getSubjects().get(0).setApiGroup("");
     assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
-    roundTripped.getMetadata().setAnnotations(Map.of("unexpected", "ownership"));
+    roundTripped.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
+    assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
+    roundTripped.getMetadata().setAnnotations(Map.of("firemud.dev/unexpected", "ownership"));
     assertFalse(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
   }
 
@@ -304,6 +306,7 @@ class HostedIdentityScopeServiceTest {
     Resource<Role> operation = fixture.operation();
     Role desired = role("get");
     Role oldSpec = role("list");
+    oldSpec.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
     when(operation.get()).thenReturn(oldSpec);
 
     HostedIdentityScopeService.ensureRole(client, "pr-42", desired);
@@ -313,6 +316,7 @@ class HostedIdentityScopeServiceTest {
     Role converged = editor.getValue().apply(new RoleBuilder(oldSpec).build());
     assertEquals("get", converged.getRules().get(0).getVerbs().get(0));
     assertEquals(ROLE_LABELS, converged.getMetadata().getLabels());
+    assertEquals("external", converged.getMetadata().getAnnotations().get("other.example/claim"));
 
     when(operation.get()).thenReturn(converged);
     HostedIdentityScopeService.ensureRole(client, "pr-42", desired);
@@ -352,12 +356,12 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void roleUnexpectedAnnotationDriftRemainsFailClosed() {
+  void roleControllerAnnotationDriftRemainsFailClosed() {
     Role desired = role("get");
     Role unexpectedAnnotation =
         new RoleBuilder(desired)
             .editMetadata()
-            .addToAnnotations("other.example/claim", "unexpected")
+            .addToAnnotations("firemud.dev/unexpected", "ownership")
             .endMetadata()
             .build();
 
@@ -398,6 +402,7 @@ class HostedIdentityScopeServiceTest {
                 .withName("old-controller")
                 .withNamespace(plan.controlNamespace())
                 .build());
+    oldSpec.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
     when(operation.get()).thenReturn(oldSpec);
 
     HostedIdentityScopeService.ensureBinding(client, "pr-42", "scope", ROLE_LABELS, "scope", plan);
@@ -409,6 +414,7 @@ class HostedIdentityScopeServiceTest {
     assertEquals("scope", converged.getRoleRef().getName());
     assertEquals("firemud-hosted-identity-controller", converged.getSubjects().get(0).getName());
     assertEquals(BINDING_LABELS, converged.getMetadata().getLabels());
+    assertEquals("external", converged.getMetadata().getAnnotations().get("other.example/claim"));
 
     when(operation.get()).thenReturn(converged);
     HostedIdentityScopeService.ensureBinding(client, "pr-42", "scope", ROLE_LABELS, "scope", plan);
@@ -442,7 +448,7 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void bindingIdentityRoleRefAndUnknownMetadataDriftRemainFailClosed() {
+  void bindingIdentityRoleRefAndControllerMetadataDriftRemainFailClosed() {
     EnvironmentIdentityPlan plan = plan();
     RoleBinding exactMetadata =
         binding(
@@ -462,10 +468,10 @@ class HostedIdentityScopeServiceTest {
             .withName("other-scope")
             .endMetadata()
             .build();
-    RoleBinding unknownMetadata =
+    RoleBinding controllerMetadata =
         new RoleBindingBuilder(exactMetadata)
             .editMetadata()
-            .addToAnnotations("other.example/claim", "unexpected")
+            .addToAnnotations("firemud.dev/unexpected", "ownership")
             .endMetadata()
             .build();
     RoleBinding wrongRoleRef =
@@ -480,9 +486,10 @@ class HostedIdentityScopeServiceTest {
 
     IllegalStateException identityFailure = assertBindingDriftFailsClosed(wrongIdentity, plan);
     assertEquals("hosted identity scope RoleBinding drifted", identityFailure.getMessage());
-    IllegalStateException unknownMetadataFailure =
-        assertBindingDriftFailsClosed(unknownMetadata, plan);
-    assertEquals("hosted identity scope RoleBinding drifted", unknownMetadataFailure.getMessage());
+    IllegalStateException controllerMetadataFailure =
+        assertBindingDriftFailsClosed(controllerMetadata, plan);
+    assertEquals(
+        "hosted identity scope RoleBinding drifted", controllerMetadataFailure.getMessage());
     IllegalStateException roleRefFailure = assertBindingDriftFailsClosed(wrongRoleRef, plan);
     assertEquals("hosted identity scope RoleBinding roleRef drifted", roleRefFailure.getMessage());
   }

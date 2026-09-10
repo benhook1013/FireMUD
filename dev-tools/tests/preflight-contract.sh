@@ -2326,6 +2326,7 @@ try:
     if (
         len(deadline_issues) != 1
         or "still not ready after 1 attempts" not in deadline_issues[0]
+        or "elapsed 6.0s of 5s readiness budget" not in deadline_issues[0]
     ):
         raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
 finally:

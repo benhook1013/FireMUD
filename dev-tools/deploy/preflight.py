@@ -6480,7 +6480,8 @@ def wait_for_secret_key_requirements(
         raise ValueError("ready_attempts must be positive")
     if ready_timeout_seconds is None:
         ready_timeout_seconds = HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
-    deadline = time.monotonic() + ready_timeout_seconds
+    readiness_started_at = time.monotonic()
+    deadline = readiness_started_at + ready_timeout_seconds
     pending = list(secret_requirements)
     latest_issues: dict[str, str] = {}
     attempts_completed = 0
@@ -6523,7 +6524,9 @@ def wait_for_secret_key_requirements(
     return [
         (
             f"{latest_issues[secret_name]} (still not ready after "
-            f"{reported_attempts} attempts)"
+            f"{reported_attempts} attempts; elapsed "
+            f"{max(0.0, time.monotonic() - readiness_started_at):.1f}s of "
+            f"{ready_timeout_seconds}s readiness budget)"
         )
         for secret_name, _ in pending
     ]

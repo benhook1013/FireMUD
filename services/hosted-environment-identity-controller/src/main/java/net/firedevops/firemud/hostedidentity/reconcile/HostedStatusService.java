@@ -81,7 +81,9 @@ public class HostedStatusService {
             && roleReady(tcpProxyBridge)
             && roleReady(grpc);
     boolean deploymentEvidenceCurrent =
-        runtimeProfile == null || runtimeProfile.deployedHeadMatchesRequest();
+        runtimeProfile != null
+            && runtimeProfile.present()
+            && runtimeProfile.deployedHeadMatchesRequest();
     boolean effectiveReady =
         ready && deploymentEvidenceCurrent && !profileChanged && identityEvidenceComplete;
     if (ready && !deploymentEvidenceCurrent) {

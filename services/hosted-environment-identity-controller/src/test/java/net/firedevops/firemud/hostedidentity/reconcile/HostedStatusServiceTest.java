@@ -332,6 +332,9 @@ class HostedStatusServiceTest {
     resource.setStatus(oldStatus);
     var service =
         new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    var runtimeProfile =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid", "a".repeat(40), "a".repeat(40), 32001, true);
 
     service.status(
         resource,
@@ -339,7 +342,7 @@ class HostedStatusServiceTest {
         "Waiting",
         "not ready",
         false,
-        null,
+        runtimeProfile,
         null,
         null,
         null);
@@ -353,7 +356,7 @@ class HostedStatusServiceTest {
         "Blocked",
         "not ready",
         false,
-        null,
+        runtimeProfile,
         null,
         null,
         null);
@@ -367,7 +370,7 @@ class HostedStatusServiceTest {
         "Blocked",
         "still not ready",
         false,
-        null,
+        runtimeProfile,
         null,
         null,
         null);
@@ -383,7 +386,7 @@ class HostedStatusServiceTest {
         "Reconciled",
         "ready",
         true,
-        null,
+        runtimeProfile,
         role,
         role,
         role,
@@ -498,6 +501,39 @@ class HostedStatusServiceTest {
         "RuntimeDeploymentPending", resource.getStatus().getConditions().get(0).getReason());
     assertEquals("a".repeat(40), resource.getStatus().getProfile().getRequestedHeadSha());
     assertEquals("b".repeat(40), resource.getStatus().getProfile().getDeployedHeadSha());
+  }
+
+  @Test
+  void readyRequiresAPresentRuntimeProfile() {
+    HostedEnvironmentIdentity resource = new HostedEnvironmentIdentity();
+    resource.setMetadata(
+        new ObjectMetaBuilder()
+            .withName("dev-demo")
+            .withNamespace("firemud-system")
+            .withGeneration(11L)
+            .build());
+    var service =
+        new HostedStatusService(new EnvironmentIdentityPlanner(new HostedIdentityProperties()));
+    var role = new HostedEnvironmentIdentityStatus.RoleStatus();
+    role.setRevision("sha256:" + "c".repeat(64));
+
+    HostedEnvironmentIdentityStatus status =
+        service.status(
+            resource,
+            HostedEnvironmentIdentityStatus.Phase.Ready,
+            "Reconciled",
+            "served",
+            true,
+            null,
+            role,
+            role,
+            role,
+            role,
+            role);
+
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Pending, status.getPhase());
+    assertEquals("False", status.getConditions().get(0).getStatus());
+    assertEquals("RuntimeDeploymentPending", status.getConditions().get(0).getReason());
   }
 
   @Test
