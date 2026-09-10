@@ -20,7 +20,7 @@ validate_timeout_seconds() {
   if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
     ((${#timeout_seconds} > 4)) ||
     ((10#$timeout_seconds > 3600)); then
-    echo "timeout must be a positive integer" >&2
+    echo "timeout must be an integer between 1 and 3600" >&2
     exit 2
   fi
 }

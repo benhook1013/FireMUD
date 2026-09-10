@@ -10,7 +10,6 @@ import static org.mockito.Mockito.verify;
 import io.fabric8.kubernetes.api.model.Secret;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
@@ -87,8 +86,7 @@ class ServedEnvironmentProbeTest {
   void injectedReadinessProbeBoundsMissingFixedGrpcConsumerConfiguration() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    EnvironmentIdentityPlan missingProbeConsumer =
-        withConsumers(plan, "tcp-proxy-service");
+    EnvironmentIdentityPlan missingProbeConsumer = withConsumers(plan, "tcp-proxy-service");
     ServedEnvironmentProbe.EndpointProbe ready =
         (hostname, port) -> new ServedEnvironmentProbe.ProbeResult(true, "ready");
 
@@ -130,7 +128,8 @@ class ServedEnvironmentProbeTest {
         "handshake-policy-rejected",
         ServedEnvironmentProbe.internalTlsProbe(
                 () -> {
-                  throw new IllegalStateException("gRPC endpoint did not negotiate HTTP/2");
+                  throw new ServedEnvironmentProbe.HandshakePolicyRejectedException(
+                      "gRPC endpoint did not negotiate HTTP/2");
                 },
                 "mtls-handshake")
             .reason());
@@ -164,8 +163,7 @@ class ServedEnvironmentProbeTest {
   void missingFixedGrpcProbeConsumerFailsAsInvalidConfiguration() throws Exception {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    EnvironmentIdentityPlan missingProbeConsumer =
-        withConsumers(plan, "tcp-proxy-service");
+    EnvironmentIdentityPlan missingProbeConsumer = withConsumers(plan, "tcp-proxy-service");
 
     Secret material = generatedMaterial(plan);
     properties.setGrpcTrustAnchorSha256(fingerprint(material.getData().get("ca.crt")));
@@ -230,13 +228,28 @@ class ServedEnvironmentProbeTest {
   private static EnvironmentIdentityPlan withConsumers(
       EnvironmentIdentityPlan plan, String... consumers) {
     return new EnvironmentIdentityPlan(
-        plan.name(), plan.controlNamespace(), plan.identityNamespace(), plan.runtimeNamespace(),
-        plan.hostname(), plan.ingressCertificateName(), plan.ingressSecretName(),
-        plan.telnetCertificateName(), plan.telnetSecretName(), plan.gatewayInternalWsCertificateName(),
-        plan.gatewayInternalWsSecretName(), plan.gatewayInternalWsDnsName(),
-        plan.tcpProxyBridgeCertificateName(), plan.tcpProxyBridgeSecretName(), plan.tcpProxyBridgeUriSan(),
-        plan.grpcCertificateName(), plan.grpcSecretName(), plan.ingressIssuer(), plan.telnetIssuer(),
-        plan.grpcIssuer(), plan.caSecretName(), List.of(consumers));
+        plan.name(),
+        plan.controlNamespace(),
+        plan.identityNamespace(),
+        plan.runtimeNamespace(),
+        plan.hostname(),
+        plan.ingressCertificateName(),
+        plan.ingressSecretName(),
+        plan.telnetCertificateName(),
+        plan.telnetSecretName(),
+        plan.gatewayInternalWsCertificateName(),
+        plan.gatewayInternalWsSecretName(),
+        plan.gatewayInternalWsDnsName(),
+        plan.tcpProxyBridgeCertificateName(),
+        plan.tcpProxyBridgeSecretName(),
+        plan.tcpProxyBridgeUriSan(),
+        plan.grpcCertificateName(),
+        plan.grpcSecretName(),
+        plan.ingressIssuer(),
+        plan.telnetIssuer(),
+        plan.grpcIssuer(),
+        plan.caSecretName(),
+        List.of(consumers));
   }
 
   private static int readStatus(String statusLine) throws Exception {

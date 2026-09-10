@@ -38,6 +38,12 @@ import org.springframework.stereotype.Component;
 /** Probes the derived public HTTPS and TLS-Telnet endpoints without accepting arbitrary hosts. */
 @Component
 public class ServedEnvironmentProbe {
+  static final class HandshakePolicyRejectedException extends IllegalStateException {
+    HandshakePolicyRejectedException(String message) {
+      super(message);
+    }
+  }
+
   private static final Pattern PRIVATE_KEY_BLOCK =
       Pattern.compile(
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
@@ -68,7 +74,8 @@ public class ServedEnvironmentProbe {
         telnetPort,
         (hostname, port) -> https(hostname, port, expectedIngressLeafSha256),
         (hostname, port) -> telnet(hostname, port, expectedTelnetLeafSha256),
-        (hostname, port) -> bridge(plan, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
+        (hostname, port) ->
+            bridge(plan, tcpProxyBridgeMaterial, expectedGatewayInternalWsLeafSha256),
         (hostname, port) -> grpc(plan, grpcMaterial, expectedGrpcLeafSha256));
   }
 
@@ -143,10 +150,9 @@ public class ServedEnvironmentProbe {
           : new ProbeResult(true, successReason);
     } catch (IllegalArgumentException exception) {
       return new ProbeResult(false, "material-or-configuration-invalid");
+    } catch (HandshakePolicyRejectedException exception) {
+      return new ProbeResult(false, "handshake-policy-rejected");
     } catch (IllegalStateException exception) {
-      if ("gRPC endpoint did not negotiate HTTP/2".equals(exception.getMessage())) {
-        return new ProbeResult(false, "handshake-policy-rejected");
-      }
       return new ProbeResult(false, "connection-failed");
     } catch (Exception exception) {
       return new ProbeResult(false, "connection-failed");
@@ -191,7 +197,7 @@ public class ServedEnvironmentProbe {
       socket.setSSLParameters(parameters);
       socket.startHandshake();
       if (!"h2".equals(socket.getApplicationProtocol())) {
-        throw new IllegalStateException("gRPC endpoint did not negotiate HTTP/2");
+        throw new HandshakePolicyRejectedException("gRPC endpoint did not negotiate HTTP/2");
       }
       X509Certificate leaf = (X509Certificate) socket.getSession().getPeerCertificates()[0];
       if (!normalize(expectedFingerprint).equals(normalize(fingerprint(leaf)))) {

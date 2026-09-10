@@ -2318,7 +2318,7 @@ run_waiter_rejects_timeout() {
   set -e
 
   [[ "$status" -eq 2 ]]
-  grep -Fxq 'timeout must be a positive integer' "$error"
+  grep -Fxq 'timeout must be an integer between 1 and 3600' "$error"
   [[ ! -s "$kubectl_log" ]]
 }
 
