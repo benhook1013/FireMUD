@@ -519,7 +519,7 @@ cat >"$TMP_DIR/actionable-quoted-rate-limit.json" <<'JSON'
             },
             {
               "author": {"login": "coderabbitai"},
-              "body": "**Actionable comments posted: 1**\n\nThe report quotes: Review rate limited",
+              "body": "<!-- walkthrough_start -->\n**Actionable comments posted: 1**\n\nThe report quotes: Review rate limited",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/actionable-quoted-rate-limit"
             }

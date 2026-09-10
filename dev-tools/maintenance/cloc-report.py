@@ -41,6 +41,7 @@ DESIGN_SECTIONS = (
     ("other_design", "other design", None),
 )
 DEFAULT_BAR_WIDTH = 16
+REMOTE_COMMAND_TIMEOUT_SECONDS = 120
 PR_COMMAND_DESCRIPTION = "compare merge-base and immutable head snapshots for a GitHub PR"
 PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
@@ -108,9 +109,13 @@ class ImpactRow:
     change_percent: float | None
 
 
-def run_command(args: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+def run_command(
+    args: Sequence[str], cwd: Path, *, timeout: float | None = None
+) -> subprocess.CompletedProcess[bytes]:
     try:
-        return subprocess.run(args, cwd=cwd, capture_output=True, check=True)
+        return subprocess.run(args, cwd=cwd, capture_output=True, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise ReportError(f"Command timed out after {error.timeout} seconds ({' '.join(args)})") from error
     except subprocess.CalledProcessError as error:
         stderr = error.stderr.decode(errors="replace").strip()
         detail = f": {stderr}" if stderr else ""
@@ -221,6 +226,7 @@ def resolve_pull_request(root: Path, number: int, requested_repository: str | No
             PR_METADATA_FIELDS,
         ),
         root,
+        timeout=REMOTE_COMMAND_TIMEOUT_SECONDS,
     )
     try:
         payload = json.loads(command_text(result, "GitHub PR metadata"))
@@ -266,6 +272,7 @@ def ensure_commit_object(root: Path, remote: str, object_id: str, refspec: str, 
                 refspec,
             ),
             root,
+            timeout=REMOTE_COMMAND_TIMEOUT_SECONDS,
         )
     if not commit_object_exists(root, object_id):
         raise ReportError(f"could not obtain the exact PR {label} commit {object_id}")
@@ -902,6 +909,7 @@ def pull_request_update_state(root: Path, number: int, repository: str) -> tuple
             PR_UPDATE_FIELDS,
         ),
         root,
+        timeout=REMOTE_COMMAND_TIMEOUT_SECONDS,
     )
     try:
         payload = json.loads(command_text(result, "GitHub PR update metadata"))
@@ -955,6 +963,7 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
                 str(body_path),
             ),
             root,
+            timeout=REMOTE_COMMAND_TIMEOUT_SECONDS,
         )
     finally:
         if body_path is not None:

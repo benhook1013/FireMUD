@@ -263,6 +263,37 @@ cloc_report = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = cloc_report
 spec.loader.exec_module(cloc_report)
 
+original_subprocess_module = cloc_report.subprocess
+subprocess_calls = []
+
+
+def fake_subprocess_run(args, **kwargs):
+    subprocess_calls.append((args, kwargs))
+    if args[0] == "gh":
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+    return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+
+
+cloc_report.subprocess = SimpleNamespace(
+    run=fake_subprocess_run,
+    CalledProcessError=subprocess.CalledProcessError,
+    TimeoutExpired=subprocess.TimeoutExpired,
+)
+try:
+    cloc_report.run_command(("git", "status"), repo)
+    assert subprocess_calls[-1][1]["timeout"] is None
+    try:
+        cloc_report.run_command(
+            ("gh", "pr", "view"), repo, timeout=cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+        )
+    except cloc_report.ReportError as error:
+        assert "gh pr view" in str(error)
+        assert "120 seconds" in str(error)
+    else:
+        raise AssertionError("remote command timeout must be normalized")
+finally:
+    cloc_report.subprocess = original_subprocess_module
+
 original_snapshot_bindings = (
     cloc_report.tempfile,
     cloc_report.run_command,
@@ -657,16 +688,22 @@ availability = {"a" * 40: [False, True], "b" * 40: [False, True]}
 original_commit_object_exists = cloc_report.commit_object_exists
 original_run_command = cloc_report.run_command
 cloc_report.commit_object_exists = lambda _root, object_id: availability[object_id].pop(0)
-def fake_pr_command(args, _root):
-    fetch_calls.append(args)
+def fake_pr_command(args, _root, *, timeout=None):
+    fetch_calls.append((args, timeout))
     if args[1:] == ("merge-base", "a" * 40, "b" * 40):
         return subprocess.CompletedProcess(args, 0, stdout=("c" * 40).encode(), stderr=b"")
     return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
 cloc_report.run_command = fake_pr_command
 try:
     assert cloc_report.pull_request_merge_base(repo, mock_metadata) == "c" * 40
-    assert any("refs/heads/stack/base" in args for args in fetch_calls)
-    assert any("refs/pull/2736/head" in args for args in fetch_calls)
+    assert all(
+        timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
+        for args, timeout in fetch_calls
+        if "fetch" in args
+    )
+    assert any("refs/heads/stack/base" in args for args, _timeout in fetch_calls)
+    assert any("refs/pull/2736/head" in args for args, _timeout in fetch_calls)
+    assert next(timeout for args, timeout in fetch_calls if "merge-base" in args) is None
 finally:
     cloc_report.commit_object_exists = original_commit_object_exists
     cloc_report.run_command = original_run_command
@@ -705,8 +742,9 @@ original_require_tool = cloc_report.require_tool
 original_run_command = cloc_report.run_command
 update_calls = []
 cloc_report.require_tool = lambda _name: None
-def fake_changed_revision_command(args, _root):
+def fake_changed_revision_command(args, _root, *, timeout=None):
     update_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
     return subprocess.CompletedProcess(
         args,
         0,
@@ -729,8 +767,8 @@ finally:
 
 stable_update_calls = []
 cloc_report.require_tool = lambda _name: None
-def fake_stable_update_command(args, _root):
-    stable_update_calls.append(args)
+def fake_stable_update_command(args, _root, *, timeout=None):
+    stable_update_calls.append((args, timeout))
     if args[:3] == ("gh", "pr", "view"):
         return subprocess.CompletedProcess(
             args,
@@ -749,10 +787,10 @@ def fake_stable_update_command(args, _root):
 cloc_report.run_command = fake_stable_update_command
 try:
     assert cloc_report.update_pull_request_body(repo, 2736, impact) is True
-    assert [args[:3] for args in stable_update_calls] == [
-        ("gh", "pr", "view"),
-        ("gh", "pr", "view"),
-        ("gh", "pr", "edit"),
+    assert [(args[:3], timeout) for args, timeout in stable_update_calls] == [
+        (("gh", "pr", "view"), cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS),
+        (("gh", "pr", "view"), cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS),
+        (("gh", "pr", "edit"), cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS),
     ]
 finally:
     cloc_report.require_tool = original_require_tool
@@ -770,8 +808,9 @@ for changed_state, change_name in (
         )
     )
     cloc_report.require_tool = lambda _name: None
-    def fake_conflicting_update_command(args, _root):
+    def fake_conflicting_update_command(args, _root, *, timeout=None):
         conflict_calls.append(args)
+        assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
         if args[:3] != ("gh", "pr", "view"):
             raise AssertionError(f"{change_name} conflict must prevent PR edit")
         return subprocess.CompletedProcess(
@@ -795,8 +834,9 @@ for changed_state, change_name in (
 
 update_calls = []
 cloc_report.require_tool = lambda _name: None
-def fake_unchanged_body_command(args, _root):
+def fake_unchanged_body_command(args, _root, *, timeout=None):
     update_calls.append(args)
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
     if args[:3] != ("gh", "pr", "view"):
         raise AssertionError("unchanged PR body must not be edited")
     return subprocess.CompletedProcess(
@@ -864,10 +904,12 @@ metadata_calls = []
 original_require_tool = cloc_report.require_tool
 original_run_command = cloc_report.run_command
 cloc_report.require_tool = lambda _name: None
-def fake_metadata_command(args, _root):
-    metadata_calls.append(args)
+def fake_metadata_command(args, _root, *, timeout=None):
+    metadata_calls.append((args, timeout))
     if args[:3] == ("git", "remote", "get-url"):
+        assert timeout is None
         return subprocess.CompletedProcess(args, 0, stdout=b"git@github.com:example/example.git\n", stderr=b"")
+    assert timeout == cloc_report.REMOTE_COMMAND_TIMEOUT_SECONDS
     return subprocess.CompletedProcess(
         args,
         0,
@@ -892,7 +934,7 @@ try:
         head_ref="feature/forked",
         head_oid="b" * 40,
     )
-    metadata_call = next(args for args in metadata_calls if args[0] == "gh")
+    metadata_call = next(args for args, _timeout in metadata_calls if args[0] == "gh")
     assert "--repo" in metadata_call
     assert metadata_call[metadata_call.index("--json") + 1] == (
         "baseRefName,baseRefOid,headRefName,headRefOid"

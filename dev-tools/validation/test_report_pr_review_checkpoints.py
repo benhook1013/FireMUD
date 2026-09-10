@@ -866,6 +866,49 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(second["review_id"], 902)
         self.assertEqual(second["inline_findings"][0]["id"], 7003)
 
+    def test_hosted_latest_selects_newest_completed_review(self) -> None:
+        newer = {
+            "id": 901,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T06:00:00Z",
+            "commit_id": "a" * 40,
+            "body": "Newer Hosted review",
+        }
+        older = {
+            "id": 999,
+            "user": {"login": "coderabbitai"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T05:00:00Z",
+            "commit_id": "b" * 40,
+            "body": "Older Hosted review",
+        }
+        reviews = [newer, older]
+        capture = self.reporter.HostedCapture(
+            "owner/repo", 42, newer, [], {}, [], False
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            with (
+                patch.object(
+                    self.reporter, "fetch_hosted_reviews", return_value=reviews
+                ) as fetch_reviews,
+                patch.object(
+                    self.reporter, "load_hosted_capture", return_value=capture
+                ) as load_capture,
+                patch.object(self.reporter, "_git_log_root", return_value=log_root),
+            ):
+                result = self.reporter.collect_hosted("owner/repo", 42, None)
+
+        fetch_reviews.assert_called_once_with("owner/repo", 42)
+        load_capture.assert_called_once_with("owner/repo", 42, 901, reviews)
+        self.assertEqual(result["review_id"], 901)
+        self.assertEqual(
+            result["snapshot_path"],
+            str(log_root / "hosted-review.901" / "snapshot.json"),
+        )
+
     def test_hosted_discovery_ignores_unidentified_authors_and_validates_coderabbit(self) -> None:
         completed = {
             "id": 903,
