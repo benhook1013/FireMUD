@@ -331,11 +331,21 @@ assert janitor_mode_run.index('case "$mode" in') < janitor_mode_run.index(
 janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
+janitor_cleanup_step = next(
+    step
+    for step in janitor_steps
+    if step.get("name") == "Remove hosted identity requester kubeconfig"
+)
 assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
     "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 )
 assert "export HOSTED_IDENTITY_REQUESTER_KUBECONFIG=" not in janitor_prune_step["run"]
 assert "${{ runner.temp }}/hosted-identity-requester.kubeconfig" not in janitor_prune_step["run"]
+assert janitor_steps.index(janitor_cleanup_step) > janitor_steps.index(janitor_prune_step)
+assert janitor_cleanup_step.get("if") == "${{ always() }}"
+assert janitor_cleanup_step.get("run") == (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+)
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 workflow_run_start = target_script.rindex('if [[ "$EVENT_NAME" == workflow_run ]]; then')

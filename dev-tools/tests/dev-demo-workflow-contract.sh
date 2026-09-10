@@ -133,6 +133,7 @@ ordered = (
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Active request",
     "Restore dev-demo runtime kubeconfig",
+    "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
     "Record exact deployed dev-demo head",
@@ -164,6 +165,13 @@ if "always()" not in restore_condition:
     raise SystemExit("dev-demo runtime kubeconfig restore must run after earlier step failures")
 if "steps.cluster-access.outputs.available == 'true'" not in restore_condition:
     raise SystemExit("dev-demo runtime kubeconfig restore lost its cluster-access guard")
+deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
+if deploy_requester_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")
+if deploy_requester_cleanup.get("run") != (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+):
+    raise SystemExit("dev-demo deploy requester credential cleanup targets the wrong file")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")

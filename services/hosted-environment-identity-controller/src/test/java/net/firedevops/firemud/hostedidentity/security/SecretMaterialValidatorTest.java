@@ -45,6 +45,10 @@ import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
@@ -988,6 +992,48 @@ class SecretMaterialValidatorTest {
                 source, GrpcTransportBundleGenerator.grpcDnsNames(plan), "Opaque", true, ""));
   }
 
+  @Test
+  void materialValidationAcceptsPresentedChainWithinCaPathLengthConstraint() throws Exception {
+    Secret chain = generatedPresentedChain(1);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(chain);
+
+    assertEquals(
+        trustAnchor,
+        new SecretMaterialValidator()
+            .validateIdentity(
+                chain,
+                java.util.List.of("path-limited.pr-42.svc.cluster.local"),
+                java.util.List.of(),
+                "Opaque",
+                true,
+                true,
+                trustAnchor)
+            .trustAnchorFingerprint());
+  }
+
+  @Test
+  void materialValidationRejectsPresentedChainExceedingCaPathLengthConstraint()
+      throws Exception {
+    Secret chain = generatedPresentedChain(0);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(chain);
+
+    SecretMaterialValidator.MaterialValidationException failure =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () ->
+                new SecretMaterialValidator()
+                    .validateIdentity(
+                        chain,
+                        java.util.List.of("path-limited.pr-42.svc.cluster.local"),
+                        java.util.List.of(),
+                        "Opaque",
+                        true,
+                        true,
+                        trustAnchor));
+
+    assertEquals("certificate chain exceeds CA path length constraint", failure.getMessage());
+  }
+
   private static String pemText(String encoded) {
     return new String(Base64.getDecoder().decode(encoded), StandardCharsets.US_ASCII);
   }
@@ -998,6 +1044,100 @@ class SecretMaterialValidatorTest {
 
   private static String relabel(String encoded, String oldLabel, String newLabel) {
     return encode(pemText(encoded).replace(oldLabel, newLabel));
+  }
+
+  private static Secret generatedPresentedChain(int rootPathLength) throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    KeyPair rootKeyPair = generateRsaKeyPair();
+    KeyPair intermediateKeyPair = generateRsaKeyPair();
+    KeyPair leafKeyPair = generateRsaKeyPair();
+    X500Name rootName = new X500Name("CN=FireMUD path root, O=FireMUD");
+    X500Name intermediateName = new X500Name("CN=FireMUD path intermediate, O=FireMUD");
+    X500Name leafName =
+        new X500Name("CN=path-limited.pr-42.svc.cluster.local, O=FireMUD");
+    X509Certificate root =
+        signedCertificate(
+            rootName, rootName, rootKeyPair, rootKeyPair, true, rootPathLength, null, now);
+    X509Certificate intermediate =
+        signedCertificate(
+            rootName,
+            intermediateName,
+            intermediateKeyPair,
+            rootKeyPair,
+            true,
+            0,
+            null,
+            now);
+    X509Certificate leaf =
+        signedCertificate(
+            intermediateName,
+            leafName,
+            leafKeyPair,
+            intermediateKeyPair,
+            false,
+            -1,
+            "path-limited.pr-42.svc.cluster.local",
+            now);
+    return new SecretBuilder()
+        .withType("Opaque")
+        .withData(
+            Map.of(
+                "ca.crt", pem("CERTIFICATE", root.getEncoded()),
+                "ca.key", pem("PRIVATE KEY", rootKeyPair.getPrivate().getEncoded()),
+                "tls.crt",
+                    pem("CERTIFICATE", leaf.getEncoded())
+                        + pem("CERTIFICATE", intermediate.getEncoded()),
+                "tls.key", pem("PRIVATE KEY", leafKeyPair.getPrivate().getEncoded())))
+        .build();
+  }
+
+  private static X509Certificate signedCertificate(
+      X500Name issuer,
+      X500Name subject,
+      KeyPair subjectKeyPair,
+      KeyPair issuerKeyPair,
+      boolean ca,
+      int pathLength,
+      String dnsName,
+      Instant now)
+      throws Exception {
+    if (Security.getProvider("BC") == null) {
+      Security.addProvider(new BouncyCastleProvider());
+    }
+    var builder =
+        new JcaX509v3CertificateBuilder(
+            issuer,
+            BigInteger.valueOf(CA_SERIAL.getAndIncrement()),
+            Date.from(now.minus(Duration.ofMinutes(1))),
+            Date.from(now.plus(Duration.ofDays(60))),
+            subject,
+            subjectKeyPair.getPublic());
+    builder.addExtension(
+        Extension.basicConstraints,
+        true,
+        ca ? new BasicConstraints(pathLength) : new BasicConstraints(false));
+    builder.addExtension(
+        Extension.keyUsage,
+        true,
+        new KeyUsage(ca ? KeyUsage.keyCertSign | KeyUsage.cRLSign :
+            KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+    if (!ca) {
+      builder.addExtension(
+          Extension.extendedKeyUsage,
+          false,
+          new ExtendedKeyUsage(
+              new KeyPurposeId[] {
+                KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth
+              }));
+      builder.addExtension(
+          Extension.subjectAlternativeName,
+          false,
+          new GeneralNames(new GeneralName(GeneralName.dNSName, dnsName)));
+    }
+    var signer = new JcaContentSignerBuilder("SHA256withRSA").build(issuerKeyPair.getPrivate());
+    return new JcaX509CertificateConverter()
+        .setProvider("BC")
+        .getCertificate(builder.build(signer));
   }
 
   private static EnvironmentIdentityPlan withGrpcConsumers(

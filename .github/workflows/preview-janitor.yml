@@ -91,3 +91,7 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Remove hosted identity requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"

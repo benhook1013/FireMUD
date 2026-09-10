@@ -302,6 +302,7 @@ public class SecretMaterialValidator {
     X509Certificate current = presentedChain.get(0);
     used.add(sha256(current.getEncoded()));
     X509Certificate anchor = null;
+    int subordinateCaDepth = 0;
     List<X509Certificate> candidates = new ArrayList<>(presentedChain);
     candidates.addAll(anchors);
     for (int depth = 0; depth <= candidates.size(); depth++) {
@@ -341,6 +342,13 @@ public class SecretMaterialValidator {
         throw new MaterialValidationException(
             "certificate CA key usage must include keyCertSign");
       }
+      if (next.getBasicConstraints() < subordinateCaDepth) {
+        throw new MaterialValidationException(
+            "certificate chain exceeds CA path length constraint");
+      }
+      if (!isSelfIssued(next)) {
+        subordinateCaDepth++;
+      }
       current = next;
     }
     if (anchor == null) {
@@ -360,6 +368,10 @@ public class SecretMaterialValidator {
     if (anchor.getBasicConstraints() < 0) {
       throw new MaterialValidationException("certificate chain anchor is not a CA");
     }
+    if (anchor.getBasicConstraints() < subordinateCaDepth) {
+      throw new MaterialValidationException(
+          "certificate chain exceeds CA path length constraint");
+    }
     if (!caKeyUsageAllowsSigning(anchor)) {
       throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
     }
@@ -368,6 +380,10 @@ public class SecretMaterialValidator {
       throw new MaterialValidationException("certificate chain trust anchor fingerprint mismatch");
     }
     return fingerprint;
+  }
+
+  private static boolean isSelfIssued(X509Certificate certificate) {
+    return certificate.getSubjectX500Principal().equals(certificate.getIssuerX500Principal());
   }
 
   private static boolean hasVerifiableIssuer(

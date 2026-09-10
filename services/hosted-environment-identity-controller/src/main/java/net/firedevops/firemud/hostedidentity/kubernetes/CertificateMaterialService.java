@@ -888,13 +888,12 @@ public class CertificateMaterialService {
       return true;
     }
     if (desired instanceof Collection<?> desiredCollection) {
-      if (!(existing instanceof Collection<?> existingCollection)
-          || desiredCollection.size() != existingCollection.size()) {
+      if (!(existing instanceof Collection<?> existingCollection)) {
         return false;
       }
       var desiredIterator = desiredCollection.iterator();
       var existingIterator = existingCollection.iterator();
-      while (desiredIterator.hasNext()) {
+      while (desiredIterator.hasNext() && existingIterator.hasNext()) {
         if (!hasOnlyDesiredShape(
             desiredIterator.next(), existingIterator.next(), path + "[]")) {
           return false;

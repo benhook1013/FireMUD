@@ -114,6 +114,57 @@ class CertificateMaterialServiceTest {
 
   @Test
   @SuppressWarnings("unchecked")
+  void certificateListLengthDriftIsRepairedThroughCas() {
+    EnvironmentIdentityPlan plan = plan();
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    GenericKubernetesResource existing = new GenericKubernetesResource();
+    existing.setApiVersion("cert-manager.io/v1");
+    existing.setKind("Certificate");
+    existing.setMetadata(
+        new ObjectMetaBuilder()
+            .withName(desired.getMetadata().getName())
+            .withNamespace(plan.identityNamespace())
+            .withLabels(desired.getMetadata().getLabels())
+            .withResourceVersion("7")
+            .build());
+    Map<String, Object> desiredSpec =
+        (Map<String, Object>) desired.getAdditionalProperties().get("spec");
+    Map<String, Object> existingSpec = new LinkedHashMap<>(desiredSpec);
+    existingSpec.put("dnsNames", List.of("obsolete.example", "extra.example"));
+    existing.setAdditionalProperties(Map.of("spec", existingSpec));
+
+    KubernetesClient client = mock(KubernetesClient.class);
+    MixedOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        certificates = mock(MixedOperation.class);
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        identityCertificates = mock(NonNamespaceOperation.class);
+    Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
+    Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource =
+        mock(ReplaceDeletable.class);
+    when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
+    when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
+    when(identityCertificates.withName(desired.getMetadata().getName()))
+        .thenReturn(existingResource);
+    when(existingResource.get()).thenReturn(existing);
+    when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
+
+    CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
+
+    assertEquals("7", desired.getMetadata().getResourceVersion());
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
   void certificateShapeRejectsUnknownNestedCollectionFields() {
     EnvironmentIdentityPlan plan = plan();
     GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);

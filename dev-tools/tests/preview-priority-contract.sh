@@ -1651,6 +1651,27 @@ test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_annotation_confirmation_error_output="$TEMP_DIR/reconciler-annotation-confirmation-error.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_ANNOTATE_ERROR=true \
+    FAKE_ANNOTATE_CONFIRMATION_ERROR=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash -e "$RECONCILER_RUN"
+) > "$reconciler_annotation_confirmation_error_output" 2>&1; then
+  echo "reconciler suppressed an annotation-failure confirmation error" >&2
+  exit 1
+fi
+grep -qx \
+  'Unable to recheck namespace pr-901 after annotation failure; refusing preview reconcile.' \
+  "$reconciler_annotation_confirmation_error_output"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_namespace_recheck_error_output="$TEMP_DIR/reconciler-namespace-recheck-error.out"
 if (
   cd "$ROOT_DIR"
