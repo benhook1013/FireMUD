@@ -246,7 +246,8 @@ import importlib.util
 import os
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 repo = Path.cwd()
@@ -731,6 +732,51 @@ try:
 finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
+
+original_main_functions = (
+    cloc_report.repository_root,
+    cloc_report.build_pr_report,
+    cloc_report.update_pull_request_body,
+)
+main_events = []
+cloc_report.repository_root = lambda: repo
+
+
+def fake_build_pr_report(_root, _number, _repository):
+    main_events.append("build")
+    return impact
+
+
+cloc_report.build_pr_report = fake_build_pr_report
+try:
+    for extra_args in ([], ["--json"]):
+        stdout = StringIO()
+        stderr = StringIO()
+
+        def failing_main_update(_root, _number, _report):
+            assert stdout.getvalue()
+            main_events.append("update")
+            raise cloc_report.ReportError("remote update failed")
+
+        cloc_report.update_pull_request_body = failing_main_update
+        main_events.clear()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cloc_report.main(["pr", "2736", "--update-pr", *extra_args])
+        assert status == 1
+        assert main_events == ["build", "update"]
+        if extra_args:
+            assert json.loads(stdout.getvalue()) == impact
+        else:
+            assert cloc_report.PR_REPORT_START in stdout.getvalue()
+            assert cloc_report.PR_REPORT_END in stdout.getvalue()
+        assert "cloc-report: remote update failed" in stderr.getvalue()
+        assert "Updated the marked LOC section" not in stderr.getvalue()
+finally:
+    (
+        cloc_report.repository_root,
+        cloc_report.build_pr_report,
+        cloc_report.update_pull_request_body,
+    ) = original_main_functions
 
 metadata_calls = []
 original_require_tool = cloc_report.require_tool

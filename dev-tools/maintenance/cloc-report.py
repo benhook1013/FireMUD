@@ -1215,11 +1215,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.number <= 0:
                 raise ReportError("pull request number must be positive")
             report = build_pr_report(root, args.number, args.repo)
+            print_json(report) if args.json else print(render_pr_report(report))
             if args.update_pr:
                 updated = update_pull_request_body(root, args.number, report)
                 status = "Updated the marked LOC section" if updated else "The marked LOC section is already up to date"
                 print(f"{status} in PR #{args.number}.", file=sys.stderr)
-            print_json(report) if args.json else print(render_pr_report(report))
             return 0
 
         if args.command == "diff":

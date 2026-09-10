@@ -289,6 +289,37 @@ class CheckpointReporterTest(unittest.TestCase):
         )
         self.assertIn("Earlier counts cover the previous scope.", report["timeline"][0]["description"])
 
+    def test_scope_marker_count_normalizes_whitespace_and_rejects_duplicates(self) -> None:
+        created_at = "2026-09-10T00:00:00Z"
+        comments = [
+            {
+                "id": 205,
+                "body": (
+                    "**Review scope changed:** accepted whitespace.\n"
+                    "  <!-- firemud-review-scope-change -->  "
+                ),
+                "created_at": created_at,
+            },
+            {
+                "id": 206,
+                "body": (
+                    "**Review scope changed:** duplicate markers.\n"
+                    "\t<!-- firemud-review-scope-change --> \n"
+                    " <!-- firemud-review-scope-change -->\t"
+                ),
+                "created_at": created_at,
+            },
+        ]
+
+        report = self.reporter.collect_report(comments, 0)
+
+        self.assertEqual(report["matched_scope_changes"], 1)
+        self.assertEqual(report["unparsed_candidates"], 1)
+        self.assertEqual(
+            [(item["kind"], item["comment_id"]) for item in report["timeline"]],
+            [("scope_change", 205)],
+        )
+
     def test_fetches_paginated_comments_with_explicit_get(self) -> None:
         response = subprocess.CompletedProcess(
             args=[],

@@ -182,6 +182,10 @@ def _comment_fields(
     return body, created_at, updated_at, comment_id, first_line
 
 
+def _scope_marker_count(body: str) -> int:
+    return sum(line.strip() == SCOPE_MARKER for line in body.splitlines()[1:])
+
+
 def parse_checkpoint_comments(
     comments: list[dict[str, Any]],
 ) -> tuple[list[Checkpoint], int]:
@@ -196,7 +200,7 @@ def parse_checkpoint_comments(
         match = CHECKPOINT_HEADING.fullmatch(first_line)
         if match is None:
             if CHECKPOINT_CANDIDATE.match(first_line) or (
-                first_line.startswith("**Review scope changed:**") and body.splitlines()[1:].count(SCOPE_MARKER) != 1
+                first_line.startswith("**Review scope changed:**") and _scope_marker_count(body) != 1
             ):
                 unparsed_candidates += 1
             continue
@@ -237,7 +241,7 @@ def parse_scope_changes(comments: list[dict[str, Any]]) -> list[ScopeChange]:
         if first_line is None:
             continue
         match = SCOPE_CHANGE.fullmatch(first_line)
-        if match is None or body.splitlines()[1:].count(SCOPE_MARKER) != 1:
+        if match is None or _scope_marker_count(body) != 1:
             continue
         changes.append(
             ScopeChange(
