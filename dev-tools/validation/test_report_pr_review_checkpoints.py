@@ -373,9 +373,123 @@ class CheckpointReporterTest(unittest.TestCase):
         with redirect_stdout(output):
             self.reporter.emit_text(report)
         self.assertIn(
-            "202 2026-09-10T02:00:00Z scope_change validator cleanup moved to #2731.",
+            "202 2026-09-10 14:00:00 NZST scope_change validator cleanup moved to #2731.",
             output.getvalue(),
         )
+        self.assertEqual(report["timeline"][0]["created_at"], "2026-09-10T02:00:00Z")
+
+    def test_human_timestamps_use_new_zealand_time_without_changing_report_values(self) -> None:
+        self.assertEqual(
+            self.reporter.format_human_timestamp("2026-06-01T00:00:00Z"),
+            "2026-06-01 12:00:00 NZST",
+        )
+        self.assertEqual(
+            self.reporter.format_human_timestamp("2026-01-01T00:00:00Z"),
+            "2026-01-01 13:00:00 NZDT",
+        )
+        with self.assertRaisesRegex(self.reporter.CheckpointError, "has no timezone"):
+            self.reporter.format_human_timestamp("2026-01-01T00:00:00")
+
+        overview = self.reporter.collect_report(
+            [
+                {
+                    "id": 1,
+                    "body": "**CLI: 0 found / 0 accepted**",
+                    "created_at": "2026-06-01T00:00:00Z",
+                },
+                {
+                    "id": 2,
+                    "body": (
+                        "**Review scope changed:** summer scope.\n"
+                        "<!-- firemud-review-scope-change -->"
+                    ),
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+            ],
+            0,
+        )
+        overview_output = io.StringIO()
+        with redirect_stdout(overview_output):
+            self.reporter.emit_text(overview)
+        self.assertIn("2026-06-01 12:00:00 NZST CLI", overview_output.getvalue())
+        self.assertIn(
+            "2026-01-01 13:00:00 NZDT scope_change", overview_output.getvalue()
+        )
+        self.assertEqual(
+            [item["created_at"] for item in overview["timeline"]],
+            ["2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"],
+        )
+
+        rounds = {
+            "matched_cli_rounds": 2,
+            "returned_rounds": 2,
+            "omitted_rounds": 0,
+            "requested_rounds": 2,
+            "disposition": "all",
+            "rounds": [
+                {
+                    "comment_id": 1,
+                    "created_at": "2026-06-01T00:00:00Z",
+                    "reviewed_sha": None,
+                    "run_id": None,
+                    "status": "unavailable",
+                    "message": "unlinked",
+                    "findings": [],
+                },
+                {
+                    "review_id": 2,
+                    "submitted_at": "2026-01-01T00:00:00Z",
+                    "commit_id": None,
+                    "status": "linked",
+                    "message": "loaded",
+                    "findings": [],
+                },
+            ],
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_rejections_text(rounds)
+
+        self.assertIn("posted_at_nz=2026-06-01 12:00:00 NZST", output.getvalue())
+        self.assertIn("submitted_at_nz=2026-01-01 13:00:00 NZDT", output.getvalue())
+        self.assertEqual(rounds["rounds"][0]["created_at"], "2026-06-01T00:00:00Z")
+        self.assertEqual(rounds["rounds"][1]["submitted_at"], "2026-01-01T00:00:00Z")
+
+    def test_human_text_strips_terminal_controls_without_mutating_raw_report(self) -> None:
+        description = (
+            "safe \x1b[31mred\x1b[0m "
+            "\x1b]0;forged title\x07"
+            "\x1b]8;;https://example.invalid\x1b\\link\x1b]8;;\x1b\\"
+            "\x00\x08\x0b next\nrow\tcell"
+        )
+        report = {
+            "matched_checkpoints": 0,
+            "returned_checkpoints": 0,
+            "omitted_checkpoints": 0,
+            "unparsed_candidates": 0,
+            "warnings": [],
+            "timeline": [
+                {
+                    "kind": "scope_change",
+                    "comment_id": 1,
+                    "created_at": "2026-06-01T00:00:00Z",
+                    "description": description,
+                }
+            ],
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+
+        rendered = output.getvalue()
+        self.assertNotIn("\x1b", rendered)
+        self.assertNotIn("\x07", rendered)
+        self.assertNotIn("\x00", rendered)
+        self.assertNotIn("\x08", rendered)
+        self.assertNotIn("\x0b", rendered)
+        self.assertIn("safe red link next\nrow\tcell", rendered)
+        self.assertEqual(report["timeline"][0]["description"], description)
+        self.assertEqual(self.reporter.display_prose("\x1b[31m\x1b[0m"), "-")
 
     def test_scope_marker_count_normalizes_whitespace_and_rejects_duplicates(self) -> None:
         created_at = "2026-09-10T00:00:00Z"
@@ -539,6 +653,94 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(decision_detail["message"], "linked capture loaded")
         self.assertEqual(decision_detail["findings"][0]["disposition"], "rejected")
         self.assertEqual(decision_detail["findings"][0]["rejection_reason"], "Recorded decision.")
+
+    def test_cli_decisions_must_fit_the_checkpoint_accepted_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            run_dir = log_root / "run.A1b2C3"
+            run_dir.mkdir()
+            (run_dir / "metadata").write_text(
+                "run_id=run.A1b2C3\n"
+                "repository=owner/repo\n"
+                "pull_request=42\n"
+                "candidate_sha=abc1234567890123456789012345678901234567\n"
+                "candidate_files=2\n",
+                encoding="utf-8",
+            )
+            (run_dir / "exit-status").write_text("0\n", encoding="utf-8")
+            findings = [
+                {"type": "finding", "fileName": "a.txt"},
+                {"type": "finding", "fileName": "b.txt"},
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 2,
+                    "reviewedFiles": ["a.txt", "b.txt"],
+                },
+            ]
+            (run_dir / "stdout").write_text(
+                "\n".join(json.dumps(item) for item in findings) + "\n",
+                encoding="utf-8",
+            )
+            decisions_path = run_dir / "decisions.tsv"
+
+            def checkpoint(accepted: int):
+                return self.reporter.Checkpoint(
+                    comment_id=1,
+                    created_at="2026-09-10T00:00:00Z",
+                    type="CLI",
+                    raw_found=2,
+                    accepted=accepted,
+                    reviewed_sha="abc1234",
+                    file_count=2,
+                    correction=False,
+                    updated_at=None,
+                    run_id="run.A1b2C3",
+                    hosted_review_id=None,
+                )
+
+            with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                decisions_path.write_text("1\taccepted\t\n", encoding="utf-8")
+                for accepted in (1, 2):
+                    with self.subTest(partial_bound=accepted):
+                        self.assertEqual(
+                            self.reporter.load_capture(
+                                checkpoint(accepted), "owner/repo", 42
+                            ).decisions,
+                            {1: ("accepted", "")},
+                        )
+                with self.assertRaisesRegex(
+                    self.reporter.CaptureInvalid,
+                    "decisions do not match the checkpoint accepted count",
+                ):
+                    self.reporter.load_capture(checkpoint(0), "owner/repo", 42)
+
+                decisions_path.write_text(
+                    "1\trejected\tNot useful.\n", encoding="utf-8"
+                )
+                with self.assertRaisesRegex(
+                    self.reporter.CaptureInvalid,
+                    "decisions do not match the checkpoint accepted count",
+                ):
+                    self.reporter.load_capture(checkpoint(2), "owner/repo", 42)
+
+                decisions_path.write_text(
+                    "1\taccepted\t\n2\trejected\tNot useful.\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(
+                    len(
+                        self.reporter.load_capture(
+                            checkpoint(1), "owner/repo", 42
+                        ).decisions
+                    ),
+                    2,
+                )
+                with self.assertRaisesRegex(
+                    self.reporter.CaptureInvalid,
+                    "decisions do not match the checkpoint accepted count",
+                ):
+                    self.reporter.load_capture(checkpoint(2), "owner/repo", 42)
 
     def test_details_rejects_missing_marker_or_invalid_capture_without_empty_success(self) -> None:
         comments = [
@@ -1300,6 +1502,7 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertNotIn("hidden boilerplate", output.getvalue())
         self.assertNotIn("hidden chain", output.getvalue())
         self.assertIn("checkpoint_marker=<!-- firemud-hosted-review: 904 -->", output.getvalue())
+        self.assertIn("submitted_at_nz=2026-09-10 20:00:00 NZST", output.getvalue())
         self.assertIn("snapshot_path=-", output.getvalue())
         self.assertIn("decisions_path=-", output.getvalue())
         self.assertIn("disposition=unknown", output.getvalue())

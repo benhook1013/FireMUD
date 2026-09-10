@@ -11,8 +11,10 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 CHECKPOINT_HEADING = re.compile(
     r"^\*\*(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
@@ -41,6 +43,10 @@ CLI_AGENT_BOILERPLATE = re.compile(
     r"minimal, and validate\.\s*",
     re.DOTALL,
 )
+ANSI_OSC = re.compile(r"(?:\x1b\]|\x9d).*?(?:\x07|\x1b\\|\x9c)", re.DOTALL)
+ANSI_CSI = re.compile(r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]")
+TERMINAL_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+HUMAN_TIME_ZONE = ZoneInfo("Pacific/Auckland")
 
 
 @dataclass(frozen=True)
@@ -996,6 +1002,10 @@ def load_capture(checkpoint: Checkpoint, repo: str, pr_number: int) -> CaptureDa
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is not None:
         decisions, unlinked, present = _read_decisions(decision_path, list(range(1, len(findings) + 1)))
+        recorded_accepted = sum(disposition == "accepted" for disposition, _ in decisions.values())
+        unknown_count = len(findings) - len(decisions)
+        if not recorded_accepted <= checkpoint.accepted <= recorded_accepted + unknown_count:
+            raise CaptureInvalid("linked capture decisions do not match the checkpoint accepted count")
         return CaptureData(
             metadata=metadata,
             findings=findings,
@@ -1165,7 +1175,28 @@ def collect_rejections(
 
 
 def format_marker(value: str | int | None) -> str:
-    return "-" if value is None else str(value)
+    return "-" if value is None else terminal_display_text(str(value))
+
+
+def terminal_display_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return "-"
+    sanitized = ANSI_OSC.sub("", value)
+    sanitized = ANSI_CSI.sub("", sanitized)
+    sanitized = TERMINAL_CONTROLS.sub("", sanitized)
+    return sanitized or "-"
+
+
+def format_human_timestamp(value: Any) -> str:
+    if not isinstance(value, str):
+        raise CheckpointError("review timestamp is invalid")
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CheckpointError("review timestamp is invalid") from exc
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise CheckpointError("review timestamp has no timezone")
+    return timestamp.astimezone(HUMAN_TIME_ZONE).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def display_prose(value: Any) -> str:
@@ -1186,7 +1217,8 @@ def display_prose(value: Any) -> str:
     if depth == 0:
         visible_parts.append(value[cursor:])
     visible = HTML_COMMENT.sub("", "".join(visible_parts)).strip()
-    return visible or value.strip() or "-"
+    selected = visible or value.strip() or "-"
+    return terminal_display_text(selected)
 
 
 def finding_display_text(finding: dict[str, Any]) -> str:
@@ -1200,11 +1232,14 @@ def emit_text(report: dict[str, Any]) -> None:
         "omitted={omitted_checkpoints} unparsed={unparsed_candidates}".format(**report)
     )
     for warning in report.get("warnings", []):
-        print(f"warning={warning}")
-    print("comment_id posted_at_utc type found/accepted sha files run_id hosted_review_id")
+        print(f"warning={terminal_display_text(warning)}")
+    print("comment_id posted_at_nz type found/accepted sha files run_id hosted_review_id")
     for item in report["timeline"]:
         if item["kind"] == "scope_change":
-            print(f"{format_marker(item['comment_id'])} {item['created_at']} scope_change {item['description']}")
+            print(
+                f"{format_marker(item['comment_id'])} {format_human_timestamp(item['created_at'])} "
+                f"scope_change {display_prose(item['description'])}"
+            )
             continue
         checkpoint = item
         checkpoint_type = checkpoint["type"]
@@ -1214,7 +1249,8 @@ def emit_text(report: dict[str, Any]) -> None:
         if run_id is None:
             run_id = "unlinked" if checkpoint["type"] == "CLI" else "-"
         print(
-            f"{format_marker(checkpoint['comment_id'])} {checkpoint['created_at']} {checkpoint_type} "
+            f"{format_marker(checkpoint['comment_id'])} "
+            f"{format_human_timestamp(checkpoint['created_at'])} {checkpoint_type} "
             f"{checkpoint['raw_found']}/{checkpoint['accepted']} "
             f"{format_marker(checkpoint['reviewed_sha'])} "
             f"{format_marker(checkpoint['file_count'])} {run_id} "
@@ -1224,37 +1260,48 @@ def emit_text(report: dict[str, Any]) -> None:
 
 def emit_detail_text(detail: dict[str, Any]) -> None:
     print(f"comment_id={detail['comment_id']} linkage={detail['linkage_status']}")
-    print(detail["message"])
+    print(terminal_display_text(detail["message"]))
     hosted_review = detail.get("hosted_review")
     if hosted_review is not None:
         emit_hosted_text(hosted_review)
         return
     for item in detail.get("findings", []):
         finding = item["finding"]
-        print(f"finding[{item['ordinal']}] severity={finding.get('severity', '-')} file={finding.get('fileName', '-')}")
+        print(
+            f"finding[{item['ordinal']}] severity={terminal_display_text(finding.get('severity', '-'))} "
+            f"file={terminal_display_text(finding.get('fileName', '-'))}"
+        )
         print(f"  details={finding_display_text(finding)}")
         disposition = item.get("disposition", "unknown")
         if disposition == "rejected":
-            print(f"  disposition=rejected rejection_reason={item.get('rejection_reason') or 'not recorded'}")
+            print(
+                "  disposition=rejected rejection_reason="
+                f"{display_prose(item.get('rejection_reason') or 'not recorded')}"
+            )
         else:
             print(f"  disposition={disposition}")
     for rejection in detail.get("unlinked_rejections", []):
-        print(f"unlinked_rejection reference={rejection['reference']} reason={rejection['reason']}")
+        print(
+            f"unlinked_rejection reference={terminal_display_text(rejection['reference'])} "
+            f"reason={display_prose(rejection['reason'])}"
+        )
     for decision in detail.get("unlinked_decisions", []):
         print(
             f"unlinked_decision finding_id={decision.get('finding_id', '-')} "
-            f"disposition={decision.get('disposition', '-')} reason={decision.get('reason') or 'not recorded'}"
+            f"disposition={terminal_display_text(decision.get('disposition', '-'))} "
+            f"reason={display_prose(decision.get('reason') or 'not recorded')}"
         )
 
 
 def emit_hosted_text(report: dict[str, Any]) -> None:
     print(f"review_id={report['review_id']}")
     print(f"checkpoint_marker=<!-- firemud-hosted-review: {report['review_id']} -->")
-    print(f"submitted_at={report['submitted_at']}")
+    print(f"submitted_at_nz={format_human_timestamp(report['submitted_at'])}")
     print(f"commit_id={report.get('commit_id') or '-'}")
     snapshot_path = report.get("snapshot_path", "-")
-    print(f"snapshot_path={snapshot_path}")
-    print(f"decisions_path={snapshot_path.rsplit('/', 1)[0] + '/decisions.tsv' if snapshot_path != '-' else '-'}")
+    print(f"snapshot_path={terminal_display_text(snapshot_path)}")
+    decisions_path = snapshot_path.rsplit("/", 1)[0] + "/decisions.tsv" if snapshot_path != "-" else "-"
+    print(f"decisions_path={terminal_display_text(decisions_path)}")
     print(f"summary={display_prose(report['summary_body'])}")
     for finding in report["inline_findings"]:
         decision = report.get("decisions", {}).get(str(finding["id"]), {"disposition": "unknown", "reason": ""})
@@ -1262,13 +1309,13 @@ def emit_hosted_text(report: dict[str, Any]) -> None:
         reason = decision.get("reason") or "not recorded"
         decision_text = f" disposition={disposition}"
         if disposition == "rejected" or decision.get("reason"):
-            decision_text += f" reason={reason}"
+            decision_text += f" reason={display_prose(reason)}"
         print(
-            f"inline_finding comment_id={finding['id']} path={finding.get('path', '-')} "
-            f"line={finding.get('line', '-')} finding={finding_display_text(finding)}{decision_text}"
+            f"inline_finding comment_id={finding['id']} path={terminal_display_text(finding.get('path', '-'))} "
+            f"line={format_marker(finding.get('line'))} finding={finding_display_text(finding)}{decision_text}"
         )
     for limitation in report["limitations"]:
-        print(f"limitation={limitation}")
+        print(f"limitation={display_prose(limitation)}")
 
 
 def emit_rejections_text(report: dict[str, Any]) -> None:
@@ -1281,37 +1328,43 @@ def emit_rejections_text(report: dict[str, Any]) -> None:
     )
     for round_result in report["rounds"]:
         if "review_id" in round_result:
-            identifier = f"review_id={round_result['review_id']} submitted_at={round_result['submitted_at']}"
+            identifier = (
+                f"review_id={round_result['review_id']} "
+                f"submitted_at_nz={format_human_timestamp(round_result['submitted_at'])}"
+            )
             commit_id = f" commit_id={round_result.get('commit_id') or '-'}"
         else:
             identifier = (
-                f"comment_id={format_marker(round_result['comment_id'])} posted_at_utc={round_result['created_at']}"
+                f"comment_id={format_marker(round_result['comment_id'])} "
+                f"posted_at_nz={format_human_timestamp(round_result['created_at'])}"
             )
             commit_id = (
                 f" sha={format_marker(round_result['reviewed_sha'])} run_id={format_marker(round_result.get('run_id'))}"
             )
         print(f"round {identifier}{commit_id} status={round_result['status']}")
-        print(f"  {round_result['message']}")
+        print(f"  {terminal_display_text(round_result['message'])}")
         for row in round_result.get("findings", []):
             finding = row["finding"]
             identifier = row.get("ordinal", row.get("comment_id", "-"))
-            location = finding.get("fileName", finding.get("path", "-"))
+            location = terminal_display_text(finding.get("fileName", finding.get("path", "-")))
             content = finding_display_text(finding)
             detail = f" details={content}"
             if row["disposition"] == "rejected" or row["reason"]:
-                detail += f" reason={row['reason'] or 'not recorded'}"
+                detail += f" reason={display_prose(row['reason'] or 'not recorded')}"
             print(f"  {row['disposition']} finding[{identifier}] file={location}{detail}")
         for reference in round_result.get("references", []):
             reference_id = reference.get("finding_id", reference.get("ordinal", "-"))
-            reference_label = reference.get("reference", f"comment_id={reference.get('comment_id', '-')}")
+            reference_label = terminal_display_text(
+                reference.get("reference", f"comment_id={reference.get('comment_id', '-')}")
+            )
             print(
                 f"  recorded reference_id={reference_id} reference={reference_label} "
-                f"reason={reference.get('reason') or 'not recorded'}"
+                f"reason={display_prose(reference.get('reason') or 'not recorded')}"
             )
         if round_result.get("coverage_gap"):
             print(f"  coverage_gap={round_result['coverage_gap']} finding(s) have no recorded disposition")
         for limitation in round_result.get("limitations", []):
-            print(f"  limitation={limitation}")
+            print(f"  limitation={display_prose(limitation)}")
 
 
 def parse_args() -> argparse.Namespace:
