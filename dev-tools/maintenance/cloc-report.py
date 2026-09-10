@@ -41,6 +41,7 @@ DESIGN_SECTIONS = (
     ("other_design", "other design", None),
 )
 DEFAULT_BAR_WIDTH = 16
+PR_COMMAND_DESCRIPTION = "compare merge-base and immutable head snapshots for a GitHub PR"
 PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
@@ -336,6 +337,22 @@ def snapshot_worktree(root: Path, revision: str) -> Iterable[Path]:
             shutil.rmtree(temp_root, ignore_errors=False)
         except OSError as error:
             cleanup_errors.append(error)
+        if added:
+            try:
+                run_command(
+                    (
+                        "git",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "worktree",
+                        "prune",
+                        "--expire",
+                        "now",
+                    ),
+                    root,
+                )
+            except (OSError, ReportError):
+                pass
 
         if original_error is None and cleanup_errors:
             if len(cleanup_errors) == 1:
@@ -1137,7 +1154,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = commands.add_parser(
         "pr",
-        help="compare merge-base and immutable head snapshots for a GitHub PR",
+        help=PR_COMMAND_DESCRIPTION,
+        description=PR_COMMAND_DESCRIPTION,
     )
     pr.add_argument("number", type=int, help="GitHub pull request number")
     pr.add_argument("--repo", help="GitHub repository in owner/name form (defaults to origin)")

@@ -268,12 +268,18 @@ original_snapshot_functions = (
 )
 snapshot_temp_root = repo / "snapshot-cleanup-fixture"
 snapshot_cleanup_calls = []
+snapshot_cleanup_failures = {"remove": True, "prune": True}
 
 
 def failing_snapshot_command(args, _root):
     if args[3:5] == ("worktree", "remove"):
         snapshot_cleanup_calls.append("worktree-remove")
-        raise cloc_report.ReportError("worktree removal failed")
+        if snapshot_cleanup_failures["remove"]:
+            raise cloc_report.ReportError("worktree removal failed")
+    elif args[3:5] == ("worktree", "prune"):
+        snapshot_cleanup_calls.append("worktree-prune")
+        if snapshot_cleanup_failures["prune"]:
+            raise cloc_report.ReportError("worktree prune failed")
     return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
 
 
@@ -295,7 +301,7 @@ try:
         assert error is body_error
     else:
         raise AssertionError("snapshot cleanup replaced or suppressed the body error")
-    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree"]
+    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree", "worktree-prune"]
 
     snapshot_cleanup_calls.clear()
     try:
@@ -305,7 +311,13 @@ try:
         assert str(error) == "worktree removal failed"
     else:
         raise AssertionError("snapshot cleanup suppressed a worktree removal failure")
-    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree"]
+    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree", "worktree-prune"]
+
+    snapshot_cleanup_calls.clear()
+    snapshot_cleanup_failures["remove"] = False
+    with cloc_report.snapshot_worktree(repo, "c" * 40):
+        pass
+    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree", "worktree-prune"]
 finally:
     (
         cloc_report.tempfile.mkdtemp,
@@ -820,12 +832,17 @@ else:
     raise AssertionError("snapshot symlink escape must fail closed")
 
 help_output = subprocess.check_output([*script, "--help"], cwd=repo, text=True)
+assert "{summary,scope,modules,diff,pr,classify}" in help_output
 assert "summary" in help_output
 assert "scope" in help_output
 assert "modules" in help_output
 assert "diff" in help_output
 assert "pr" in help_output
 assert "classify" in help_output
+pr_help_output = subprocess.check_output([*script, "pr", "--help"], cwd=repo, text=True)
+assert cloc_report.PR_COMMAND_DESCRIPTION in pr_help_output
+for pr_argument in ("number", "--repo", "--json", "--update-pr"):
+    assert pr_argument in pr_help_output
 
 print("cloc report contract checks passed")
 PY

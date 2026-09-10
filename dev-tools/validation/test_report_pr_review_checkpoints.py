@@ -484,6 +484,39 @@ class CheckpointReporterTest(unittest.TestCase):
                     self.assertEqual(result, 2)
                     self.assertEqual(stderr.getvalue(), message)
 
+    def test_hosted_source_rejects_cli_rejections_shorthand_before_fetching(self) -> None:
+        arguments = self.reporter.argparse.Namespace(
+            repo="owner/repo",
+            pr=42,
+            limit=20,
+            details=None,
+            rejections=2,
+            rounds=None,
+            hosted=None,
+            source="hosted",
+            disposition="all",
+            json=False,
+        )
+        stderr = io.StringIO()
+        with (
+            patch.object(self.reporter, "parse_args", return_value=arguments),
+            patch.object(self.reporter, "fetch_comments") as fetch_comments,
+            patch.object(self.reporter, "fetch_hosted_reviews") as fetch_hosted_reviews,
+            patch.object(self.reporter, "collect_rejections") as collect_rejections,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            result = self.reporter.main()
+
+        self.assertEqual(result, 2)
+        self.assertEqual(
+            stderr.getvalue(),
+            "error: --rejections is CLI-only; use --rounds with --source hosted\n",
+        )
+        fetch_comments.assert_not_called()
+        fetch_hosted_reviews.assert_not_called()
+        collect_rejections.assert_not_called()
+
     def test_rejections_selects_latest_cli_rounds_and_keeps_missing_links(self) -> None:
         comments = [
             {
@@ -702,6 +735,53 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(decisions, {1: ("rejected", "Rejected by owner.")})
         self.assertEqual(unlinked, [])
         self.assertTrue(present)
+
+    def test_decision_and_rejection_records_ignore_blank_lines_and_normalize_blank_reason(
+        self,
+    ) -> None:
+        findings = [{"fileName": "a.txt"}, {"fileName": "b.txt"}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            decisions_path = root / "decisions.tsv"
+            decisions_path.write_text(
+                "\n  \n1\taccepted\t\n\t\n2\trejected\t   \n",
+                encoding="utf-8",
+            )
+            decisions, unlinked, present = self.reporter._read_decisions(
+                decisions_path, [1, 2]
+            )
+            rejections_path = root / "rejections.tsv"
+            rejections_path.write_text(
+                "\n1\ta.txt:5\tRecorded reason.\n  \n",
+                encoding="utf-8",
+            )
+            reasons, rejection_references = self.reporter._read_rejections(
+                rejections_path, findings
+            )
+
+        self.assertEqual(decisions, {1: ("accepted", "")})
+        self.assertEqual(
+            unlinked,
+            [{"finding_id": 2, "disposition": "rejected", "reason": "not recorded"}],
+        )
+        self.assertTrue(present)
+        self.assertEqual(reasons, {1: "Recorded reason."})
+        self.assertEqual(rejection_references, [])
+
+    def test_decision_and_rejection_records_still_reject_nonblank_malformed_physical_line(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            decisions_path = root / "decisions.tsv"
+            decisions_path.write_text("\nmalformed\n", encoding="utf-8")
+            rejections_path = root / "rejections.tsv"
+            rejections_path.write_text("  \nmalformed\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(self.reporter.CaptureInvalid, "line 2"):
+                self.reporter._read_decisions(decisions_path, [1])
+            with self.assertRaisesRegex(self.reporter.CaptureInvalid, "line 2"):
+                self.reporter._read_rejections(rejections_path, [{"fileName": "a.txt"}])
 
     def test_rounds_filter_after_selecting_latest_and_keeps_unknown_findings(self) -> None:
         comment = {

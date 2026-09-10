@@ -460,6 +460,8 @@ def _read_decisions(
     decisions: dict[int, tuple[str, str]] = {}
     unlinked: list[dict[str, Any]] = []
     for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
         fields = line.split("\t")
         if len(fields) != 3 or not fields[0].isdigit() or int(fields[0]) <= 0:
             raise CaptureInvalid(f"decision records are malformed at line {line_number}")
@@ -472,7 +474,7 @@ def _read_decisions(
                 {
                     "finding_id": finding_id,
                     "disposition": disposition,
-                    "reason": reason or "not recorded",
+                    "reason": reason if reason.strip() else "not recorded",
                 }
             )
             continue
@@ -857,6 +859,8 @@ def _read_rejections(path: Path, findings: list[dict[str, Any]]) -> tuple[dict[i
     reasons: dict[int, str] = {}
     unlinked: list[dict[str, Any]] = []
     for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
         fields = line.split("\t")
         ordinal: int | None = None
         if len(fields) == 3 and fields[0].isdigit():
@@ -1319,6 +1323,9 @@ def main() -> int:
         return 2
     if args.source != "cli" and args.rounds is None and args.rejections is None:
         print("error: --source requires --rounds or --rejections", file=sys.stderr)
+        return 2
+    if args.source == "hosted" and args.rejections is not None:
+        print("error: --rejections is CLI-only; use --rounds with --source hosted", file=sys.stderr)
         return 2
     if args.rounds is None and args.disposition != "all":
         if args.rejections is not None:
