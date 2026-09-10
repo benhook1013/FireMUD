@@ -355,6 +355,7 @@ class CheckpointReporterTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
+            timeout=self.reporter.GH_TIMEOUT_SECONDS,
         )
 
     def test_details_preserves_legacy_reason_separately_from_raw_findings(self) -> None:
@@ -1043,6 +1044,37 @@ class CheckpointReporterTest(unittest.TestCase):
             self.assertRaisesRegex(self.reporter.CheckpointError, "unexpected paginated response"),
         ):
             self.reporter.fetch_comments("owner/repo", 42)
+
+        timeout = subprocess.TimeoutExpired("gh api", self.reporter.GH_TIMEOUT_SECONDS)
+        with (
+            patch.object(self.reporter.subprocess, "run", side_effect=timeout),
+            self.assertRaisesRegex(RuntimeError, "gh api timed out after 30 seconds"),
+        ):
+            self.reporter.fetch_comments("owner/repo", 42)
+
+        arguments = self.reporter.argparse.Namespace(
+            repo="owner/repo",
+            pr=42,
+            limit=20,
+            details=None,
+            rejections=None,
+            rounds=None,
+            hosted=None,
+            source="cli",
+            disposition="all",
+            json=False,
+        )
+        stderr = io.StringIO()
+        with (
+            patch.object(self.reporter, "parse_args", return_value=arguments),
+            patch.object(self.reporter.subprocess, "run", side_effect=timeout),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
+            result = self.reporter.main()
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr.getvalue(), "error: gh api timed out after 30 seconds\n")
 
     def test_negative_limit_is_rejected(self) -> None:
         with self.assertRaises(self.reporter.argparse.ArgumentTypeError):

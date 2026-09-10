@@ -619,11 +619,11 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         ):
             continue
         effective_at = comment_effective_timestamp(comment) or created_at_dt
-        if latest_review_trigger_dt is not None and effective_at < latest_review_trigger_dt:
+        if latest_review_trigger_dt is not None and created_at_dt < latest_review_trigger_dt:
             continue
-        if latest_rate_limit_at_dt is not None and effective_at < latest_rate_limit_at_dt:
+        if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
             continue
-        latest_rate_limit_at_dt = effective_at
+        latest_rate_limit_at_dt = created_at_dt
         latest_rate_limit_until_dt = parse_review_rate_limit_until(body, effective_at)
         latest_rate_limit_without_expiry = latest_rate_limit_until_dt is None
 

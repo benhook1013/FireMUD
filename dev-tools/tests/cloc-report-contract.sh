@@ -269,10 +269,14 @@ original_snapshot_functions = (
 )
 snapshot_temp_root = repo / "snapshot-cleanup-fixture"
 snapshot_cleanup_calls = []
-snapshot_cleanup_failures = {"remove": True, "prune": True}
+snapshot_cleanup_failures = {"add": False, "remove": True, "prune": True}
+snapshot_add_error = cloc_report.ReportError("worktree add failed")
 
 
 def failing_snapshot_command(args, _root):
+    if args[3:5] == ("worktree", "add") and snapshot_cleanup_failures["add"]:
+        snapshot_cleanup_calls.append("worktree-add")
+        raise snapshot_add_error
     if args[3:5] == ("worktree", "remove"):
         snapshot_cleanup_calls.append("worktree-remove")
         if snapshot_cleanup_failures["remove"]:
@@ -319,6 +323,17 @@ try:
     with cloc_report.snapshot_worktree(repo, "c" * 40):
         pass
     assert snapshot_cleanup_calls == ["worktree-remove", "rmtree", "worktree-prune"]
+
+    snapshot_cleanup_calls.clear()
+    snapshot_cleanup_failures["add"] = True
+    try:
+        with cloc_report.snapshot_worktree(repo, "d" * 40):
+            raise AssertionError("failed worktree add unexpectedly entered the body")
+    except cloc_report.ReportError as error:
+        assert error is snapshot_add_error
+    else:
+        raise AssertionError("snapshot cleanup replaced or suppressed the add failure")
+    assert snapshot_cleanup_calls == ["worktree-add", "rmtree", "worktree-prune"]
 finally:
     (
         cloc_report.tempfile.mkdtemp,
