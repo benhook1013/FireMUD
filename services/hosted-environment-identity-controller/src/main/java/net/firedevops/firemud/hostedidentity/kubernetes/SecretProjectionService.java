@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -340,9 +340,7 @@ public class SecretProjectionService {
                 updateLengthPrefixed(digest, entry.getKey().getBytes(StandardCharsets.UTF_8));
                 updateLengthPrefixed(digest, Base64.getDecoder().decode(entry.getValue()));
               });
-      StringBuilder result = new StringBuilder("sha256:");
-      for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value));
-      return result.toString();
+      return "sha256:" + HexFormat.of().formatHex(digest.digest());
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("unable to calculate material revision", exception);
     }

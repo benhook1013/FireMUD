@@ -285,8 +285,6 @@ class CertificateMaterialServiceTest {
     KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
     org.mockito.Mockito.doThrow(failure).when(lockedReplacementResource).replace();
 
-    verify(replacementResource).lockResourceVersion("7");
-
     KubernetesClientException thrown =
         assertThrows(
             KubernetesClientException.class,
@@ -295,6 +293,7 @@ class CertificateMaterialServiceTest {
                     client, plan.identityNamespace(), desired));
 
     assertSame(failure, thrown);
+    verify(replacementResource, org.mockito.Mockito.times(2)).lockResourceVersion("7");
   }
 
   @Test

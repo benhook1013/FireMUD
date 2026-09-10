@@ -704,14 +704,14 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
         if security.get("runAsNonRoot") is False:
             fail(f"{container_path}.securityContext.runAsNonRoot must not be false")
         validate_extra_security_fields(security, f"{container_path}.securityContext")
-        for field, inherited in (
+        for security_field, inherited in (
             ("runAsUser", pod_security["runAsUser"]),
             ("runAsGroup", pod_security["runAsGroup"]),
         ):
-            value = security.get(field, inherited)
+            value = security.get(security_field, inherited)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 fail(
-                    f"{container_path}.securityContext.{field} must be a positive numeric identity"
+                    f"{container_path}.securityContext.{security_field} must be a positive numeric identity"
                 )
         capabilities = security.get("capabilities")
         if not isinstance(capabilities, dict) or "ALL" not in (capabilities.get("drop") or []):
@@ -732,11 +732,11 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
         for port_index, port in enumerate(container.get("ports") or []):
             if isinstance(port, dict) and "hostPort" in port:
                 fail(f"{container_path}.ports[{port_index}].hostPort is forbidden")
-        for field in ("livenessProbe", "readinessProbe", "startupProbe", "lifecycle"):
-            action = container.get(field)
+        for probe_field in ("livenessProbe", "readinessProbe", "startupProbe", "lifecycle"):
+            action = container.get(probe_field)
             if not isinstance(action, dict):
                 continue
-            for nested_path, nested in walk(action, f"{container_path}.{field}"):
+            for nested_path, nested in walk(action, f"{container_path}.{probe_field}"):
                 if nested_path.endswith(".host"):
                     fail(f"{nested_path} is forbidden in a probe/lifecycle action")
         windows = security.get("windowsOptions")

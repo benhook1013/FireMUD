@@ -4,8 +4,9 @@ IFS=$'\n\t'
 
 # This command is an operator bootstrap, not a workflow job. The controller
 # establishes each named scope during reconciliation. The command intentionally
-# has no --as/impersonation option and requires an explicit trusted-operator
-# acknowledgement before it can apply cluster-scoped resources.
+# exposes no operator-facing --as/impersonation flag and requires an explicit
+# trusted-operator acknowledgement before it can apply cluster-scoped resources.
+# Internal --as use is confined to read-only kubectl auth can-i verification.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MANIFEST_DIR="$REPO_ROOT/k8s/hosted-identity-controller"

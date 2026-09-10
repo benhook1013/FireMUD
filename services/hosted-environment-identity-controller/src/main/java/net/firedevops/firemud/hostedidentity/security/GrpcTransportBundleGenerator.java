@@ -107,9 +107,7 @@ public class GrpcTransportBundleGenerator {
     }
     long currentGeneration = issuanceGeneration(existing);
     validateAcceptedGeneration(currentGeneration, accepted);
-    boolean trustAnchorChanged =
-        !normalizeFingerprint(expectedTrustAnchorSha256)
-            .equals(SecretMaterialValidator.trustAnchorFingerprint(existing));
+    boolean trustAnchorChanged = trustAnchorChanged(existing, expectedTrustAnchorSha256);
     if (!trustAnchorChanged
         && leafDnsNamesMatch(existing, plan)
         && !renewalRequired(existing, renewBefore, now)) {
@@ -338,6 +336,17 @@ public class GrpcTransportBundleGenerator {
     } catch (Exception exception) {
       throw new IllegalStateException("gRPC source has invalid leaf certificate", exception);
     }
+  }
+
+  private static boolean trustAnchorChanged(
+      Secret existing, String expectedTrustAnchorSha256) {
+    String existingTrustAnchorSha256;
+    try {
+      existingTrustAnchorSha256 = SecretMaterialValidator.trustAnchorFingerprint(existing);
+    } catch (IllegalArgumentException exception) {
+      return true;
+    }
+    return !normalizeFingerprint(expectedTrustAnchorSha256).equals(existingTrustAnchorSha256);
   }
 
   static void validateAcceptedGeneration(long currentGeneration, long acceptedGeneration) {
