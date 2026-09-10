@@ -5,9 +5,11 @@ usage() {
   cat <<'EOF'
 Usage: dev-tools/run-coderabbit-review.sh <pull-request-number> [--repo <owner/name>]
 
-Run the complete committed candidate through CodeRabbit CLI using the pull request's
-current base. The source worktree may be dirty; its committed HEAD is reviewed from
-an isolated temporary worktree and uncommitted edits are preserved.
+Launches the CodeRabbit CLI for a complete committed candidate review using the pull
+request's current base; this consumes the separate CLI review quota. The source
+worktree may be dirty; its committed HEAD is reviewed from an isolated temporary
+worktree and uncommitted edits are preserved. For read-only checkpoint and local
+capture reporting, use dev-tools/validation/report-pr-review-checkpoints.py.
 EOF
 }
 
@@ -237,6 +239,7 @@ printf 'candidate_files=%s\n' "$candidate_files"
 printf 'published_status=%s\n' "$published_status"
 printf 'log_dir=%s\n' "$log_dir"
 printf 'checkpoint_marker=<!-- firemud-cli-run: %s -->\n' "$run_name"
+printf 'report_command=python3 dev-tools/validation/report-pr-review-checkpoints.py --repo %s --pr %s\n' "$repo" "$pr_number"
 
 set +e
 (

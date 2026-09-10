@@ -188,7 +188,8 @@ export TEST_INVOCATIONS_FILE="$INVOCATIONS_FILE"
 export TEST_STARTED_FILE="$STARTED_FILE"
 export TEST_RELEASE_FILE="$RELEASE_FILE"
 
-if "$WRAPPER" --help >/dev/null; then
+help_output="$($WRAPPER --help)"
+if [[ "$help_output" == *"Launches the CodeRabbit CLI"* && "$help_output" == *"consumes the separate CLI review quota"* && "$help_output" == *"report-pr-review-checkpoints.py"* ]]; then
   :
 else
   echo "wrapper --help failed" >&2
@@ -239,6 +240,7 @@ set -e
 [[ "$RUN_OUTPUT" == *"published_files=2"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"candidate_files=3"* ]] || exit 1
 [[ "$RUN_OUTPUT" == *"published_status=unpublished-commits-ahead:1"* ]] || exit 1
+[[ "$RUN_OUTPUT" == *"report_command=python3 dev-tools/validation/report-pr-review-checkpoints.py --repo example/FireMUD --pr 2694"* ]] || exit 1
 [[ "$(cat "$HEAD_FILE")" == "$LOCAL_HEAD_SHA" ]] || exit 1
 [[ "$(cat "$BASE_FILE")" == "$BASE_SHA" ]] || exit 1
 [[ -z "$(cat "$STATUS_FILE")" ]] || {
