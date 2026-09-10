@@ -2,6 +2,7 @@ package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -341,9 +342,22 @@ class RuntimeProfileServiceTest {
 
     Namespace invalidPort = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "32016");
     when(namespace.get()).thenReturn(invalidPort);
+    IllegalStateException invalidPortFailure =
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan));
     assertEquals(
-        "runtime Namespace has an invalid Telnet port identity",
-        assertThrows(IllegalStateException.class, () -> service.read(client, plan)).getMessage());
+        "runtime Namespace has an invalid Telnet port identity: 32016",
+        invalidPortFailure.getMessage());
+    assertInstanceOf(NumberFormatException.class, invalidPortFailure.getCause());
+
+    Namespace malformedPort =
+        previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "not-a-port");
+    when(namespace.get()).thenReturn(malformedPort);
+    IllegalStateException malformedPortFailure =
+        assertThrows(IllegalStateException.class, () -> service.read(client, plan));
+    assertEquals(
+        "runtime Namespace has an invalid Telnet port identity: not-a-port",
+        malformedPortFailure.getMessage());
+    assertInstanceOf(NumberFormatException.class, malformedPortFailure.getCause());
   }
 
   private static Namespace previewRuntimeNamespace(

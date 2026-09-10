@@ -390,6 +390,10 @@ public class GrpcTransportBundleGenerator {
       if (certificate.getBasicConstraints() < 0) {
         throw new IllegalStateException("configured gRPC CA certificate is not a CA");
       }
+      if (!SecretMaterialValidator.caKeyUsageAllowsSigning(certificate)) {
+        throw new IllegalStateException(
+            "configured gRPC CA certificate key usage must include keyCertSign");
+      }
       var privateKey = parsePrivateKey(requiredData(caSource, "ca.key"));
       if (!(privateKey instanceof RSAPrivateCrtKey rsaKey)
           || !certificate

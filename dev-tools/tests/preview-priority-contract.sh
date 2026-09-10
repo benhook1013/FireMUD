@@ -99,6 +99,15 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]]; then
     exit 0
   fi
+  if [[ -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}" ]]; then
+    rm -f "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
+    if [[ "${FAKE_ANNOTATE_CONFIRMATION_ERROR:-false}" == true ]]; then
+      exit 1
+    fi
+    if [[ "${FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE:-false}" == true ]]; then
+      exit 0
+    fi
+  fi
   snapshot_head="${FAKE_PR_901_HEAD:-}"
   snapshot_requested_head="${FAKE_PR_901_REQUESTED_HEAD:-}"
   if [[ "$count" -gt 1 ]]; then
@@ -176,6 +185,10 @@ if [[ "$1" == wait && "$2" == --for=delete ]]; then
 fi
 if [[ "$1" == annotate && "$2" == namespace ]]; then
   printf '%s\n' "$*" >> "$FAKE_ANNOTATE_LOG"
+  if [[ "${FAKE_ANNOTATE_ERROR:-false}" == true ]]; then
+    : > "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
+    exit 1
+  fi
   exit 0
 fi
 if [[ "$*" == *"get hostedenvironmentidentity"* ]]; then
@@ -522,6 +535,7 @@ export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
+export FAKE_ANNOTATE_FAILURE_MARKER="$TEMP_DIR/annotate-failure.marker"
 export FAKE_REQUESTED_HEAD_LOG="$TEMP_DIR/requested-head.log"
 export FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER="$TEMP_DIR/requested-head-not-found"
 export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
@@ -551,7 +565,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -581,6 +595,9 @@ reset_case() {
   unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD
   export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
+  export FAKE_ANNOTATE_ERROR=false
+  export FAKE_ANNOTATE_CONFIRMATION_ERROR=false
+  export FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE=false
   export FAKE_REQUESTED_HEAD_READ_ERROR=false
   export FAKE_REQUESTED_HEAD_NOT_FOUND=false
   export FAKE_REQUESTED_HEAD_RECHECK_ERROR=false
@@ -1594,6 +1611,46 @@ test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESP
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_ANNOTATE_ERROR=true \
+    FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_annotation_deleted_output"
+grep -qx 'Namespace pr-901 was deleted during requested-head repair; continuing.' \
+  "$reconciler_annotation_deleted_output"
+grep -Fqx \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  "$FAKE_ANNOTATE_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.out"
+if (
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_ANNOTATE_ERROR=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_annotation_existing_output" 2>&1; then
+  echo "reconciler continued after annotation failure while namespace still existed" >&2
+  exit 1
+fi
+grep -qx \
+  'Unable to annotate namespace pr-901; namespace still exists, refusing preview reconcile.' \
+  "$reconciler_annotation_existing_output"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_namespace_recheck_error_output="$TEMP_DIR/reconciler-namespace-recheck-error.out"
 if (
   cd "$ROOT_DIR"
@@ -1917,7 +1974,7 @@ grep -q 'another preview repair was already dispatched this cycle' "$reconciler_
 grep -Fq 'kubectl get namespace "${namespace}" --ignore-not-found -o json' \
   "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert the initial and fresh namespace snapshots.
-test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 2
+test "$(grep -Fc 'kubectl get namespace "${namespace}" --ignore-not-found -o json' "$reconciler_workflow")" -eq 3
 # shellcheck disable=SC2016 # Assert the fresh namespace snapshot fences repair.
 grep -Fq 'requested head changed during annotation repair check' "$reconciler_workflow"
 # The janitor keeps explicit kubeconfig selection on the consuming kubectl steps;

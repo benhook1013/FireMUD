@@ -288,6 +288,11 @@ public class SecretMaterialValidator {
     }
   }
 
+  static boolean caKeyUsageAllowsSigning(X509Certificate certificate) {
+    boolean[] usage = certificate.getKeyUsage();
+    return usage == null || (usage.length > 5 && usage[5]);
+  }
+
   private static String validateChain(
       String caPem, List<X509Certificate> presentedChain, String expectedAnchor) throws Exception {
     List<X509Certificate> anchors =
@@ -332,6 +337,10 @@ public class SecretMaterialValidator {
       if (next.getBasicConstraints() < 0) {
         throw new MaterialValidationException("certificate chain contains a non-CA issuer");
       }
+      if (!caKeyUsageAllowsSigning(next)) {
+        throw new MaterialValidationException(
+            "certificate CA key usage must include keyCertSign");
+      }
       current = next;
     }
     if (anchor == null) {
@@ -342,10 +351,17 @@ public class SecretMaterialValidator {
       // ACME TLS Secrets commonly omit ca.crt. The complete presented chain is
       // still checked here; the served system-trust probe supplies the public
       // trust-anchor proof before Ready is reported.
+      if (!caKeyUsageAllowsSigning(current)) {
+        throw new MaterialValidationException(
+            "certificate CA key usage must include keyCertSign");
+      }
       return sha256(current.getEncoded());
     }
     if (anchor.getBasicConstraints() < 0) {
       throw new MaterialValidationException("certificate chain anchor is not a CA");
+    }
+    if (!caKeyUsageAllowsSigning(anchor)) {
+      throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
     }
     String fingerprint = sha256(anchor.getEncoded());
     if (!expectedAnchor.isBlank() && !expectedAnchor.equals(normalize(fingerprint))) {

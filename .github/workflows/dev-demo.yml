@@ -939,6 +939,10 @@ jobs:
           kubectl -n firemud-system delete hostedenvironmentidentity dev-demo \
             --wait=true --timeout=180s
 
+      - name: Remove hosted identity requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+
       - name: Summarize dev-demo destroy
         run: |
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \

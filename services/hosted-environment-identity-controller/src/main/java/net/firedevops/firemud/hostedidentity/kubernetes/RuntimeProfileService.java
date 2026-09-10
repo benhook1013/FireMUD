@@ -68,16 +68,18 @@ public class RuntimeProfileService {
     if (portValue == null || portValue.isBlank()) {
       throw new IllegalStateException("runtime Namespace has no canonical Telnet port identity");
     }
+    int port;
     try {
-      int port = Integer.parseInt(portValue);
+      port = Integer.parseInt(portValue);
       if (!isValidTelnetPort(plan, port)) {
         throw new NumberFormatException("out of range");
       }
-      return new RuntimeProfile(
-          namespace.getMetadata().getUid(), requestedHead, deployedHead, port, true);
     } catch (NumberFormatException exception) {
-      throw new IllegalStateException("runtime Namespace has an invalid Telnet port identity");
+      throw new IllegalStateException(
+          "runtime Namespace has an invalid Telnet port identity: " + portValue, exception);
     }
+    return new RuntimeProfile(
+        namespace.getMetadata().getUid(), requestedHead, deployedHead, port, true);
   }
 
   /**

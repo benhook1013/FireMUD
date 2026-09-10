@@ -317,6 +317,17 @@ assert publisher_script.count(
     'echo "<!-- firemud-hosted-identity-controller-image-unavailable -->" >> "$GITHUB_STEP_SUMMARY"'
 ) == 1
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
+janitor_mode_step = next(
+    step for step in janitor_steps if step.get("id") == "certificate-identity"
+)
+janitor_mode_run = janitor_mode_step["run"]
+assert janitor_mode_run.count("resolve-certificate-identity-mode.py") == 1
+assert 'case "$mode" in' in janitor_mode_run
+assert "standalone|hosted-controller) ;;" in janitor_mode_run
+assert "Resolver output must be exactly standalone or hosted-controller." in janitor_mode_run
+assert janitor_mode_run.index('case "$mode" in') < janitor_mode_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+)
 janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
@@ -594,6 +605,18 @@ assert "FIREMUD_PREFLIGHT_CONTEXT=operator" in operator_run
 assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
 assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
+preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
+preview_derive_step = next(
+    step for step in preview_plan_steps if step.get("id") == "derive"
+)
+preview_derive_run = preview_derive_step["run"]
+assert '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
+assert 'HEAD_SHA="${HEAD_SHA,,}"' in preview_derive_run
+assert 'IMAGE_TAG="${{ inputs.image_tag }}"' in preview_derive_run
+assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run.index(
+    'if [ -z "$IMAGE_TAG" ]'
+)
+assert 'IMAGE_TAG="${HEAD_SHA}"' in preview_derive_run
 assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 60
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_mode_step = next(
@@ -782,6 +805,109 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+preview_derive_step="$TEMP_DIR/preview-derive-step.sh"
+python3 - "$preview" "$preview_derive_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+derive_step = next(
+    step
+    for step in workflow["jobs"]["preview-plan"]["steps"]
+    if step.get("id") == "derive"
+)
+body = derive_step["run"]
+for source, target in {
+    "${{ github.event_name }}": "$EVENT_NAME",
+    "${{ github.event.action }}": "$EVENT_ACTION",
+    "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
+    "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
+    "${{ github.event.pull_request.base.sha }}": "$EVENT_BASE_SHA",
+    "${{ inputs.pr_number }}": "$INPUT_PR_NUMBER",
+    "${{ inputs.head_sha }}": "$INPUT_HEAD_SHA",
+    "${{ inputs.preview_domain }}": "$INPUT_PREVIEW_DOMAIN",
+    "${{ inputs.action }}": "$INPUT_ACTION",
+    "${{ inputs.image_tag }}": "$INPUT_IMAGE_TAG",
+}.items():
+    body = body.replace(source, target)
+Path(sys.argv[2]).write_text(
+    "#!/usr/bin/env bash\nset -euo pipefail\n" + body,
+    encoding="utf-8",
+)
+PY
+chmod +x "$preview_derive_step"
+preview_derive_stub_dir="$TEMP_DIR/preview-derive-stubs"
+mkdir -p "$preview_derive_stub_dir"
+cat >"$preview_derive_stub_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == api && "$2" == repos/example/FireMUD/pulls/901 && "$3" == --jq ]]
+printf '%s\n' "$*" >>"${PREVIEW_DERIVE_GH_LOG:?}"
+case "$4" in
+  .base.sha) printf '%s\n' base-901 ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$preview_derive_stub_dir/gh"
+
+preview_derive_head_upper=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+preview_derive_head_lower=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+preview_derive_output="$TEMP_DIR/preview-derive-uppercase.output"
+preview_derive_error="$TEMP_DIR/preview-derive-uppercase.error"
+env \
+  PATH="$preview_derive_stub_dir:$PATH" \
+  EVENT_NAME=workflow_dispatch \
+  EVENT_ACTION='' \
+  EVENT_PR_NUMBER='' \
+  EVENT_HEAD_SHA='' \
+  EVENT_BASE_SHA='' \
+  INPUT_PR_NUMBER=901 \
+  INPUT_HEAD_SHA="$preview_derive_head_upper" \
+  INPUT_PREVIEW_DOMAIN=preview.firedevops.net \
+  INPUT_ACTION=deploy \
+  INPUT_IMAGE_TAG=Pr-901-CustomTag \
+  GITHUB_REPOSITORY=example/FireMUD \
+  GITHUB_SHA="$preview_derive_head_lower" \
+  PREVIEW_DERIVE_GH_LOG="$TEMP_DIR/preview-derive-uppercase.gh.log" \
+  GITHUB_OUTPUT="$preview_derive_output" \
+  bash "$preview_derive_step" >"$TEMP_DIR/preview-derive-uppercase.stdout" \
+  2>"$preview_derive_error"
+grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
+grep -Fxq 'image_tag=Pr-901-CustomTag' "$preview_derive_output"
+grep -Fxq 'base_sha=base-901' "$preview_derive_output"
+grep -Fxq 'api repos/example/FireMUD/pulls/901 --jq .base.sha' \
+  "$TEMP_DIR/preview-derive-uppercase.gh.log"
+
+preview_derive_invalid_output="$TEMP_DIR/preview-derive-invalid.output"
+preview_derive_invalid_error="$TEMP_DIR/preview-derive-invalid.error"
+if env \
+  PATH="$preview_derive_stub_dir:$PATH" \
+  EVENT_NAME=workflow_dispatch \
+  EVENT_ACTION='' \
+  EVENT_PR_NUMBER='' \
+  EVENT_HEAD_SHA='' \
+  EVENT_BASE_SHA='' \
+  INPUT_PR_NUMBER=901 \
+  INPUT_HEAD_SHA=not-a-sha \
+  INPUT_PREVIEW_DOMAIN=preview.firedevops.net \
+  INPUT_ACTION=deploy \
+  INPUT_IMAGE_TAG=Pr-901-CustomTag \
+  GITHUB_REPOSITORY=example/FireMUD \
+  GITHUB_SHA="$preview_derive_head_lower" \
+  PREVIEW_DERIVE_GH_LOG="$TEMP_DIR/preview-derive-invalid.gh.log" \
+  GITHUB_OUTPUT="$preview_derive_invalid_output" \
+  bash "$preview_derive_step" >"$TEMP_DIR/preview-derive-invalid.stdout" \
+  2>"$preview_derive_invalid_error"; then
+  echo "preview plan accepted a noncanonical workflow-dispatch head SHA" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters.' \
+  "$preview_derive_invalid_error"
+test ! -e "$TEMP_DIR/preview-derive-invalid.gh.log"
 
 # Execute the shared rollout inventory with a strict kubectl stub. This proves
 # every canonical deployment is checked in order with the caller-supplied

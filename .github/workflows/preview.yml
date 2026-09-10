@@ -108,11 +108,18 @@ jobs:
           if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
             HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
           fi
-          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
-          fi
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
+          # Keep an explicitly supplied image tag unchanged; only the requested
+          # head identity is normalized for every downstream lifecycle boundary.
+          HEAD_SHA="${HEAD_SHA,,}"
+          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
           fi
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"

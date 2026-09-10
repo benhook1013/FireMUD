@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class EnvironmentIdentityPlanner {
-  private static final Pattern PREVIEW_NAME = Pattern.compile("pr-[1-9][0-9]*");
+  private static final Pattern PREVIEW_NAME = Pattern.compile("pr-[1-9][0-9]{0,50}");
   private static final String DEV_DEMO_NAME = "dev-demo";
   private static final List<String> GRPC_CONSUMERS =
       List.of(

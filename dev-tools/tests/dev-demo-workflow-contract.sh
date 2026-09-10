@@ -217,6 +217,7 @@ destroy_order = (
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
+    "Remove hosted identity requester kubeconfig",
 )
 destroy_positions = [destroy_names.index(name) for name in destroy_order]
 if destroy_positions != sorted(destroy_positions):
@@ -227,6 +228,13 @@ if "request-hosted-identity.sh dev-demo Retired" not in destroy_by_name[
     "Apply fixed dev-demo Retired request"
 ]["run"]:
     raise SystemExit("dev-demo retirement is not the fixed-shape shared request")
+requester_cleanup = destroy_by_name["Remove hosted identity requester kubeconfig"]
+if requester_cleanup.get("if") != "${{ always() }}":
+    raise SystemExit("dev-demo requester credential cleanup must run after failures")
+if requester_cleanup.get("run") != (
+    'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+):
+    raise SystemExit("dev-demo requester credential cleanup targets the wrong file")
 
 for required in (
     '[[ "$desired_state" != Active && "$desired_state" != Retired ]]',
@@ -281,6 +289,12 @@ reconcile_step_run = next(
 if "bash ./dev-tools/hosted/dev-demo/reconcile-dev-demo.sh" not in reconcile_step_run:
     raise SystemExit("workflow must invoke the extracted reconciler script")
 reconcile_run = reconcile_script
+if "command -v jq >/dev/null 2>&1" not in reconcile_run:
+    raise SystemExit("dev-demo reconciler must explicitly require jq")
+if "jq is required for dev-demo reconciliation." not in reconcile_run:
+    raise SystemExit("dev-demo reconciler jq prerequisite lacks a clear diagnostic")
+if reconcile_run.index("command -v jq") >= reconcile_run.index("jq -"):
+    raise SystemExit("dev-demo reconciler uses jq before checking the prerequisite")
 for required in (
     "set -euo pipefail",
     "export LC_ALL=C",

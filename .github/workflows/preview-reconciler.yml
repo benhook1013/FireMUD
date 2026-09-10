@@ -163,9 +163,22 @@ jobs:
                     echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
                     continue
                   elif [[ -z "${fresh_requested_head_sha}" ]]; then
-                    kubectl annotate namespace "${namespace}" \
+                    if ! kubectl annotate namespace "${namespace}" \
                       "firemud.dev/requested-preview-head-sha=${head_sha}" \
-                      --overwrite >/dev/null
+                      --overwrite >/dev/null; then
+                      if ! annotation_failure_namespace_json="$(
+                        kubectl get namespace "${namespace}" --ignore-not-found -o json
+                      )"; then
+                        echo "Unable to recheck namespace ${namespace} after annotation failure; refusing preview reconcile." >&2
+                        exit 1
+                      fi
+                      if [[ -n "${annotation_failure_namespace_json}" ]]; then
+                        echo "Unable to annotate namespace ${namespace}; namespace still exists, refusing preview reconcile." >&2
+                        exit 1
+                      fi
+                      echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
+                      continue
+                    fi
                     echo "Repaired missing requested head for aligned preview ${namespace}"
                     continue
                   elif [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then

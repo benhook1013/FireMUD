@@ -379,6 +379,52 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void materialValidationRejectsConfiguredCaWithoutKeyCertSign() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret validCa = generatedCa(now, Duration.ofDays(60));
+    Secret generated =
+        new GrpcTransportBundleGenerator().generate(plan, validCa, 2, Duration.ofDays(7), now);
+    Secret invalidCa = generatedCaWithoutKeyCertSign(now, Duration.ofDays(60));
+    Map<String, String> data = new LinkedHashMap<>(generated.getData());
+    data.put("ca.crt", invalidCa.getData().get("ca.crt"));
+    Secret invalid = new SecretBuilder(generated).withData(data).build();
+
+    SecretMaterialValidator.MaterialValidationException failure =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () ->
+                new SecretMaterialValidator()
+                    .validate(
+                        invalid,
+                        GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                        "Opaque",
+                        true,
+                        SecretMaterialValidator.trustAnchorFingerprint(invalidCa)));
+
+    assertEquals("certificate CA key usage must include keyCertSign", failure.getMessage());
+  }
+
+  @Test
+  void signingCaValidationRejectsCaWithoutKeyCertSign() throws Exception {
+    Secret invalidCa =
+        generatedCaWithoutKeyCertSign(
+            Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS), Duration.ofDays(60));
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                GrpcTransportBundleGenerator.validateCa(
+                    invalidCa, SecretMaterialValidator.trustAnchorFingerprint(invalidCa)));
+
+    assertEquals(
+        "configured gRPC CA certificate key usage must include keyCertSign",
+        failure.getMessage());
+  }
+
+  @Test
   void productionGenerationUsesTheConfiguredCaAndExactIssuanceGeneration() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     EnvironmentIdentityPlan plan =
@@ -1005,7 +1051,19 @@ class SecretMaterialValidatorTest {
         generateRsaKeyPair());
   }
 
+  private static Secret generatedCaWithoutKeyCertSign(Instant now, Duration lifetime)
+      throws Exception {
+    return generatedCa(now, lifetime, new X500Name("CN=FireMUD test transport root, O=FireMUD"),
+        FIXTURE_CA_KEY_PAIR, KeyUsage.cRLSign);
+  }
+
   private static Secret generatedCa(Instant now, Duration lifetime, X500Name name, KeyPair keyPair)
+      throws Exception {
+    return generatedCa(now, lifetime, name, keyPair, KeyUsage.keyCertSign | KeyUsage.cRLSign);
+  }
+
+  private static Secret generatedCa(
+      Instant now, Duration lifetime, X500Name name, KeyPair keyPair, int keyUsageBits)
       throws Exception {
     if (Security.getProvider("BC") == null) {
       Security.addProvider(new BouncyCastleProvider());
@@ -1020,7 +1078,7 @@ class SecretMaterialValidatorTest {
             keyPair.getPublic());
     builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
     builder.addExtension(
-        Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+        Extension.keyUsage, true, new KeyUsage(keyUsageBits));
     var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
     X509Certificate ca =
         new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));

@@ -106,6 +106,23 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void acceptsTheMaximumLengthPreviewIdentityNamespace() {
+    var plan = planner.plan("pr-" + "7".repeat(51));
+
+    assertEquals(63, plan.identityNamespace().length());
+  }
+
+  @Test
+  void rejectsPreviewNamesThatWouldExceedTheKubernetesNamespaceLimit() {
+    String name = "pr-" + "7".repeat(52);
+
+    IllegalArgumentException failure =
+        assertThrows(IllegalArgumentException.class, () -> planner.plan(name));
+
+    assertEquals("unsupported HostedEnvironmentIdentity name: " + name, failure.getMessage());
+  }
+
+  @Test
   void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
     Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
     Map<?, ?> scopeRolePolicy;
