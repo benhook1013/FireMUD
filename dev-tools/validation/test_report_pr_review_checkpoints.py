@@ -671,6 +671,30 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertNotIn("hidden boilerplate", output.getvalue())
         self.assertNotIn("hidden chain", output.getvalue())
         self.assertIn("checkpoint_marker=<!-- firemud-hosted-review: 904 -->", output.getvalue())
+        self.assertIn("snapshot_path=-", output.getvalue())
+        self.assertIn("decisions_path=-", output.getvalue())
+        self.assertIn("disposition=unknown", output.getvalue())
+
+    def test_detail_text_displays_accepted_disposition_without_rejection_label(self) -> None:
+        detail = {
+            "comment_id": 907,
+            "linkage_status": "linked",
+            "message": "linked capture loaded",
+            "findings": [
+                {
+                    "ordinal": 1,
+                    "finding": {"fileName": "a.txt", "description": "Accepted finding."},
+                    "disposition": "accepted",
+                    "rejection_reason": None,
+                }
+            ],
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_detail_text(detail)
+
+        self.assertIn("disposition=accepted", output.getvalue())
+        self.assertNotIn("rejection_reason", output.getvalue())
 
     def test_malformed_capture_stdout_is_invalid_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

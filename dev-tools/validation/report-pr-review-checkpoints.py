@@ -1159,8 +1159,11 @@ def emit_detail_text(detail: dict[str, Any]) -> None:
         finding = item["finding"]
         print(f"finding[{item['ordinal']}] severity={finding.get('severity', '-')} file={finding.get('fileName', '-')}")
         print(f"  details={finding_display_text(finding)}")
-        reason = item.get("rejection_reason")
-        print(f"  rejection_reason={reason if reason is not None else 'not recorded'}")
+        disposition = item.get("disposition", "unknown")
+        if disposition == "rejected":
+            print(f"  disposition=rejected rejection_reason={item.get('rejection_reason') or 'not recorded'}")
+        else:
+            print(f"  disposition={disposition}")
     for rejection in detail.get("unlinked_rejections", []):
         print(f"unlinked_rejection reference={rejection['reference']} reason={rejection['reason']}")
     for decision in detail.get("unlinked_decisions", []):
@@ -1175,11 +1178,20 @@ def emit_hosted_text(report: dict[str, Any]) -> None:
     print(f"checkpoint_marker=<!-- firemud-hosted-review: {report['review_id']} -->")
     print(f"submitted_at={report['submitted_at']}")
     print(f"commit_id={report.get('commit_id') or '-'}")
+    snapshot_path = report.get("snapshot_path", "-")
+    print(f"snapshot_path={snapshot_path}")
+    print(f"decisions_path={snapshot_path.rsplit('/', 1)[0] + '/decisions.tsv' if snapshot_path != '-' else '-'}")
     print(f"summary={display_prose(report['summary_body'])}")
     for finding in report["inline_findings"]:
+        decision = report.get("decisions", {}).get(str(finding["id"]), {"disposition": "unknown", "reason": ""})
+        disposition = decision.get("disposition", "unknown")
+        reason = decision.get("reason") or "not recorded"
+        decision_text = f" disposition={disposition}"
+        if disposition == "rejected" or decision.get("reason"):
+            decision_text += f" reason={reason}"
         print(
             f"inline_finding comment_id={finding['id']} path={finding.get('path', '-')} "
-            f"line={finding.get('line', '-')} finding={finding_display_text(finding)}"
+            f"line={finding.get('line', '-')} finding={finding_display_text(finding)}{decision_text}"
         )
     for limitation in report["limitations"]:
         print(f"limitation={limitation}")
