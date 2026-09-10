@@ -414,8 +414,9 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
-              "createdAt": "2026-07-03T02:40:05Z",
+              "body": "Review rate limited\nYour next included review will be available in 36 minutes",
+              "createdAt": "2026-07-03T02:39:55Z",
+              "updatedAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/rate-limited"
             }
           ]
@@ -905,6 +906,7 @@ expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "explicit_review_after_latest_commit=true" "$TMP_DIR/review-rate-limited.out"
 grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
+grep -q "review_rate_limit_until=2026-07-03T03:16:05+00:00" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
