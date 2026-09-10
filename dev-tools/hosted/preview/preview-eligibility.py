@@ -258,6 +258,7 @@ def main() -> int:
         evaluator = revalidate_cleanup if args.revalidate_cleanup else revalidate_deploy
         refusal_reason = evaluator(sys.stdin.read(), args.expected_repository, args.expected_head_sha)
         if refusal_reason is not None:
+            # Keep this on stdout because revalidate-preview-deploy.sh captures the reason.
             print(refusal_reason)
             return 1
         return 0

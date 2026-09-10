@@ -34,6 +34,42 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.validator = load_validator()
 
+    def test_expected_chart_label_comes_from_trusted_metadata(self):
+        self.assertEqual(
+            "firemud-0.1.0",
+            self.validator.EXPECTED_TOP_LEVEL_LABELS["helm.sh/chart"],
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            chart_metadata = Path(temporary_directory) / "Chart.yaml"
+            chart_metadata.write_text(
+                "apiVersion: v2\nname: example\nversion: 1.2.3+build.4\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                "example-1.2.3_build.4",
+                self.validator._expected_chart_label(chart_metadata),
+            )
+
+    def test_expected_chart_label_rejects_malformed_metadata(self):
+        malformed_documents = (
+            "name: [\n",
+            "- not-a-mapping\n",
+            "name: ''\nversion: 1.2.3\n",
+            "name: firemud\nversion: 1\n",
+            "name: firemud\n",
+            "name: firemud\nversion: [1, 2, 3]\n",
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            chart_metadata = Path(temporary_directory) / "Chart.yaml"
+            for document in malformed_documents:
+                with self.subTest(document=document):
+                    chart_metadata.write_text(document, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        (TypeError, ValueError), "trusted chart metadata"
+                    ):
+                        self.validator._expected_chart_label(chart_metadata)
+
     def test_sanitized_walk_rejects_projected_and_csi_secret_references(self):
         cases = (
             (

@@ -78,6 +78,8 @@ decode_secret_key() {
   local key="$2"
   local secret_json="$3"
   local encoded_value decoded_secret_value canonical_encoded_value
+  # Callers use assignment command substitutions: rejection exits that subshell,
+  # and the failed assignment reaches the caller's set -e.
   if ! encoded_value="$(jq -er --arg key "$key" '.data[$key] | select(type == "string" and length > 0)' <<<"$secret_json")" ||
     ! decoded_secret_value="$(printf '%s' "$encoded_value" | base64 --decode 2>/dev/null)" ||
     [[ -z "$decoded_secret_value" ]]; then

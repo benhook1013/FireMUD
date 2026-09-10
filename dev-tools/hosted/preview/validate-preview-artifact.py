@@ -13,6 +13,28 @@ from pathlib import Path
 
 import yaml
 
+
+def _expected_chart_label(chart_metadata_path: Path) -> str:
+    try:
+        chart_metadata = yaml.safe_load(chart_metadata_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(
+            f"could not load trusted chart metadata: {chart_metadata_path}"
+        ) from exc
+    if not isinstance(chart_metadata, dict):
+        raise TypeError("trusted chart metadata must be a mapping")
+    name = chart_metadata.get("name")
+    version = chart_metadata.get("version")
+    if not isinstance(name, str) or not name or name.strip() != name:
+        raise ValueError("trusted chart metadata name must be a nonempty string")
+    if not isinstance(version, str) or not version or version.strip() != version:
+        raise ValueError("trusted chart metadata version must be a nonempty string")
+    return f"{name}-{version.replace('+', '_')}"
+
+
+TRUSTED_CHART_METADATA = (
+    Path(__file__).resolve().parents[3] / "k8s/helm/firemud/Chart.yaml"
+)
 EXPECTED_KINDS = {
     ("apps/v1", "Deployment"),
     ("v1", "ConfigMap"),
@@ -92,7 +114,7 @@ EXPECTED_SECRET_REFS = {
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
-    "helm.sh/chart": "firemud-0.1.0",
+    "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
 }
 
 

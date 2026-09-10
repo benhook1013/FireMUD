@@ -4,9 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ALLOCATOR="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 PRUNER="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-# shellcheck disable=SC2016 # Match the literal script guard.
-grep -Fq 'if ! kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false; then' "$PRUNER"
-grep -Fq 'Unable to submit deletion for runtime namespace' "$PRUNER"
 DELETE_HOSTED_NAMESPACE="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
@@ -457,6 +454,10 @@ cat > "$TEMP_DIR/delete" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s %s\n' "$1" "$2" >> "$FAKE_DELETE_LOG"
+if [[ -n "${FAKE_DELETE_TIMEOUT_LOG:-}" ]]; then
+  printf '%s\n' "${PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS:-unset}" \
+    >> "$FAKE_DELETE_TIMEOUT_LOG"
+fi
 if [[ -n "${FAKE_OPERATION_SEQUENCE:-}" ]]; then
   printf 'runtime-delete\n' >> "$FAKE_OPERATION_SEQUENCE"
 fi
@@ -538,6 +539,7 @@ export PREVIEW_DELETE_SCRIPT="$TEMP_DIR/delete"
 export PREVIEW_RECLAIMED_PUBLISH_SCRIPT="$TEMP_DIR/publish"
 export PREVIEW_RECLAIM_PUBLISH_RETRY_DELAY_SECONDS=0
 export FAKE_DELETE_LOG="$TEMP_DIR/delete.log"
+export FAKE_DELETE_TIMEOUT_LOG="$TEMP_DIR/delete-timeout.log"
 export FAKE_PUBLISH_LOG="$TEMP_DIR/publish.log"
 export FAKE_PUBLISHED_STATE="$TEMP_DIR/published-state"
 export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
@@ -574,7 +576,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -1193,37 +1195,10 @@ for invalid_preview_row in \
 done
 
 reset_case
-export FAKE_RUNTIME_NAMESPACE_PRESENT=false
 bash "$PRUNER" --delete-runtime pr-101
-grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
-if grep -Eq '^(delete|wait) ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
-  echo "runtime deletion continued after a successful absent lookup" >&2
-  exit 1
-fi
-
-reset_case
-export FAKE_RUNTIME_LOOKUP_ERROR=true
-if runtime_lookup_output="$(bash "$PRUNER" --delete-runtime pr-101 2>&1)"; then
-  echo "runtime deletion treated a namespace lookup error as NotFound" >&2
-  exit 1
-fi
-if [[ "$runtime_lookup_output" != "Unable to determine whether runtime namespace pr-101 exists." ]]; then
-  echo "runtime deletion did not distinguish lookup failure from confirmed absence" >&2
-  exit 1
-fi
-grep -qx 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG"
-if grep -Eq '^(delete|wait) ' "$FAKE_RUNTIME_KUBECTL_LOG"; then
-  echo "runtime deletion continued after a namespace lookup error" >&2
-  exit 1
-fi
-
-reset_case
-export FAKE_RUNTIME_WAIT_ERROR=true
-export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
-bash "$PRUNER" --delete-runtime pr-101
-test "$(grep -Fc 'get namespace pr-101 --ignore-not-found -o name' "$FAKE_RUNTIME_KUBECTL_LOG")" -eq 2
-grep -qx 'delete namespace pr-101 --ignore-not-found --wait=false' "$FAKE_RUNTIME_KUBECTL_LOG"
-grep -qx 'wait --for=delete namespace/pr-101 --timeout=600s' "$FAKE_RUNTIME_KUBECTL_LOG"
+grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+grep -qx '600' "$FAKE_DELETE_TIMEOUT_LOG"
+test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
 
 for invalid_preview_delete_timeout in 0 invalid 3601 99999999999999999999; do
   reset_case
@@ -1232,34 +1207,21 @@ for invalid_preview_delete_timeout in 0 invalid 3601 99999999999999999999; do
     echo "pruner accepted an invalid PREVIEW_DELETE_TIMEOUT" >&2
     exit 1
   fi
-  test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
+  test ! -e "$FAKE_DELETE_LOG"
 done
 
 for valid_preview_delete_timeout in 1 3600; do
   reset_case
   export PREVIEW_DELETE_TIMEOUT="$valid_preview_delete_timeout"
   bash "$PRUNER" --delete-runtime pr-101
-  grep -qx \
-    "wait --for=delete namespace/pr-101 --timeout=${valid_preview_delete_timeout}s" \
-    "$FAKE_RUNTIME_KUBECTL_LOG"
+  grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
+  grep -qx "$valid_preview_delete_timeout" "$FAKE_DELETE_TIMEOUT_LOG"
 done
 
 reset_case
-bash "$PRUNER" --delete-runtime pr-101
-grep -qx 'wait --for=delete namespace/pr-101 --timeout=600s' "$FAKE_RUNTIME_KUBECTL_LOG"
-
-reset_case
-export FAKE_RUNTIME_WAIT_ERROR=true
+export FAKE_DELETE_FAIL=true
 if bash "$PRUNER" --delete-runtime pr-101; then
-  echo "runtime deletion suppressed a wait failure while the namespace remained present" >&2
-  exit 1
-fi
-
-reset_case
-export FAKE_RUNTIME_WAIT_ERROR=true
-export FAKE_RUNTIME_RECHECK_ERROR=true
-if bash "$PRUNER" --delete-runtime pr-101; then
-  echo "runtime deletion suppressed a wait failure after the absence recheck failed" >&2
+  echo "runtime deletion suppressed the shared deletion helper failure" >&2
   exit 1
 fi
 
@@ -2063,6 +2025,17 @@ grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
 # shellcheck disable=SC2016 # Assert literal default helper selection.
 grep -Fq 'delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+# shellcheck disable=SC2016 # Assert literal delegated timeout and arguments.
+grep -Fq 'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+# shellcheck disable=SC2016 # Assert literal delegated helper arguments.
+grep -Fq 'bash "$delete_script" "$2" "$2"' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+if grep -Fq 'delete_runtime_namespace()' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
+  echo "pruner retained a duplicate runtime namespace deletion implementation" >&2
+  exit 1
+fi
 # shellcheck disable=SC2016 # Assert literal helper invocation arguments.
 grep -Fq 'bash "$delete_script" "$namespace" "$release_name"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"

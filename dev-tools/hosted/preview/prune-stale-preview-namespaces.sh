@@ -2,48 +2,8 @@
 set -euo pipefail
 
 preview_delete_timeout="${PREVIEW_DELETE_TIMEOUT:-600}"
-
-delete_runtime_namespace() {
-  local runtime_namespace="$1"
-  local runtime_lookup runtime_lookup_status wait_status
-  if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]*$ ]]; then
-    echo "runtime namespace is not a canonical PR preview: ${runtime_namespace}" >&2
-    return 2
-  fi
-
-  if runtime_lookup="$(
-    kubectl get namespace "$runtime_namespace" --ignore-not-found -o name
-  )"; then
-    runtime_lookup_status=0
-  else
-    runtime_lookup_status=$?
-  fi
-  if ((runtime_lookup_status != 0)); then
-    echo "Unable to determine whether runtime namespace ${runtime_namespace} exists." >&2
-    return "$runtime_lookup_status"
-  fi
-  if [[ -z "$runtime_lookup" ]]; then
-    echo "Runtime namespace ${runtime_namespace} is already absent."
-    return 0
-  fi
-
-  if ! kubectl delete namespace "$runtime_namespace" --ignore-not-found --wait=false; then
-    echo "Unable to submit deletion for runtime namespace ${runtime_namespace}." >&2
-    return 1
-  fi
-  wait_status=0
-  kubectl wait --for=delete "namespace/${runtime_namespace}" --timeout="${preview_delete_timeout}s" \
-    || wait_status=$?
-  if ((wait_status != 0)); then
-    runtime_lookup="$(
-      kubectl get namespace "$runtime_namespace" --ignore-not-found -o name
-    )" || return "$wait_status"
-    if [[ -n "$runtime_lookup" ]]; then
-      return "$wait_status"
-    fi
-  fi
-  echo "Runtime namespace ${runtime_namespace} is absent."
-}
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 
 if [[ "${1:-}" == "--delete-runtime" ]]; then
   if [[ $# -ne 2 ]]; then
@@ -56,7 +16,8 @@ if [[ "${1:-}" == "--delete-runtime" ]]; then
     echo "PREVIEW_DELETE_TIMEOUT must be an integer between 1 and 3600" >&2
     exit 2
   fi
-  delete_runtime_namespace "$2"
+  PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
+    bash "$delete_script" "$2" "$2"
   exit $?
 fi
 
@@ -104,9 +65,7 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
   exit 1
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
-delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"
 identity_request_script="${HOSTED_IDENTITY_REQUEST_SCRIPT:-${script_dir}/../shared/request-hosted-identity.sh}"
 identity_wait_script="${HOSTED_IDENTITY_WAIT_SCRIPT:-${script_dir}/wait-for-hosted-identity.sh}"
 
