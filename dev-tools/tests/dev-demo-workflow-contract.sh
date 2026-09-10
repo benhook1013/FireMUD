@@ -262,6 +262,7 @@ reconcile_run = reconcile_script
 for required in (
     "set -euo pipefail",
     "export LC_ALL=C",
+    '[[ -n "${KUBECONFIG:-}" ]]',
     "--ignore-not-found",
     '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]',
     '"${candidate_conclusion}" == success',
@@ -316,8 +317,10 @@ if "gh run list" in reconcile_run or "--limit" in reconcile_run:
     raise SystemExit("dev-demo retry evidence must not use an evictable global run limit")
 if "for nonterminal_status in" in reconcile_run:
     raise SystemExit("dev-demo active-run lookup must use one all-status traversal")
-if reconcile_run.count('run_page="$(list_run_page "$page")"') != 2:
+if reconcile_run.count('list_run_page "$page"') != 2:
     raise SystemExit("dev-demo active and completed history must use bounded all-status pages")
+if "run_page_result" not in reconcile_run:
+    raise SystemExit("dev-demo history page cache must return its result without a subshell")
 if reconcile_run.count('-f "head_sha=${desired_head_sha}"') != 1:
     raise SystemExit("only the one-result develop push anchor may use head_sha search")
 if reconcile_run.count("-f branch=develop") != 1:
@@ -1018,17 +1021,26 @@ while (($# > 0)); do
   esac
 done
 
-expected_jsonpath='jsonpath={.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}'
+expected_last_jsonpath='jsonpath={.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}'
+expected_requested_jsonpath='jsonpath={.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}'
+if [[ "${positional[*]}" == "annotate namespace dev firemud.dev/requested-dev-demo-head-sha=${TEST_HEAD_SHA:?} --overwrite" \
+  && "$ignore_not_found" == false && -z "$output_format" ]]; then
+  : >"${TEST_REPAIR_MARKER:?}"
+  exit 0
+fi
 if [[ "${positional[*]}" != "get namespace dev" \
   || "$ignore_not_found" != true \
-  || "$output_format" != "$expected_jsonpath" ]]; then
+  || ("$output_format" != "$expected_last_jsonpath" \
+    && "$output_format" != "$expected_requested_jsonpath") ]]; then
   echo "unexpected kubectl Namespace annotation lookup" >&2
   exit 2
 fi
-# The runtime Namespace is absent or has no aligned-head annotation unless a
-# fixture explicitly supplies TEST_CURRENT_HEAD_SHA.
-if [[ -n "${TEST_CURRENT_HEAD_SHA:-}" ]]; then
-  printf '%s' "$TEST_CURRENT_HEAD_SHA"
+# The runtime Namespace is absent or has no annotation unless a fixture
+# explicitly supplies the corresponding test value.
+if [[ "$output_format" == "$expected_last_jsonpath" ]]; then
+  printf '%s' "${TEST_CURRENT_HEAD_SHA:-}"
+else
+  printf '%s' "${TEST_REQUESTED_HEAD_SHA:-}"
 fi
 exit 0
 SH
@@ -1190,7 +1202,7 @@ empty_runs() {
 printf 'runs status=all page=%s\n' "$page" >>"$TEST_GH_TRACE"
 
 case "$TEST_SCENARIO:$page" in
-  empty:*|aligned-no-record:*)
+  empty:*|aligned-no-record:*|aligned-request-repair:*)
     empty_runs
     ;;
   three-failures:1|three-failures:2)
@@ -1330,20 +1342,41 @@ chmod +x "$stub_dir/gh" "$stub_dir/kubectl"
 test_head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 test_other_head_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
+missing_kubeconfig_output="$fixture_dir/reconciler-missing-kubeconfig.out"
+set +e
+(
+  cd "$ROOT_DIR"
+  env -u KUBECONFIG \
+    PATH="$stub_dir:$PATH" \
+    GITHUB_REPOSITORY="benhook1013/FireMUD" \
+    GH_TOKEN="fixture-token" \
+    bash "$reconcile_step"
+) >"$missing_kubeconfig_output" 2>&1
+missing_kubeconfig_status=$?
+set -e
+if [[ "$missing_kubeconfig_status" -eq 0 ]] || ! grep -Fq \
+  "KUBECONFIG must be non-empty for dev-demo reconciliation" "$missing_kubeconfig_output"; then
+  echo "reconciler did not fail closed when KUBECONFIG was missing" >&2
+  cat "$missing_kubeconfig_output" >&2
+  exit 1
+fi
+
 run_reconcile_fixture() {
   local scenario="$1"
   local expected_status="$2"
   local expected_dispatches="$3"
   local expected_output="$4"
   local current_head_sha="${5:-}"
+  local requested_head_sha="${6:-}"
   local command_log="$fixture_dir/${scenario}-gh.log"
   local trace_log="$fixture_dir/${scenario}-gh.trace"
   local active_marker="$fixture_dir/${scenario}-active-seen"
+  local repair_marker="$fixture_dir/${scenario}-repair-seen"
   local output="$fixture_dir/${scenario}.out"
   local actual_status actual_dispatches
   : >"$command_log"
   : >"$trace_log"
-  rm -f "$active_marker"
+  rm -f "$active_marker" "$repair_marker"
 
   set +e
   (
@@ -1352,13 +1385,16 @@ run_reconcile_fixture() {
       PATH="$stub_dir:$PATH" \
       GITHUB_REPOSITORY="benhook1013/FireMUD" \
       GH_TOKEN="fixture-token" \
+      KUBECONFIG="$fixture_dir/fake-kubeconfig" \
       TEST_SCENARIO="$scenario" \
       TEST_HEAD_SHA="$test_head_sha" \
       TEST_OTHER_HEAD_SHA="$test_other_head_sha" \
       TEST_CURRENT_HEAD_SHA="$current_head_sha" \
+      TEST_REQUESTED_HEAD_SHA="$requested_head_sha" \
       TEST_GH_LOG="$command_log" \
       TEST_GH_TRACE="$trace_log" \
       TEST_ACTIVE_MARKER="$active_marker" \
+      TEST_REPAIR_MARKER="$fixture_dir/${scenario}-repair-seen" \
       bash "$reconcile_step"
   ) >"$output" 2>&1
   actual_status=$?
@@ -1380,6 +1416,16 @@ run_reconcile_fixture() {
     cat "$output" >&2
     exit 1
   }
+  if [[ "$scenario" == aligned-request-repair ]]; then
+    [[ -f "$repair_marker" ]] || {
+      echo "reconciler did not repair stale requested-head evidence" >&2
+      cat "$output" >&2
+      exit 1
+    }
+  elif [[ -f "$repair_marker" ]]; then
+    echo "reconciler unexpectedly rewrote requested-head evidence" >&2
+    exit 1
+  fi
 
   if [[ "$scenario" == nonterminal-old ]]; then
     expected_trace=$'anchor\nruns status=all page=1\nruns status=all page=2'
@@ -1392,7 +1438,7 @@ run_reconcile_fixture() {
     fi
   fi
   if [[ "$scenario" == nonterminal-before-anchor ]]; then
-    expected_trace=$'anchor\nruns status=all page=1\nruns status=all page=1'
+    expected_trace=$'anchor\nruns status=all page=1'
     actual_trace="$(<"$trace_log")"
     if [[ "$actual_trace" != "$expected_trace" ]]; then
       echo "reconciler fixture $scenario crossed the history anchor" >&2
@@ -1404,14 +1450,15 @@ run_reconcile_fixture() {
 }
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
-run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" "$test_head_sha"
+run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" "$test_head_sha" "$test_head_sha"
+run_reconcile_fixture aligned-request-repair 0 0 "Repaired missing or stale requested dev-demo head annotation" "$test_head_sha" ""
 run_reconcile_fixture three-failures 1 0 "Dev-demo retry budget exhausted"
 run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
 run_reconcile_fixture bootstrap-two-failures 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
 run_reconcile_fixture bootstrap-missing-created-at 1 0 "Dev-demo history bootstrap invalid"
 run_reconcile_fixture successful-unaligned 0 1 "Redispatching successful dev-demo candidate"
 run_reconcile_fixture successful-unaligned-budget 1 0 "Dev-demo alignment retry budget exhausted"
-run_reconcile_fixture successful-aligned 0 0 "already aligned to successful develop head" "$test_head_sha"
+run_reconcile_fixture successful-aligned 0 0 "already aligned to successful develop head" "$test_head_sha" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture nonterminal-before-anchor 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

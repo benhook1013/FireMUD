@@ -800,8 +800,8 @@ class SecretProjectionServiceTest {
     verify(secretClient.runtimeSecrets(), org.mockito.Mockito.times(1))
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
 
-    repaired.setData(Map.of("tls.crt", encoded("tampered-again"), "tls.key", encoded("key")));
-    var rejectedAcceptance =
+    repaired.setData(Map.of("tls.crt", "not-base64", "tls.key", encoded("key")));
+    var malformedAcceptance =
         service.acknowledge(
             secretClient.client(),
             plan,
@@ -811,7 +811,23 @@ class SecretProjectionServiceTest {
             1,
             spki,
             ALWAYS_CURRENT);
-    assertEquals("projection-material-changed", rejectedAcceptance.state());
+    assertEquals("projection-material-changed", malformedAcceptance.state());
+    verify(existingResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
+
+    Map<String, String> nullMaterial = new LinkedHashMap<>(desiredData);
+    nullMaterial.put("tls.crt", null);
+    repaired.setData(nullMaterial);
+    var nullAcceptance =
+        service.acknowledge(
+            secretClient.client(),
+            plan,
+            HostedIdentityContract.INGRESS_ROLE,
+            revision,
+            1,
+            1,
+            spki,
+            ALWAYS_CURRENT);
+    assertEquals("projection-material-changed", nullAcceptance.state());
     verify(existingResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
 
     repaired.setData(desiredData);

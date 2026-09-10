@@ -91,7 +91,17 @@ class CertificateMaterialServiceTest {
         () ->
             CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
     existingSpec.remove("isCA");
-    existing.getMetadata().getLabels().put("unexpected", "metadata-drift");
+    existingSpec.put(
+        "secretName",
+        ((Map<String, Object>) desired.getAdditionalProperties().get("spec")).get("secretName"));
+    existing.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
+    assertDoesNotThrow(
+        () ->
+            CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired));
+    existing
+        .getMetadata()
+        .getLabels()
+        .put(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller");
     assertThrows(
         IllegalStateException.class,
         () ->

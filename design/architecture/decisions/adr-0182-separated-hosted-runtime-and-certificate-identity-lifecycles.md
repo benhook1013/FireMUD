@@ -57,7 +57,7 @@ Certificate and identity evidence contains only non-secret references, generatio
 
 ### Fixed dev-demo reconciliation
 
-The fixed `dev-demo-cluster` identity is reconciled indefinitely while the environment is active. Its runtime namespace may be recreated to preserve clean reproducibility, but the controller retains and repairs the fixed identity namespace and verifies identity/consumer convergence. Dev-demo remains non-player-facing, non-promotable, and non-attestable; reconciliation does not turn its identity or runtime evidence into stage or production evidence.
+The fixed `dev-demo` identity in the `dev-demo-cluster` environment is reconciled indefinitely while the environment is active. Its runtime namespace may be recreated to preserve clean reproducibility, but the controller retains and repairs the fixed identity namespace and verifies identity/consumer convergence. Dev-demo remains non-player-facing, non-promotable, and non-attestable; reconciliation does not turn its identity or runtime evidence into stage or production evidence.
 
 ## Consequences
 

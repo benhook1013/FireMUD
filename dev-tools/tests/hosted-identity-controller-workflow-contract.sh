@@ -284,6 +284,8 @@ publisher_script = next(
 )
 missing_image_block = '''if ! docker image inspect "$image" >/dev/null 2>&1; then
     if [[ "$service" == hosted-environment-identity-controller ]]; then
+      echo "::warning title=Optional controller image unavailable::The optional hosted identity controller image is absent; publication is being skipped." >&2
+      echo "<!-- firemud-hosted-identity-controller-image-unavailable -->" >> "$GITHUB_STEP_SUMMARY"
       echo "Source artifact does not contain optional $image; skipping publication." >&2
       continue
     fi
@@ -299,6 +301,12 @@ assert publisher_script.count(
 ) == 1
 assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
+) == 1
+assert publisher_script.count(
+    'echo "::warning title=Optional controller image unavailable::The optional hosted identity controller image is absent; publication is being skipped." >&2'
+) == 1
+assert publisher_script.count(
+    'echo "<!-- firemud-hosted-identity-controller-image-unavailable -->" >> "$GITHUB_STEP_SUMMARY"'
 ) == 1
 janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
 janitor_prune_step = next(

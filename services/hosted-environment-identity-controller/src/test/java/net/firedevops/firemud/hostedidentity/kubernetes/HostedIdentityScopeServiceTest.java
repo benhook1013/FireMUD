@@ -252,9 +252,17 @@ class HostedIdentityScopeServiceTest {
     var roundTripped = new RoleBuilder(desired).build();
     roundTripped.getMetadata().setUid("api-uid");
     roundTripped.getMetadata().setResourceVersion("7");
+    roundTripped.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
     roundTripped.getRules().get(0).setResourceNames(null);
     roundTripped.getRules().get(0).setNonResourceURLs(null);
     assertTrue(HostedIdentityScopeService.roleEquivalent(roundTripped, desired));
+
+    var unexpectedControllerLabel = new RoleBuilder(roundTripped).build();
+    unexpectedControllerLabel
+        .getMetadata()
+        .getLabels()
+        .put("firemud.dev/unexpected", "ownership");
+    assertFalse(HostedIdentityScopeService.roleEquivalent(unexpectedControllerLabel, desired));
 
     roundTripped
         .getMetadata()
@@ -301,7 +309,11 @@ class HostedIdentityScopeServiceTest {
             .build();
     var roundTripped = new RoleBindingBuilder(desired).build();
     roundTripped.getSubjects().get(0).setApiGroup("");
+    roundTripped.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
     assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
+    roundTripped.getMetadata().getLabels().put("firemud.dev/unexpected", "ownership");
+    assertFalse(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
+    roundTripped.getMetadata().getLabels().remove("firemud.dev/unexpected");
     roundTripped.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
     assertTrue(HostedIdentityScopeService.bindingEquivalent(roundTripped, desired));
     roundTripped.getMetadata().setAnnotations(Map.of("firemud.dev/unexpected", "ownership"));
@@ -316,6 +328,7 @@ class HostedIdentityScopeServiceTest {
     Resource<Role> operation = fixture.operation();
     Role desired = role("get");
     Role oldSpec = role("list");
+    oldSpec.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
     oldSpec.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
     when(operation.get()).thenReturn(oldSpec);
 
@@ -325,7 +338,8 @@ class HostedIdentityScopeServiceTest {
     verify(operation).edit(editor.capture());
     Role converged = editor.getValue().apply(new RoleBuilder(oldSpec).build());
     assertEquals("get", converged.getRules().get(0).getVerbs().get(0));
-    assertEquals(ROLE_LABELS, converged.getMetadata().getLabels());
+    assertEquals(
+        "cluster-tool", converged.getMetadata().getLabels().get("tooling.example/managed-by"));
     assertEquals("external", converged.getMetadata().getAnnotations().get("other.example/claim"));
 
     when(operation.get()).thenReturn(converged);
@@ -412,6 +426,7 @@ class HostedIdentityScopeServiceTest {
                 .withName("old-controller")
                 .withNamespace(plan.controlNamespace())
                 .build());
+    oldSpec.getMetadata().getLabels().put("tooling.example/managed-by", "cluster-tool");
     oldSpec.getMetadata().setAnnotations(Map.of("other.example/claim", "external"));
     when(operation.get()).thenReturn(oldSpec);
 
@@ -423,7 +438,8 @@ class HostedIdentityScopeServiceTest {
     RoleBinding converged = editor.getValue().apply(new RoleBindingBuilder(oldSpec).build());
     assertEquals("scope", converged.getRoleRef().getName());
     assertEquals("firemud-hosted-identity-controller", converged.getSubjects().get(0).getName());
-    assertEquals(BINDING_LABELS, converged.getMetadata().getLabels());
+    assertEquals(
+        "cluster-tool", converged.getMetadata().getLabels().get("tooling.example/managed-by"));
     assertEquals("external", converged.getMetadata().getAnnotations().get("other.example/claim"));
 
     when(operation.get()).thenReturn(converged);

@@ -666,7 +666,9 @@ assert not optional_metadata_unchanged(
 
 role_expression = policies["firemud-hosted-identity-scope-roles"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in role_expression
-assert "object.metadata.labels.size() == 6" in role_expression
+assert "object.metadata.labels.size() ==" not in role_expression
+assert "object.metadata.labels.all(k," in role_expression
+assert "!k.startsWith('firemud.dev/')" in role_expression
 assert "object.rules.size() == 7" in role_expression
 assert "object.rules.size() == 6" in role_expression
 assert "'firemud-grpc-ca'" not in role_expression
@@ -680,8 +682,48 @@ assert (
 ) in normalized_role_expression
 binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
-assert "object.metadata.labels.size() == 5" in binding_expression
+assert "object.metadata.labels.size() ==" not in binding_expression
+assert "object.metadata.labels.all(k," in binding_expression
+assert "!k.startsWith('firemud.dev/')" in binding_expression
 assert "object.subjects.size() == 1" in binding_expression
+
+
+def controller_scope_labels_are_valid(labels, required):
+    return all(labels.get(key) == value for key, value in required.items()) and all(
+        not key.startswith("firemud.dev/") or key in required for key in labels
+    )
+
+
+role_labels = {
+    "app.kubernetes.io/name": "hosted-environment-identity-controller",
+    "app.kubernetes.io/component": "controller-scope",
+    "app.kubernetes.io/part-of": "firemud",
+    "firemud.dev/managed-by": "hosted-identity-controller",
+    "firemud.dev/identity-name": "pr-42",
+    "firemud.dev/environment-class": "pr-preview",
+}
+binding_labels = {
+    key: role_labels[key]
+    for key in (
+        "app.kubernetes.io/name",
+        "app.kubernetes.io/component",
+        "app.kubernetes.io/part-of",
+        "firemud.dev/managed-by",
+        "firemud.dev/identity-name",
+    )
+}
+assert controller_scope_labels_are_valid(
+    {**role_labels, "example.test/owner": "platform"}, role_labels
+)
+assert not controller_scope_labels_are_valid(
+    {**role_labels, "firemud.dev/unowned": "drift"}, role_labels
+)
+assert controller_scope_labels_are_valid(
+    {**binding_labels, "example.test/owner": "platform"}, binding_labels
+)
+assert not controller_scope_labels_are_valid(
+    {**binding_labels, "firemud.dev/unowned": "drift"}, binding_labels
+)
 namespace_expression = policies["firemud-hosted-system-namespace-guard"]["spec"]["validations"][0]["expression"]
 namespace_rule = policies["firemud-hosted-system-namespace-guard"]["spec"]["matchConstraints"]["resourceRules"][0]
 assert namespace_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
@@ -729,8 +771,37 @@ controller_secret_expression = next(
     for expression in secret_expressions
     if "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in expression
 )
+normalized_controller_secret_expression = " ".join(controller_secret_expression.split())
 assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc']" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
+assert normalized_controller_secret_expression.count("request.name.startsWith(") == 3
+assert normalized_controller_secret_expression.count("object.metadata.name.startsWith(") == 2
+assert "request.namespace.size() - 9" in normalized_controller_secret_expression
+
+
+def canonical_environment_prefix(namespace):
+    if namespace in ("dev", "dev-identity"):
+        return "dev-"
+    if namespace.endswith("-identity"):
+        return f"{namespace[:-9]}-"
+    return f"{namespace}-"
+
+
+def canonical_primary_name(namespace, name):
+    prefix = canonical_environment_prefix(namespace)
+    return name.startswith(prefix) and name[len(prefix) :] in {
+        "tls",
+        "telnet-tls",
+        "gateway-internal-ws",
+        "tcp-proxy-bridge",
+    }
+
+
+assert canonical_primary_name("dev-identity", "dev-tls")
+assert canonical_primary_name("pr-42", "pr-42-telnet-tls")
+assert canonical_primary_name("pr-42-identity", "pr-42-gateway-internal-ws")
+assert not canonical_primary_name("pr-42-identity", "pr-43-gateway-internal-ws")
+assert not canonical_primary_name("dev-identity", "pr-42-tls")
 cert_manager_expression = next(
     expression
     for expression in secret_expressions
@@ -773,13 +844,14 @@ controller_certificate_expression = certificate_match.split(
 )[0]
 assert "request.namespace == 'dev-identity'" in controller_certificate_expression
 assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in controller_certificate_expression
-assert "((request.operation == 'DELETE' && request.name.matches(" in certificate_match
+assert "(request.operation == 'DELETE' &&" in certificate_match
 controller_delete_expression = controller_certificate_expression.split(
     "(request.operation == 'DELETE' &&", 1
 )[1].split(
     "(request.operation != 'DELETE' &&", 1
 )[0]
 assert "firemud-grpc-tls" not in controller_delete_expression
+assert "request.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert (
     "object.metadata.labels['firemud.dev/role'] in "
@@ -816,6 +888,7 @@ assert "firemud-grpc-tls" in namespace_controller_expression
 profile_expression = next(
     expression for expression in certificate_expressions if "gateway-internal-ws" in expression
 )
+normalized_profile_expression = " ".join(profile_expression.split())
 assert "spring-cloud-gateway-mtls." in profile_expression
 assert ".svc.cluster.local" in profile_expression
 assert "spiffe://firemud/ns/" in profile_expression
@@ -828,14 +901,14 @@ assert "object.spec.issuerRef.name == 'firemud-ca-issuer'" in profile_expression
 assert "object.spec.issuerRef.kind == 'ClusterIssuer'" in profile_expression
 assert "object.spec.issuerRef.group == 'cert-manager.io'" in profile_expression
 assert (
-    "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||\n"
-    "    ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
-) in profile_expression
+    "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' || "
+    "((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
+) in normalized_profile_expression
 assert (
-    "object.metadata.labels['firemud.dev/role'] != 'ingress' &&\n"
-    "    object.metadata.labels['firemud.dev/role'] != 'telnet' ||\n"
-    "    object.spec.usages == ['digital signature', 'key encipherment', 'server auth']"
-) in profile_expression
+    "object.metadata.labels['firemud.dev/role'] != 'ingress' && "
+    "object.metadata.labels['firemud.dev/role'] != 'telnet' || "
+    "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']"
+) in normalized_profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']" in profile_expression
 for private_key_profile in (

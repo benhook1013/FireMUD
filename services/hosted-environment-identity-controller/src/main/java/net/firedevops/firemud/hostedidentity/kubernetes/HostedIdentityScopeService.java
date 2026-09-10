@@ -413,10 +413,23 @@ public class HostedIdentityScopeService {
         && java.util.Objects.equals(current.getName(), desired.getName())
         && java.util.Objects.equals(current.getNamespace(), desired.getNamespace())
         && (current.getGenerateName() == null || current.getGenerateName().isBlank())
-        && java.util.Objects.equals(current.getLabels(), desired.getLabels())
+        && managedLabelsEquivalent(current.getLabels(), desired.getLabels())
         && controllerAnnotations(current).equals(controllerAnnotations(desired))
         && emptyIfNull(current.getOwnerReferences()).isEmpty()
         && emptyIfNull(current.getFinalizers()).isEmpty();
+  }
+
+  private static boolean managedLabelsEquivalent(
+      Map<String, String> current, Map<String, String> desired) {
+    return current != null
+        && desired != null
+        && desired.entrySet().stream()
+            .allMatch(
+                entry ->
+                    java.util.Objects.equals(entry.getValue(), current.get(entry.getKey())))
+        && current.keySet().stream()
+            .filter(key -> key.startsWith("firemud.dev/"))
+            .allMatch(desired::containsKey);
   }
 
   private static Map<String, String> controllerAnnotations(ObjectMeta metadata) {

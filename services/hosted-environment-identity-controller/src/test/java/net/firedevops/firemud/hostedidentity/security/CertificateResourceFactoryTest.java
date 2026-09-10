@@ -168,9 +168,13 @@ class CertificateResourceFactoryTest {
 
   private static void assertCertificateDefaults(Map<?, ?> certificateSpec) {
     Map<?, ?> issuerRef = (Map<?, ?>) certificateSpec.get("issuerRef");
+    Map<?, ?> privateKey = (Map<?, ?>) certificateSpec.get("privateKey");
     assertEquals("ClusterIssuer", issuerRef.get("kind"));
     assertEquals("cert-manager.io", issuerRef.get("group"));
-    assertEquals("Always", ((Map<?, ?>) certificateSpec.get("privateKey")).get("rotationPolicy"));
+    assertEquals("RSA", privateKey.get("algorithm"));
+    assertEquals(2048, privateKey.get("size"));
+    assertEquals("PKCS8", privateKey.get("encoding"));
+    assertEquals("Always", privateKey.get("rotationPolicy"));
     assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
   }
 

@@ -365,7 +365,7 @@ public class SecretProjectionService {
   private static boolean materialMatchesRevision(Secret secret, String revision) {
     try {
       return revision.equals(revisionForData(secret.getData()));
-    } catch (IllegalArgumentException exception) {
+    } catch (RuntimeException exception) {
       return false;
     }
   }

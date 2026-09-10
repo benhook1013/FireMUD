@@ -2,6 +2,10 @@
 set -euo pipefail
 export LC_ALL=C
 namespace="dev"
+[[ -n "${KUBECONFIG:-}" ]] || {
+  echo "::error title=Missing Kubernetes configuration::KUBECONFIG must be non-empty for dev-demo reconciliation." >&2
+  exit 1
+}
 desired_head_sha="$(
   gh api "repos/${GITHUB_REPOSITORY}/branches/develop" --jq '.commit.sha'
 )"
@@ -10,16 +14,18 @@ desired_head_sha="$(
   exit 1
 }
 current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
+current_requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}')"
 max_failed_attempts=3
 max_history_pages=10
 expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
 workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
 declare -A run_page_cache=()
+run_page_result=""
 
 list_run_page() {
   local page="$1"
   if [[ -v "run_page_cache[$page]" ]]; then
-    printf '%s' "${run_page_cache[$page]}"
+    run_page_result="${run_page_cache[$page]}"
     return
   fi
   local api_args=(
@@ -30,7 +36,7 @@ list_run_page() {
     -F "page=${page}"
   )
   run_page_cache[$page]="$(gh api "${api_args[@]}")"
-  printf '%s' "${run_page_cache[$page]}"
+  run_page_result="${run_page_cache[$page]}"
 }
 
 develop_push_run="$(
@@ -57,7 +63,8 @@ if [[ -z "$history_not_before" ]]; then
   bootstrap_exact_run_count=0
   bootstrap_complete=false
   for ((bootstrap_page = 1; bootstrap_page <= max_history_pages; bootstrap_page += 1)); do
-    bootstrap_run_page="$(list_run_page "$bootstrap_page")"
+    list_run_page "$bootstrap_page"
+    bootstrap_run_page="$run_page_result"
     bootstrap_page_size="$(jq -r '.workflow_runs | length' <<<"${bootstrap_run_page}")"
     bootstrap_exact_runs="$(
       jq -c \
@@ -127,7 +134,8 @@ fi
 candidate_run=""
 page=1
 while (( page <= max_history_pages )); do
-  run_page="$(list_run_page "$page")"
+  list_run_page "$page"
+  run_page="$run_page_result"
   candidate_run="$(
     jq -r --arg head "${desired_head_sha}" --arg title "${expected_deploy_title}" \
       '(first(.workflow_runs[] | select(.head_sha == $head and .display_title == $title and .status != "completed")) // empty) | [.id, .status, (.conclusion // "")] | @tsv' \
@@ -167,7 +175,8 @@ failed_attempts=0
 unaligned_completed_attempts=0
 page=1
 while (( page <= max_history_pages )); do
-  run_page="$(list_run_page "$page")"
+  list_run_page "$page"
+  run_page="$run_page_result"
   exact_page_runs="$(
     jq -c \
       --arg head "${desired_head_sha}" \
@@ -230,8 +239,17 @@ if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
   exit 0
 fi
 
+repair_requested_head_if_aligned() {
+  if [[ "${current_requested_head_sha}" != "${desired_head_sha}" ]]; then
+    kubectl annotate namespace "${namespace}" \
+      "firemud.dev/requested-dev-demo-head-sha=${desired_head_sha}" --overwrite
+    echo "Repaired missing or stale requested dev-demo head annotation."
+  fi
+}
+
 if [[ "${current_head_sha}" == "${desired_head_sha}" \
   && -z "${candidate_run}" ]]; then
+  repair_requested_head_if_aligned
   echo "Dev demo already aligned to develop head ${desired_head_sha}; no exact deploy candidate remains."
   exit 0
 fi
@@ -239,6 +257,7 @@ fi
 if [[ "${current_head_sha}" == "${desired_head_sha}" \
   && "${candidate_status}" == completed \
   && "${candidate_conclusion}" == success ]]; then
+  repair_requested_head_if_aligned
   echo "Dev demo already aligned to successful develop head ${desired_head_sha}"
   exit 0
 fi

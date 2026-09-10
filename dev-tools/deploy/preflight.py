@@ -6572,12 +6572,12 @@ def hosted_bridge_preflight(
     expected_hosted_telnet_node_port: int | None = None,
 ) -> int:
     """Validate a hosted controller render before Helm apply or smoke proof."""
+    if context not in {"operator", "ci-static"}:
+        fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     try:
         expected = hosted_bridge_expected_bindings(namespace, release_name)
     except ValueError as exc:
         fail(str(exc))
-    if context not in {"operator", "ci-static"}:
-        fail(f"Invalid FIREMUD_PREFLIGHT_CONTEXT: {context}")
     if not render_path.is_file():
         fail(f"Hosted bridge render does not exist: {render_path}")
     try:

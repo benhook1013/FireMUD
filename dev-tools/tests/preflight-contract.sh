@@ -8679,6 +8679,28 @@ if malformed_invocation.returncode == 0 or malformed_invocation.stderr.strip() !
         f"{malformed_invocation.stderr!r}"
     )
 
+invalid_context = subprocess.run(
+    [
+        sys.executable,
+        str(root / "dev-tools/deploy/preflight.py"),
+        "hosted-bridge",
+        str(render_path),
+        "pr-0",
+        "preview",
+    ],
+    env={**os.environ, "FIREMUD_PREFLIGHT_CONTEXT": "invalid-context"},
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if invalid_context.returncode == 0 or invalid_context.stderr.strip() != (
+    "Invalid FIREMUD_PREFLIGHT_CONTEXT: invalid-context"
+):
+    raise SystemExit(
+        "hosted-bridge invalid context did not win before target validation: "
+        f"{invalid_context.stderr!r}"
+    )
+
 
 valid = run_hosted(
     render_path,

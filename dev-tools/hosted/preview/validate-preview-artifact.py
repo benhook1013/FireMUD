@@ -51,6 +51,28 @@ EXPECTED_NAMES = {
         "tcp-proxy-service-egress",
     },
 }
+EXPECTED_PVC_SPECS = {
+    "postgres-data": {
+        "accessModes": ["ReadWriteOnce"],
+        "storageClassName": "local-path",
+        "resources": {"requests": {"storage": "5Gi"}},
+    },
+    "redis-coord-data": {
+        "accessModes": ["ReadWriteOnce"],
+        "storageClassName": "local-path",
+        "resources": {"requests": {"storage": "1Gi"}},
+    },
+    "redis-cache-data": {
+        "accessModes": ["ReadWriteOnce"],
+        "storageClassName": "local-path",
+        "resources": {"requests": {"storage": "1Gi"}},
+    },
+    "minio-data": {
+        "accessModes": ["ReadWriteOnce"],
+        "storageClassName": "local-path",
+        "resources": {"requests": {"storage": "5Gi"}},
+    },
+}
 EXPECTED_OBJECTS = {
     (kind, name)
     for kind, names in EXPECTED_NAMES.items()
@@ -475,6 +497,13 @@ def _validate_workload_selector_metadata(document: dict) -> None:
         fail(f"Deployment/{name} has an unsafe selector")
 
 
+def _validate_persistent_volume_claim(document: dict) -> None:
+    name = document["metadata"]["name"]
+    spec = _require_mapping(document.get("spec"), f"PersistentVolumeClaim/{name}.spec")
+    if spec != EXPECTED_PVC_SPECS[name]:
+        fail(f"PersistentVolumeClaim/{name} has an unsafe spec")
+
+
 def _is_expected_secret_reference(value: object) -> bool:
     return isinstance(value, str) and value in EXPECTED_SECRET_REFS
 
@@ -594,12 +623,11 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
     for field in ("hostNetwork", "hostPID", "hostIPC"):
         if pod.get(field) is True:
             fail(f"{path}.{field} is forbidden by restricted Pod Security Admission")
-    if pod.get("sysctls"):
-        fail(f"{path}.sysctls are not allowed in the preview runtime")
-
     pod_security = pod.get("securityContext")
     if not isinstance(pod_security, dict):
         fail(f"{path}.securityContext is required by restricted Pod Security Admission")
+    if pod_security.get("sysctls"):
+        fail(f"{path}.securityContext.sysctls are not allowed in the preview runtime")
     if pod_security.get("runAsNonRoot") is not True:
         fail(f"{path}.securityContext.runAsNonRoot must be true")
     for field in ("runAsUser", "runAsGroup", "fsGroup"):
@@ -1333,6 +1361,8 @@ def validate_manifest(
                 _validate_image_reference(location, value, expected_image_tag)
         if document["kind"] in {"Deployment", "Job"}:
             _validate_workload_selector_metadata(document)
+        if document["kind"] == "PersistentVolumeClaim":
+            _validate_persistent_volume_claim(document)
     if seen != EXPECTED_OBJECTS:
         missing = sorted(EXPECTED_OBJECTS - seen)
         extra = sorted(seen - EXPECTED_OBJECTS)

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.hostedidentity.kubernetes;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
@@ -88,6 +89,26 @@ class DeploymentRolloutServiceTest {
     verify(locked).replace(replacement.capture());
     assertEquals("returned", replacement.getValue().getMetadata().getName());
     assertEquals("rv-3", replacement.getValue().getMetadata().getResourceVersion());
+  }
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void replaceWithCasRethrowsNonConflictFailure() {
+    RollableScalableResource<Deployment> operation = mock(RollableScalableResource.class);
+    ReplaceDeletable<Deployment> locked = mock(ReplaceDeletable.class);
+    when(operation.lockResourceVersion("rv-3")).thenReturn(locked);
+    KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
+    doThrow(failure).when(locked).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    Deployment observed = readyDeployment("observed", Map.of(), 3L);
+
+    KubernetesClientException thrown =
+        assertThrows(
+            KubernetesClientException.class,
+            () -> DeploymentRolloutService.replaceWithCas(operation, observed, current -> current));
+
+    assertSame(failure, thrown);
+    verify(operation).lockResourceVersion("rv-3");
+    verify(locked).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test

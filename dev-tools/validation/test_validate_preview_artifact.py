@@ -232,6 +232,94 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
         }
         self._validate_manifest(document)
 
+    def test_manifest_rejects_pod_security_context_sysctls(self):
+        document = self._manifest_fixture({"emptyDir": {}})
+        document["spec"]["template"]["spec"]["securityContext"]["sysctls"] = [
+            {"name": "net.ipv4.ip_unprivileged_port_start", "value": "0"}
+        ]
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape(
+                "Deployment/account-service.spec.template.spec.securityContext.sysctls "
+                "are not allowed in the preview runtime"
+            ),
+        ):
+            self._validate_manifest(document)
+
+
+class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.validator = load_validator()
+
+    def _document(self, name, spec):
+        return {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {
+                "name": name,
+                "namespace": "pr-42",
+                "labels": {
+                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    "app.kubernetes.io/instance": "pr-42",
+                },
+            },
+            "spec": spec,
+        }
+
+    def _validate(self, document):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.yaml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with (
+                patch.object(
+                    self.validator,
+                    "EXPECTED_NAMES",
+                    {"PersistentVolumeClaim": {document["metadata"]["name"]}},
+                ),
+                patch.object(
+                    self.validator,
+                    "EXPECTED_OBJECTS",
+                    {("PersistentVolumeClaim", document["metadata"]["name"])},
+                ),
+                patch.object(self.validator, "validate_services"),
+                patch.object(self.validator, "validate_network_policies"),
+                patch.object(self.validator, "validate_infrastructure_deployments"),
+                patch.object(self.validator, "validate_service_consumers"),
+            ):
+                self.validator.validate_manifest(
+                    path,
+                    "pr-42",
+                    "pr-42-head-42",
+                    "pr-42.preview.example.test",
+                )
+
+    def test_manifest_accepts_pinned_complete_pvc_specs(self):
+        for name, spec in self.validator.EXPECTED_PVC_SPECS.items():
+            with self.subTest(name=name):
+                self._validate(self._document(name, copy.deepcopy(spec)))
+
+    def test_manifest_rejects_incomplete_or_changed_pvc_specs(self):
+        expected = self.validator.EXPECTED_PVC_SPECS["postgres-data"]
+        cases = []
+        for missing_field in ("accessModes", "storageClassName", "resources"):
+            spec = copy.deepcopy(expected)
+            spec.pop(missing_field)
+            cases.append((missing_field, spec))
+        spec = copy.deepcopy(expected)
+        spec["resources"]["requests"].pop("storage")
+        cases.append(("resources.requests.storage", spec))
+        spec = copy.deepcopy(expected)
+        spec["accessModes"] = ["ReadWriteMany"]
+        cases.append(("accessModes value", spec))
+
+        for case, spec in cases:
+            with self.subTest(case=case), self.assertRaisesRegex(
+                ValueError,
+                re.escape("PersistentVolumeClaim/postgres-data has an unsafe spec"),
+            ):
+                self._validate(self._document("postgres-data", spec))
+
 
 class PreviewArtifactMetadataTest(unittest.TestCase):
     @classmethod

@@ -833,7 +833,7 @@ public class CertificateMaterialService {
       if (!"cert-manager.io/v1".equals(existing.getApiVersion())
           || !"Certificate".equals(existing.getKind())
           || existing.getMetadata() == null
-          || !Objects.equals(
+          || !containsDesiredLabels(
               existing.getMetadata().getLabels(), desired.getMetadata().getLabels())) {
         throw new IllegalStateException("owned Certificate identity metadata drifted");
       }
