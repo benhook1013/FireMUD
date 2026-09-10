@@ -9,6 +9,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTes
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.readyCertificate;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretClient;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.secretName;
+import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stableBatchFixture;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificate;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificateRequest;
 import static net.firedevops.firemud.hostedidentity.kubernetes.HostedIdentityTestFixtures.stubCertificateRequests;
@@ -1864,44 +1865,6 @@ class CertificateMaterialServiceTest {
         existingResource,
         replacementResource,
         lockedReplacementResource);
-  }
-
-  private static StableBatchFixture stableBatchFixture() {
-    return HostedIdentityTestFixtures.stableBatchFixture(
-        CertificateMaterialServiceTest::stubProjectionAndSource);
-  }
-
-  private static Secret stubProjectionAndSource(
-      SecretClient secretClient,
-      EnvironmentIdentityPlan plan,
-      String role,
-      Map<String, String> projectionData,
-      Map<String, String> recordedData,
-      Map<String, String> sourceData) {
-    String name = secretName(plan, role);
-    String revision = SecretProjectionService.revisionForRole(role, recordedData);
-    Secret projection =
-        ownedSecret(
-            plan, role, name, projectionData, acceptedAnnotations(revision, "2".repeat(64)));
-    if (HostedIdentityContract.GRPC_ROLE.equals(role)) {
-      projection.setType("Opaque");
-    }
-    projection.getMetadata().setResourceVersion("7");
-    Resource<Secret> projectionResource = mock(Resource.class);
-    when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
-    when(projectionResource.get()).thenReturn(projection);
-    Secret source =
-        HostedIdentityContract.GRPC_ROLE.equals(role)
-            ? ownedSecret(plan, role, name, sourceData, Map.of())
-            : certManagerSource(plan, role, name, sourceData);
-    Resource<Secret> sourceResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
-    when(sourceResource.get()).thenReturn(source);
-    Resource<Secret> predecessorResource = mock(Resource.class);
-    when(secretClient.identitySecrets().withName(name + "-previous"))
-        .thenReturn(predecessorResource);
-    when(predecessorResource.get()).thenReturn(null);
-    return source;
   }
 
   private record CertificateApplyFixture(
