@@ -42,6 +42,7 @@ DESIGN_SECTIONS = (
 )
 DEFAULT_BAR_WIDTH = 16
 PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner"
+PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"
 
@@ -834,6 +835,95 @@ def render_pr_report(report: dict[str, object]) -> str:
     return "\n".join(output)
 
 
+def replace_pr_report_block(body: str, snippet: str) -> str:
+    start_count = body.count(PR_REPORT_START)
+    end_count = body.count(PR_REPORT_END)
+    if start_count == 0 and end_count == 0:
+        if not body:
+            return snippet
+        separator = "" if body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n"
+        return f"{body}{separator}{snippet}"
+    if start_count != 1 or end_count != 1:
+        raise ReportError("PR body must contain exactly one complete LOC marker block")
+    start = body.find(PR_REPORT_START)
+    end = body.find(PR_REPORT_END)
+    if end < start:
+        raise ReportError("PR body LOC markers are reversed")
+    end += len(PR_REPORT_END)
+    return f"{body[:start]}{snippet}{body[end:]}"
+
+
+def pull_request_update_state(root: Path, number: int, repository: str) -> tuple[str, str, str]:
+    require_tool("gh")
+    result = run_command(
+        (
+            "gh",
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            repository,
+            "--json",
+            PR_UPDATE_FIELDS,
+        ),
+        root,
+    )
+    try:
+        payload = json.loads(command_text(result, "GitHub PR update metadata"))
+    except json.JSONDecodeError as error:
+        raise ReportError(f"GitHub PR update metadata was not valid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise ReportError("GitHub PR update metadata was not an object")
+    body = payload.get("body")
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise ReportError("GitHub PR body was not text")
+    return body, valid_object_id(payload.get("baseRefOid"), "base"), valid_object_id(payload.get("headRefOid"), "head")
+
+
+def update_pull_request_body(root: Path, number: int, report: dict[str, object]) -> bool:
+    repository = report.get("repository")
+    base = report.get("base")
+    head = report.get("head")
+    if not isinstance(repository, str) or not isinstance(base, dict) or not isinstance(head, dict):
+        raise ReportError("PR report metadata was malformed before body update")
+    counted_base = base.get("oid")
+    counted_head = head.get("oid")
+    if not isinstance(counted_base, str) or not isinstance(counted_head, str):
+        raise ReportError("PR report revisions were malformed before body update")
+
+    body, current_base, current_head = pull_request_update_state(root, number, repository)
+    if current_base != counted_base or current_head != counted_head:
+        raise ReportError("PR base or head changed while the LOC report was being generated; refusing body update")
+
+    updated_body = replace_pr_report_block(body, render_pr_report(report))
+    if updated_body == body:
+        return False
+    body_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
+            body_path = Path(body_file.name)
+            body_file.write(updated_body)
+        run_command(
+            (
+                "gh",
+                "pr",
+                "edit",
+                str(number),
+                "--repo",
+                repository,
+                "--body-file",
+                str(body_path),
+            ),
+            root,
+        )
+    finally:
+        if body_path is not None:
+            body_path.unlink(missing_ok=True)
+    return True
+
+
 def language_rows(files: list[FileStats]) -> list[dict[str, object]]:
     languages: dict[str, list[FileStats]] = {}
     for item in files:
@@ -1036,6 +1126,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("number", type=int, help="GitHub pull request number")
     pr.add_argument("--repo", help="GitHub repository in owner/name form (defaults to origin)")
     pr.add_argument("--json", action="store_true", help="emit structured JSON")
+    pr.add_argument("--update-pr", action="store_true", help="replace the marked LOC section in the PR body")
 
     classify = commands.add_parser("classify", help="show source/test classification for tracked files")
     classify.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -1090,6 +1181,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.number <= 0:
                 raise ReportError("pull request number must be positive")
             report = build_pr_report(root, args.number, args.repo)
+            if args.update_pr:
+                updated = update_pull_request_body(root, args.number, report)
+                status = "Updated the marked LOC section" if updated else "The marked LOC section is already up to date"
+                print(f"{status} in PR #{args.number}.", file=sys.stderr)
             print_json(report) if args.json else print(render_pr_report(report))
             return 0
 

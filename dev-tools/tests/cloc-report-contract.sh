@@ -593,6 +593,80 @@ assert cloc_report.format_change(0.04, 1, 1) == "+<0.1%"
 assert cloc_report.format_change(-0.04, -1, 1) == "-<0.1%"
 assert cloc_report.format_change(0.0, 0, 0) == "0.0%"
 
+impact_snippet = cloc_report.render_pr_report(impact)
+appended_body = cloc_report.replace_pr_report_block("prefix", impact_snippet)
+assert appended_body.startswith("prefix\n\n" + cloc_report.PR_REPORT_START)
+assert appended_body.count(cloc_report.PR_REPORT_START) == 1
+assert appended_body.count(cloc_report.PR_REPORT_END) == 1
+replaced_body = cloc_report.replace_pr_report_block(
+    "prefix\n" + cloc_report.PR_REPORT_START + "\nold\n" + cloc_report.PR_REPORT_END + "\nsuffix",
+    impact_snippet,
+)
+assert replaced_body.startswith("prefix\n")
+assert replaced_body.endswith("\nsuffix")
+assert replaced_body.count(cloc_report.PR_REPORT_START) == 1
+assert cloc_report.replace_pr_report_block(replaced_body, impact_snippet) == replaced_body
+for malformed_body in (
+    cloc_report.PR_REPORT_START,
+    cloc_report.PR_REPORT_END,
+    cloc_report.PR_REPORT_START + "\n" + cloc_report.PR_REPORT_END + "\n" + cloc_report.PR_REPORT_START,
+    cloc_report.PR_REPORT_END + "\n" + cloc_report.PR_REPORT_START,
+):
+    try:
+        cloc_report.replace_pr_report_block(malformed_body, impact_snippet)
+    except cloc_report.ReportError:
+        pass
+    else:
+        raise AssertionError("malformed PR body markers must fail closed")
+
+original_require_tool = cloc_report.require_tool
+original_run_command = cloc_report.run_command
+update_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_changed_revision_command(args, _root):
+    update_calls.append(args)
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {"baseRefOid": "a" * 40, "headRefOid": "d" * 40, "body": "existing"}
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_changed_revision_command
+try:
+    try:
+        cloc_report.update_pull_request_body(repo, 2736, impact)
+    except cloc_report.ReportError as error:
+        assert "base or head changed" in str(error)
+    else:
+        raise AssertionError("changed PR revisions must block body update")
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
+update_calls = []
+cloc_report.require_tool = lambda _name: None
+def fake_unchanged_body_command(args, _root):
+    update_calls.append(args)
+    if args[:3] != ("gh", "pr", "view"):
+        raise AssertionError("unchanged PR body must not be edited")
+    return subprocess.CompletedProcess(
+        args,
+        0,
+        stdout=json.dumps(
+            {"baseRefOid": "a" * 40, "headRefOid": "b" * 40, "body": impact_snippet}
+        ).encode(),
+        stderr=b"",
+    )
+cloc_report.run_command = fake_unchanged_body_command
+try:
+    assert cloc_report.update_pull_request_body(repo, 2736, impact) is False
+    assert len(update_calls) == 1
+finally:
+    cloc_report.require_tool = original_require_tool
+    cloc_report.run_command = original_run_command
+
 metadata_calls = []
 original_require_tool = cloc_report.require_tool
 original_run_command = cloc_report.run_command
