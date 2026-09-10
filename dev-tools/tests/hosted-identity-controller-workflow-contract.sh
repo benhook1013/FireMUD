@@ -1002,9 +1002,10 @@ run_credential_step() {
   local output="$2"
   local error="$3"
   local fail_create="${4:-}"
+  local runtime_namespace="${5-pr-42}"
   env \
     PATH="$credential_stub_dir:$PATH" \
-    RUNTIME_NAMESPACE=pr-42 \
+    RUNTIME_NAMESPACE="$runtime_namespace" \
     CREDENTIAL_STATE_DIR="$state_dir" \
     CREDENTIAL_OPENSSL_COUNT="$state_dir/openssl-count" \
     CREDENTIAL_OPENSSL_LOG="$state_dir/openssl.log" \
@@ -1026,6 +1027,25 @@ assert_credential_files_removed() {
     [[ ! -e "$(dirname "$path")" ]]
   done <"$state_dir/credential-files.log"
 }
+
+for invalid_runtime_namespace in "" dev pr-0 pr-01 pr-abc pr-42/escape; do
+  invalid_state="$credential_state_root/invalid-${invalid_runtime_namespace//\//-}"
+  mkdir -p "$invalid_state"
+  if run_credential_step "$invalid_state" \
+    "$TEMP_DIR/invalid-credential-${invalid_runtime_namespace//\//-}.output" \
+    "$TEMP_DIR/invalid-credential-${invalid_runtime_namespace//\//-}.error" \
+    "" "$invalid_runtime_namespace"; then
+    echo "credential step accepted invalid runtime namespace: $invalid_runtime_namespace" >&2
+    exit 1
+  fi
+  test ! -e "$invalid_state/kubectl.log"
+  invalid_error="$TEMP_DIR/invalid-credential-${invalid_runtime_namespace//\//-}.error"
+  if [[ -z "$invalid_runtime_namespace" ]]; then
+    grep -Fxq 'runtime namespace is required' "$invalid_error"
+  else
+    grep -Fxq 'runtime namespace must match pr-[1-9][0-9]*' "$invalid_error"
+  fi
+done
 
 create_once_state="$credential_state_root/create-once"
 mkdir -p "$create_once_state"

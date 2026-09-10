@@ -225,6 +225,10 @@ public class CertificateMaterialService {
       String secretName,
       RoleExpectation expectation,
       MaterializationBatch batch) {
+    RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
+    if (pinned != null) {
+      return pinned;
+    }
     if (batch.deferBehindSelectedRotation(role)) {
       return acceptedMaterial(client, plan, role, expectation);
     }
@@ -232,10 +236,6 @@ public class CertificateMaterialService {
         readyCertificateRevision(client, plan.identityNamespace(), certificate);
     if (readyCertificate == null) {
       return RoleMaterial.pending(role, "certificate-pending");
-    }
-    RoleMaterial pinned = batch.pinnedUnacceptedMaterial(role, expectation);
-    if (pinned != null) {
-      return pinned;
     }
     return serialize(
         client,
@@ -856,6 +856,7 @@ public class CertificateMaterialService {
               .genericKubernetesResources(ResourceContexts.CERTIFICATES)
               .inNamespace(namespace)
               .resource(desired)
+              .lockResourceVersion(resourceVersion)
               .replace();
         } catch (KubernetesClientException exception) {
           if (exception.getCode() != 409) {

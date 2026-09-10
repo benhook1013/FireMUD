@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -217,6 +218,69 @@ class ServedEnvironmentProbeTest {
     }
   }
 
+  @Test
+  void malformedOrUnsupportedGrpcPrivateKeysAreMaterialErrors() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+
+    assertGrpcPrivateKeyRejected(plan, encodedPem(new byte[] {1, 2, 3}));
+
+    KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC");
+    assertGrpcPrivateKeyRejected(
+        plan, encodedPem(keyPairGenerator.generateKeyPair().getPrivate().getEncoded()));
+  }
+
+  @Test
+  void mismatchedGrpcPrivateKeyIsAMaterialError() throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+    keyPairGenerator.initialize(2048);
+
+    Secret material = generatedMaterial(plan);
+    material
+        .getData()
+        .put("tls.key", encodedPem(keyPairGenerator.generateKeyPair().getPrivate().getEncoded()));
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ServedEnvironmentProbe.grpcSslContext(material, trustAnchor));
+    assertEquals("gRPC private key does not match the leaf certificate", failure.getMessage());
+    assertEquals(
+        "material-or-configuration-invalid",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  ServedEnvironmentProbe.grpcSslContext(material, trustAnchor);
+                  return null;
+                },
+                "mtls-handshake")
+            .reason());
+  }
+
+  private static void assertGrpcPrivateKeyRejected(
+      EnvironmentIdentityPlan plan, String encodedPrivateKey) throws Exception {
+    Secret material = generatedMaterial(plan);
+    material.getData().put("tls.key", encodedPrivateKey);
+    String trustAnchor = fingerprint(material.getData().get("ca.crt"));
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> ServedEnvironmentProbe.grpcSslContext(material, trustAnchor));
+    assertEquals("gRPC private key is not valid RSA PKCS#8", failure.getMessage());
+    assertEquals(
+        "material-or-configuration-invalid",
+        ServedEnvironmentProbe.internalTlsProbe(
+                () -> {
+                  ServedEnvironmentProbe.grpcSslContext(material, trustAnchor);
+                  return null;
+                },
+                "mtls-handshake")
+            .reason());
+  }
+
   private static Secret generatedMaterial(EnvironmentIdentityPlan plan) throws Exception {
     Method generate =
         GrpcTransportBundleGenerator.class.getDeclaredMethod(
@@ -269,5 +333,12 @@ class ServedEnvironmentProbeTest {
       result.append(String.format(Locale.ROOT, "%02x", value));
     }
     return result.toString();
+  }
+
+  private static String encodedPem(byte[] der) {
+    String body = Base64.getEncoder().encodeToString(der);
+    String pem =
+        "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";
+    return Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.US_ASCII));
   }
 }

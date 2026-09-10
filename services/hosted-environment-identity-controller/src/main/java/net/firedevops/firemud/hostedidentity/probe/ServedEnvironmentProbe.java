@@ -9,14 +9,17 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
+import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -265,6 +268,7 @@ public class ServedEnvironmentProbe {
     }
     List<X509Certificate> chain = certificates(requiredData(material, "tls.crt"));
     PrivateKey privateKey = privateKey(requiredData(material, "tls.key"));
+    requireMatchingPrivateKey(chain.get(0), privateKey);
     List<X509Certificate> anchors = certificates(requiredData(material, "ca.crt"));
     String normalizedAnchor = normalize(expectedTrustAnchor);
     if (!normalizedAnchor.matches("[0-9a-f]{64}")) {
@@ -325,14 +329,36 @@ public class ServedEnvironmentProbe {
     return result;
   }
 
-  private static PrivateKey privateKey(String encodedPem) throws Exception {
+  private static PrivateKey privateKey(String encodedPem) {
     String pem = new String(Base64.getDecoder().decode(encodedPem), StandardCharsets.US_ASCII);
     Matcher matcher = PRIVATE_KEY_BLOCK.matcher(pem);
     if (!matcher.matches()) {
       throw new IllegalArgumentException("gRPC private key PEM label is invalid");
     }
     byte[] der = Base64.getDecoder().decode(matcher.group(1).replaceAll("\\s", ""));
-    return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
+    try {
+      return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(der));
+    } catch (GeneralSecurityException exception) {
+      throw new IllegalArgumentException("gRPC private key is not valid RSA PKCS#8", exception);
+    }
+  }
+
+  private static void requireMatchingPrivateKey(X509Certificate leaf, PrivateKey privateKey) {
+    if (!(privateKey instanceof RSAPrivateCrtKey rsaKey)) {
+      throw new IllegalArgumentException("gRPC private key is not an RSA key");
+    }
+    try {
+      if (!leaf
+          .getPublicKey()
+          .equals(
+              KeyFactory.getInstance("RSA")
+                  .generatePublic(
+                      new RSAPublicKeySpec(rsaKey.getModulus(), rsaKey.getPublicExponent())))) {
+        throw new IllegalArgumentException("gRPC private key does not match the leaf certificate");
+      }
+    } catch (GeneralSecurityException exception) {
+      throw new IllegalArgumentException("gRPC private key could not be validated", exception);
+    }
   }
 
   @SuppressFBWarnings(

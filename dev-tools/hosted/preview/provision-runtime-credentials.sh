@@ -2,6 +2,14 @@
 set -euo pipefail
 
 umask 077
+if [[ -z "${RUNTIME_NAMESPACE:-}" ]]; then
+  echo "runtime namespace is required" >&2
+  exit 2
+fi
+if [[ ! "$RUNTIME_NAMESPACE" =~ ^pr-[1-9][0-9]*$ ]]; then
+  echo "runtime namespace must match pr-[1-9][0-9]*" >&2
+  exit 2
+fi
 credential_files_dir=""
 cleanup_credential_files() {
   if [[ -n "$credential_files_dir" && -d "$credential_files_dir" ]]; then

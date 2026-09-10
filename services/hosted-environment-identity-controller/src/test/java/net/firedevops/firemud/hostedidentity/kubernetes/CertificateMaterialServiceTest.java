@@ -73,17 +73,21 @@ class CertificateMaterialServiceTest {
         identityCertificates = mock(NonNamespaceOperation.class);
     Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
     Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource =
+        mock(ReplaceDeletable.class);
     when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
     when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
     when(identityCertificates.withName(desired.getMetadata().getName()))
         .thenReturn(existingResource);
     when(existingResource.get()).thenReturn(existing);
     when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
 
     CertificateMaterialService.applyCertificate(client, plan.identityNamespace(), desired);
 
     assertEquals("7", desired.getMetadata().getResourceVersion());
-    verify(replacementResource).replace();
+    verify(replacementResource).lockResourceVersion("7");
+    verify(lockedReplacementResource).replace();
 
     existingSpec.put("isCA", true);
     assertThrows(
@@ -140,15 +144,18 @@ class CertificateMaterialServiceTest {
         identityCertificates = mock(NonNamespaceOperation.class);
     Resource<GenericKubernetesResource> existingResource = mock(Resource.class);
     Resource<GenericKubernetesResource> replacementResource = mock(Resource.class);
+    ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource =
+        mock(ReplaceDeletable.class);
     when(client.genericKubernetesResources(ResourceContexts.CERTIFICATES)).thenReturn(certificates);
     when(certificates.inNamespace(plan.identityNamespace())).thenReturn(identityCertificates);
     when(identityCertificates.withName(desired.getMetadata().getName()))
         .thenReturn(existingResource);
     when(existingResource.get()).thenReturn(existing);
     when(identityCertificates.resource(desired)).thenReturn(replacementResource);
+    when(replacementResource.lockResourceVersion("7")).thenReturn(lockedReplacementResource);
 
     org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
-        .when(replacementResource)
+        .when(lockedReplacementResource)
         .replace();
 
     assertDoesNotThrow(
@@ -157,7 +164,9 @@ class CertificateMaterialServiceTest {
 
     existingSpec.put("secretName", "another-obsolete-secret-name");
     KubernetesClientException failure = new KubernetesClientException("forbidden", 403, null);
-    org.mockito.Mockito.doThrow(failure).when(replacementResource).replace();
+    org.mockito.Mockito.doThrow(failure).when(lockedReplacementResource).replace();
+
+    verify(replacementResource).lockResourceVersion("7");
 
     KubernetesClientException thrown =
         assertThrows(
@@ -476,6 +485,29 @@ class CertificateMaterialServiceTest {
         .withName(org.mockito.ArgumentMatchers.anyString());
     verify(secretClient.identitySecrets(), never())
         .withName(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void unacceptedProjectionRemainsPinnedWhenItsCertificateIsNotReady() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    Secret projection =
+        fixture
+            .secretClient()
+            .runtimeSecrets()
+            .withName(plan.ingressSecretName())
+            .get();
+    projection
+        .getMetadata()
+        .getAnnotations()
+        .remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+    stubCertificate(
+        fixture.secretClient().client(), plan, plan.ingressCertificateName(), false);
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
+
+    assertEquals("serialized-in-flight", material.state());
+    assertSame(projection, material.source());
   }
 
   @Test
