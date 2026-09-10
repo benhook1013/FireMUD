@@ -117,6 +117,17 @@ for required in (
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
 deploy_names = [step.get("name") for step in deploy_steps if isinstance(step, dict)]
+deploy_mode_run = deploy_by_name["Resolve certificate identity mode"]["run"]
+if 'case "$mode" in' not in deploy_mode_run:
+    raise SystemExit("dev-demo deploy mode output lacks an explicit allowlist")
+if "standalone|hosted-controller) ;;" not in deploy_mode_run:
+    raise SystemExit("dev-demo deploy mode output allowlist is incomplete")
+if "Resolver output must be exactly standalone or hosted-controller." not in deploy_mode_run:
+    raise SystemExit("dev-demo deploy mode output lacks a fail-closed diagnostic")
+if deploy_mode_run.index('case "$mode" in') >= deploy_mode_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+):
+    raise SystemExit("dev-demo deploy mode output is published before validation")
 ordered = (
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
@@ -189,6 +200,17 @@ for required in ("success()", "steps.smoke.outcome == 'success'"):
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}
 destroy_names = [step.get("name") for step in destroy_steps if isinstance(step, dict)]
+destroy_mode_run = destroy_by_name["Resolve certificate identity mode"]["run"]
+if 'case "$mode" in' not in destroy_mode_run:
+    raise SystemExit("dev-demo destroy mode output lacks an explicit allowlist")
+if "standalone|hosted-controller) ;;" not in destroy_mode_run:
+    raise SystemExit("dev-demo destroy mode output allowlist is incomplete")
+if "Resolver output must be exactly standalone or hosted-controller." not in destroy_mode_run:
+    raise SystemExit("dev-demo destroy mode output lacks a fail-closed diagnostic")
+if destroy_mode_run.index('case "$mode" in') >= destroy_mode_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+):
+    raise SystemExit("dev-demo destroy mode output is published before validation")
 destroy_order = (
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",

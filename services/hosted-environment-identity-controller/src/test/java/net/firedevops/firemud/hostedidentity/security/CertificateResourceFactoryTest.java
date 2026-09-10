@@ -11,6 +11,7 @@ import java.util.Map;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.kubernetes.CertificateResourceFactory;
+import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import org.junit.jupiter.api.Test;
 
 class CertificateResourceFactoryTest {
@@ -32,18 +33,7 @@ class CertificateResourceFactoryTest {
     assertCertificateDefaults(certificateSpec);
     assertFalse(certificateSpec.containsKey("duration"));
     assertFalse(certificateSpec.containsKey("renewBefore"));
-    Map<?, ?> secretTemplate = (Map<?, ?>) certificateSpec.get("secretTemplate");
-    assertFalse(secretTemplate.containsKey("metadata"));
-    assertEquals(
-        HostedIdentityContract.managedLabels(plan.name(), HostedIdentityContract.INGRESS_ROLE),
-        secretTemplate.get("labels"));
-    assertEquals(
-        Map.of(
-            HostedIdentityContract.PROVENANCE_ANNOTATION,
-            "cert-manager",
-            HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION,
-            "source-materialized"),
-        secretTemplate.get("annotations"));
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.INGRESS_ROLE);
   }
 
   @Test
@@ -62,6 +52,7 @@ class CertificateResourceFactoryTest {
         java.util.List.of("pr-42.preview.firedevops.net"), certificateSpec.get("dnsNames"));
     assertEquals("letsencrypt-prod", issuerName(certificateSpec));
     assertCertificateDefaults(certificateSpec);
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.TELNET_ROLE);
     assertFalse(certificateSpec.containsKey("duration"));
     assertFalse(certificateSpec.containsKey("renewBefore"));
   }
@@ -86,6 +77,8 @@ class CertificateResourceFactoryTest {
         java.util.List.of("digital signature", "key encipherment", "server auth"),
         certificateSpec.get("usages"));
     assertCertificateDefaults(certificateSpec);
+    assertSecretTemplate(
+        certificateSpec, plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
   }
 
   @Test
@@ -109,6 +102,7 @@ class CertificateResourceFactoryTest {
         java.util.List.of("digital signature", "key encipherment", "client auth"),
         certificateSpec.get("usages"));
     assertCertificateDefaults(certificateSpec);
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE);
   }
 
   @Test
@@ -176,6 +170,21 @@ class CertificateResourceFactoryTest {
     assertEquals("PKCS8", privateKey.get("encoding"));
     assertEquals("Always", privateKey.get("rotationPolicy"));
     assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
+  }
+
+  private static void assertSecretTemplate(
+      Map<?, ?> certificateSpec, EnvironmentIdentityPlan plan, String role) {
+    Map<?, ?> secretTemplate = (Map<?, ?>) certificateSpec.get("secretTemplate");
+    assertFalse(secretTemplate.containsKey("metadata"));
+    assertEquals(
+        HostedIdentityContract.managedLabels(plan.name(), role), secretTemplate.get("labels"));
+    assertEquals(
+        Map.of(
+            HostedIdentityContract.PROVENANCE_ANNOTATION,
+            "cert-manager",
+            HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION,
+            "source-materialized"),
+        secretTemplate.get("annotations"));
   }
 
   private static void assertInvalidRenewalWindow(

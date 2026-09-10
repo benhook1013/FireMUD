@@ -153,7 +153,14 @@ jobs:
           set -euo pipefail
           mode="$(python3 ./dev-tools/hosted/shared/resolve-certificate-identity-mode.py \
             k8s/helm/firemud/values-hosted-shared.example.yaml)"
-          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          case "$mode" in
+            standalone|hosted-controller) ;;
+            *)
+              echo "::error title=Invalid certificate identity mode::Resolver output must be exactly standalone or hosted-controller." >&2
+              exit 1
+              ;;
+          esac
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
@@ -869,7 +876,14 @@ jobs:
           set -euo pipefail
           mode="$(python3 ./dev-tools/hosted/shared/resolve-certificate-identity-mode.py \
             k8s/helm/firemud/values-hosted-shared.example.yaml)"
-          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          case "$mode" in
+            standalone|hosted-controller) ;;
+            *)
+              echo "::error title=Invalid certificate identity mode::Resolver output must be exactly standalone or hosted-controller." >&2
+              exit 1
+              ;;
+          esac
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5

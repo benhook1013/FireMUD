@@ -98,20 +98,30 @@ command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 umask 077
 
 temporary_manifest="$(mktemp)"
+temporary_rendered_manifest=""
 cleanup() {
   rm -f "$temporary_manifest"
+  if [[ -n "$temporary_rendered_manifest" ]]; then
+    rm -f "$temporary_rendered_manifest"
+  fi
 }
 trap cleanup EXIT
+
+replace_manifest() {
+  temporary_rendered_manifest="$(mktemp)"
+  sed "$@" "$temporary_manifest" >"$temporary_rendered_manifest"
+  mv -f "$temporary_rendered_manifest" "$temporary_manifest"
+  temporary_rendered_manifest=""
+}
 
 # Render privately so the checked-in base cannot silently acquire a mutable
 # image tag or an activation mode.  Server-side apply below remains the only
 # cluster write path.
 kubectl kustomize "$MANIFEST_DIR" >"$temporary_manifest"
-sed -i \
+replace_manifest \
   -e "s#ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:__IMAGE_DIGEST_REQUIRED__#$IMAGE_REF#g" \
   -e "s#value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__#value: $GRPC_TRUST_ANCHOR_SHA256#g" \
-  -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g" \
-  "$temporary_manifest"
+  -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
 grep -Fq -- "value: $GRPC_TRUST_ANCHOR_SHA256" "$temporary_manifest" || fail "gRPC trust-anchor replacement did not occur"
 rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
@@ -292,7 +302,7 @@ if [[ "$ACTIVATION_MODE" == "active" ]]; then
   # Re-rendering is unnecessary: the only changed value is the enum-validated
   # activation field. Re-applying the complete private manifest keeps the
   # transition under the same server-side field manager as bootstrap.
-  sed -i "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/value: $initial_activation_mode/value: $ACTIVATION_MODE/;}" "$temporary_manifest"
+  replace_manifest "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/value: $initial_activation_mode/value: $ACTIVATION_MODE/;}"
   rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
   [[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]] || \
     fail "active activation replacement did not produce exactly one active value"

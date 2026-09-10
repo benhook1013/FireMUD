@@ -1066,7 +1066,7 @@ grep -qx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
 grep -qx -- '--retired pr-101 600' "$FAKE_IDENTITY_WAIT_LOG"
 grep -Fqx -- '-n firemud-system get hostedenvironmentidentity pr-101 --ignore-not-found -o json' \
   "$FAKE_IDENTITY_LOG"
-grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --wait=true --timeout=180s' \
+grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore-not-found --wait=true --timeout=180s' \
   "$FAKE_IDENTITY_LOG"
 
 reset_case

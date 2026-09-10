@@ -105,6 +105,13 @@ class SecretProjectionServiceTest {
         assertThrows(
             IllegalArgumentException.class, () -> SecretProjectionService.revisionForData(null));
     assertEquals("material data is required", missing.getMessage());
+    IllegalArgumentException missingRoleData =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                SecretProjectionService.revisionForRole(
+                    HostedIdentityContract.INGRESS_ROLE, null));
+    assertEquals("material data is required", missingRoleData.getMessage());
     assertThrows(
         IllegalArgumentException.class,
         () -> SecretProjectionService.revisionForData(Map.of("tls.crt", "not-base64")));

@@ -233,7 +233,14 @@ assert validate_job["outputs"]["certificate_identity_mode"] == (
 mode_step = next(
     step for step in validate_job["steps"] if step.get("id") == "certificate-identity"
 )
-assert mode_step["run"].count("resolve-certificate-identity-mode.py") == 1
+mode_run = mode_step["run"]
+assert mode_run.count("resolve-certificate-identity-mode.py") == 1
+assert 'case "$mode" in' in mode_run
+assert "standalone|hosted-controller) ;;" in mode_run
+assert "Resolver output must be exactly standalone or hosted-controller." in mode_run
+assert mode_run.index('case "$mode" in') < mode_run.index(
+    "printf 'mode=%s\\n' \"$mode\" >> \"$GITHUB_OUTPUT\""
+)
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 assert "Unsupported lifecycle event" in target_step["run"]
 for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):

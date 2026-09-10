@@ -498,6 +498,24 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
+  void renewalRequiredTreatsTheExpiryThresholdAsInclusive() throws Exception {
+    Instant now = Instant.parse("2026-01-01T00:00:00Z");
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret generated =
+        generator.generate(plan, generatedCa(now, Duration.ofDays(60)), 4, Duration.ofDays(7), now);
+    Instant leafNotAfter = certificate(generated.getData().get("tls.crt")).getNotAfter().toInstant();
+    Duration exactRenewalThreshold = Duration.between(now, leafNotAfter);
+
+    assertTrue(
+        GrpcTransportBundleGenerator.renewalRequired(generated, exactRenewalThreshold, now));
+    assertFalse(
+        GrpcTransportBundleGenerator.renewalRequired(
+            generated, exactRenewalThreshold.minusSeconds(1), now));
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void ensureRepairsCurrentBundleWhenLeafDnsNamesDoNotMatch() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);

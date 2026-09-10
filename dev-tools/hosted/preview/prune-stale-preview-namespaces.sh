@@ -165,7 +165,7 @@ retire_hosted_identity() {
   fi
   if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
     kubectl -n firemud-system delete hostedenvironmentidentity "$identity_name" \
-      --wait=true --timeout=180s; then
+      --ignore-not-found --wait=true --timeout=180s; then
     return 1
   fi
 }

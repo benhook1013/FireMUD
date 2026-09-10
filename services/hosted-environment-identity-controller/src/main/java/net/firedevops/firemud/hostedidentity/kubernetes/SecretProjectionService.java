@@ -359,6 +359,9 @@ public class SecretProjectionService {
   }
 
   public static String revisionForRole(String role, Map<String, String> data) {
+    if (data == null) {
+      throw new IllegalArgumentException("material data is required");
+    }
     return revisionForData(projectedData(role, data));
   }
 

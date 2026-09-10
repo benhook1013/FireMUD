@@ -1162,8 +1162,15 @@ done
 require_literal "$BOOTSTRAP" "validatingadmissionpolicybinding"
 require_literal "$BOOTSTRAP" ".spec.failurePolicy"
 require_literal "$BOOTSTRAP" ".spec.validationActions[*]"
-for forbidden_command in 'kubectl delete' 'kubectl apply --all'; do
+for forbidden_command in 'kubectl delete' 'kubectl apply --all' 'sed -i'; do
   forbid_literal "$BOOTSTRAP" "$forbidden_command"
+done
+# shellcheck disable=SC2016 # Match literal portable-rendering fragments.
+for portable_render_fragment in \
+  'temporary_rendered_manifest="$(mktemp)"' \
+  'sed "$@" "$temporary_manifest" >"$temporary_rendered_manifest"' \
+  'mv -f "$temporary_rendered_manifest" "$temporary_manifest"'; do
+  require_literal "$BOOTSTRAP" "$portable_render_fragment"
 done
 require_literal "$ADMISSION" "'firemud-grpc-tls-previous'] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
