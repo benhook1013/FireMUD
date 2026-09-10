@@ -207,6 +207,12 @@ for name in controller_steps:
     condition = deploy_by_name[name].get("if", "")
     if "steps.certificate-identity.outputs.mode == 'hosted-controller'" not in condition:
         raise SystemExit(f"{name} is not fail-closed behind hosted-controller mode")
+readiness_run = deploy_by_name["Wait for exact dev-demo controller readiness"]["run"]
+if (
+    'dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" \\\n'
+    '  "${{ needs.dev-demo-plan.outputs.namespace }}" 900'
+) not in readiness_run:
+    raise SystemExit("dev-demo readiness wait does not use the derived runtime namespace")
 restore_condition = deploy_by_name["Restore dev-demo runtime kubeconfig"].get("if", "")
 if "always()" not in restore_condition:
     raise SystemExit("dev-demo runtime kubeconfig restore must run after earlier step failures")
@@ -1351,6 +1357,10 @@ empty_runs() {
 }
 
 printf 'runs status=all page=%s\n' "$page" >>"$TEST_GH_TRACE"
+if [[ "$TEST_SCENARIO" == history-page-api-failure ]]; then
+  echo "simulated workflow-run page API failure" >&2
+  exit 3
+fi
 
 case "$TEST_SCENARIO:$page" in
   empty:*|aligned-no-record:*|aligned-request-repair:*)
@@ -1634,6 +1644,8 @@ run_reconcile_fixture() {
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture develop-head-api-failure 1 0 "Develop head lookup failed"
+run_reconcile_fixture history-page-api-failure 1 0 \
+  "Dev-demo run history lookup failed::Unable to list dev-demo runs page 1."
 run_reconcile_fixture aligned-no-record 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
 run_reconcile_fixture aligned-request-repair 0 0 "Repaired missing or stale requested dev-demo head annotation" "$test_head_sha" ""
 run_reconcile_fixture aligned-newest-failed 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"

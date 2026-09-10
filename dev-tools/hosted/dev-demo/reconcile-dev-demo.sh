@@ -61,7 +61,12 @@ list_run_page() {
     -F per_page=100
     -F "page=${page}"
   )
-  run_page_cache[$page]="$(gh api "${api_args[@]}")"
+  local page_body
+  if ! page_body="$(gh api "${api_args[@]}")"; then
+    echo "::error title=Dev-demo run history lookup failed::Unable to list dev-demo runs page ${page}." >&2
+    exit 1
+  fi
+  run_page_cache[$page]="$page_body"
   run_page_result="${run_page_cache[$page]}"
 }
 

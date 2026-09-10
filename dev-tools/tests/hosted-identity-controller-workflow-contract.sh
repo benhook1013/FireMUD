@@ -318,7 +318,8 @@ assert validate_job["if"] == (
     "github.event.workflow_run.head_repository.full_name == github.repository && "
     "github.event.workflow_run.name == 'PR Preview Environment') || "
     "(github.event_name == 'pull_request_target' && "
-    "github.event.action == 'closed') }}"
+    "github.event.action == 'closed' && "
+    "github.event.pull_request.head.repo.full_name == github.repository) }}"
 )
 assert validate_job["permissions"] == {
     "actions": "read",
@@ -390,6 +391,17 @@ assert_mode_step(janitor_mode_step, "preview janitor")
 janitor_prune_step = next(
     step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
 )
+janitor_requester_step = next(
+    step
+    for step in janitor_steps
+    if step.get("name") == "Write hosted identity requester kubeconfig"
+)
+janitor_restore_step = next(
+    step for step in janitor_steps if step.get("name") == "Restore preview kubeconfig"
+)
+janitor_verify_step = next(
+    step for step in janitor_steps if step.get("name") == "Verify preview cluster access"
+)
 janitor_cleanup_step = next(
     step
     for step in janitor_steps
@@ -400,6 +412,15 @@ assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
 )
 assert "export HOSTED_IDENTITY_REQUESTER_KUBECONFIG=" not in janitor_prune_step["run"]
 assert "${{ runner.temp }}/hosted-identity-requester.kubeconfig" not in janitor_prune_step["run"]
+assert janitor_restore_step.get("if") == (
+    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+assert janitor_restore_step.get("run") == (
+    'echo "KUBECONFIG=$RUNNER_TEMP/preview-kubeconfig.yaml" >> "$GITHUB_ENV"'
+)
+assert janitor_steps.index(janitor_requester_step) < janitor_steps.index(
+    janitor_restore_step
+) < janitor_steps.index(janitor_verify_step) < janitor_steps.index(janitor_prune_step)
 assert janitor_steps.index(janitor_cleanup_step) > janitor_steps.index(janitor_prune_step)
 assert janitor_cleanup_step.get("if") == "${{ always() }}"
 assert janitor_cleanup_step.get("run") == (

@@ -54,6 +54,10 @@ jobs:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
 
+      - name: Restore preview kubeconfig
+        if: ${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: echo "KUBECONFIG=$RUNNER_TEMP/preview-kubeconfig.yaml" >> "$GITHUB_ENV"
+
       - name: Verify preview cluster access
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml

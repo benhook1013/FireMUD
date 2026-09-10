@@ -387,7 +387,8 @@ jobs:
         run: |
           echo "DEV_DEMO_STAGE=identity-ready" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-            dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" dev 900
+            dev-demo "${{ needs.dev-demo-plan.outputs.head_sha }}" \
+            "${{ needs.dev-demo-plan.outputs.namespace }}" 900
 
       - name: Validate controller-projected dev-demo identity
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}

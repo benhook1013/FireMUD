@@ -72,13 +72,15 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
-  void requiresNonblankDistinctRequestedAndDeployedHeadAnnotations() {
+  void requiresNonblankDistinctLifecycleAnnotations() {
     List<BiConsumer<HostedIdentityProperties, String>> annotationSetters =
         List.of(
             HostedIdentityProperties::setPreviewRequestedHeadAnnotation,
             HostedIdentityProperties::setPreviewDeployedHeadAnnotation,
             HostedIdentityProperties::setDevDemoRequestedHeadAnnotation,
-            HostedIdentityProperties::setDevDemoHeadAnnotation);
+            HostedIdentityProperties::setDevDemoHeadAnnotation,
+            HostedIdentityProperties::setPreviewTelnetPortAnnotation,
+            HostedIdentityProperties::setDevDemoTelnetPortAnnotation);
     for (BiConsumer<HostedIdentityProperties, String> setter : annotationSetters) {
       for (String invalid : new String[] {null, "", " \t "}) {
         HostedIdentityProperties properties = new HostedIdentityProperties();
@@ -101,27 +103,26 @@ class HostedIdentityPropertiesTest {
     assertEquals(
         "dev-demo requested and deployed head annotations must differ",
         devDemoFailure.getMessage());
-  }
 
-  @Test
-  void requiresNonblankTelnetPortAnnotations() {
-    assertBlankTelnetPortAnnotationRejected(
-        "preview Telnet port annotation", HostedIdentityProperties::setPreviewTelnetPortAnnotation);
-    assertBlankTelnetPortAnnotationRejected(
-        "dev-demo Telnet port annotation",
-        HostedIdentityProperties::setDevDemoTelnetPortAnnotation);
-  }
+    HostedIdentityProperties previewRequestedCollision = new HostedIdentityProperties();
+    previewRequestedCollision.setPreviewTelnetPortAnnotation(
+        previewRequestedCollision.getPreviewRequestedHeadAnnotation());
+    assertThrows(IllegalStateException.class, previewRequestedCollision::afterPropertiesSet);
 
-  private static void assertBlankTelnetPortAnnotationRejected(
-      String propertyName, BiConsumer<HostedIdentityProperties, String> setter) {
-    for (String invalid : new String[] {null, "", " \t "}) {
-      HostedIdentityProperties properties = new HostedIdentityProperties();
-      setter.accept(properties, invalid);
+    HostedIdentityProperties previewDeployedCollision = new HostedIdentityProperties();
+    previewDeployedCollision.setPreviewTelnetPortAnnotation(
+        previewDeployedCollision.getPreviewDeployedHeadAnnotation());
+    assertThrows(IllegalStateException.class, previewDeployedCollision::afterPropertiesSet);
 
-      IllegalStateException failure =
-          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
-      assertEquals(propertyName + " must not be blank", failure.getMessage());
-    }
+    HostedIdentityProperties devDemoRequestedCollision = new HostedIdentityProperties();
+    devDemoRequestedCollision.setDevDemoTelnetPortAnnotation(
+        devDemoRequestedCollision.getDevDemoRequestedHeadAnnotation());
+    assertThrows(IllegalStateException.class, devDemoRequestedCollision::afterPropertiesSet);
+
+    HostedIdentityProperties devDemoDeployedCollision = new HostedIdentityProperties();
+    devDemoDeployedCollision.setDevDemoTelnetPortAnnotation(
+        devDemoDeployedCollision.getDevDemoHeadAnnotation());
+    assertThrows(IllegalStateException.class, devDemoDeployedCollision::afterPropertiesSet);
   }
 
   @Test

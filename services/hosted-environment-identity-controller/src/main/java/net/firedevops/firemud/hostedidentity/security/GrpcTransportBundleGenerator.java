@@ -108,9 +108,7 @@ public class GrpcTransportBundleGenerator {
     long currentGeneration = issuanceGeneration(existing);
     validateAcceptedGeneration(currentGeneration, accepted);
     boolean trustAnchorChanged = trustAnchorChanged(existing, expectedTrustAnchorSha256);
-    if (!trustAnchorChanged
-        && leafDnsNamesMatch(existing, plan)
-        && !renewalRequired(existing, renewBefore, now)) {
+    if (!trustAnchorChanged && leafIsReusable(existing, plan, renewBefore, now)) {
       return existing;
     }
     String existingResourceVersion = existing.getMetadata().getResourceVersion();
@@ -301,7 +299,7 @@ public class GrpcTransportBundleGenerator {
           .getNotAfter()
           .toInstant();
     } catch (Exception exception) {
-      throw new IllegalStateException("gRPC source has invalid leaf certificate", exception);
+      throw new InvalidLeafCertificateException(exception);
     }
   }
 
@@ -310,6 +308,15 @@ public class GrpcTransportBundleGenerator {
     issuanceGeneration(secret);
     return !leafNotAfter(secret)
         .isAfter(plus(now, renewBefore, "gRPC renewal threshold is out of range"));
+  }
+
+  private static boolean leafIsReusable(
+      Secret secret, EnvironmentIdentityPlan plan, Duration renewBefore, Instant now) {
+    try {
+      return leafDnsNamesMatch(secret, plan) && !renewalRequired(secret, renewBefore, now);
+    } catch (InvalidLeafCertificateException exception) {
+      return false;
+    }
   }
 
   private static boolean leafDnsNamesMatch(Secret secret, EnvironmentIdentityPlan plan) {
@@ -334,7 +341,13 @@ public class GrpcTransportBundleGenerator {
       }
       return actualDnsNames.stream().distinct().sorted().toList().equals(grpcDnsNames(plan));
     } catch (Exception exception) {
-      throw new IllegalStateException("gRPC source has invalid leaf certificate", exception);
+      throw new InvalidLeafCertificateException(exception);
+    }
+  }
+
+  private static final class InvalidLeafCertificateException extends IllegalStateException {
+    private InvalidLeafCertificateException(Exception cause) {
+      super("gRPC source has invalid leaf certificate", cause);
     }
   }
 

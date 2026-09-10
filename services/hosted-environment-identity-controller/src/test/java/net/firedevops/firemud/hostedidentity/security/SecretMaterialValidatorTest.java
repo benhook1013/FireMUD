@@ -593,6 +593,40 @@ public class SecretMaterialValidatorTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"missing", "malformed"})
+  void ensureRepairsControllerOwnedBundleWithUnreadableLeaf(String corruption) throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
+    existing.getMetadata().setResourceVersion("7");
+    Map<String, String> corruptedData = new LinkedHashMap<>(existing.getData());
+    if ("missing".equals(corruption)) {
+      corruptedData.remove("tls.crt");
+    } else {
+      corruptedData.put("tls.crt", encode("not a certificate"));
+    }
+    existing.setData(corruptedData);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+
+    IdentityClient identityClient = identityClient(plan, existing, ca);
+    Replacement replacement = stubReplacement(identityClient, "7");
+
+    Secret repaired = generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
+
+    verify(identityClient.identitySecrets())
+        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    verify(replacement.resource()).lockResourceVersion("7");
+    verify(replacement.lockedResource()).replace();
+    assertSame(replacement.holder()[0], repaired);
+    assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
+    assertEquals(ca.getData().get("ca.crt"), repaired.getData().get("ca.crt"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "malformed"})
   void ensureRepairsControllerOwnedBundleWithUnreadableTrustAnchor(String corruption)
       throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);

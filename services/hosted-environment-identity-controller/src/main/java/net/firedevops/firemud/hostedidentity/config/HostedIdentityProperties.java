@@ -68,12 +68,16 @@ public class HostedIdentityProperties implements InitializingBean {
     requireNonBlank("gRPC issuer", grpcIssuer);
     requireValidHostname("preview domain", previewDomain);
     requireValidHostname("dev-demo hostname", devDemoHostname);
-    requireDistinctHeadAnnotations(
-        "preview", previewRequestedHeadAnnotation, previewDeployedHeadAnnotation);
-    requireDistinctHeadAnnotations(
-        "dev-demo", devDemoRequestedHeadAnnotation, devDemoHeadAnnotation);
-    requireNonBlank("preview Telnet port annotation", previewTelnetPortAnnotation);
-    requireNonBlank("dev-demo Telnet port annotation", devDemoTelnetPortAnnotation);
+    requireDistinctLifecycleAnnotations(
+        "preview",
+        previewRequestedHeadAnnotation,
+        previewDeployedHeadAnnotation,
+        previewTelnetPortAnnotation);
+    requireDistinctLifecycleAnnotations(
+        "dev-demo",
+        devDemoRequestedHeadAnnotation,
+        devDemoHeadAnnotation,
+        devDemoTelnetPortAnnotation);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(
@@ -114,13 +118,22 @@ public class HostedIdentityProperties implements InitializingBean {
     }
   }
 
-  private static void requireDistinctHeadAnnotations(
-      String lifecycle, String requestedAnnotation, String deployedAnnotation) {
+  private static void requireDistinctLifecycleAnnotations(
+      String lifecycle,
+      String requestedAnnotation,
+      String deployedAnnotation,
+      String telnetPortAnnotation) {
     requireNonBlank(lifecycle + " requested head annotation", requestedAnnotation);
     requireNonBlank(lifecycle + " deployed head annotation", deployedAnnotation);
+    requireNonBlank(lifecycle + " Telnet port annotation", telnetPortAnnotation);
     if (requestedAnnotation.equals(deployedAnnotation)) {
       throw new IllegalStateException(
           lifecycle + " requested and deployed head annotations must differ");
+    }
+    if (telnetPortAnnotation.equals(requestedAnnotation)
+        || telnetPortAnnotation.equals(deployedAnnotation)) {
+      throw new IllegalStateException(
+          lifecycle + " requested head, deployed head, and Telnet port annotations must differ");
     }
   }
 
