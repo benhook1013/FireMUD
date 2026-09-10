@@ -158,29 +158,38 @@ def _comment_hosted_review_id(body: str) -> int | None:
     return marker_ids[0] if len(marker_ids) == 1 else None
 
 
+def _comment_fields(
+    comment: Any, position: int
+) -> tuple[str, str, str | None, int | None, str | None]:
+    if not isinstance(comment, dict):
+        raise CheckpointError(f"comment {position} is not an object")
+    body = comment.get("body")
+    created_at = comment.get("created_at")
+    updated_at = comment.get("updated_at")
+    if not isinstance(body, str) or not isinstance(created_at, str):
+        raise CheckpointError(f"comment {position} is missing body or created_at")
+    if updated_at is not None and not isinstance(updated_at, str):
+        raise CheckpointError(f"comment {position} has an invalid updated_at")
+    comment_id = comment.get("id")
+    if comment_id is not None and (
+        isinstance(comment_id, bool) or not isinstance(comment_id, int) or comment_id <= 0
+    ):
+        raise CheckpointError(f"comment {position} has an invalid id")
+    first_line = next(
+        (line for line in body.splitlines() if line.strip() and not line[0].isspace()),
+        None,
+    )
+    return body, created_at, updated_at, comment_id, first_line
+
+
 def parse_checkpoint_comments(
     comments: list[dict[str, Any]],
 ) -> tuple[list[Checkpoint], int]:
     checkpoints: list[Checkpoint] = []
     unparsed_candidates = 0
     for position, comment in enumerate(comments, 1):
-        if not isinstance(comment, dict):
-            raise CheckpointError(f"comment {position} is not an object")
-        body = comment.get("body")
-        created_at = comment.get("created_at")
-        updated_at = comment.get("updated_at")
-        if not isinstance(body, str) or not isinstance(created_at, str):
-            raise CheckpointError(f"comment {position} is missing body or created_at")
-        if updated_at is not None and not isinstance(updated_at, str):
-            raise CheckpointError(f"comment {position} has an invalid updated_at")
-        comment_id = comment.get("id")
-        if comment_id is not None and (
-            isinstance(comment_id, bool) or not isinstance(comment_id, int) or comment_id <= 0
-        ):
-            raise CheckpointError(f"comment {position} has an invalid id")
-        first_line = next(
-            (line for line in body.splitlines() if line.strip() and not line[0].isspace()),
-            None,
+        body, created_at, updated_at, comment_id, first_line = _comment_fields(
+            comment, position
         )
         if first_line is None:
             continue
@@ -222,23 +231,8 @@ def parse_checkpoint_comments(
 def parse_scope_changes(comments: list[dict[str, Any]]) -> list[ScopeChange]:
     changes: list[ScopeChange] = []
     for position, comment in enumerate(comments, 1):
-        if not isinstance(comment, dict):
-            raise CheckpointError(f"comment {position} is not an object")
-        body = comment.get("body")
-        created_at = comment.get("created_at")
-        updated_at = comment.get("updated_at")
-        if not isinstance(body, str) or not isinstance(created_at, str):
-            raise CheckpointError(f"comment {position} is missing body or created_at")
-        if updated_at is not None and not isinstance(updated_at, str):
-            raise CheckpointError(f"comment {position} has an invalid updated_at")
-        comment_id = comment.get("id")
-        if comment_id is not None and (
-            isinstance(comment_id, bool) or not isinstance(comment_id, int) or comment_id <= 0
-        ):
-            raise CheckpointError(f"comment {position} has an invalid id")
-        first_line = next(
-            (line for line in body.splitlines() if line.strip() and not line[0].isspace()),
-            None,
+        body, created_at, updated_at, comment_id, first_line = _comment_fields(
+            comment, position
         )
         if first_line is None:
             continue

@@ -147,6 +147,59 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(len(checkpoints), 1)
         self.assertEqual(checkpoints[0].raw_found, 4)
 
+    def test_checkpoint_and_scope_parsers_share_first_eligible_line_selection(self) -> None:
+        created_at = "2026-09-10T00:00:00Z"
+        checkpoint_body = (
+            "\n  **Hosted: 8 found / 8 accepted**\n"
+            "**CLI: 2 found / 1 accepted** · `abc1234` · 3 files"
+        )
+        scope_body = (
+            "\n  **Review scope changed:** quoted example\n"
+            "**Review scope changed:** implementation moved to #2731.\n"
+            "<!-- firemud-review-scope-change -->"
+        )
+
+        checkpoints, unparsed = self.reporter.parse_checkpoint_comments(
+            [{"id": 301, "body": checkpoint_body, "created_at": created_at}]
+        )
+        scope_changes = self.reporter.parse_scope_changes(
+            [{"id": 302, "body": scope_body, "created_at": created_at}]
+        )
+
+        self.assertEqual(unparsed, 0)
+        self.assertEqual([(item.comment_id, item.raw_found) for item in checkpoints], [(301, 2)])
+        self.assertEqual(
+            [(item.comment_id, item.description) for item in scope_changes],
+            [(302, "implementation moved to #2731.")],
+        )
+
+    def test_checkpoint_and_scope_parsers_share_malformed_comment_validation(self) -> None:
+        valid = {
+            "id": 1,
+            "body": "unrelated comment",
+            "created_at": "2026-09-10T00:00:00Z",
+        }
+        cases = (
+            ("not-object", "not an object"),
+            ({**valid, "body": None}, "missing body or created_at"),
+            ({**valid, "created_at": None}, "missing body or created_at"),
+            ({**valid, "updated_at": 1}, "invalid updated_at"),
+            ({**valid, "id": True}, "invalid id"),
+            ({**valid, "id": 0}, "invalid id"),
+            ({**valid, "id": "1"}, "invalid id"),
+        )
+
+        for parser in (
+            self.reporter.parse_checkpoint_comments,
+            self.reporter.parse_scope_changes,
+        ):
+            for comment, message in cases:
+                with (
+                    self.subTest(parser=parser.__name__, comment=comment),
+                    self.assertRaisesRegex(self.reporter.CheckpointError, message),
+                ):
+                    parser([comment])
+
     def test_accepts_observed_literal_escaped_correction_prose(self) -> None:
         comments = [
             {

@@ -831,7 +831,11 @@ except cloc_report.ReportError as error:
 else:
     raise AssertionError("snapshot symlink escape must fail closed")
 
-help_output = subprocess.check_output([*script, "--help"], cwd=repo, text=True)
+help_env = os.environ.copy()
+help_env["COLUMNS"] = "120"
+help_output = subprocess.check_output(
+    [*script, "--help"], cwd=repo, env=help_env, text=True
+)
 assert "{summary,scope,modules,diff,pr,classify}" in help_output
 assert "summary" in help_output
 assert "scope" in help_output
@@ -839,7 +843,9 @@ assert "modules" in help_output
 assert "diff" in help_output
 assert "pr" in help_output
 assert "classify" in help_output
-pr_help_output = subprocess.check_output([*script, "pr", "--help"], cwd=repo, text=True)
+pr_help_output = subprocess.check_output(
+    [*script, "pr", "--help"], cwd=repo, env=help_env, text=True
+)
 assert cloc_report.PR_COMMAND_DESCRIPTION in pr_help_output
 for pr_argument in ("number", "--repo", "--json", "--update-pr"):
     assert pr_argument in pr_help_output
