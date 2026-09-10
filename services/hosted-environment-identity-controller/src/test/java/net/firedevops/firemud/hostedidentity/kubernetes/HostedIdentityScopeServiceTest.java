@@ -118,7 +118,7 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void retainedIdentityNamespaceMustHaveOnlyItsDerivedControllerLabels() {
+  void retainedIdentityNamespaceRequiresItsDerivedControllerLabelsAndAllowsExternalLabels() {
     var devPlan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
     var valid =
         new NamespaceBuilder()
@@ -140,6 +140,7 @@ class HostedIdentityScopeServiceTest {
 
     Map<String, String> injectedLabels = new HashMap<>(valid.getMetadata().getLabels());
     injectedLabels.put("kubernetes.io/metadata.name", "dev-identity");
+    injectedLabels.put("tooling.example/managed-by", "cluster-tool");
     var apiRoundTripped =
         new NamespaceBuilder(valid)
             .editMetadata()
@@ -149,6 +150,15 @@ class HostedIdentityScopeServiceTest {
             .endMetadata()
             .build();
     assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(apiRoundTripped, devPlan));
+
+    assertFalse(
+        HostedIdentityScopeService.isExpectedIdentityNamespace(
+            new NamespaceBuilder(valid)
+                .editMetadata()
+                .addToLabels("kubernetes.io/metadata.name", "other-identity")
+                .endMetadata()
+                .build(),
+            devPlan));
 
     Map<String, String> labels = new HashMap<>(valid.getMetadata().getLabels());
     labels.put("firemud.dev/other", "unexpected");

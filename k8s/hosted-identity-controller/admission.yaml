@@ -306,6 +306,9 @@ spec:
            object.spec.usages.size() > 0 &&
            object.spec.usages.all(usage,
              usage in ['digital signature', 'key encipherment', 'server auth', 'client auth']) &&
+           (object.metadata.labels['firemud.dev/role'] != 'ingress' &&
+            object.metadata.labels['firemud.dev/role'] != 'telnet' ||
+            object.spec.usages == ['digital signature', 'key encipherment', 'server auth']) &&
            (object.metadata.labels['firemud.dev/role'] != 'gateway-internal-ws' ||
             (object.spec.dnsNames == ['spring-cloud-gateway-mtls.' + ((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.svc.cluster.local'] &&
              (!has(object.spec.uris) || object.spec.uris.size() == 0) &&

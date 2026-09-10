@@ -272,8 +272,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
+    verify(account, never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -308,8 +308,8 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
+    verify(account, never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -341,9 +341,9 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
     verify(proxy).get();
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
     verify(account, never()).get();
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -387,9 +387,9 @@ class DeploymentRolloutServiceTest {
     assertEquals("runtime profile fence", failure.getMessage());
     assertEquals(2, guardCalls.get());
     verify(proxy).get();
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
     verify(account, never()).get();
-    verify(account, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(account, never()).lockResourceVersion(anyString());
   }
 
   @Test
@@ -435,9 +435,9 @@ class DeploymentRolloutServiceTest {
     assertEquals(false, result.gatewayStopped());
     assertEquals(false, result.proxyStopped());
     verify(gateway).get();
-    verify(gateway, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(gateway, never()).lockResourceVersion(anyString());
     verify(proxy, never()).get();
-    verify(proxy, never()).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(proxy, never()).lockResourceVersion(anyString());
   }
 
   @Test

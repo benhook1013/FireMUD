@@ -831,6 +831,11 @@ assert (
     "object.metadata.labels['firemud.dev/role'] != 'tcp-proxy-bridge' ||\n"
     "    ((!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) &&"
 ) in profile_expression
+assert (
+    "object.metadata.labels['firemud.dev/role'] != 'ingress' &&\n"
+    "    object.metadata.labels['firemud.dev/role'] != 'telnet' ||\n"
+    "    object.spec.usages == ['digital signature', 'key encipherment', 'server auth']"
+) in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']" in profile_expression
 assert "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']" in profile_expression
 for private_key_profile in (

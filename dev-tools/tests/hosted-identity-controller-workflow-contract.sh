@@ -90,6 +90,7 @@ for required in \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
 done
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 for forbidden in \
   'if command -v helm' \
   'installed_helm="$(command -v helm)"' \
