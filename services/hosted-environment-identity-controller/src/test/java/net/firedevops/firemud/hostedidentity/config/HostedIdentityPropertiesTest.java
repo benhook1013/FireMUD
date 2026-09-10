@@ -119,6 +119,25 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
+  void rejectsBlankCertificateIssuers() {
+    assertBlankIssuerRejected("ingress issuer", HostedIdentityProperties::setIngressIssuer);
+    assertBlankIssuerRejected("Telnet issuer", HostedIdentityProperties::setTelnetIssuer);
+    assertBlankIssuerRejected("gRPC issuer", HostedIdentityProperties::setGrpcIssuer);
+  }
+
+  private static void assertBlankIssuerRejected(
+      String propertyName, BiConsumer<HostedIdentityProperties, String> setter) {
+    for (String invalidIssuer : new String[] {null, "", " \t "}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      setter.accept(properties, invalidIssuer);
+
+      IllegalStateException failure =
+          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      assertEquals(propertyName + " must not be blank", failure.getMessage());
+    }
+  }
+
+  @Test
   void rejectsEveryNoncanonicalTelnetPortAllocation() {
     for (int invalidPort : new int[] {31999, 32001, 32016, 32017}) {
       HostedIdentityProperties previewProperties = new HostedIdentityProperties();
@@ -232,6 +251,20 @@ class HostedIdentityPropertiesTest {
           "gRPC trust-anchor SHA-256 pin must be a nonempty 64 lowercase hexadecimal value when activation is active",
           failure.getMessage());
     }
+  }
+
+  @Test
+  void activationModeIsCommittedOnlyAfterSuccessfulInitialization() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode("active");
+
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+
+    properties.setGrpcTrustAnchorSha256("a".repeat(64));
+    properties.afterPropertiesSet();
+    assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());
   }
 
   @Test

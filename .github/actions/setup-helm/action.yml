@@ -14,14 +14,6 @@ runs:
           echo "pinned Helm installer requires a Linux X64 runner" >&2
           exit 1
         fi
-        if command -v helm >/dev/null 2>&1; then
-          installed_helm="$(command -v helm)"
-          if installed_version="$(helm version --template '{{ .Version }}')" \
-            && [[ "$installed_version" == "$helm_version" ]]; then
-            echo "Using already-installed Helm ${helm_version} at ${installed_helm}."
-            exit 0
-          fi
-        fi
         helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"
         archive_path="${helm_root}/helm.tar.gz"
         extraction_dir="${helm_root}/extracted"

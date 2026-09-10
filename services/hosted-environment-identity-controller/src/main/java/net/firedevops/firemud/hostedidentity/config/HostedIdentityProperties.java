@@ -63,6 +63,9 @@ public class HostedIdentityProperties implements InitializingBean {
       throw new IllegalStateException(
           "gRPC CA secret name must be " + HostedIdentityContract.GRPC_CA_SECRET_NAME);
     }
+    requireNonBlank("ingress issuer", ingressIssuer);
+    requireNonBlank("Telnet issuer", telnetIssuer);
+    requireNonBlank("gRPC issuer", grpcIssuer);
     requireValidHostname("preview domain", previewDomain);
     requireValidHostname("dev-demo hostname", devDemoHostname);
     requireCanonicalTelnetPort(
@@ -96,6 +99,12 @@ public class HostedIdentityProperties implements InitializingBean {
       throw new IllegalStateException(
           propertyName
               + " must be a nonempty 64 lowercase hexadecimal value when activation is active");
+    }
+  }
+
+  private static void requireNonBlank(String propertyName, String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalStateException(propertyName + " must not be blank");
     }
   }
 
@@ -143,7 +152,6 @@ public class HostedIdentityProperties implements InitializingBean {
 
   public void setActivationMode(String activationMode) {
     this.activationMode = activationMode;
-    this.resolvedActivationMode = resolveActivationMode(false);
   }
 
   /** Invalid or missing activation is deliberately treated as paused. */

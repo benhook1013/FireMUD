@@ -68,11 +68,11 @@ jobs:
           KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml
           GH_TOKEN: ${{ github.token }}
           HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
+          HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: |
           set -euo pipefail
           case "$HOSTED_IDENTITY_MODE" in
             hosted-controller)
-              export HOSTED_IDENTITY_REQUESTER_KUBECONFIG="${{ runner.temp }}/hosted-identity-requester.kubeconfig"
               bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
                 --apply --retire-terminal-identities
               ;;

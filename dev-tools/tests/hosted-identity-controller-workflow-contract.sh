@@ -9,6 +9,7 @@ runtime="$ROOT_DIR/.github/workflows/runtime-images.yml"
 publisher="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 kubeconfig_action="$ROOT_DIR/.github/actions/write-kubeconfig/action.yml"
 helm_action="$ROOT_DIR/.github/actions/setup-helm/action.yml"
+janitor="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 build_gradle="$ROOT_DIR/build.gradle.kts"
 controller_build_gradle="$ROOT_DIR/services/hosted-environment-identity-controller/build.gradle.kts"
 controller_dockerfile="$ROOT_DIR/services/hosted-environment-identity-controller/Dockerfile"
@@ -80,17 +81,23 @@ for required in \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
+  'helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"' \
   'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
   'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
-  'if command -v helm' \
-  'installed_helm="$(command -v helm)"' \
-  'if installed_version="$(helm version --template' \
-  '&& [[ "$installed_version" == "$helm_version" ]]; then' \
   'Helm version mismatch' \
   'Expected ${helm_version}, but the installed Helm binary reported ${reported_version}.'; do
   contains "$helm_action" "$required"
+done
+for forbidden in \
+  'if command -v helm' \
+  'installed_helm="$(command -v helm)"' \
+  'Using already-installed Helm'; do
+  if grep -Fq -- "$forbidden" "$helm_action"; then
+    echo "$helm_action must not reuse an arbitrary PATH Helm binary: $forbidden" >&2
+    exit 1
+  fi
 done
 if grep -Fq -- '--retry-all-errors' "$helm_action"; then
   echo "$helm_action must not retry non-transient curl failures" >&2
@@ -181,7 +188,7 @@ contains "$dev_demo" 'wait-for-hosted-identity.sh'
 contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
-python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" <<'PY'
+python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" <<'PY'
 import sys
 from pathlib import Path
 
@@ -192,6 +199,7 @@ preview_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
+janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 triggers = workflow.get("on", workflow.get(True))
 assert list(triggers) == ["workflow_run", "pull_request_target"], triggers
 assert triggers["workflow_run"] == {
@@ -291,6 +299,15 @@ assert publisher_script.count(
 assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
 ) == 1
+janitor_steps = janitor_workflow["jobs"]["prune-stale-preview-namespaces"]["steps"]
+janitor_prune_step = next(
+    step for step in janitor_steps if step.get("name") == "Prune stale preview namespaces"
+)
+assert janitor_prune_step["env"]["HOSTED_IDENTITY_REQUESTER_KUBECONFIG"] == (
+    "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+)
+assert "export HOSTED_IDENTITY_REQUESTER_KUBECONFIG=" not in janitor_prune_step["run"]
+assert "${{ runner.temp }}/hosted-identity-requester.kubeconfig" not in janitor_prune_step["run"]
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
 workflow_run_start = target_script.rindex('if [[ "$EVENT_NAME" == workflow_run ]]; then')

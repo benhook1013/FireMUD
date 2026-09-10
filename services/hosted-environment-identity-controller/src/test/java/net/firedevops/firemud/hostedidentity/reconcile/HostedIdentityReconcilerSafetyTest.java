@@ -563,8 +563,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retirementPublishesTerminalStatusBeforeDeletionRemovesFinalizer() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     when(runtime.read(any(), any())).thenReturn(RuntimeProfileService.RuntimeProfile.absent());
@@ -614,8 +614,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retiredIntentTerminatesLiveBridgeEndpointsBeforeMaterialRemoval() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
     NonNamespaceOperation namespaces = mock(NonNamespaceOperation.class);
     Resource namespace = mock(Resource.class);
@@ -690,8 +690,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retirementWithLiveRuntimeWithoutPriorIdentityProofWithholdsBridgeShutdown() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     when(runtime.read(any(), any()))
@@ -730,8 +730,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retirementWithMalformedLiveRuntimeProfileWithholdsBridgeShutdown() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     when(runtime.read(any(), any()))
@@ -768,8 +768,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void retirementWithReplacedLiveRuntimeProfileWithholdsBridgeShutdown() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     KubernetesClient client = mock(KubernetesClient.class);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     when(runtime.read(any(), any()))
@@ -1039,8 +1039,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void pausedModeCannotMaterializeOrChangeFinalizers() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("paused");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.PAUSED);
     CertificateMaterialService certificates = mock(CertificateMaterialService.class);
     SecretProjectionService projections = mock(SecretProjectionService.class);
     HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
@@ -1073,8 +1073,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void observeModeIsAlsoNonMaterializing() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("observe");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.OBSERVE);
     CertificateMaterialService certificates = mock(CertificateMaterialService.class);
     SecretProjectionService projections = mock(SecretProjectionService.class);
     HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
@@ -1106,8 +1106,8 @@ class HostedIdentityReconcilerSafetyTest {
 
   @Test
   void activeModeReportsRuntimeAbsenceBeforeIssuingMaterial() {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("active");
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
     RuntimeProfileService runtime = mock(RuntimeProfileService.class);
     when(runtime.read(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
         .thenReturn(RuntimeProfileService.RuntimeProfile.absent());
@@ -1352,7 +1352,7 @@ class HostedIdentityReconcilerSafetyTest {
 
   private static final class DeploymentHeadGateFixture {
     private final KubernetesClient client = mock(KubernetesClient.class);
-    private final HostedIdentityProperties properties = new HostedIdentityProperties();
+    private final HostedIdentityProperties properties;
     private final EnvironmentIdentityPlanner planner;
     private final net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan plan;
     private final CertificateMaterialService certificates = mock(CertificateMaterialService.class);
@@ -1365,7 +1365,7 @@ class HostedIdentityReconcilerSafetyTest {
     private final HostedEnvironmentIdentity resource;
 
     private DeploymentHeadGateFixture(RuntimeProfileService.RuntimeProfile runtimeProfile) {
-      properties.setActivationMode("active");
+      properties = initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
       planner = new EnvironmentIdentityPlanner(properties);
       plan = planner.plan("dev-demo");
       when(runtime.read(client, plan)).thenReturn(runtimeProfile);
@@ -1488,8 +1488,8 @@ class HostedIdentityReconcilerSafetyTest {
     private final HostedIdentityReconciler reconciler;
 
     private RetirementDeletionFixture() {
-      HostedIdentityProperties properties = new HostedIdentityProperties();
-      properties.setActivationMode("active");
+      HostedIdentityProperties properties =
+          initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
 
       NonNamespaceOperation<Namespace, NamespaceList, Resource<Namespace>> namespaces =
           mock(NonNamespaceOperation.class);
@@ -1615,6 +1615,17 @@ class HostedIdentityReconcilerSafetyTest {
                   .Retired);
       return reconciler.reconcile(resource, mock(Context.class));
     }
+  }
+
+  private static HostedIdentityProperties initializedProperties(
+      HostedIdentityProperties.ActivationMode activationMode) {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    properties.setActivationMode(activationMode.name());
+    if (activationMode == HostedIdentityProperties.ActivationMode.ACTIVE) {
+      properties.setGrpcTrustAnchorSha256("a".repeat(64));
+    }
+    properties.afterPropertiesSet();
+    return properties;
   }
 
   private static HostedEnvironmentIdentity resource() {
