@@ -208,6 +208,7 @@ pr_state=$pr_state
 source_root=$source_root
 candidate_worktree=$candidate_worktree
 candidate_sha=$candidate_sha
+run_id=$run_name
 pr_head_sha=$pr_head_sha
 base_ref_name=$base_ref_name
 base_sha=$base_sha
@@ -235,6 +236,7 @@ printf 'published_files=%s\n' "$published_files"
 printf 'candidate_files=%s\n' "$candidate_files"
 printf 'published_status=%s\n' "$published_status"
 printf 'log_dir=%s\n' "$log_dir"
+printf 'checkpoint_marker=<!-- firemud-cli-run: %s -->\n' "$run_name"
 
 set +e
 (

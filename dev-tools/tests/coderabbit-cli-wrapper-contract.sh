@@ -220,6 +220,10 @@ run_wrapper() {
   RUN_OUTPUT="$(<"$output_file")"
   RUN_ERROR="$(<"$error_file")"
   RUN_LOG_DIR="$(sed -n 's/^log_dir=//p' "$output_file")"
+  RUN_ID="$(basename "$RUN_LOG_DIR")"
+  if [[ "$RUN_STATUS" == 0 ]]; then
+    [[ "$(sed -n 's/^checkpoint_marker=//p' "$output_file")" == "<!-- firemud-cli-run: $RUN_ID -->" ]] || exit 1
+  fi
   return "$RUN_STATUS"
 }
 
@@ -242,6 +246,7 @@ set -e
   exit 1
 }
 [[ -f "$RUN_LOG_DIR/metadata" && -f "$RUN_LOG_DIR/argv" && -f "$RUN_LOG_DIR/stdout" ]] || exit 1
+grep -q "^run_id=$RUN_ID$" "$RUN_LOG_DIR/metadata" || exit 1
 [[ "$(cat "$RUN_LOG_DIR/exit-status")" == 0 ]] || exit 1
 candidate_path="$(sed -n 's/^candidate_worktree=//p' "$RUN_LOG_DIR/metadata")"
 [[ ! -e "$candidate_path" ]] || exit 1

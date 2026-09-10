@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -66,6 +69,34 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertIsNone(checkpoints[1].file_count)
         self.assertEqual(checkpoints[2].updated_at, "2026-09-09T04:19:20Z")
         self.assertTrue(checkpoints[3].correction)
+
+    def test_parses_hidden_run_marker_and_warns_for_unlinked_cli_comments(self) -> None:
+        comments = [
+            {
+                "id": 101,
+                "body": "**CLI: 2 found / 1 accepted** · `abc1234` · 3 files\n<!-- firemud-cli-run: run.A1b2C3 -->",
+                "created_at": "2026-09-10T00:00:00Z",
+                "updated_at": "2026-09-10T00:00:00Z",
+            },
+            {
+                "id": 102,
+                "body": "**CLI: 0 found / 0 accepted**",
+                "created_at": "2026-09-10T00:01:00Z",
+                "updated_at": "2026-09-10T00:01:00Z",
+            },
+        ]
+
+        report = self.reporter.collect_report(comments, 0)
+
+        self.assertEqual(report["checkpoints"][0]["comment_id"], 101)
+        self.assertEqual(report["checkpoints"][0]["run_id"], "run.A1b2C3")
+        self.assertEqual(report["checkpoints"][1]["comment_id"], 102)
+        self.assertEqual(len(report["warnings"]), 1)
+        self.assertIn("1 CLI checkpoint", report["warnings"][0])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertIn("unlinked", output.getvalue())
 
     def test_ignores_unrelated_and_quoted_text_and_counts_malformed_candidates(self) -> None:
         comments = [
@@ -163,6 +194,48 @@ class CheckpointReporterTest(unittest.TestCase):
             ["2026-09-10T03:00:00Z", "2026-09-10T04:00:00Z"],
         )
 
+    def test_interleaves_scope_change_timeline_event_with_selected_checkpoints(self) -> None:
+        comments = [
+            {
+                "id": 201,
+                "body": "**CLI: 1 found / 0 accepted** · `abc1234` · 2 files",
+                "created_at": "2026-09-10T01:00:00Z",
+                "updated_at": "2026-09-10T01:00:00Z",
+            },
+            {
+                "id": 202,
+                "body": (
+                    "**Review scope changed:** validator cleanup moved to #2731. "
+                    "Earlier counts cover the previous scope.\n"
+                    "<!-- firemud-review-scope-change -->"
+                ),
+                "created_at": "2026-09-10T02:00:00Z",
+                "updated_at": "2026-09-10T02:00:00Z",
+            },
+            {
+                "id": 203,
+                "body": "**CLI: 2 found / 1 accepted** · `def5678` · 3 files",
+                "created_at": "2026-09-10T03:00:00Z",
+                "updated_at": "2026-09-10T03:00:00Z",
+            },
+            {
+                "id": 204,
+                "body": "**Review scope changed:** legacy text without the standard marker",
+                "created_at": "2026-09-10T04:00:00Z",
+                "updated_at": "2026-09-10T04:00:00Z",
+            },
+        ]
+
+        report = self.reporter.collect_report(comments, 1)
+
+        self.assertEqual(report["matched_scope_changes"], 1)
+        self.assertEqual(report["unparsed_candidates"], 1)
+        self.assertEqual(
+            [(item["kind"], item["comment_id"]) for item in report["timeline"]],
+            [("scope_change", 202), ("checkpoint", 203)],
+        )
+        self.assertIn("Earlier counts cover the previous scope.", report["timeline"][0]["description"])
+
     def test_fetches_paginated_comments_with_explicit_get(self) -> None:
         response = subprocess.CompletedProcess(
             args=[],
@@ -199,6 +272,121 @@ class CheckpointReporterTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def test_details_preserves_legacy_reason_separately_from_raw_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_root = Path(directory)
+            run_dir = log_root / "run.A1b2C3"
+            run_dir.mkdir()
+            (run_dir / "metadata").write_text(
+                "repository=owner/repo\n"
+                "pull_request=42\n"
+                "candidate_sha=abc1234567890123456789012345678901234567\n"
+                "candidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run_dir / "exit-status").write_text("0\n", encoding="utf-8")
+            (run_dir / "stdout").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "finding",
+                                "severity": "minor",
+                                "fileName": "a.txt",
+                                "codegenInstructions": "In @a.txt around lines 5 - 7, fix it.",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "complete",
+                                "status": "review_completed",
+                                "findings": 1,
+                                "reviewedFiles": ["a.txt"],
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "rejections.tsv").write_text(
+                "a.txt:5\tRejected because the rule is canonical.\n", encoding="utf-8"
+            )
+            comments = [
+                {
+                    "id": 777,
+                    "body": "**CLI: 1 found / 0 accepted** · `abc1234` · 1 files\n<!-- firemud-cli-run: run.A1b2C3 -->",
+                    "created_at": "2026-09-10T00:00:00Z",
+                    "updated_at": "2026-09-10T00:00:00Z",
+                }
+            ]
+            with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                detail = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
+                mismatch = self.reporter.collect_detail(
+                    [
+                        {
+                            **comments[0],
+                            "body": "**CLI: 2 found / 0 accepted** · `abc1234` · 1 files\n"
+                            "<!-- firemud-cli-run: run.A1b2C3 -->",
+                        }
+                    ],
+                    777,
+                    "owner/repo",
+                    42,
+                )
+                (run_dir / "rejections.tsv").unlink()
+                without_rejections = self.reporter.collect_detail(comments, 777, "owner/repo", 42)
+
+        self.assertEqual(detail["linkage_status"], "linked")
+        self.assertEqual(detail["findings"][0]["reason_status"], "not recorded")
+        self.assertEqual(detail["findings"][0]["rejection_reason"], None)
+        self.assertEqual(detail["unlinked_rejections"][0]["format"], "legacy")
+        self.assertEqual(
+            detail["unlinked_rejections"][0]["reason"],
+            "Rejected because the rule is canonical.",
+        )
+        self.assertEqual(mismatch["linkage_status"], "invalid")
+        self.assertIn("finding count does not match the checkpoint", mismatch["message"])
+        self.assertEqual(without_rejections["linkage_status"], "linked")
+        self.assertFalse(without_rejections["no_linked_data"])
+        self.assertIn("rejection reasons are not recorded", without_rejections["message"])
+
+    def test_details_rejects_missing_marker_or_invalid_capture_without_empty_success(self) -> None:
+        comments = [
+            {
+                "id": 778,
+                "body": "**CLI: 1 found / 0 accepted** · `abc1234` · 1 files",
+                "created_at": "2026-09-10T00:00:00Z",
+                "updated_at": "2026-09-10T00:00:00Z",
+            }
+        ]
+
+        detail = self.reporter.collect_detail(comments, 778, "owner/repo", 42)
+
+        self.assertEqual(detail["linkage_status"], "unavailable")
+        self.assertTrue(detail["no_linked_data"])
+        self.assertIn("no firemud-cli-run marker", detail["message"])
+
+    def test_future_rejections_use_one_based_finding_ordinal(self) -> None:
+        finding = {
+            "fileName": "a.txt",
+            "codegenInstructions": "In @a.txt around lines 5 - 7, fix it.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rejections.tsv"
+            path.write_text("1\ta.txt:5\tRejected by owner.\n", encoding="utf-8")
+            reasons, unlinked = self.reporter._read_rejections(path, [finding])
+
+        self.assertEqual(reasons, {1: "Rejected by owner."})
+        self.assertEqual(unlinked, [])
+
+    def test_malformed_capture_stdout_is_invalid_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stdout"
+            path.write_text('{"type":"finding"}\nnot-json\n', encoding="utf-8")
+            with self.assertRaisesRegex(self.reporter.CaptureInvalid, "invalid JSON"):
+                self.reporter._parse_capture_stdout(path)
 
     def test_api_errors_and_malformed_payload_are_not_zero_findings(self) -> None:
         with (
