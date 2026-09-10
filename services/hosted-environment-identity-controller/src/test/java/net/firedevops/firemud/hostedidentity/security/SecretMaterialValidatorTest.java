@@ -44,8 +44,8 @@ import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.BasicConstraints;
-import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.KeyPurposeId;
@@ -424,8 +424,7 @@ class SecretMaterialValidatorTest {
                     invalidCa, SecretMaterialValidator.trustAnchorFingerprint(invalidCa)));
 
     assertEquals(
-        "configured gRPC CA certificate key usage must include keyCertSign",
-        failure.getMessage());
+        "configured gRPC CA certificate key usage must include keyCertSign", failure.getMessage());
   }
 
   @Test
@@ -555,11 +554,11 @@ class SecretMaterialValidatorTest {
     GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
     Secret generated =
         generator.generate(plan, generatedCa(now, Duration.ofDays(60)), 4, Duration.ofDays(7), now);
-    Instant leafNotAfter = certificate(generated.getData().get("tls.crt")).getNotAfter().toInstant();
+    Instant leafNotAfter =
+        certificate(generated.getData().get("tls.crt")).getNotAfter().toInstant();
     Duration exactRenewalThreshold = Duration.between(now, leafNotAfter);
 
-    assertTrue(
-        GrpcTransportBundleGenerator.renewalRequired(generated, exactRenewalThreshold, now));
+    assertTrue(GrpcTransportBundleGenerator.renewalRequired(generated, exactRenewalThreshold, now));
     assertFalse(
         GrpcTransportBundleGenerator.renewalRequired(
             generated, exactRenewalThreshold.minusSeconds(1), now));
@@ -1012,8 +1011,7 @@ class SecretMaterialValidatorTest {
   }
 
   @Test
-  void materialValidationRejectsPresentedChainExceedingCaPathLengthConstraint()
-      throws Exception {
+  void materialValidationRejectsPresentedChainExceedingCaPathLengthConstraint() throws Exception {
     Secret chain = generatedPresentedChain(0);
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(chain);
 
@@ -1053,21 +1051,13 @@ class SecretMaterialValidatorTest {
     KeyPair leafKeyPair = generateRsaKeyPair();
     X500Name rootName = new X500Name("CN=FireMUD path root, O=FireMUD");
     X500Name intermediateName = new X500Name("CN=FireMUD path intermediate, O=FireMUD");
-    X500Name leafName =
-        new X500Name("CN=path-limited.pr-42.svc.cluster.local, O=FireMUD");
+    X500Name leafName = new X500Name("CN=path-limited.pr-42.svc.cluster.local, O=FireMUD");
     X509Certificate root =
         signedCertificate(
             rootName, rootName, rootKeyPair, rootKeyPair, true, rootPathLength, null, now);
     X509Certificate intermediate =
         signedCertificate(
-            rootName,
-            intermediateName,
-            intermediateKeyPair,
-            rootKeyPair,
-            true,
-            0,
-            null,
-            now);
+            rootName, intermediateName, intermediateKeyPair, rootKeyPair, true, 0, null, now);
     X509Certificate leaf =
         signedCertificate(
             intermediateName,
@@ -1085,8 +1075,9 @@ class SecretMaterialValidatorTest {
                 "ca.crt", pem("CERTIFICATE", root.getEncoded()),
                 "ca.key", pem("PRIVATE KEY", rootKeyPair.getPrivate().getEncoded()),
                 "tls.crt",
-                    pem("CERTIFICATE", leaf.getEncoded())
-                        + pem("CERTIFICATE", intermediate.getEncoded()),
+                    encode(
+                        pemText(pem("CERTIFICATE", leaf.getEncoded()))
+                            + pemText(pem("CERTIFICATE", intermediate.getEncoded()))),
                 "tls.key", pem("PRIVATE KEY", leafKeyPair.getPrivate().getEncoded())))
         .build();
   }
@@ -1119,16 +1110,16 @@ class SecretMaterialValidatorTest {
     builder.addExtension(
         Extension.keyUsage,
         true,
-        new KeyUsage(ca ? KeyUsage.keyCertSign | KeyUsage.cRLSign :
-            KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        new KeyUsage(
+            ca
+                ? KeyUsage.keyCertSign | KeyUsage.cRLSign
+                : KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
     if (!ca) {
       builder.addExtension(
           Extension.extendedKeyUsage,
           false,
           new ExtendedKeyUsage(
-              new KeyPurposeId[] {
-                KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth
-              }));
+              new KeyPurposeId[] {KeyPurposeId.id_kp_serverAuth, KeyPurposeId.id_kp_clientAuth}));
       builder.addExtension(
           Extension.subjectAlternativeName,
           false,
@@ -1193,8 +1184,12 @@ class SecretMaterialValidatorTest {
 
   private static Secret generatedCaWithoutKeyCertSign(Instant now, Duration lifetime)
       throws Exception {
-    return generatedCa(now, lifetime, new X500Name("CN=FireMUD test transport root, O=FireMUD"),
-        FIXTURE_CA_KEY_PAIR, KeyUsage.cRLSign);
+    return generatedCa(
+        now,
+        lifetime,
+        new X500Name("CN=FireMUD test transport root, O=FireMUD"),
+        FIXTURE_CA_KEY_PAIR,
+        KeyUsage.cRLSign);
   }
 
   private static Secret generatedCa(Instant now, Duration lifetime, X500Name name, KeyPair keyPair)
@@ -1217,8 +1212,7 @@ class SecretMaterialValidatorTest {
             name,
             keyPair.getPublic());
     builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
-    builder.addExtension(
-        Extension.keyUsage, true, new KeyUsage(keyUsageBits));
+    builder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsageBits));
     var signer = new JcaContentSignerBuilder("SHA256withRSA").build(keyPair.getPrivate());
     X509Certificate ca =
         new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));

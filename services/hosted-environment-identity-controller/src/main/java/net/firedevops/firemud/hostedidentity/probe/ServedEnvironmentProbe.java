@@ -14,10 +14,10 @@ import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
-import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.ArrayList;
@@ -348,8 +348,7 @@ public class ServedEnvironmentProbe {
       throw new IllegalArgumentException("gRPC private key is not an RSA key");
     }
     try {
-      if (!leaf
-          .getPublicKey()
+      if (!leaf.getPublicKey()
           .equals(
               KeyFactory.getInstance("RSA")
                   .generatePublic(
@@ -429,9 +428,9 @@ public class ServedEnvironmentProbe {
     }
     int statusCode =
         (statusLine.charAt(9) - '0') * 100
-        + (statusLine.charAt(10) - '0') * 10
-        + statusLine.charAt(11)
-        - '0';
+            + (statusLine.charAt(10) - '0') * 10
+            + statusLine.charAt(11)
+            - '0';
     return statusCode >= 100 && statusCode <= 599 ? statusCode : -1;
   }
 

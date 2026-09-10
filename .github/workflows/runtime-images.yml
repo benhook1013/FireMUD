@@ -330,10 +330,7 @@ jobs:
         run: |
           set -euo pipefail
           container_name="hosted-identity-controller-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
-            docker rm --force "$container_name" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
+          trap 'docker rm --force "$container_name" >/dev/null 2>&1 || true' EXIT
 
           docker run --detach \
             --name "$container_name" \

@@ -1385,6 +1385,16 @@ for invalid_delete_timeout in 0 invalid 3601 99999999999999999999; do
   test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
 done
 
+for valid_delete_timeout in 1 3600; do
+  reset_case
+  export PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$valid_delete_timeout"
+  export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=false
+  bash "$DELETE_HOSTED_NAMESPACE" dev dev
+  grep -qx \
+    "wait --for=delete namespace/dev --timeout=${valid_delete_timeout}s" \
+    "$FAKE_RUNTIME_KUBECTL_LOG"
+done
+
 for prune_failure in FAKE_PRUNE_QUERY_FAIL FAKE_PRUNE_JQ_FAIL; do
   reset_case
   export FAKE_NAMESPACE_ROWS='pr-101\t101\n'

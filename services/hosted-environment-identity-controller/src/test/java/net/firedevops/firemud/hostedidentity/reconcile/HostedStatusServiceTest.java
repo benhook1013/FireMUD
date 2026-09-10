@@ -18,6 +18,7 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -564,36 +565,76 @@ class HostedStatusServiceTest {
     assertEquals("sha256:" + "5".repeat(64), status.getGrpc().getRevision());
   }
 
+  @ParameterizedTest
+  @EnumSource(RoleField.class)
+  void statusDtoDefensivelyCopiesEveryRole(RoleField roleField) {
+    HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
+    HostedEnvironmentIdentityStatus.RoleStatus input =
+        new HostedEnvironmentIdentityStatus.RoleStatus();
+    input.setRevision("sha256:" + "a".repeat(64));
+    setRole(status, roleField, input);
+
+    input.setRevision("mutated-input");
+    HostedEnvironmentIdentityStatus.RoleStatus returned = getRole(status, roleField);
+    returned.setRevision("mutated-output");
+
+    assertEquals("sha256:" + "a".repeat(64), getRole(status, roleField).getRevision());
+  }
+
   @Test
-  void statusDtoDefensivelyCopiesNestedJacksonAndKubernetesState() {
+  void statusDtoDefensivelyCopiesNestedConditionAndProfileState() {
     HostedEnvironmentIdentityStatus status = new HostedEnvironmentIdentityStatus();
     HostedCondition condition = new HostedCondition("Ready", "False", "Pending", "pending");
-    HostedEnvironmentIdentityStatus.RoleStatus role =
-        new HostedEnvironmentIdentityStatus.RoleStatus();
-    role.setRevision("sha256:" + "a".repeat(64));
     RuntimeProfile profile = new RuntimeProfile();
     profile.setRuntimeNamespaceUid("uid-before");
     profile.setRequestedHeadSha("head-before");
     status.setConditions(java.util.List.of(condition));
-    status.setGatewayInternalWs(role);
     status.setProfile(profile);
 
     condition.setReason("mutated-input");
-    role.setRevision("mutated-input");
     profile.setRuntimeNamespaceUid("mutated-input");
     profile.setRequestedHeadSha("mutated-input");
     HostedCondition returnedCondition = status.getConditions().get(0);
-    HostedEnvironmentIdentityStatus.RoleStatus returnedRole = status.getGatewayInternalWs();
     RuntimeProfile returnedProfile = status.getProfile();
     returnedCondition.setReason("mutated-output");
-    returnedRole.setRevision("mutated-output");
     returnedProfile.setRuntimeNamespaceUid("mutated-output");
     returnedProfile.setRequestedHeadSha("mutated-output");
 
     assertEquals("Pending", status.getConditions().get(0).getReason());
-    assertEquals("sha256:" + "a".repeat(64), status.getGatewayInternalWs().getRevision());
     assertEquals("uid-before", status.getProfile().getRuntimeNamespaceUid());
     assertEquals("head-before", status.getProfile().getRequestedHeadSha());
+  }
+
+  private static void setRole(
+      HostedEnvironmentIdentityStatus status,
+      RoleField roleField,
+      HostedEnvironmentIdentityStatus.RoleStatus role) {
+    switch (roleField) {
+      case INGRESS -> status.setIngress(role);
+      case TELNET -> status.setTelnet(role);
+      case GATEWAY_INTERNAL_WS -> status.setGatewayInternalWs(role);
+      case TCP_PROXY_BRIDGE -> status.setTcpProxyBridge(role);
+      case GRPC -> status.setGrpc(role);
+    }
+  }
+
+  private static HostedEnvironmentIdentityStatus.RoleStatus getRole(
+      HostedEnvironmentIdentityStatus status, RoleField roleField) {
+    return switch (roleField) {
+      case INGRESS -> status.getIngress();
+      case TELNET -> status.getTelnet();
+      case GATEWAY_INTERNAL_WS -> status.getGatewayInternalWs();
+      case TCP_PROXY_BRIDGE -> status.getTcpProxyBridge();
+      case GRPC -> status.getGrpc();
+    };
+  }
+
+  private enum RoleField {
+    INGRESS,
+    TELNET,
+    GATEWAY_INTERNAL_WS,
+    TCP_PROXY_BRIDGE,
+    GRPC
   }
 
   private static HostedEnvironmentIdentityStatus.RoleStatus role(String revision) {

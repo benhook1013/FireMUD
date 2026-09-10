@@ -349,8 +349,7 @@ class RuntimeProfileServiceTest {
         invalidPortFailure.getMessage());
     assertInstanceOf(NumberFormatException.class, invalidPortFailure.getCause());
 
-    Namespace malformedPort =
-        previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "not-a-port");
+    Namespace malformedPort = previewRuntimeNamespace("a".repeat(40), "a".repeat(40), "not-a-port");
     when(namespace.get()).thenReturn(malformedPort);
     IllegalStateException malformedPortFailure =
         assertThrows(IllegalStateException.class, () -> service.read(client, plan));

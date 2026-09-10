@@ -389,8 +389,8 @@ for required in (
     'if (( bootstrap_exact_run_count == 0 )); then',
     'history_not_before="1970-01-01T00:00:00Z"',
     "retained history is complete and dispatch may proceed",
-    '&& -z "${candidate_run}"',
-    "no exact deploy candidate remains",
+    'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then',
+    "no retry or redispatch required",
     ".head_sha == $head and .display_title == $title",
     "No decisive exact deploy history",
     "refusing a history-blind dispatch",
@@ -413,6 +413,9 @@ for required in (
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
+aligned_guard = 'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then'
+if reconcile_run.index(aligned_guard) > reconcile_run.index("develop_push_run="):
+    raise SystemExit("dev-demo alignment must short-circuit before retry history is consumed")
 if reconcile_run.index("export LC_ALL=C") > reconcile_run.index("created_at >= $not_before"):
     raise SystemExit("dev-demo reconciler must set the bytewise locale before timestamp comparisons")
 if "gh run list" in reconcile_run or "--limit" in reconcile_run:
@@ -1307,6 +1310,20 @@ case "$TEST_SCENARIO:$page" in
   empty:*|aligned-no-record:*|aligned-request-repair:*)
     empty_runs
     ;;
+  aligned-newest-failed:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[{
+        id:709,head_sha:$head,status:"completed",conclusion:"failure",created_at:"2026-09-09T05:03:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)
+      }]}'
+    ;;
+  aligned-failure-budget-repair:1)
+    jq -nc --arg head "$TEST_HEAD_SHA" \
+      '{workflow_runs:[
+        {id:712,head_sha:$head,status:"completed",conclusion:"failure",created_at:"2026-09-09T05:03:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
+        {id:711,head_sha:$head,status:"completed",conclusion:"cancelled",created_at:"2026-09-09T05:02:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)},
+        {id:710,head_sha:$head,status:"completed",conclusion:"timed_out",created_at:"2026-09-09T05:01:00Z",display_title:("Develop Dev Demo Environment deploy head-" + $head)}
+      ]}'
+    ;;
   three-failures:1|three-failures:2)
     jq -nc --arg other "$TEST_OTHER_HEAD_SHA" --argjson page "$page" \
       '{workflow_runs:[range(0;100) as $index | {
@@ -1518,7 +1535,8 @@ run_reconcile_fixture() {
     cat "$output" >&2
     exit 1
   }
-  if [[ "$scenario" == aligned-request-repair ]]; then
+  if [[ "$scenario" == aligned-request-repair \
+    || "$scenario" == aligned-failure-budget-repair ]]; then
     [[ -f "$repair_marker" ]] || {
       echo "reconciler did not repair stale requested-head evidence" >&2
       cat "$output" >&2
@@ -1549,18 +1567,28 @@ run_reconcile_fixture() {
       exit 1
     fi
   fi
+  if [[ "$scenario" == aligned-newest-failed \
+    || "$scenario" == aligned-failure-budget-repair ]]; then
+    [[ ! -s "$trace_log" ]] || {
+      echo "reconciler fixture $scenario consumed retry history despite namespace alignment" >&2
+      cat "$trace_log" >&2
+      exit 1
+    }
+  fi
 }
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
-run_reconcile_fixture aligned-no-record 0 0 "no exact deploy candidate remains" "$test_head_sha" "$test_head_sha"
+run_reconcile_fixture aligned-no-record 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
 run_reconcile_fixture aligned-request-repair 0 0 "Repaired missing or stale requested dev-demo head annotation" "$test_head_sha" ""
+run_reconcile_fixture aligned-newest-failed 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
+run_reconcile_fixture aligned-failure-budget-repair 0 0 "Repaired missing or stale requested dev-demo head annotation" "$test_head_sha" ""
 run_reconcile_fixture three-failures 1 0 "Dev-demo retry budget exhausted"
-run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
-run_reconcile_fixture bootstrap-two-failures 0 1 "Redispatching failed dev-demo candidate" "$test_head_sha"
+run_reconcile_fixture one-failure 0 1 "Redispatching failed dev-demo candidate"
+run_reconcile_fixture bootstrap-two-failures 0 1 "Redispatching failed dev-demo candidate"
 run_reconcile_fixture bootstrap-missing-created-at 1 0 "Dev-demo history bootstrap invalid"
 run_reconcile_fixture successful-unaligned 0 1 "Redispatching successful dev-demo candidate"
 run_reconcile_fixture successful-unaligned-budget 1 0 "Dev-demo alignment retry budget exhausted"
-run_reconcile_fixture successful-aligned 0 0 "already aligned to successful develop head" "$test_head_sha" "$test_head_sha"
+run_reconcile_fixture successful-aligned 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"
 run_reconcile_fixture nonterminal-old 0 0 "already converging develop head"
 run_reconcile_fixture nonterminal-before-anchor 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture other-titles 0 1 "Dispatching dev-demo deploy"

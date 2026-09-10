@@ -23,6 +23,20 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class AdmissionValidatorTest {
+  private static final String METADATA_REQUIRED_MESSAGE =
+      "HostedEnvironmentIdentity metadata is required";
+
+  @Test
+  void nullResourceIsRejectedBeforePlanning() {
+    assertRejectedBeforePlanning((HostedEnvironmentIdentity) null, METADATA_REQUIRED_MESSAGE);
+  }
+
+  @Test
+  void nullMetadataIsRejectedBeforePlanning() {
+    assertRejectedBeforePlanning(
+        resource -> resource.setMetadata(null), METADATA_REQUIRED_MESSAGE);
+  }
+
   @Test
   void missingDesiredStateIsRejectedBeforePlanning() {
     assertRejectedBeforePlanning(

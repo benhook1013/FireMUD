@@ -258,10 +258,7 @@ class HostedIdentityScopeServiceTest {
     assertTrue(HostedIdentityScopeService.roleEquivalent(roundTripped, desired));
 
     var unexpectedControllerLabel = new RoleBuilder(roundTripped).build();
-    unexpectedControllerLabel
-        .getMetadata()
-        .getLabels()
-        .put("firemud.dev/unexpected", "ownership");
+    unexpectedControllerLabel.getMetadata().getLabels().put("firemud.dev/unexpected", "ownership");
     assertFalse(HostedIdentityScopeService.roleEquivalent(unexpectedControllerLabel, desired));
 
     roundTripped

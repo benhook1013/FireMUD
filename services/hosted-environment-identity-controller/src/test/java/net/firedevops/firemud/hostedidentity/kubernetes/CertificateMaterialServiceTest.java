@@ -184,8 +184,7 @@ class CertificateMaterialServiceTest {
             .build());
     Map<String, Object> existingSpec = new LinkedHashMap<>(desiredSpec);
     existingSpec.put(
-        "additionalOutputFormats",
-        List.of(Map.of("type", "CombinedPEM", "unexpected", "value")));
+        "additionalOutputFormats", List.of(Map.of("type", "CombinedPEM", "unexpected", "value")));
     existing.setAdditionalProperties(Map.of("spec", existingSpec));
 
     KubernetesClient client = mock(KubernetesClient.class);
@@ -596,17 +595,12 @@ class CertificateMaterialServiceTest {
     StableBatchFixture fixture = stableBatchFixture();
     EnvironmentIdentityPlan plan = fixture.plan();
     Secret projection =
-        fixture
-            .secretClient()
-            .runtimeSecrets()
-            .withName(plan.ingressSecretName())
-            .get();
+        fixture.secretClient().runtimeSecrets().withName(plan.ingressSecretName()).get();
     projection
         .getMetadata()
         .getAnnotations()
         .remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
-    stubCertificate(
-        fixture.secretClient().client(), plan, plan.ingressCertificateName(), false);
+    stubCertificate(fixture.secretClient().client(), plan, plan.ingressCertificateName(), false);
 
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
@@ -660,6 +654,19 @@ class CertificateMaterialServiceTest {
                         "status", "True",
                         "observedGeneration", 6)))));
     assertEquals(null, CertificateMaterialService.readyRevision(certificate));
+
+    for (int nonPositiveRevision : java.util.List.of(0, -1)) {
+      certificate.setAdditionalProperties(
+          Map.of(
+              "status",
+              Map.of(
+                  "revision",
+                  nonPositiveRevision,
+                  "conditions",
+                  java.util.List.of(
+                      Map.of("type", "Ready", "status", "True", "observedGeneration", 7)))));
+      assertEquals(null, CertificateMaterialService.readyRevision(certificate));
+    }
   }
 
   @Test

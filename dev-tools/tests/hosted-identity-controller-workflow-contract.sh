@@ -79,7 +79,7 @@ assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
 )
 smoke_run = smoke_step["run"]
 for required in (
-    'trap cleanup EXIT',
+    'trap \'docker rm --force "$container_name" >/dev/null 2>&1 || true\' EXIT',
     'docker run --detach',
     '--env FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE=paused',
     '"$CONTROLLER_IMAGE"',

@@ -23,6 +23,21 @@ desired_head_sha="$(
 }
 current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
 current_requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}')"
+
+repair_requested_head_if_aligned() {
+  if [[ "${current_requested_head_sha}" != "${desired_head_sha}" ]]; then
+    kubectl annotate namespace "${namespace}" \
+      "firemud.dev/requested-dev-demo-head-sha=${desired_head_sha}" --overwrite
+    echo "Repaired missing or stale requested dev-demo head annotation."
+  fi
+}
+
+if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
+  repair_requested_head_if_aligned
+  echo "Dev demo already aligned to develop head ${desired_head_sha}; no retry or redispatch required."
+  exit 0
+fi
+
 max_failed_attempts=3
 max_history_pages=10
 expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
@@ -204,10 +219,6 @@ while (( page <= max_history_pages )); do
   if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
     break
   fi
-  if [[ "${candidate_status}" == completed && "${candidate_conclusion}" == success \
-    && "${current_head_sha}" == "${desired_head_sha}" ]]; then
-    break
-  fi
   page_failed_attempts="$(
     jq -r \
       '[.[] | select(.status == "completed" and .conclusion != "success")] | length' \
@@ -244,29 +255,6 @@ fi
 
 if [[ -n "${candidate_status}" && "${candidate_status}" != completed ]]; then
   echo "Dev-demo run ${candidate_run_id} is already converging develop head ${desired_head_sha}."
-  exit 0
-fi
-
-repair_requested_head_if_aligned() {
-  if [[ "${current_requested_head_sha}" != "${desired_head_sha}" ]]; then
-    kubectl annotate namespace "${namespace}" \
-      "firemud.dev/requested-dev-demo-head-sha=${desired_head_sha}" --overwrite
-    echo "Repaired missing or stale requested dev-demo head annotation."
-  fi
-}
-
-if [[ "${current_head_sha}" == "${desired_head_sha}" \
-  && -z "${candidate_run}" ]]; then
-  repair_requested_head_if_aligned
-  echo "Dev demo already aligned to develop head ${desired_head_sha}; no exact deploy candidate remains."
-  exit 0
-fi
-
-if [[ "${current_head_sha}" == "${desired_head_sha}" \
-  && "${candidate_status}" == completed \
-  && "${candidate_conclusion}" == success ]]; then
-  repair_requested_head_if_aligned
-  echo "Dev demo already aligned to successful develop head ${desired_head_sha}"
   exit 0
 fi
 

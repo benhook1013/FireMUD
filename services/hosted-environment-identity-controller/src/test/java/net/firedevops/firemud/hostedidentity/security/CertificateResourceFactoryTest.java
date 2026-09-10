@@ -77,8 +77,7 @@ class CertificateResourceFactoryTest {
         java.util.List.of("digital signature", "key encipherment", "server auth"),
         certificateSpec.get("usages"));
     assertCertificateDefaults(certificateSpec);
-    assertSecretTemplate(
-        certificateSpec, plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
+    assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE);
   }
 
   @Test

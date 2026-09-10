@@ -425,8 +425,7 @@ public class HostedIdentityScopeService {
         && desired != null
         && desired.entrySet().stream()
             .allMatch(
-                entry ->
-                    java.util.Objects.equals(entry.getValue(), current.get(entry.getKey())))
+                entry -> java.util.Objects.equals(entry.getValue(), current.get(entry.getKey())))
         && current.keySet().stream()
             .filter(key -> key.startsWith("firemud.dev/"))
             .allMatch(desired::containsKey);

@@ -109,8 +109,7 @@ class SecretProjectionServiceTest {
         assertThrows(
             IllegalArgumentException.class,
             () ->
-                SecretProjectionService.revisionForRole(
-                    HostedIdentityContract.INGRESS_ROLE, null));
+                SecretProjectionService.revisionForRole(HostedIdentityContract.INGRESS_ROLE, null));
     assertEquals("material data is required", missingRoleData.getMessage());
     assertThrows(
         IllegalArgumentException.class,

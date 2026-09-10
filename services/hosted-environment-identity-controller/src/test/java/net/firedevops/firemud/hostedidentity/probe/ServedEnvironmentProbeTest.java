@@ -346,8 +346,7 @@ class ServedEnvironmentProbeTest {
 
   private static String encodedPem(byte[] der) {
     String body = Base64.getEncoder().encodeToString(der);
-    String pem =
-        "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";
+    String pem = "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";
     return Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.US_ASCII));
   }
 }

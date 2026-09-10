@@ -894,8 +894,7 @@ public class CertificateMaterialService {
       var desiredIterator = desiredCollection.iterator();
       var existingIterator = existingCollection.iterator();
       while (desiredIterator.hasNext() && existingIterator.hasNext()) {
-        if (!hasOnlyDesiredShape(
-            desiredIterator.next(), existingIterator.next(), path + "[]")) {
+        if (!hasOnlyDesiredShape(desiredIterator.next(), existingIterator.next(), path + "[]")) {
           return false;
         }
       }

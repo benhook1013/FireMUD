@@ -339,8 +339,7 @@ public class SecretMaterialValidator {
         throw new MaterialValidationException("certificate chain contains a non-CA issuer");
       }
       if (!caKeyUsageAllowsSigning(next)) {
-        throw new MaterialValidationException(
-            "certificate CA key usage must include keyCertSign");
+        throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
       }
       if (next.getBasicConstraints() < subordinateCaDepth) {
         throw new MaterialValidationException(
@@ -360,8 +359,7 @@ public class SecretMaterialValidator {
       // still checked here; the served system-trust probe supplies the public
       // trust-anchor proof before Ready is reported.
       if (!caKeyUsageAllowsSigning(current)) {
-        throw new MaterialValidationException(
-            "certificate CA key usage must include keyCertSign");
+        throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
       }
       return sha256(current.getEncoded());
     }
@@ -369,8 +367,7 @@ public class SecretMaterialValidator {
       throw new MaterialValidationException("certificate chain anchor is not a CA");
     }
     if (anchor.getBasicConstraints() < subordinateCaDepth) {
-      throw new MaterialValidationException(
-          "certificate chain exceeds CA path length constraint");
+      throw new MaterialValidationException("certificate chain exceeds CA path length constraint");
     }
     if (!caKeyUsageAllowsSigning(anchor)) {
       throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
