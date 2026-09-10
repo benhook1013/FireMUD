@@ -41,7 +41,7 @@ DESIGN_SECTIONS = (
     ("other_design", "other design", None),
 )
 DEFAULT_BAR_WIDTH = 16
-PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner"
+PR_METADATA_FIELDS = "baseRefName,baseRefOid,headRefName,headRefOid"
 PR_UPDATE_FIELDS = "baseRefOid,headRefOid,body"
 PR_REPORT_START = "<!-- firemud:cloc-report:start -->"
 PR_REPORT_END = "<!-- firemud:cloc-report:end -->"

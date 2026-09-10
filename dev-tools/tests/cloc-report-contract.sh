@@ -737,7 +737,6 @@ def fake_metadata_command(args, _root):
                 "baseRefOid": "a" * 40,
                 "headRefName": "feature/forked",
                 "headRefOid": "b" * 40,
-                "headRepository": {"nameWithOwner": "contributor/example"},
             }
         ).encode(),
         stderr=b"",
@@ -753,7 +752,11 @@ try:
         head_ref="feature/forked",
         head_oid="b" * 40,
     )
-    assert any(args[0] == "gh" and "--repo" in args for args in metadata_calls)
+    metadata_call = next(args for args in metadata_calls if args[0] == "gh")
+    assert "--repo" in metadata_call
+    assert metadata_call[metadata_call.index("--json") + 1] == (
+        "baseRefName,baseRefOid,headRefName,headRefOid"
+    )
 finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command

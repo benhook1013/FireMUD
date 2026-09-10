@@ -368,6 +368,65 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertTrue(detail["no_linked_data"])
         self.assertIn("no firemud-cli-run marker", detail["message"])
 
+    def test_capture_accepts_symlinked_log_root_without_weakening_artifact_containment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_log_root = root / "real-logs"
+            run_dir = real_log_root / "run.A1b2C3"
+            run_dir.mkdir(parents=True)
+            (run_dir / "metadata").write_text(
+                "repository=owner/repo\n"
+                "pull_request=42\n"
+                "candidate_sha=abc1234567890123456789012345678901234567\n"
+                "candidate_files=0\n",
+                encoding="utf-8",
+            )
+            (run_dir / "exit-status").write_text("0\n", encoding="utf-8")
+            (run_dir / "stdout").write_text(
+                json.dumps(
+                    {
+                        "type": "complete",
+                        "status": "review_completed",
+                        "findings": 0,
+                        "reviewedFiles": [],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            linked_log_root = root / "linked-logs"
+            linked_log_root.symlink_to(real_log_root, target_is_directory=True)
+            linked_run_dir = linked_log_root / "run.A1b2C3"
+
+            self.assertEqual(
+                self.reporter._contained_file(linked_run_dir, "metadata"),
+                (run_dir / "metadata").resolve(),
+            )
+
+            checkpoint = self.reporter.Checkpoint(
+                comment_id=777,
+                created_at="2026-09-10T00:00:00Z",
+                type="CLI",
+                raw_found=0,
+                accepted=0,
+                reviewed_sha="abc1234",
+                file_count=0,
+                correction=False,
+                updated_at="2026-09-10T00:00:00Z",
+                run_id="run.A1b2C3",
+                hosted_review_id=None,
+            )
+            with patch.object(self.reporter, "_git_log_root", return_value=linked_log_root):
+                capture = self.reporter.load_capture(checkpoint, "owner/repo", 42)
+
+            self.assertEqual(capture.metadata["candidate_files"], "0")
+
+            outside = root / "outside.tsv"
+            outside.write_text("1\taccepted\t\n", encoding="utf-8")
+            (run_dir / "decisions.tsv").symlink_to(outside)
+            with self.assertRaisesRegex(self.reporter.CaptureInvalid, "escapes"):
+                self.reporter._contained_file(linked_run_dir, "decisions.tsv")
+
     def test_details_unknown_comment_id_fails_in_command_mode(self) -> None:
         arguments = self.reporter.argparse.Namespace(
             repo="owner/repo",

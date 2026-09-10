@@ -188,7 +188,7 @@ export TEST_INVOCATIONS_FILE="$INVOCATIONS_FILE"
 export TEST_STARTED_FILE="$STARTED_FILE"
 export TEST_RELEASE_FILE="$RELEASE_FILE"
 
-help_output="$($WRAPPER --help)"
+help_output="$("$WRAPPER" --help)"
 if [[ "$help_output" == *"Launches the CodeRabbit CLI"* && "$help_output" == *"consumes the separate CLI review quota"* && "$help_output" == *"report-pr-review-checkpoints.py"* ]]; then
   :
 else

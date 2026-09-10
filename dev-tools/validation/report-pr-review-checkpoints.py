@@ -767,7 +767,11 @@ def _read_metadata(path: Path) -> dict[str, str]:
 
 
 def _contained_file(run_dir: Path, name: str, required: bool = True) -> Path | None:
-    candidate = run_dir / name
+    try:
+        resolved_run_dir = run_dir.resolve()
+    except OSError as exc:
+        raise CaptureUnavailable(f"linked capture artifact cannot be read: {name}") from exc
+    candidate = resolved_run_dir / name
     try:
         resolved = candidate.resolve(strict=True)
     except FileNotFoundError:
@@ -779,7 +783,7 @@ def _contained_file(run_dir: Path, name: str, required: bool = True) -> Path | N
     except OSError as exc:
         raise CaptureUnavailable(f"linked capture artifact cannot be read: {name}") from exc
     try:
-        resolved.relative_to(run_dir)
+        resolved.relative_to(resolved_run_dir)
     except ValueError as exc:
         raise CaptureInvalid(f"linked capture artifact escapes its run directory: {name}") from exc
     if not resolved.is_file():
@@ -892,7 +896,7 @@ def load_capture(checkpoint: Checkpoint, repo: str, pr_number: int) -> CaptureDa
         raise CaptureUnavailable("no linked data: checkpoint has no reviewed SHA")
     if not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureInvalid("linked run ID is invalid")
-    log_root = _git_log_root()
+    log_root = _git_log_root().resolve()
     run_dir = log_root / checkpoint.run_id
     try:
         run_dir = run_dir.resolve(strict=True)
