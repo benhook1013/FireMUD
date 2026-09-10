@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -1168,6 +1169,34 @@ class CheckpointReporterTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
             self.assertEqual(capture.review["id"], 915)
             self.assertEqual(list(snapshot.parent.iterdir()), [snapshot])
+
+    def test_hosted_snapshot_hardens_new_and_existing_log_roots(self) -> None:
+        review = {
+            "id": 916,
+            "user": {"login": "coderabbitai[bot]"},
+            "state": "COMMENTED",
+            "submitted_at": "2026-09-10T08:00:00Z",
+            "commit_id": "f" * 40,
+            "body": "Hosted review summary",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for initially_exists in (False, True):
+                with self.subTest(initially_exists=initially_exists):
+                    log_root = root / f"logs-{initially_exists}"
+                    if initially_exists:
+                        log_root.mkdir(mode=0o755)
+                        log_root.chmod(0o755)
+                    previous_umask = os.umask(0o022)
+                    try:
+                        with patch.object(self.reporter, "_git_log_root", return_value=log_root):
+                            snapshot = self.reporter._save_hosted_snapshot("owner/repo", 42, review, [])
+                    finally:
+                        os.umask(previous_umask)
+
+                    self.assertEqual(stat.S_IMODE(log_root.stat().st_mode), 0o700)
+                    self.assertEqual(stat.S_IMODE(snapshot.parent.stat().st_mode), 0o700)
+                    self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
 
     def test_hosted_detail_rejects_checkpoint_sha_mismatch(self) -> None:
         checkpoint = {

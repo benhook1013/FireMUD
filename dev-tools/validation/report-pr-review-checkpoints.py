@@ -520,6 +520,9 @@ def _save_hosted_snapshot(repo: str, pr_number: int, review: dict[str, Any], com
     review_id = _hosted_review_id(review.get("id"))
     snapshot_dir = _hosted_snapshot_dir(repo, pr_number, review_id)
     try:
+        log_root = snapshot_dir.parent
+        log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        log_root.chmod(0o700)
         snapshot_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         snapshot_path = snapshot_dir / "snapshot.json"
         if snapshot_path.is_symlink():
