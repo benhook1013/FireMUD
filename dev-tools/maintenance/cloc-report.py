@@ -317,6 +317,7 @@ def snapshot_worktree(root: Path, revision: str) -> Iterator[Path]:
         raise
     finally:
         cleanup_errors: list[Exception] = []
+        prune_required = not added
         if added:
             try:
                 run_command(
@@ -333,25 +334,27 @@ def snapshot_worktree(root: Path, revision: str) -> Iterator[Path]:
                 )
             except (OSError, ReportError) as error:
                 cleanup_errors.append(error)
+                prune_required = True
         try:
             shutil.rmtree(temp_root, ignore_errors=False)
         except OSError as error:
             cleanup_errors.append(error)
-        try:
-            run_command(
-                (
-                    "git",
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "worktree",
-                    "prune",
-                    "--expire",
-                    "now",
-                ),
-                root,
-            )
-        except (OSError, ReportError):
-            pass
+        if prune_required:
+            try:
+                run_command(
+                    (
+                        "git",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "worktree",
+                        "prune",
+                        "--expire",
+                        "now",
+                    ),
+                    root,
+                )
+            except (OSError, ReportError):
+                pass
 
         if original_error is None and cleanup_errors:
             if len(cleanup_errors) == 1:

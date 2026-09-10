@@ -115,6 +115,41 @@ class CheckpointReporterTest(unittest.TestCase):
             self.reporter.emit_text(report)
         self.assertIn("unlinked", output.getvalue())
 
+    def test_duplicate_and_malformed_run_markers_remain_unlinked_checkpoints(self) -> None:
+        comments = [
+            {
+                "id": 103,
+                "body": (
+                    "**CLI: 1 found / 1 accepted**\n"
+                    "<!-- firemud-cli-run: run.A1b2C3 -->\n"
+                    "<!-- firemud-cli-run: run.D4e5F6 -->"
+                ),
+                "created_at": "2026-09-10T00:02:00Z",
+            },
+            {
+                "id": 104,
+                "body": (
+                    "**CLI: 1 found / 1 accepted**\n"
+                    "<!-- firemud-cli-run: malformed -->"
+                ),
+                "created_at": "2026-09-10T00:03:00Z",
+            },
+        ]
+
+        checkpoints, _ = self.reporter.parse_checkpoint_comments(comments)
+        report = self.reporter.collect_report(comments, 0)
+
+        self.assertEqual(report["matched_checkpoints"], 2)
+        self.assertEqual([checkpoint.run_id for checkpoint in checkpoints], [None, None])
+        self.assertEqual(
+            report["warnings"],
+            ["2 CLI checkpoint comment(s) lack a firemud-cli-run marker"],
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.reporter.emit_text(report)
+        self.assertEqual(output.getvalue().count(" unlinked "), 2)
+
     def test_ignores_unrelated_and_quoted_text_and_counts_malformed_candidates(self) -> None:
         comments = [
             {
@@ -379,7 +414,7 @@ class CheckpointReporterTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
-            timeout=self.reporter.SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=self.reporter.GH_API_TIMEOUT_SECONDS,
         )
 
     def test_details_preserves_legacy_reason_separately_from_raw_findings(self) -> None:
@@ -1206,10 +1241,10 @@ class CheckpointReporterTest(unittest.TestCase):
         ):
             self.reporter.fetch_comments("owner/repo", 42)
 
-        timeout = subprocess.TimeoutExpired("gh api", self.reporter.SUBPROCESS_TIMEOUT_SECONDS)
+        timeout = subprocess.TimeoutExpired("gh api", self.reporter.GH_API_TIMEOUT_SECONDS)
         with (
             patch.object(self.reporter.subprocess, "run", side_effect=timeout),
-            self.assertRaisesRegex(RuntimeError, "gh api timed out after 30 seconds"),
+            self.assertRaisesRegex(RuntimeError, "gh api timed out after 120 seconds"),
         ):
             self.reporter.fetch_comments("owner/repo", 42)
 
@@ -1224,7 +1259,7 @@ class CheckpointReporterTest(unittest.TestCase):
             result = self.reporter.main()
 
         self.assertEqual(result, 1)
-        self.assertEqual(stderr.getvalue(), "error: gh api timed out after 30 seconds\n")
+        self.assertEqual(stderr.getvalue(), "error: gh api timed out after 120 seconds\n")
 
     def test_git_log_root_bounds_subprocess_and_normalizes_failures(self) -> None:
         response = subprocess.CompletedProcess([], 0, ".git\n", "")
@@ -1237,11 +1272,11 @@ class CheckpointReporterTest(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
-            timeout=self.reporter.SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=self.reporter.GIT_TIMEOUT_SECONDS,
         )
 
         for error in (
-            subprocess.TimeoutExpired("git rev-parse", self.reporter.SUBPROCESS_TIMEOUT_SECONDS),
+            subprocess.TimeoutExpired("git rev-parse", self.reporter.GIT_TIMEOUT_SECONDS),
             subprocess.CalledProcessError(1, "git rev-parse"),
         ):
             with (

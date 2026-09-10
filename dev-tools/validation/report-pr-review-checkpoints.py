@@ -26,7 +26,8 @@ CHECKPOINT_SUFFIX = re.compile(
 CHECKPOINT_CANDIDATE = re.compile(r"^\*\*(?:Correction — )?(?:Hosted|CLI):")
 SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$")
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
-SUBPROCESS_TIMEOUT_SECONDS = 30
+GH_API_TIMEOUT_SECONDS = 120
+GIT_TIMEOUT_SECONDS = 30
 REPO_NAME = re.compile(r"^[^/\s]+/[^/\s]+$")
 RUN_MARKER = re.compile(r"^<!-- firemud-cli-run: (?P<run_id>run\.[A-Za-z0-9]{1,32}) -->$")
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
@@ -283,12 +284,12 @@ def fetch_api_endpoint(endpoint: str) -> list[dict[str, Any]]:
             check=True,
             capture_output=True,
             text=True,
-            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=GH_API_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("gh CLI is required") from exc
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"gh api timed out after {SUBPROCESS_TIMEOUT_SECONDS} seconds") from exc
+        raise RuntimeError(f"gh api timed out after {GH_API_TIMEOUT_SECONDS} seconds") from exc
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.strip() if exc.stderr else "gh api failed"
         raise RuntimeError(detail) from exc
@@ -835,7 +836,7 @@ def _git_log_root() -> Path:
             check=True,
             capture_output=True,
             text=True,
-            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=GIT_TIMEOUT_SECONDS,
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise CaptureUnavailable("could not resolve the shared Git common directory") from exc

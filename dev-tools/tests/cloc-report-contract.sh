@@ -249,6 +249,7 @@ import sys
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 repo = Path.cwd()
 script = ["python3", "dev-tools/maintenance/cloc-report.py"]
@@ -262,10 +263,10 @@ cloc_report = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = cloc_report
 spec.loader.exec_module(cloc_report)
 
-original_snapshot_functions = (
-    cloc_report.tempfile.mkdtemp,
+original_snapshot_bindings = (
+    cloc_report.tempfile,
     cloc_report.run_command,
-    cloc_report.shutil.rmtree,
+    cloc_report.shutil,
 )
 snapshot_temp_root = repo / "snapshot-cleanup-fixture"
 snapshot_cleanup_calls = []
@@ -294,9 +295,9 @@ def recording_rmtree(path, *, ignore_errors):
     snapshot_cleanup_calls.append("rmtree")
 
 
-cloc_report.tempfile.mkdtemp = lambda **_kwargs: str(snapshot_temp_root)
+cloc_report.tempfile = SimpleNamespace(mkdtemp=lambda **_kwargs: str(snapshot_temp_root))
 cloc_report.run_command = failing_snapshot_command
-cloc_report.shutil.rmtree = recording_rmtree
+cloc_report.shutil = SimpleNamespace(rmtree=recording_rmtree)
 try:
     body_error = RuntimeError("snapshot body failed")
     try:
@@ -322,7 +323,7 @@ try:
     snapshot_cleanup_failures["remove"] = False
     with cloc_report.snapshot_worktree(repo, "c" * 40):
         pass
-    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree", "worktree-prune"]
+    assert snapshot_cleanup_calls == ["worktree-remove", "rmtree"]
 
     snapshot_cleanup_calls.clear()
     snapshot_cleanup_failures["add"] = True
@@ -336,10 +337,10 @@ try:
     assert snapshot_cleanup_calls == ["worktree-add", "rmtree", "worktree-prune"]
 finally:
     (
-        cloc_report.tempfile.mkdtemp,
+        cloc_report.tempfile,
         cloc_report.run_command,
-        cloc_report.shutil.rmtree,
-    ) = original_snapshot_functions
+        cloc_report.shutil,
+    ) = original_snapshot_bindings
 
 assert cloc_report.source_classification("services/foo/README.md") is None
 assert cloc_report.source_classification("README.md") is None

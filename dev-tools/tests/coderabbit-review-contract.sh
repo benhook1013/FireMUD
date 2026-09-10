@@ -481,13 +481,13 @@ cat >"$TMP_DIR/substantive-quoted-rate-limit.json" <<'JSON'
           "nodes": [
             {
               "author": {"login": "benhook1013"},
-              "body": "@coderabbitai review",
+              "body": "@coderabbitai full review",
               "createdAt": "2026-07-03T02:40:00Z",
               "url": "https://example.test/substantive-request"
             },
             {
               "author": {"login": "coderabbitai"},
-              "body": "<!-- walkthrough_start -->\nThe report quotes: Review rate limited",
+              "body": "<!-- walkthrough_start -->\nThe report quotes: More reviews will be available in 36 minutes",
               "createdAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/substantive-quoted-rate-limit"
             }
