@@ -309,12 +309,17 @@ for bare_assertion in (
 ):
     if bare_assertion in runtime_target_run or bare_assertion in deployed_head_step["run"]:
         raise SystemExit(f"dev-demo validation retained opaque assertion {bare_assertion}")
-if "success()" not in deploy_by_name["Smoke dev-demo over TCP"].get("if", ""):
+smoke_condition = deploy_by_name["Smoke dev-demo over TCP"].get("if", "")
+if "success()" not in smoke_condition:
     raise SystemExit("dev-demo smoke must not bypass an earlier identity/preflight failure")
+if "!cancelled()" in smoke_condition:
+    raise SystemExit("dev-demo smoke redundantly combines !cancelled() with success()")
 success_condition = deploy_by_name["Summarize dev-demo access"].get("if", "")
 for required in ("success()", "steps.smoke.outcome == 'success'"):
     if required not in success_condition:
         raise SystemExit(f"dev-demo success publication lacks {required}")
+if "!cancelled()" in success_condition:
+    raise SystemExit("dev-demo success publication redundantly combines !cancelled() with success()")
 
 destroy_steps = workflow["jobs"]["dev-demo-destroy"]["steps"]
 destroy_by_name = {step.get("name"): step for step in destroy_steps if isinstance(step, dict)}

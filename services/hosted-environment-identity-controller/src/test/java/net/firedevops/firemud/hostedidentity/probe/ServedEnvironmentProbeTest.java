@@ -35,7 +35,7 @@ import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
-import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidatorTest;
+import net.firedevops.firemud.hostedidentity.security.GrpcMaterialFixture;
 import org.junit.jupiter.api.Test;
 
 class ServedEnvironmentProbeTest {
@@ -468,7 +468,7 @@ class ServedEnvironmentProbeTest {
   }
 
   private static Secret generatedMaterial(EnvironmentIdentityPlan plan) throws Exception {
-    return SecretMaterialValidatorTest.GrpcMaterialFixture.generate(plan);
+    return GrpcMaterialFixture.generate(plan);
   }
 
   private static SSLServerSocket mutualTlsServer(
