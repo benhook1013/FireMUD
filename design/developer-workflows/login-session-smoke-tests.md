@@ -18,11 +18,12 @@ The fresh-bootstrap step establishes the claim and running stack; the standalone
 
 ## Requirements
 
-1. Account Service stub or real credential provider must be running (`grpcurl` prefix `account-service:6565` by default).
-2. For the Telnet-via-Gateway path, Game Session Service, Spring Cloud Gateway, and TCP Proxy must be running with the same tenant, or use the documented `GATEWAY_WS_URL` / `ACCOUNT_SERVICE_ENDPOINT` overrides to target your locally running instances. For the direct backend WebSocket path, Gateway and TCP Proxy are not prerequisites: Account Service, Game Logic Service, and Game Session Service are sufficient. The current direct smoke requires positive numeric tenant and game-instance identifiers; a separate positive session identifier is not required because the direct listener derives its transport session ID from an optional `X-Firemud-Transport-Session-Id` header and otherwise uses `X-Game-Instance-Id`. UUID identifiers are target-state only until the current backend wire parsers are migrated.
-3. Before running the flow, wait for the canonical readiness endpoints of the path you are exercising. For the Telnet path, that means Account Service, Game Logic Service, Game Session Service, Spring Cloud Gateway, and TCP Proxy must all report `UP` from `/actuator/health/readiness`.
+1. Python 3 and the `websocket-client` package are required by the canonical scripted clients. Install the package with `python3 -m pip install websocket-client` when it is not already available.
+2. Account Service must be running, and the canonical Compose-backed scripts require the local PostgreSQL schema to be available because `wait_for_account_schema` checks the `<COMPOSE_PROJECT_NAME>-postgres-1` container before the HTTP smoke preflight. The smoke client then verifies credentials with `POST ${SMOKE_ACCOUNT_API_BASE}/auth/login`; this HTTP preflight is separate from Game Session's internal Account Service gRPC dependency.
+3. For the Telnet-via-Gateway path, Game Session Service, Spring Cloud Gateway, and TCP Proxy must be running with the same tenant. The client controls are `SMOKE_TELNET_HOST` and `TCP_PROXY_PORT` for the Telnet endpoint, plus `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, `SMOKE_GAME_SESSION_API_BASE`, `SMOKE_GATEWAY_API_BASE`, and `SMOKE_TCP_PROXY_API_BASE` for readiness and HTTP checks. For the direct backend WebSocket path, Gateway and TCP Proxy are not prerequisites: Account Service, Game Logic Service, and Game Session Service are sufficient. Its controls are `SMOKE_GAME_SESSION_WS_URL`, `SMOKE_ACCOUNT_API_BASE`, `SMOKE_GAME_LOGIC_API_BASE`, and `SMOKE_GAME_SESSION_API_BASE`. Service-to-service bridge variables such as `GATEWAY_WS_URL` configure the running services and are separate from these client controls. The current direct smoke requires positive numeric tenant and game-instance identifiers; a separate positive session identifier is not required because the direct listener derives its transport session ID from an optional `X-Firemud-Transport-Session-Id` header and otherwise uses `X-Game-Instance-Id`. UUID identifiers are target-state only until the current backend wire parsers are migrated.
+4. Before running the flow, wait for the canonical readiness endpoints of the path you are exercising. For the Telnet path, that means Account Service, Game Logic Service, Game Session Service, Spring Cloud Gateway, and TCP Proxy must all report `UP` from `/actuator/health/readiness`.
    For the direct WebSocket path, that means Account Service, Game Logic Service, and Game Session Service must all report `UP` from `/actuator/health/readiness`.
-4. For the Compose-backed Telnet smoke, assert the pre-readiness admission behavior before waiting for readiness convergence: while TCP Proxy readiness is still false, new Telnet sockets must either be refused before the listener binds or receive the explicit `DISCONNECT startup_unavailable ...` response. Do not accept silent connection success during this window.
+5. For the Compose-backed Telnet smoke, assert the pre-readiness admission behavior before waiting for readiness convergence: while TCP Proxy readiness is still false, a new Telnet connection must be refused before the listener binds, receive the explicit `DISCONNECT startup_unavailable ...` response, or close immediately without payload. A socket that silently remains open until a timeout is not an acceptable fail-closed outcome. The current helper's EOF/timeout distinction is a proof limitation; this document states the intended contract without claiming that the automated client currently distinguishes every case.
    Do not require an equivalent pre-readiness startup refusal assertion for direct Game Session WebSocket access in this slice: Telnet is the external player admission boundary, while direct WebSocket smoke is a parity and backend-path check for the currently exposed developer/test surface.
 
 ## 1. Direct WebSocket Smoke Flow (non-production backend path)
@@ -60,7 +61,7 @@ You are in a candle-lit antechamber carved into basalt.
 
 Capture both responses so you can compare them to the Telnet flow.
 
-Optional mutating item/container/equipment extension, only when the run-owned isolation boundary above is satisfied and the target environment has the required fixtures:
+Optional mutating item/container/equipment extension, only when the run-owned isolation boundary above is satisfied and the target environment has the required fixtures. The authorized fixture plan is the seeded room-ground `Torch` and `Backpack` (`backpack#1`), the `Ration` inside that backpack, `Leather Cap`, and `Iron Boots`; the incompatible boots check expects `SLOT_INCOMPATIBLE`. The default clients and both two-transport wrappers remain baseline-only, and persistent, shared, and hosted environments are not mutation targets.
 
 ```text
 INV HERE
@@ -87,9 +88,9 @@ Expected semantic checks:
 - `TAKE Torch FROM Backpack` reports success and refreshes the container view with the torch removed again.
 - `DROP Torch` reports `You drop Torch.` and the next `INV HERE` shows the torch back on the room ground.
 - `WEAR Leather Cap` reports success, `EQUIPMENT` shows `HEAD: Leather Cap`, and `REMOVE HEAD` reports success.
-- `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error in environments that carry the demo incompatible-item fixture.
+- `WEAR Iron Boots` returns a clear `SLOT_INCOMPATIBLE` error.
 
-The plain `bash ./websocket-login-look-smoke.sh` invocation is baseline-only. The supported scripted WebSocket mutation invocation documented here is the top-of-page run-owned Compose command block, which reuses the previously established exact claim with `SMOKE_MUTATION_EXTENSION=true` and `SMOKE_MUTATION_BOUNDARY=run-owned-compose`; do not invoke it against shared or stable state.
+The plain `bash ./websocket-login-look-smoke.sh` invocation is baseline-only. The supported scripted WebSocket mutation invocation documented here is the top-of-page run-owned Compose command block, which reuses the previously established exact claim with `SMOKE_MUTATION_EXTENSION=true` and `SMOKE_MUTATION_BOUNDARY=run-owned-compose`; do not invoke it against shared, stable, persistent, or hosted state. The default clients and both two-transport wrappers reject or omit this mutating extension.
 
 For Compose-backed blackbox verification, the current canonical script is:
 
