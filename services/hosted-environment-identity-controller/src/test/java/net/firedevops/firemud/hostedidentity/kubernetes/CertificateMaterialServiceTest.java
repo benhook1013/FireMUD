@@ -665,6 +665,81 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void unacceptedProjectionPinsItsMaterialAndAcceptedProjectionAdvancesOnRestart() {
+    StableBatchFixture fixture = stableBatchFixture();
+    Secret ingressProjection =
+        fixture.secretClient().runtimeSecrets().withName(fixture.plan().ingressSecretName()).get();
+    Map<String, String> pendingAnnotations =
+        new LinkedHashMap<>(ingressProjection.getMetadata().getAnnotations());
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION);
+    pendingAnnotations.remove(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION);
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
+    ingressProjection.getMetadata().setAnnotations(pendingAnnotations);
+
+    Map<String, String> replacement =
+        Map.of("tls.crt", encoded("replacement"), "tls.key", encoded("key-2"));
+    when(fixture
+            .secretClient()
+            .identitySecrets()
+            .withName(fixture.plan().ingressSecretName())
+            .get())
+        .thenReturn(
+            certManagerSource(
+                fixture.plan(),
+                HostedIdentityContract.INGRESS_ROLE,
+                fixture.plan().ingressSecretName(),
+                replacement));
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        2,
+        replacement);
+
+    CertificateMaterialService.RoleMaterial pinned = fixture.batch().ingress();
+
+    assertEquals(SERIALIZED_IN_FLIGHT, pinned.state());
+    assertEquals(fixture.acceptedData(), pinned.source().getData());
+
+    pendingAnnotations.put(
+        HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION,
+        pendingAnnotations.get(HostedIdentityContract.REVISION_ANNOTATION));
+    pendingAnnotations.put(
+        HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION,
+        pendingAnnotations.get(HostedIdentityContract.SOURCE_GENERATION_ANNOTATION));
+    pendingAnnotations.put(
+        HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION,
+        pendingAnnotations.get(HostedIdentityContract.SOURCE_OBJECT_GENERATION_ANNOTATION));
+    pendingAnnotations.put(
+        HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION,
+        pendingAnnotations.get(HostedIdentityContract.SPKI_SHA256_ANNOTATION));
+    pendingAnnotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "accepted");
+
+    CertificateMaterialService restarted =
+        new CertificateMaterialService(
+            new CertificateResourceFactory(),
+            fixture.validator(),
+            fixture.grpcGenerator(),
+            fixture.properties());
+    stubCertificate(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        fixture.plan().ingressCertificateName(),
+        true,
+        2,
+        replacement);
+
+    CertificateMaterialService.RoleMaterial advanced =
+        restarted.beginMaterialization(fixture.secretClient().client(), fixture.plan()).ingress();
+
+    assertEquals(SOURCE_READY, advanced.state());
+    assertEquals(replacement, advanced.source().getData());
+  }
+
+  @Test
   void selectedRotationIsResolvedBeforeAnEarlierNonSelectedRoleAppliesItsCertificate() {
     StableBatchFixture fixture = stableBatchFixture();
     Secret telnetSource =

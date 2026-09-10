@@ -354,7 +354,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     str(SCRIPT),
                     str(metadata_path),
                     str(manifest_path),
-                    "benhook1013/FireMUD",
+                    "example/FireMUD",
                     "1",
                     "42",
                     "a" * 40,

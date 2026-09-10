@@ -548,7 +548,7 @@ class SecretProjectionServiceTest {
   }
 
   @Test
-  void unacceptedProjectionPinsItsMaterialUntilAcceptanceThenAdvancesOnRestart() {
+  void unacceptedProjectionAwaitsAcceptanceAndCanBeAcknowledged() {
     StableBatchFixture fixture = stableBatchFixture();
     Secret ingressProjection =
         fixture.secretClient().runtimeSecrets().withName(fixture.plan().ingressSecretName()).get();
@@ -584,8 +584,6 @@ class SecretProjectionServiceTest {
 
     CertificateMaterialService.RoleMaterial pinned = fixture.batch().ingress();
 
-    assertEquals(SERIALIZED_IN_FLIGHT, pinned.state());
-    assertEquals(fixture.acceptedData(), pinned.source().getData());
     SecretProjectionService projections = new SecretProjectionService();
     SecretProjectionService.ProjectionResult pending =
         projections.project(
@@ -616,26 +614,6 @@ class SecretProjectionServiceTest {
                 pinned.summary().spkiSha256(),
                 ALWAYS_CURRENT)
             .isSynced());
-
-    CertificateMaterialService restarted =
-        new CertificateMaterialService(
-            new CertificateResourceFactory(),
-            fixture.validator(),
-            fixture.grpcGenerator(),
-            fixture.properties());
-    stubCertificate(
-        fixture.secretClient().client(),
-        fixture.plan(),
-        fixture.plan().ingressCertificateName(),
-        true,
-        2,
-        replacement);
-
-    CertificateMaterialService.RoleMaterial advanced =
-        restarted.beginMaterialization(fixture.secretClient().client(), fixture.plan()).ingress();
-
-    assertEquals(SOURCE_READY, advanced.state());
-    assertEquals(replacement, advanced.source().getData());
   }
 
   @Test

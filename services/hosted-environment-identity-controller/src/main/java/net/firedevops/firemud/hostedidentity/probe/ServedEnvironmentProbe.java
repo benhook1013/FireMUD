@@ -158,8 +158,6 @@ public class ServedEnvironmentProbe {
       return new ProbeResult(false, "material-or-configuration-invalid");
     } catch (HandshakePolicyRejectedException exception) {
       return new ProbeResult(false, "handshake-policy-rejected");
-    } catch (IllegalStateException exception) {
-      return new ProbeResult(false, "connection-failed");
     } catch (Exception exception) {
       return new ProbeResult(false, "connection-failed");
     }
