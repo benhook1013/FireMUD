@@ -134,6 +134,48 @@ inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"
 grep -q '^labels_valid=true$' <<<"$inspect_priority"
 grep -q '^priority=true$' <<<"$inspect_priority"
 
+priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
+ordinary_labels_base64="$(printf '%s' '[{"name":"ordinary"}]' | base64 | tr -d '\n')"
+batch_candidates="$({
+  printf '901\thead-901\tfork/FireMUD\thuman\tdevelop\topen\tnot-base64!\n'
+  printf '902\t2222222222222222222222222222222222222222\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "$ordinary_labels_base64"
+  printf '903\t3333333333333333333333333333333333333333\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "$priority_labels_base64"
+  printf '904\t4444444444444444444444444444444444444444\texample/FireMUD\thuman\tmain\topen\t%s\n' "$priority_labels_base64"
+} | python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD)"
+test "$batch_candidates" = $'903\t3333333333333333333333333333333333333333\n904\t4444444444444444444444444444444444444444'
+
+if printf '905\t5555555555555555555555555555555555555555\texample/FireMUD\thuman\tdevelop\topen\tnot-base64!\n' |
+  python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
+    >"$TEMP_DIR/batch-malformed.out" 2>"$TEMP_DIR/batch-malformed.err"; then
+  echo "Batch eligibility accepted malformed same-repository label transport" >&2
+  exit 1
+fi
+grep -Fxq 'priority PR #905 has malformed label transport' "$TEMP_DIR/batch-malformed.err"
+
+if printf '906\tnot-a-commit-sha\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "$priority_labels_base64" |
+  python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
+    >"$TEMP_DIR/batch-malformed-head.out" 2>"$TEMP_DIR/batch-malformed-head.err"; then
+  echo "Batch eligibility accepted a malformed same-repository head SHA" >&2
+  exit 1
+fi
+grep -Fxq 'candidate row 1 has malformed PR identity' "$TEMP_DIR/batch-malformed-head.err"
+
+python3 - "$priority_labels_base64" >"$TEMP_DIR/batch-overflow-input" <<'PY'
+import sys
+
+for number in range(1, 1002):
+    print(
+        f"{number}\t{number:040x}\texample/FireMUD\thuman\tdevelop\topen\t{sys.argv[1]}"
+    )
+PY
+if python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
+  <"$TEMP_DIR/batch-overflow-input" \
+  >"$TEMP_DIR/batch-overflow.out" 2>"$TEMP_DIR/batch-overflow.err"; then
+  echo "Batch eligibility accepted more than 1,000 candidates" >&2
+  exit 1
+fi
+grep -Fxq 'candidate limit exceeded (1000)' "$TEMP_DIR/batch-overflow.err"
+
 assert_conflicting_modes_refused() {
   local conflicting_output
 
@@ -151,6 +193,7 @@ assert_conflicting_modes_refused() {
 assert_conflicting_modes_refused --inspect-labels --revalidate-deploy
 assert_conflicting_modes_refused --revalidate-deploy --inspect-labels
 assert_conflicting_modes_refused --revalidate-deploy --revalidate-cleanup
+assert_conflicting_modes_refused --batch-deploy-candidates --inspect-labels
 
 for malformed_labels in 'null' '{}' '[{"name":1}]' '{not-json'; do
   inspect_malformed="$(python3 "$SCRIPT" --inspect-labels --labels-json "$malformed_labels")"

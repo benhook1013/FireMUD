@@ -146,7 +146,7 @@ jobs:
             fi
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
-              if [[ -z "${requested_head_sha}" ]]; then
+              if [[ "${requested_head_sha}" != "${head_sha}" ]]; then
                 if ! fresh_namespace_json="$(
                   kubectl get namespace "${namespace}" --ignore-not-found -o json
                 )"; then
@@ -163,7 +163,13 @@ jobs:
                   if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
                     echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
                     continue
-                  elif [[ -z "${fresh_requested_head_sha}" ]]; then
+                  elif [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
+                    echo "Preview ${namespace} already aligned to ${head_sha}"
+                    continue
+                  elif [[ "${fresh_requested_head_sha}" != "${requested_head_sha}" ]]; then
+                    echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+                    continue
+                  else
                     if ! kubectl annotate namespace "${namespace}" \
                       "firemud.dev/requested-preview-head-sha=${head_sha}" \
                       --overwrite >/dev/null; then
@@ -180,17 +186,15 @@ jobs:
                       echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
                       continue
                     fi
-                    echo "Repaired missing requested head for aligned preview ${namespace}"
-                    continue
-                  elif [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
-                    echo "Preview ${namespace} already aligned to ${head_sha}"
-                    continue
-                  else
-                    echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+                    if [[ -z "${requested_head_sha}" ]]; then
+                      echo "Repaired missing requested head for aligned preview ${namespace}"
+                    else
+                      echo "Repaired stale requested head for aligned preview ${namespace}"
+                    fi
                     continue
                   fi
                 fi
-              elif [[ "${requested_head_sha}" == "${head_sha}" ]]; then
+              else
                 echo "Preview ${namespace} already aligned to ${head_sha}"
                 continue
               fi

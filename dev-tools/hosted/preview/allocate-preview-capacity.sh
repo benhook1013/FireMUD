@@ -96,18 +96,11 @@ get_pr_state() {
 find_unsatisfied_priority_pr() {
   local max_priority_candidates=1000
   local priority_rows
+  local priority_candidates
+  local candidate_row
   local pr_number
   local head_sha
-  local head_repository
-  local pr_author
-  local pr_base_ref
-  local pr_state
-  local eligibility_output
-  local eligible
-  local reason
-  local is_priority
-  local labels_base64
-  local labels_json
+  local extra
   local namespace
   local namespace_owner
   local namespace_head
@@ -154,44 +147,23 @@ find_unsatisfied_priority_pr() {
       return 1
     fi
   fi
-  while IFS=$'\t' read -r pr_number head_sha head_repository pr_author pr_base_ref pr_state labels_base64; do
-    if [[ -z "$pr_number" ]]; then
+  if ! priority_candidates="$(
+    printf '%s' "$priority_rows" | python3 "$eligibility_script" \
+      --batch-deploy-candidates \
+      --expected-repository "$GITHUB_REPOSITORY"
+  )"; then
+    echo "Unable to evaluate preview eligibility for priority pull requests" >&2
+    return 1
+  fi
+  while IFS= read -r candidate_row; do
+    if [[ -z "$candidate_row" ]]; then
       continue
     fi
-    if [[ "$head_repository" != "$GITHUB_REPOSITORY" ]]; then
-      continue
-    fi
-    if ! labels_json="$(printf '%s' "$labels_base64" | base64 --decode 2>/dev/null)"; then
-      echo "Unable to evaluate priority PR #${pr_number}: malformed label transport" >&2
+    IFS=$'\t' read -r pr_number head_sha extra <<<"$candidate_row"
+    if ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]] ||
+      [[ -z "$head_sha" || -n "${extra:-}" || "$candidate_row" != "${pr_number}"$'\t'"${head_sha}" ]]; then
+      echo "Invalid batched preview eligibility result" >&2
       return 1
-    fi
-    if ! eligibility_output="$(python3 "$eligibility_script" \
-      --operation deploy \
-      --state "$pr_state" \
-      --base-ref "$pr_base_ref" \
-      --author "$pr_author" \
-      --labels-json "$labels_json")"; then
-      echo "Unable to evaluate preview eligibility for priority PR #${pr_number}" >&2
-      return 1
-    fi
-    eligible="$(sed -n 's/^eligible=//p' <<<"$eligibility_output")"
-    reason="$(sed -n 's/^reason=//p' <<<"$eligibility_output")"
-    is_priority="$(sed -n 's/^priority=//p' <<<"$eligibility_output")"
-    if [[ "$eligible" != "true" && "$eligible" != "false" ]] ||
-      [[ -z "$reason" ]] ||
-      [[ "$is_priority" != "true" && "$is_priority" != "false" ]]; then
-      echo "Invalid preview eligibility result for priority PR #${pr_number}" >&2
-      return 1
-    fi
-    if [[ "$reason" == malformed-label-metadata ]]; then
-      echo "Unable to evaluate priority PR #${pr_number}: malformed label metadata" >&2
-      return 1
-    fi
-    if [[ "$is_priority" != true ]]; then
-      continue
-    fi
-    if [[ "$eligible" != "true" ]]; then
-      continue
     fi
     namespace="pr-${pr_number}"
     namespace_owner="$(kubectl get namespace "$namespace" -o jsonpath='{.metadata.labels.firemud\.dev/pr-number}' 2>/dev/null || true)"
@@ -200,7 +172,7 @@ find_unsatisfied_priority_pr() {
       printf '%s\n' "$pr_number"
       return
     fi
-  done <<<"$priority_rows"
+  done <<<"$priority_candidates"
 }
 
 # Fail closed on the complete live PR contract before evaluating or mutating

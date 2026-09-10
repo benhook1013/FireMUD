@@ -26,6 +26,7 @@ firemud:
     activation-mode: paused
     control-namespace: firemud-system
     preview-domain: preview.firedevops.net
+    dev-demo-hostname: dev.preview.firedevops.net
     ingress-issuer: letsencrypt-prod
     telnet-issuer: letsencrypt-prod
     grpc-issuer: firemud-ca-issuer

@@ -566,6 +566,7 @@ export HOSTED_IDENTITY_WAIT_SCRIPT="$TEMP_DIR/identity-wait"
 export HOSTED_IDENTITY_REQUESTER_KUBECONFIG="$TEMP_DIR/requester.kubeconfig"
 touch "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG"
 export FAKE_TARGET_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+priority_candidate_head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n2026-01-03T00:00:00Z|pr-102|102|2026-01-04T00:00:00Z|head-102|image-102\n'
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
 adversarial_priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"},{"name":"quote\"slash\\label"}]' | base64 | tr -d '\n')"
@@ -889,7 +890,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export FAKE_NAMESPACE_ROWS='2026-01-01T00:00:00Z|pr-900|900|2026-01-01T00:00:00Z|head-900|image-900\n2026-01-02T00:00:00Z|pr-101|101|2026-01-02T00:00:00Z|head-101|image-101\n'
 if ! bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD"; then
   echo "existing ordinary preview was blocked by an unsatisfied priority PR" >&2
@@ -988,7 +989,7 @@ grep -qx 'reclaimed' "$FAKE_PUBLISHED_STATE"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not yield to an unsatisfied priority PR" >&2
   exit 1
@@ -997,8 +998,9 @@ test ! -e "$FAKE_DELETE_LOG"
 
 for ineligible_priority_row in \
   "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n" \
-  "901\thead-901\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n" \
-  "901\thead-901\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
+  "901\thead-901\tother/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n" \
+  "901\t${priority_candidate_head}\texample/FireMUD\tdependabot[bot]\tdevelop\topen\t${priority_labels_base64}\n" \
+  "901\t${priority_candidate_head}\texample/FireMUD\thuman\tfeature/stack\topen\t${priority_labels_base64}\n"
 do
   reset_case
   export FAKE_TARGET_PRIORITY=false
@@ -1009,13 +1011,13 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_labels_base64}\n"
 bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"
 test ! -e "$FAKE_DELETE_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${invalid_json_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed on malformed priority labels" >&2
   exit 1
@@ -1064,7 +1066,7 @@ done
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${priority_labels_base64}\n"
 export PREVIEW_ELIGIBILITY_SCRIPT="$TEMP_DIR/eligibility-fail.py"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation did not fail closed when eligibility evaluation failed" >&2
@@ -1073,7 +1075,7 @@ fi
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
-export FAKE_OPEN_PRIORITY_ROWS="901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_priority_labels_base64}\n"
+export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_priority_labels_base64}\n"
 if bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD"; then
   echo "ordinary allocation ignored a priority label alongside quoted and backslashed label data" >&2
   exit 1
@@ -1675,6 +1677,25 @@ test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESP
 test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
+reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=stale-head \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_stale_requested_output"
+grep -qx 'Repaired stale requested head for aligned preview pr-901' \
+  "$reconciler_stale_requested_output"
+grep -Fqx \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  "$FAKE_ANNOTATE_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
+test ! -e "$FAKE_DISPATCH_LOG"
+
+reset_case
 reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.out"
 (
   cd "$ROOT_DIR"
@@ -1769,6 +1790,24 @@ reconciler_changed_requested_output="$TEMP_DIR/reconciler-changed-requested.out"
 grep -qx \
   'Skipping preview repair for PR #901: requested head changed during annotation repair check.' \
   "$reconciler_changed_requested_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test ! -e "$FAKE_DISPATCH_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+
+reset_case
+reconciler_changed_stale_requested_output="$TEMP_DIR/reconciler-changed-stale-requested.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD=stale-head \
+    FAKE_PR_901_RECHECK_REQUESTED_HEAD=other-stale-head \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_changed_stale_requested_output"
+grep -qx \
+  'Skipping preview repair for PR #901: requested head changed during annotation repair check.' \
+  "$reconciler_changed_stale_requested_output"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
@@ -1952,10 +1991,9 @@ grep -Fq -- '--expected-repository "$GITHUB_REPOSITORY"' "$revalidation_helper"
 # shellcheck disable=SC2016 # Assert literal shell source in the revalidation helper.
 grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
-grep -q -- '--operation deploy' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- '--batch-deploy-candidates' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
-grep -q -- "s/^priority=//p" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
-grep -q -- "--labels-json \"\$labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q -- '--expected-repository "$GITHUB_REPOSITORY"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 grep -q 'max_priority_candidates=1000' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" python3 - <<'PY'
 import os
@@ -1966,8 +2004,9 @@ start = source.index("find_unsatisfied_priority_pr()")
 end = source.index("\n# Fail closed", start)
 body = source[start:end]
 assert "inspect_labels" not in body
-assert "--operation deploy" in body
-assert "s/^priority=//p" in body
+assert "--batch-deploy-candidates" in body
+assert body.count('python3 "$eligibility_script"') == 1
+assert "--operation deploy" not in body
 assert "priority_page_size=100" in body
 assert "max_priority_pages=$((max_priority_candidates / priority_page_size))" in body
 assert 'page=${page}' in body
@@ -1980,7 +2019,7 @@ PY
 # overflow probe to reject candidate 1001.
 priority_limit_rows=""
 for _ in $(seq 1 100); do
-  priority_limit_rows+=$'901\thead-901\texample/FireMUD\thuman\tdevelop\topen\t'"${priority_labels_base64}"$'\n'
+  priority_limit_rows+="901"$'\t'"${priority_candidate_head}"$'\texample/FireMUD\thuman\tdevelop\topen\t'"${priority_labels_base64}"$'\n'
 done
 reset_case
 export FAKE_TARGET_PRIORITY=false

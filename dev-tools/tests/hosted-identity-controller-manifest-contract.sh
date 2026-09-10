@@ -1199,6 +1199,9 @@ done
 require_literal "$ADMISSION" "'firemud-grpc-tls-previous'] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
+# shellcheck disable=SC2016 # Match the literal bootstrap default.
+require_literal "$BOOTSTRAP" 'FIREMUD_HOSTED_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-480'
+require_literal "$BOOTSTRAP" 'deployment wait timeout (default: 480)'
 # shellcheck disable=SC2016 # Match the literal bootstrap expression.
 require_literal "$BOOTSTRAP" 'crd_remaining=$((crd_deadline - SECONDS))'
 # shellcheck disable=SC2016 # Match the literal bootstrap expression.

@@ -8,6 +8,8 @@ missing or malformed metadata as a preview-eligible PR.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import re
 import sys
@@ -20,6 +22,7 @@ DEPENDENCY_BOT_AUTHORS = {
 }
 SUPPORTED_BASE_REFS = {"main", "develop"}
 GIT_COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+MAX_PRIORITY_CANDIDATES = 1000
 
 
 def parse_labels(labels_json: str) -> tuple[bool, bool]:
@@ -56,6 +59,48 @@ def evaluate(
     if operation in {"deploy", "retain"} and state != "open":
         return False, "pr-not-open", is_priority
     return True, "eligible", is_priority
+
+
+def evaluate_priority_candidates(rows_input: str, expected_repository: str) -> tuple[list[tuple[str, str]], str | None]:
+    """Return ordered eligible priority PR identities from bounded TSV input."""
+
+    rows = [row for row in rows_input.splitlines() if row]
+    if len(rows) > MAX_PRIORITY_CANDIDATES:
+        return [], f"candidate limit exceeded ({MAX_PRIORITY_CANDIDATES})"
+
+    priority_candidates: list[tuple[str, str]] = []
+    for row_index, row in enumerate(rows, start=1):
+        fields = row.split("\t")
+        if len(fields) != 7:
+            return [], f"candidate row {row_index} has malformed field framing"
+        (
+            pr_number,
+            head_sha,
+            head_repository,
+            author,
+            base_ref,
+            state,
+            labels_base64,
+        ) = fields
+
+        # Fork rows are outside the trusted same-repository preview contract.
+        # Skip them before decoding or validating their label payload.
+        if head_repository != expected_repository:
+            continue
+        if not re.fullmatch(r"[1-9][0-9]*", pr_number) or not GIT_COMMIT_SHA_RE.fullmatch(head_sha):
+            return [], f"candidate row {row_index} has malformed PR identity"
+        try:
+            labels_json = base64.b64decode(labels_base64, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return [], f"priority PR #{pr_number} has malformed label transport"
+
+        eligible, reason, is_priority = evaluate("deploy", state, base_ref, author, labels_json)
+        if reason == "malformed-label-metadata":
+            return [], f"priority PR #{pr_number} has malformed label metadata"
+        if eligible and is_priority:
+            priority_candidates.append((pr_number, head_sha))
+
+    return priority_candidates, None
 
 
 def _nested_value(payload: dict[str, object], *keys: str) -> object | None:
@@ -98,10 +143,7 @@ def _revalidate_target(
             f"pull request is not {expected_state} (state={_display_value(state)})",
             None,
         )
-    if (
-        not isinstance(expected_head_sha, str)
-        or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha)
-    ):
+    if not isinstance(expected_head_sha, str) or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha):
         return "expected head SHA must be exactly 40 hexadecimal characters", None
     if (
         not isinstance(head_sha, str)
@@ -179,6 +221,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--inspect-labels", action="store_true")
+    mode.add_argument("--batch-deploy-candidates", action="store_true")
     mode.add_argument("--revalidate-deploy", action="store_true")
     mode.add_argument("--revalidate-cleanup", action="store_true")
     parser.add_argument("--operation", choices=("deploy", "destroy", "retain"))
@@ -189,6 +232,17 @@ def main() -> int:
     parser.add_argument("--expected-repository")
     parser.add_argument("--expected-head-sha")
     args = parser.parse_args()
+
+    if args.batch_deploy_candidates:
+        if args.expected_repository is None:
+            parser.error("the following arguments are required: --expected-repository")
+        candidates, refusal_reason = evaluate_priority_candidates(sys.stdin.read(), args.expected_repository)
+        if refusal_reason is not None:
+            print(refusal_reason, file=sys.stderr)
+            return 1
+        for pr_number, head_sha in candidates:
+            print(f"{pr_number}\t{head_sha}")
+        return 0
 
     if args.revalidate_deploy or args.revalidate_cleanup:
         missing = [
@@ -202,9 +256,7 @@ def main() -> int:
         if missing:
             parser.error(f"the following arguments are required: {', '.join(missing)}")
         evaluator = revalidate_cleanup if args.revalidate_cleanup else revalidate_deploy
-        refusal_reason = evaluator(
-            sys.stdin.read(), args.expected_repository, args.expected_head_sha
-        )
+        refusal_reason = evaluator(sys.stdin.read(), args.expected_repository, args.expected_head_sha)
         if refusal_reason is not None:
             print(refusal_reason)
             return 1

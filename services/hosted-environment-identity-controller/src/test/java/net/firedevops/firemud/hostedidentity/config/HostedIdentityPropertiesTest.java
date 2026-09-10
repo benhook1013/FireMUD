@@ -32,6 +32,14 @@ class HostedIdentityPropertiesTest {
       sources.addLast(source);
     }
     var properties = new HostedIdentityProperties();
+    properties.setPreviewDomain("sentinel.preview.invalid");
+    properties.setDevDemoHostname("sentinel.dev.invalid");
+    properties.setPreviewRequestedHeadAnnotation("sentinel.invalid/preview-requested");
+    properties.setPreviewDeployedHeadAnnotation("sentinel.invalid/preview-deployed");
+    properties.setDevDemoRequestedHeadAnnotation("sentinel.invalid/dev-demo-requested");
+    properties.setDevDemoHeadAnnotation("sentinel.invalid/dev-demo-deployed");
+    properties.setPreviewTelnetPortAnnotation("sentinel.invalid/preview-telnet-port");
+    properties.setDevDemoTelnetPortAnnotation("sentinel.invalid/dev-demo-telnet-port");
 
     var binding =
         Binder.get(environment).bind("firemud.hosted-identity", Bindable.ofInstance(properties));

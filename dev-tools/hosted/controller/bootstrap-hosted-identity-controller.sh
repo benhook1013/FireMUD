@@ -16,7 +16,7 @@ FIELD_MANAGER="firemud-hosted-identity-bootstrap"
 ACTIVATION_MODE="paused"
 IMAGE_REF="${FIREMUD_HOSTED_IDENTITY_CONTROLLER_IMAGE:-}"
 GRPC_TRUST_ANCHOR_SHA256="${FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256:-}"
-WAIT_SECONDS="${FIREMUD_HOSTED_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-180}"
+WAIT_SECONDS="${FIREMUD_HOSTED_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-480}"
 
 fail() {
   echo "hosted identity bootstrap: $*" >&2
@@ -29,7 +29,7 @@ Usage: bootstrap-hosted-identity-controller.sh --image ghcr.io/benhook1013/hoste
 
 Options:
   --activation-mode MODE  paused (default), observe, or active
-  --wait-seconds N        deployment wait timeout (default: 180)
+  --wait-seconds N        deployment wait timeout (default: 480)
   --image IMAGE           immutable controller image (also accepted by env)
   --grpc-trust-anchor-sha256 SHA256
                            required gRPC CA SHA-256 fingerprint (also accepted by env)
