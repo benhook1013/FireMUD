@@ -1868,10 +1868,10 @@ class SecretProjectionServiceTest {
     Resource<Secret> projectionResource = mock(Resource.class);
     when(secretClient.runtimeSecrets().withName(name)).thenReturn(projectionResource);
     when(projectionResource.get()).thenReturn(projection);
-    Secret source = ownedSecret(plan, role, name, sourceData, Map.of());
-    if (!HostedIdentityContract.GRPC_ROLE.equals(role)) {
-      source = certManagerSource(plan, role, name, sourceData);
-    }
+    Secret source =
+        HostedIdentityContract.GRPC_ROLE.equals(role)
+            ? ownedSecret(plan, role, name, sourceData, Map.of())
+            : certManagerSource(plan, role, name, sourceData);
     Resource<Secret> sourceResource = mock(Resource.class);
     when(secretClient.identitySecrets().withName(name)).thenReturn(sourceResource);
     when(sourceResource.get()).thenReturn(source);
