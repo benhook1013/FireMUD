@@ -311,6 +311,7 @@ jobs:
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/hosted/shared/write-kubeconfig.sh)"
           bash ./dev-tools/hosted/shared/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
+          echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -425,6 +426,49 @@ jobs:
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
+      - name: Record reconciled preview target
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
+        run: |
+          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
+
+      - name: Write hosted identity requester kubeconfig
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
+          path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+
+      - name: Apply canonical Active request
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "pr-${{ needs.preview-plan.outputs.pr_number }}" Active
+
+      - name: Restore preview runtime kubeconfig
+        if: ${{ always() && steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing preview runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
+          fi
+          echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
+
+      - name: Remove hosted identity requester kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"
+
+      - name: Wait for all controller identity projections
+        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        run: |
+          echo "PREVIEW_STAGE=identity-projections" >> "$GITHUB_ENV"
+          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
+            --projections "pr-${{ needs.preview-plan.outputs.pr_number }}" "${{ needs.preview-plan.outputs.namespace }}" 900
+
       - name: Ensure preview gRPC TLS secret exists
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' && steps.certificate-identity.outputs.mode == 'standalone' }}
         run: |
@@ -472,17 +516,6 @@ jobs:
           path: |
             /tmp/preview-values.yaml
             /tmp/preview-rendered.yaml
-
-      - name: Record reconciled preview target
-        if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}
-        run: |
-          bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${{ needs.preview-plan.outputs.pr_number }}" \
-            "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ steps.effective-image-tag.outputs.image_tag }}" \
-            "${{ steps.telnet-port.outputs.telnet_port }}" \
-            "${{ steps.preview-capacity.outputs.allocation_timestamp }}"
 
       - name: Summarize preview target
         if: ${{ steps.preview-access.outputs.available == 'true' && steps.preview-capacity.outcome == 'success' }}

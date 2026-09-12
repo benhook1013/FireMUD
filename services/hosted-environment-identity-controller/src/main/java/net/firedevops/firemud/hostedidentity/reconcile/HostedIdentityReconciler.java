@@ -520,7 +520,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       CertificateMaterialService.RoleMaterial tcpProxyBridge,
       CertificateMaterialService.RoleMaterial grpc,
       SecretProjectionService.ProjectionResult projection) {
-    if (projection == null || !"runtime-profile-changed".equals(projection.state())) {
+    if (projection == null
+        || !HostedIdentityContract.RUNTIME_PROFILE_CHANGED_STATE.equals(projection.state())) {
       return null;
     }
     return status(

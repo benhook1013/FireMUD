@@ -332,6 +332,13 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build controller JAR and image locally
         run: |
           set -euo pipefail
@@ -384,13 +391,6 @@ jobs:
           }
           echo "image_id=$local_image_id" >> "$GITHUB_OUTPUT"
 
-      - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Publish exact smoke-tested controller image
         id: publish
         env:
@@ -403,12 +403,10 @@ jobs:
             exit 1
           }
 
-          push_output="$(mktemp)"
-          trap 'rm -f "$push_output"' EXIT
           max_push_attempts=3
           push_attempt=1
           while true; do
-            if docker push "$CONTROLLER_IMAGE" 2>&1 | tee "$push_output"; then
+            if docker push "$CONTROLLER_IMAGE"; then
               break
             fi
             if ((push_attempt >= max_push_attempts)); then
@@ -421,7 +419,8 @@ jobs:
             push_attempt=$((push_attempt + 1))
           done
 
-          pushed_digest="$(sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\) size:.*$/\1/p' "$push_output")"
+          pushed_digest="$(docker buildx imagetools inspect \
+            --format '{{.Manifest.Digest}}' "$CONTROLLER_IMAGE")"
           [[ "$pushed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
             echo "Registry did not return an exact sha256 digest for $CONTROLLER_IMAGE." >&2
             exit 1

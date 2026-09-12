@@ -123,7 +123,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   jq -cn \
     --arg head "$snapshot_head" \
     --arg requested_head "$snapshot_requested_head" \
-    '{metadata:{name:"pr-901",annotations:{"firemud.dev/last-preview-head-sha":$head,"firemud.dev/requested-preview-head-sha":$requested_head}}}'
+    '{metadata:{name:"pr-901",resourceVersion:"rv-901",annotations:{"firemud.dev/last-preview-head-sha":$head,"firemud.dev/requested-preview-head-sha":$requested_head}}}'
   exit 0
 fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
@@ -256,7 +256,6 @@ case "$namespace" in
     case "$*" in
       *pr-number*) printf '%s' "${FAKE_PR_901_OWNER:-}" ;;
       *last-preview-head-sha*) printf '%s' "${FAKE_PR_901_HEAD:-}" ;;
-      *requested-preview-head-sha*) printf '%s' "${FAKE_PR_901_REQUESTED_HEAD:-}" ;;
     esac
     ;;
   *) exit 1 ;;
@@ -1510,7 +1509,7 @@ extract_workflow_step_run \
   "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
 grep -Fq -- \
-  '--jq '\''first(.[] | select(.status == "queued" or .status == "in_progress") | .databaseId) // empty'\''' \
+  '--jq '\''first(.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .databaseId) // empty'\''' \
   "$RECONCILER_RUN"
 if grep -Fq '| head -n 1' "$RECONCILER_RUN"; then
   echo "reconciler must select an active preview run without a pipefail-unsafe head" >&2
@@ -1632,7 +1631,7 @@ reconciler_missing_requested_output="$TEMP_DIR/reconciler-missing-requested.out"
 grep -qx 'Repaired missing requested head for aligned preview pr-901' \
   "$reconciler_missing_requested_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
@@ -1651,7 +1650,7 @@ reconciler_stale_requested_output="$TEMP_DIR/reconciler-stale-requested.out"
 grep -qx 'Repaired stale requested head for aligned preview pr-901' \
   "$reconciler_stale_requested_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
 test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
@@ -1672,7 +1671,7 @@ reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.ou
 grep -qx 'Namespace pr-901 was deleted during requested-head repair; continuing.' \
   "$reconciler_annotation_deleted_output"
 grep -Fqx \
-  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite' \
+  'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
 test ! -e "$FAKE_DISPATCH_LOG"
@@ -1976,6 +1975,14 @@ assert 'per_page=1&page=$((max_priority_candidates + 1))' in body
 assert 'candidate limit exceeded' in body
 assert "--paginate" not in body
 PY
+
+if printf '%s\n' "901${TAB:-$'\t'}${priority_candidate_head}${TAB:-$'\t'}example/FireMUD${TAB:-$'\t'}human${TAB:-$'\t'}develop${TAB:-$'\t'}open${TAB:-$'\t'}${priority_labels_base64}" |
+  python3 "$eligibility_script" --batch-deploy-candidates --expected-repository '' \
+  >"$TEMP_DIR/empty-expected-repository.output" 2>"$TEMP_DIR/empty-expected-repository.error"; then
+  echo "batch candidate evaluation accepted an empty expected repository" >&2
+  exit 1
+fi
+grep -Fxq 'expected repository is required' "$TEMP_DIR/empty-expected-repository.error"
 
 # Accept exactly the configured candidate limit, then use only a one-record
 # overflow probe to reject candidate 1001.

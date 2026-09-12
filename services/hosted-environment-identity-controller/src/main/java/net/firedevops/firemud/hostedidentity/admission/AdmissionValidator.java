@@ -1,7 +1,10 @@
 package net.firedevops.firemud.hostedidentity.admission;
 
+import java.util.Map;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentity;
+import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec;
+import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import org.springframework.stereotype.Component;
 
@@ -31,11 +34,9 @@ public class AdmissionValidator {
       throw new IllegalArgumentException("spec.desiredState is required");
     }
     if (resource.getStatus() != null
-        && net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus.Phase.Retired
-            .equals(resource.getStatus().getPhase())
+        && HostedEnvironmentIdentityStatus.Phase.Retired.equals(resource.getStatus().getPhase())
         && resource.getSpec().getDesiredState()
-            == net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec
-                .DesiredState.Active) {
+            == HostedEnvironmentIdentitySpec.DesiredState.Active) {
       throw new IllegalArgumentException("a Retired identity cannot be reactivated");
     }
     if (resource.getMetadata().getOwnerReferences() != null
@@ -50,7 +51,7 @@ public class AdmissionValidator {
     planner.plan(resource.getMetadata().getName());
   }
 
-  private static boolean hasReservedMetadata(java.util.Map<String, String> values) {
+  private static boolean hasReservedMetadata(Map<String, String> values) {
     return values != null
         && values.keySet().stream()
             .anyMatch(key -> key.startsWith("firemud.dev/") || key.startsWith("firemud.io/"));

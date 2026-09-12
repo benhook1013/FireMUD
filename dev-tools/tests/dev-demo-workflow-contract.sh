@@ -169,6 +169,8 @@ if derived_outputs.get("head_sha") != normalized_fixture_head:
     raise SystemExit("dev-demo plan did not normalize an uppercase dispatch head")
 if derived_outputs.get("image_tag") != normalized_fixture_head:
     raise SystemExit("dev-demo default image tag did not use the normalized dispatch head")
+if derived_outputs.get("release_name") != "dev":
+    raise SystemExit("dev-demo plan did not derive the canonical dev release identity")
 
 deploy_steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 deploy_by_name = {step.get("name"): step for step in deploy_steps if isinstance(step, dict)}
@@ -778,7 +780,7 @@ import yaml
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
 steps = workflow["jobs"]["dev-demo-deploy"]["steps"]
 run = next(step["run"] for step in steps if step.get("name") == "Deploy dev-demo release")
-run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev-demo")
+run = run.replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
 run = run.replace("${{ needs.dev-demo-plan.outputs.namespace }}", "dev")
 print(run)
 PY
@@ -806,7 +808,7 @@ cat >"$deployment_stub_dir/helm" <<'SH'
 set -euo pipefail
 
 expected=(
-  upgrade --install dev-demo k8s/helm/firemud
+  upgrade --install dev k8s/helm/firemud
   -f /tmp/dev-demo-values.yaml
   --namespace dev
   --wait

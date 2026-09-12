@@ -64,6 +64,9 @@ def evaluate(
 def evaluate_priority_candidates(rows_input: str, expected_repository: str) -> tuple[list[tuple[str, str]], str | None]:
     """Return ordered eligible priority PR identities from bounded TSV input."""
 
+    if not expected_repository:
+        return [], "expected repository is required"
+
     rows = [row for row in rows_input.splitlines() if row]
     if len(rows) > MAX_PRIORITY_CANDIDATES:
         return [], f"candidate limit exceeded ({MAX_PRIORITY_CANDIDATES})"

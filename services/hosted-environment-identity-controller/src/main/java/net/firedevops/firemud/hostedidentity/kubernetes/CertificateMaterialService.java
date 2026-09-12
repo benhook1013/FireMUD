@@ -231,7 +231,7 @@ public class CertificateMaterialService {
     return serialize(
         client,
         plan,
-        materializeSource(client, plan, role, secretName, expectation, readyCertificate),
+        materializeSource(client, plan, role, secretName, expectation, readyCertificate, batch),
         expectation,
         batch);
   }
@@ -612,15 +612,15 @@ public class CertificateMaterialService {
       String role,
       String secretName,
       RoleExpectation expectation,
-      ReadyCertificate readyCertificate) {
+      ReadyCertificate readyCertificate,
+      MaterializationBatch batch) {
     Secret source =
         client.secrets().inNamespace(plan.identityNamespace()).withName(secretName).get();
     if (source == null) {
       return RoleMaterial.pending(role, RoleMaterialState.MATERIALIZATION_PENDING);
     }
     requireCertManagerSourceBinding(source, plan, role, readyCertificate);
-    if (!certificateRequestMatchesSource(
-        client, plan.identityNamespace(), readyCertificate, source)) {
+    if (!certificateRequestMatchesSource(batch.certificateRequests(), readyCertificate, source)) {
       return RoleMaterial.pending(role, RoleMaterialState.MATERIALIZATION_PENDING);
     }
     if (!certificateSnapshotStillCurrent(client, plan.identityNamespace(), readyCertificate)) {
@@ -646,14 +646,11 @@ public class CertificateMaterialService {
   }
 
   private static boolean certificateRequestMatchesSource(
-      KubernetesClient client, String namespace, ReadyCertificate certificate, Secret source) {
+      List<GenericKubernetesResource> certificateRequests,
+      ReadyCertificate certificate,
+      Secret source) {
     List<GenericKubernetesResource> ownedRequests =
-        client
-            .genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS)
-            .inNamespace(namespace)
-            .list()
-            .getItems()
-            .stream()
+        certificateRequests.stream()
             .filter(request -> certificateRequestOwnedBy(request, certificate))
             .toList();
 
@@ -1039,6 +1036,7 @@ public class CertificateMaterialService {
     private String selectedRotationRole;
     private RotationSnapshot rotationSnapshot;
     private String postSnapshotRotationRole;
+    private List<GenericKubernetesResource> certificateRequests;
 
     private MaterializationBatch(KubernetesClient client, EnvironmentIdentityPlan plan) {
       this.client = client;
@@ -1063,6 +1061,19 @@ public class CertificateMaterialService {
 
     public RoleMaterial grpc(Long acceptedGeneration) {
       return CertificateMaterialService.this.grpc(client, plan, acceptedGeneration, this);
+    }
+
+    private List<GenericKubernetesResource> certificateRequests() {
+      if (certificateRequests == null) {
+        certificateRequests =
+            List.copyOf(
+                client
+                    .genericKubernetesResources(ResourceContexts.CERTIFICATE_REQUESTS)
+                    .inNamespace(plan.identityNamespace())
+                    .list()
+                    .getItems());
+      }
+      return certificateRequests;
     }
 
     private String selectedRotationRole() {

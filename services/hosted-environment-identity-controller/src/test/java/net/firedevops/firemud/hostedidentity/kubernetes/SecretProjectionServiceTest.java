@@ -1480,21 +1480,6 @@ class SecretProjectionServiceTest {
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
       String certificateName,
-      boolean readyAfterCreate) {
-    return stubCertificate(
-        client,
-        plan,
-        certificateName,
-        readyAfterCreate,
-        1,
-        Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key")));
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Resource<GenericKubernetesResource> stubCertificate(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      String certificateName,
       boolean readyAfterCreate,
       long revision,
       Map<String, String> sourceData) {
@@ -1577,8 +1562,16 @@ class SecretProjectionServiceTest {
             certificateName + "-request-" + revision,
             sourceData,
             true);
+    stubCertificateRequests(client, plan, List.of(request));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void stubCertificateRequests(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      List<GenericKubernetesResource> requestsToReturn) {
     GenericKubernetesResourceList requestList = new GenericKubernetesResourceList();
-    requestList.setItems(List.of(request));
+    requestList.setItems(requestsToReturn);
     MixedOperation<
             GenericKubernetesResource,
             GenericKubernetesResourceList,
@@ -1773,6 +1766,33 @@ class SecretProjectionServiceTest {
         true,
         1,
         ingressSource.getData());
+    stubCertificateRequests(
+        secretClient.client(),
+        plan,
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request",
+                ingressSource.getData(),
+                true),
+            certificateRequest(
+                plan, plan.telnetCertificateName(), 1, "telnet-request", acceptedData, true),
+            certificateRequest(
+                plan,
+                plan.gatewayInternalWsCertificateName(),
+                1,
+                "gateway-request",
+                acceptedData,
+                true),
+            certificateRequest(
+                plan,
+                plan.tcpProxyBridgeCertificateName(),
+                1,
+                "tcp-proxy-request",
+                acceptedData,
+                true)));
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     SecretMaterialValidator.MaterialSummary summary =
         new SecretMaterialValidator.MaterialSummary(

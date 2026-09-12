@@ -281,8 +281,8 @@ for admission_name in "${required_admission_policies[@]}"; do
     -o jsonpath='{.spec.validationActions[*]}{"\n"}')"; then
     fail "$admission_name admission policy binding lookup failed; refusing activation"
   fi
-  [[ " $binding_actions " == *" Deny "* ]] || \
-    fail "$admission_name admission policy binding is missing validationActions Deny"
+  [[ "$binding_actions" == "Deny" ]] || \
+    fail "$admission_name admission policy binding must contain exactly validationActions Deny"
 done
 
 verify_grpc_ca_prerequisite() {

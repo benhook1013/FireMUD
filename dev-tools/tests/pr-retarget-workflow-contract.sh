@@ -436,7 +436,7 @@ require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
-require_contains "$preview_reconciler_path" "--jq 'first(.[] | select(.status == \"queued\" or .status == \"in_progress\") | .databaseId) // empty'"
+require_contains "$preview_reconciler_path" "--jq 'first(.[] | select(.status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\") | .databaseId) // empty'"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
   echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2

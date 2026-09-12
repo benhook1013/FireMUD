@@ -188,13 +188,12 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
-  void retainedIdentityNamespaceAcceptsApiMetadataAndExternalLabels() {
+  void retainedIdentityNamespaceAcceptsExactApiMetadataNameLabel() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("dev-demo");
     Namespace valid = identityNamespace(plan);
     Map<String, String> injectedLabels = new HashMap<>(valid.getMetadata().getLabels());
     injectedLabels.put("kubernetes.io/metadata.name", "dev-identity");
-    injectedLabels.put("tooling.example/managed-by", "cluster-tool");
     var apiRoundTripped =
         new NamespaceBuilder(valid)
             .editMetadata()
@@ -711,6 +710,9 @@ class HostedIdentityScopeServiceTest {
 
     Map<String, String> unexpectedLabels = new HashMap<>(devNamespace.getMetadata().getLabels());
     unexpectedLabels.put("firemud.dev/other", "unexpected");
+    Map<String, String> arbitraryExtraLabels =
+        new HashMap<>(devNamespace.getMetadata().getLabels());
+    arbitraryExtraLabels.put("tooling.example/managed-by", "cluster-tool");
 
     return Stream.of(
         Arguments.of(
@@ -735,6 +737,14 @@ class HostedIdentityScopeServiceTest {
             new NamespaceBuilder(devNamespace)
                 .editMetadata()
                 .withLabels(unexpectedLabels)
+                .endMetadata()
+                .build()),
+        Arguments.of(
+            "arbitrary extra label",
+            devPlan,
+            new NamespaceBuilder(devNamespace)
+                .editMetadata()
+                .withLabels(arbitraryExtraLabels)
                 .endMetadata()
                 .build()),
         Arguments.of(

@@ -436,7 +436,7 @@ build_index = next(i for i, step in enumerate(controller_steps) if step.get("nam
 smoke_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Smoke exact controller image")
 login_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Login to GHCR")
 publish_index = next(i for i, step in enumerate(controller_steps) if step.get("name") == "Publish exact smoke-tested controller image")
-assert build_index < smoke_index < login_index < publish_index
+assert login_index < build_index < smoke_index < publish_index
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_steps[build_index]["run"]
 assert 'docker push "$CONTROLLER_IMAGE"' in controller_steps[publish_index]["run"]
@@ -444,6 +444,10 @@ publish_run = controller_steps[publish_index]["run"]
 assert "docker manifest inspect" not in publish_run
 assert "current_image_id" in publish_run
 assert "pushed_digest" in publish_run
+assert "docker buildx imagetools inspect" in publish_run
+assert "--format '{{.Manifest.Digest}}'" in publish_run
+assert "push_output" not in publish_run
+assert "sed -n" not in publish_run
 attest_step = next(step for step in controller_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
@@ -833,6 +837,41 @@ assert preview_namespace_step["env"] == {
 }
 assert 'CERTIFICATE_IDENTITY_MODE' in preview_namespace_step["run"]
 assert '== "standalone"' in preview_namespace_step["run"]
+preview_kubeconfig_step = next(
+    step for step in preview_steps if step.get("name") == "Write preview kubeconfig"
+)
+assert 'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"' in (
+    preview_kubeconfig_step["run"]
+)
+preview_requester = next(
+    step for step in preview_steps if step.get("name") == "Write hosted identity requester kubeconfig"
+)
+preview_active_request = next(
+    step for step in preview_steps if step.get("name") == "Apply canonical Active request"
+)
+preview_restore = next(
+    step for step in preview_steps if step.get("name") == "Restore preview runtime kubeconfig"
+)
+preview_cleanup = next(
+    step for step in preview_steps if step.get("name") == "Remove hosted identity requester kubeconfig"
+)
+preview_projection_wait = next(
+    step for step in preview_steps if step.get("name") == "Wait for all controller identity projections"
+)
+for step in (preview_requester, preview_active_request, preview_restore, preview_projection_wait):
+    assert "steps.certificate-identity.outputs.mode == 'hosted-controller'" in step["if"]
+assert preview_active_request["run"] == (
+    'bash ./dev-tools/hosted/shared/request-hosted-identity.sh "pr-${{ needs.preview-plan.outputs.pr_number }}" Active'
+)
+assert preview_restore["if"].startswith("${{ always() &&")
+assert 'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in preview_restore["run"]
+assert preview_cleanup["if"] == "${{ always() }}"
+assert preview_cleanup["run"] == 'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
+projection_lines = [line.strip() for line in preview_projection_wait["run"].splitlines()]
+assert projection_lines[-2:] == [
+    "bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \\",
+    '--projections "pr-${{ needs.preview-plan.outputs.pr_number }}" "${{ needs.preview-plan.outputs.namespace }}" 900',
+]
 preview_requested_index = next(
     index
     for index, step in enumerate(preview_steps)
@@ -849,6 +888,18 @@ preview_deployed_index = next(
     if step.get("name") == "Record exact deployed preview head"
 )
 assert preview_requested_index < preview_deploy_index < preview_deployed_index
+preview_render_index = next(
+    index
+    for index, step in enumerate(preview_steps)
+    if step.get("name") == "Render preview values"
+)
+preview_projection_index = preview_steps.index(preview_projection_wait)
+assert preview_requested_index < preview_steps.index(preview_requester)
+assert preview_steps.index(preview_requester) < preview_steps.index(preview_active_request)
+assert preview_steps.index(preview_active_request) < preview_steps.index(preview_restore)
+assert preview_steps.index(preview_restore) < preview_steps.index(preview_cleanup)
+assert preview_steps.index(preview_cleanup) < preview_projection_index
+assert preview_projection_index < preview_render_index < preview_deploy_index
 preview_deployed_step = preview_steps[preview_deployed_index]
 assert "steps.deploy-release.outcome == 'success'" in preview_deployed_step["if"]
 assert '[[ "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_deployed_step["run"]

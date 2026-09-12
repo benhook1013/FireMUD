@@ -220,7 +220,7 @@ jobs:
                 --branch "${head_ref}" \
                 --limit 20 \
                 --json databaseId,status \
-                --jq 'first(.[] | select(.status == "queued" or .status == "in_progress") | .databaseId) // empty'
+                --jq 'first(.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .databaseId) // empty'
             )"
 
             if [[ -n "${active_preview_run_id}" ]]; then

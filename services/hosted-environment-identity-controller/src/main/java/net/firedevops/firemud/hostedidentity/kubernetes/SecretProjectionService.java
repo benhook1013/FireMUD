@@ -293,7 +293,8 @@ public class SecretProjectionService {
   }
 
   private static ProjectionResult guardFailed(String revision) {
-    return ProjectionResult.awaiting("runtime-profile-changed", revision);
+    return ProjectionResult.awaiting(
+        HostedIdentityContract.RUNTIME_PROFILE_CHANGED_STATE, revision);
   }
 
   private static void requireGuard(Supplier<Boolean> runtimeProfileCurrent) {

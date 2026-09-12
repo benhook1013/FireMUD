@@ -1027,6 +1027,10 @@ class CertificateMaterialServiceTest {
   @Test
   void postSnapshotCertRotationsAdvanceOnlyTheFirstChangedRole() {
     StableBatchFixture fixture = stableBatchFixture();
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
+    Map<String, String> gatewayReplacement =
+        Map.of("tls.crt", encoded("gateway-replacement"), "tls.key", encoded("gateway-key-2"));
     stubCertificate(
         fixture.secretClient().client(),
         fixture.plan(),
@@ -1034,11 +1038,34 @@ class CertificateMaterialServiceTest {
         true,
         1,
         fixture.acceptedData());
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        List.of(
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().ingressCertificateName(),
+                1,
+                "ingress-request",
+                fixture.acceptedData(),
+                true),
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().telnetCertificateName(),
+                2,
+                "telnet-request",
+                telnetReplacement,
+                true),
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().gatewayInternalWsCertificateName(),
+                2,
+                "gateway-request",
+                gatewayReplacement,
+                true)));
 
     assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
-    Map<String, String> telnetReplacement =
-        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
     Secret telnetSource =
         certManagerSource(
             fixture.plan(),
@@ -1057,8 +1084,6 @@ class CertificateMaterialServiceTest {
 
     CertificateMaterialService.RoleMaterial telnet = fixture.batch().telnet();
 
-    Map<String, String> gatewayReplacement =
-        Map.of("tls.crt", encoded("gateway-replacement"), "tls.key", encoded("gateway-key-2"));
     Secret gatewaySource =
         certManagerSource(
             fixture.plan(),
@@ -1095,6 +1120,8 @@ class CertificateMaterialServiceTest {
   @Test
   void postSnapshotCertificateRotationDefersConcurrentGrpcGeneration() {
     StableBatchFixture fixture = stableBatchFixture();
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
     stubCertificate(
         fixture.secretClient().client(),
         fixture.plan(),
@@ -1102,10 +1129,26 @@ class CertificateMaterialServiceTest {
         true,
         1,
         fixture.acceptedData());
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        List.of(
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().ingressCertificateName(),
+                1,
+                "ingress-request",
+                fixture.acceptedData(),
+                true),
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().telnetCertificateName(),
+                2,
+                "telnet-request",
+                telnetReplacement,
+                true)));
     assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
-    Map<String, String> telnetReplacement =
-        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
     when(fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()).get())
         .thenReturn(
             certManagerSource(
@@ -1158,6 +1201,8 @@ class CertificateMaterialServiceTest {
   @Test
   void postSnapshotRotationStillInitializesAnUninitializedRoleBehindTheSelectedChange() {
     StableBatchFixture fixture = stableBatchFixture();
+    Map<String, String> telnetReplacement =
+        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
     Resource<Secret> gatewayProjection =
         fixture
             .secretClient()
@@ -1172,10 +1217,33 @@ class CertificateMaterialServiceTest {
         true,
         1,
         fixture.acceptedData());
+    stubCertificateRequests(
+        fixture.secretClient().client(),
+        fixture.plan(),
+        List.of(
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().ingressCertificateName(),
+                1,
+                "ingress-request",
+                fixture.acceptedData(),
+                true),
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().telnetCertificateName(),
+                2,
+                "telnet-request",
+                telnetReplacement,
+                true),
+            certificateRequest(
+                fixture.plan(),
+                fixture.plan().gatewayInternalWsCertificateName(),
+                1,
+                "gateway-request",
+                fixture.acceptedData(),
+                true)));
     assertEquals(SOURCE_READY, fixture.batch().ingress().state());
 
-    Map<String, String> telnetReplacement =
-        Map.of("tls.crt", encoded("telnet-replacement"), "tls.key", encoded("telnet-key-2"));
     Resource<Secret> telnetSourceResource = mock(Resource.class);
     when(fixture.secretClient().identitySecrets().withName(fixture.plan().telnetSecretName()))
         .thenReturn(telnetSourceResource);
@@ -1233,6 +1301,84 @@ class CertificateMaterialServiceTest {
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
     assertEquals(SOURCE_READY, material.state());
+  }
+
+  @Test
+  void certificateRequestsAreMemoizedWithinOneBatchAndRefreshedByTheNextBatch() {
+    StableBatchFixture fixture = stableBatchFixture();
+    EnvironmentIdentityPlan plan = fixture.plan();
+    List<GenericKubernetesResource> requests =
+        List.of(
+            certificateRequest(
+                plan,
+                plan.ingressCertificateName(),
+                1,
+                "ingress-request",
+                fixture.acceptedData(),
+                true),
+            certificateRequest(
+                plan,
+                plan.telnetCertificateName(),
+                1,
+                "telnet-request",
+                fixture.acceptedData(),
+                true));
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.ingressCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        firstRequestSnapshot =
+            stubCertificateRequests(fixture.secretClient().client(), plan, requests);
+
+    assertEquals(SOURCE_READY, fixture.batch().ingress().state());
+
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.telnetCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        laterRequestSnapshot =
+            stubCertificateRequests(fixture.secretClient().client(), plan, requests);
+
+    assertEquals(SOURCE_READY, fixture.batch().telnet().state());
+    verify(firstRequestSnapshot).list();
+    verify(laterRequestSnapshot, never()).list();
+
+    stubCertificate(
+        fixture.secretClient().client(),
+        plan,
+        plan.telnetCertificateName(),
+        true,
+        1,
+        fixture.acceptedData());
+    NonNamespaceOperation<
+            GenericKubernetesResource,
+            GenericKubernetesResourceList,
+            Resource<GenericKubernetesResource>>
+        nextBatchRequestSnapshot =
+            stubCertificateRequests(fixture.secretClient().client(), plan, requests);
+
+    assertEquals(
+        SOURCE_READY,
+        fixture
+            .service()
+            .beginMaterialization(fixture.secretClient().client(), plan)
+            .telnet()
+            .state());
+    verify(nextBatchRequestSnapshot).list();
   }
 
   @Test
@@ -1793,10 +1939,14 @@ class CertificateMaterialServiceTest {
   }
 
   @SuppressWarnings("unchecked")
-  private static void stubCertificateRequests(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      List<GenericKubernetesResource> requestsToReturn) {
+  private static NonNamespaceOperation<
+          GenericKubernetesResource,
+          GenericKubernetesResourceList,
+          Resource<GenericKubernetesResource>>
+      stubCertificateRequests(
+          KubernetesClient client,
+          EnvironmentIdentityPlan plan,
+          List<GenericKubernetesResource> requestsToReturn) {
     MixedOperation<
             GenericKubernetesResource,
             GenericKubernetesResourceList,
@@ -1813,6 +1963,7 @@ class CertificateMaterialServiceTest {
         .thenReturn(requests);
     when(requests.inNamespace(plan.identityNamespace())).thenReturn(identityRequests);
     when(identityRequests.list()).thenReturn(requestList);
+    return identityRequests;
   }
 
   private static GenericKubernetesResource certificateRequest(
@@ -2002,6 +2153,7 @@ class CertificateMaterialServiceTest {
         acceptedData,
         validator,
         grpcGenerator,
+        service,
         service.beginMaterialization(secretClient.client(), plan));
   }
 
@@ -2063,6 +2215,7 @@ class CertificateMaterialServiceTest {
       Map<String, String> acceptedData,
       SecretMaterialValidator validator,
       GrpcTransportBundleGenerator grpcGenerator,
+      CertificateMaterialService service,
       CertificateMaterialService.MaterializationBatch batch) {}
 
   private record IssuanceObservation(

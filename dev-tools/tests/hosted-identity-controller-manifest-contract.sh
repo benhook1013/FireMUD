@@ -1219,6 +1219,8 @@ done
 require_literal "$BOOTSTRAP" "validatingadmissionpolicybinding"
 require_literal "$BOOTSTRAP" ".spec.failurePolicy"
 require_literal "$BOOTSTRAP" ".spec.validationActions[*]"
+# shellcheck disable=SC2016 # Match the literal bootstrap comparison.
+require_literal "$BOOTSTRAP" '[[ "$binding_actions" == "Deny" ]]'
 for forbidden_command in 'kubectl delete' 'kubectl apply --all' 'sed -i'; do
   forbid_literal "$BOOTSTRAP" "$forbidden_command"
 done
@@ -1414,7 +1416,7 @@ if [[ "${1:-}" == "get" && "${2:-}" == "validatingadmissionpolicybinding" ]]; th
     echo "not found" >&2
     exit 1
   fi
-  printf 'Deny\n'
+  printf '%s\n' "${FAKE_BINDING_ACTIONS:-Deny}"
   exit 0
 fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "can-i" ]]; then
@@ -1579,6 +1581,13 @@ if FAKE_MISSING_BINDING=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   fail "bootstrap accepted a missing admission policy binding"
 fi
 require_literal "$bootstrap_error" "admission policy binding lookup failed"
+if FAKE_BINDING_ACTIONS='Deny Audit' FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted admission policy binding actions other than exactly Deny"
+fi
+require_literal "$bootstrap_error" "must contain exactly validationActions Deny"
 for invalid_wait_seconds in 0 3601 invalid 99999999999999999999; do
   if FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
     bash "$BOOTSTRAP" --image "$bootstrap_image" \

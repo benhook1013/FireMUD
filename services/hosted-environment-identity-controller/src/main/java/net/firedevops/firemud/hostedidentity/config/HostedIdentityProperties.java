@@ -309,16 +309,16 @@ public class HostedIdentityProperties implements InitializingBean {
     return devDemoHeadAnnotation;
   }
 
+  public void setDevDemoHeadAnnotation(String devDemoHeadAnnotation) {
+    this.devDemoHeadAnnotation = devDemoHeadAnnotation;
+  }
+
   public String getDevDemoRequestedHeadAnnotation() {
     return devDemoRequestedHeadAnnotation;
   }
 
   public void setDevDemoRequestedHeadAnnotation(String devDemoRequestedHeadAnnotation) {
     this.devDemoRequestedHeadAnnotation = devDemoRequestedHeadAnnotation;
-  }
-
-  public void setDevDemoHeadAnnotation(String devDemoHeadAnnotation) {
-    this.devDemoHeadAnnotation = devDemoHeadAnnotation;
   }
 
   public String getPreviewTelnetPortAnnotation() {
