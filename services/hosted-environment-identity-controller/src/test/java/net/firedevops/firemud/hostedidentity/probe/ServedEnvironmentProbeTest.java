@@ -3,6 +3,7 @@ package net.firedevops.firemud.hostedidentity.probe;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -17,13 +18,16 @@ import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
@@ -115,6 +119,60 @@ class ServedEnvironmentProbeTest {
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
             "account-service.pr-42.svc.cluster.local:6565"),
         endpoints);
+  }
+
+  @Test
+  void readinessProbeEnforcesOneDeadlineAcrossEveryEndpoint() throws Exception {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
+
+    for (int blockedProbe = 0; blockedProbe < 4; blockedProbe++) {
+      AtomicInteger calls = new AtomicInteger();
+      CountDownLatch interrupted = new CountDownLatch(1);
+      int blocked = blockedProbe;
+      ServedEnvironmentProbe.EndpointProbe endpoint =
+          (hostname, port) -> {
+            if (calls.getAndIncrement() == blocked) {
+              try {
+                new CountDownLatch(1).await();
+              } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                interrupted.countDown();
+                return new ServedEnvironmentProbe.ProbeResult(false, "interrupted");
+              }
+            }
+            return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+          };
+
+      ServedEnvironmentProbe.ProbeResult result =
+          probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofMillis(100));
+
+      assertEquals("probe-deadline-exceeded", result.reason());
+      assertEquals(blocked + 1, calls.get());
+      assertTrue(interrupted.await(1, TimeUnit.SECONDS));
+    }
+  }
+
+  @Test
+  void readinessProbePreservesUnexpectedProbeFailures() {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    ServedEnvironmentProbe.EndpointProbe failed =
+        (hostname, port) -> {
+          throw new IllegalStateException("probe failed");
+        };
+    ServedEnvironmentProbe.EndpointProbe ready =
+        (hostname, port) -> new ServedEnvironmentProbe.ProbeResult(true, "ready");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new ServedEnvironmentProbe(properties)
+                    .probe(plan, 32001, failed, ready, ready, ready, Duration.ofSeconds(1)));
+
+    assertEquals("probe failed", failure.getMessage());
   }
 
   @Test

@@ -20,11 +20,16 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.KeyManagerFactory;
@@ -53,6 +58,11 @@ public class ServedEnvironmentProbe {
       Pattern.compile(
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
           Pattern.DOTALL);
+  private static final int CONNECT_TIMEOUT_MILLIS = 5000;
+  private static final int IO_TIMEOUT_MILLIS = 8000;
+  private static final int ENDPOINT_PROBE_COUNT = 4;
+  private static final Duration TOTAL_PROBE_TIMEOUT =
+      Duration.ofMillis((long) ENDPOINT_PROBE_COUNT * (CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS));
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";
@@ -86,6 +96,55 @@ public class ServedEnvironmentProbe {
   }
 
   ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe) {
+    return probe(
+        plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe, TOTAL_PROBE_TIMEOUT);
+  }
+
+  ProbeResult probe(
+      EnvironmentIdentityPlan plan,
+      int telnetPort,
+      EndpointProbe httpsProbe,
+      EndpointProbe telnetProbe,
+      EndpointProbe bridgeProbe,
+      EndpointProbe grpcProbe,
+      Duration timeout) {
+    FutureTask<ProbeResult> task =
+        new FutureTask<>(
+            () ->
+                probeSequentially(
+                    plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe));
+    Thread.ofVirtual().name("served-environment-probe").start(task);
+    try {
+      return task.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+    } catch (TimeoutException exception) {
+      task.cancel(true);
+      LOGGER.debug(
+          "Served-environment probes exceeded the {} total deadline for runtime Namespace {}",
+          timeout,
+          plan.runtimeNamespace());
+      return new ProbeResult(false, "probe-deadline-exceeded");
+    } catch (InterruptedException exception) {
+      task.cancel(true);
+      Thread.currentThread().interrupt();
+      return new ProbeResult(false, "probe-interrupted");
+    } catch (ExecutionException exception) {
+      if (exception.getCause() instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (exception.getCause() instanceof Error error) {
+        throw error;
+      }
+      throw new IllegalStateException("served-environment probe failed", exception.getCause());
+    }
+  }
+
+  private static ProbeResult probeSequentially(
       EnvironmentIdentityPlan plan,
       int telnetPort,
       EndpointProbe httpsProbe,
@@ -237,13 +296,13 @@ public class ServedEnvironmentProbe {
     SSLSocket socket = null;
     boolean transferred = false;
     try {
-      transport.connect(new InetSocketAddress(connectHost, port), 5000);
+      transport.connect(new InetSocketAddress(connectHost, port), CONNECT_TIMEOUT_MILLIS);
       socket =
           (SSLSocket)
               grpcSslContext(material, expectedTrustAnchor)
                   .getSocketFactory()
                   .createSocket(transport, identityHostname, port, true);
-      socket.setSoTimeout(8000);
+      socket.setSoTimeout(IO_TIMEOUT_MILLIS);
       SSLParameters parameters = socket.getSSLParameters();
       parameters.setEndpointIdentificationAlgorithm("HTTPS");
       parameters.setServerNames(List.of(new SNIHostName(identityHostname)));
@@ -480,8 +539,8 @@ public class ServedEnvironmentProbe {
       String hostname, int port, String expectedFingerprint, SSLSocket socket) throws Exception {
     boolean transferred = false;
     try {
-      socket.setSoTimeout(8000);
-      socket.connect(new InetSocketAddress(hostname, port), 5000);
+      socket.setSoTimeout(IO_TIMEOUT_MILLIS);
+      socket.connect(new InetSocketAddress(hostname, port), CONNECT_TIMEOUT_MILLIS);
       SSLParameters parameters = socket.getSSLParameters();
       parameters.setEndpointIdentificationAlgorithm("HTTPS");
       parameters.setServerNames(List.of(new SNIHostName(hostname)));

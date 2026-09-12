@@ -3467,12 +3467,14 @@ EOF
 test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 
 target_python_log="$TEMP_DIR/closed-target-python.log"
-cat >"$TEMP_DIR/bin/python3" <<SH
+closed_target_bin="$TEMP_DIR/closed-target-bin"
+mkdir -p "$closed_target_bin"
+cat >"$closed_target_bin/python3" <<SH
 #!/usr/bin/env bash
 printf 'unexpected label parser invocation\n' >>"$target_python_log"
 printf 'labels_valid=true\npriority=false\n'
 SH
-chmod +x "$TEMP_DIR/bin/python3"
+chmod +x "$closed_target_bin/python3"
 
 run_closed_target_fixture() {
   local scenario="$1"
@@ -3491,7 +3493,7 @@ run_closed_target_fixture() {
   (
     cd "$ROOT_DIR"
     env \
-      PATH="$TEMP_DIR/bin:$PATH" \
+      PATH="$closed_target_bin:$TEMP_DIR/bin:$PATH" \
       GH_TOKEN=fake \
       GITHUB_REPOSITORY=example/FireMUD \
       EVENT_NAME=pull_request_target \
