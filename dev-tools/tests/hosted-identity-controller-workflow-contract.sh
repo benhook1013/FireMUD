@@ -2880,6 +2880,11 @@ kind: Deployment
 metadata:
   name: account-service
   namespace: pr-42
+  labels:
+    app.kubernetes.io/name: firemud
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: firemud-0.1.0
+    app.kubernetes.io/instance: pr-42
 spec:
   template: null
 YAML
