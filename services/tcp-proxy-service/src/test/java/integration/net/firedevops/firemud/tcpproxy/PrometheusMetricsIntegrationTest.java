@@ -24,7 +24,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     properties = {
       "TCP_PROXY_PORT=0",
       "TCP_PROXY_TLS_ENABLED=false",
-      "GATEWAY_WS_URL=ws://localhost/ws",
+      "GATEWAY_WS_URL=ws://localhost/ws/game",
       "spring.flyway.enabled=false",
       "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
       "management.endpoints.web.exposure.include=health,prometheus",

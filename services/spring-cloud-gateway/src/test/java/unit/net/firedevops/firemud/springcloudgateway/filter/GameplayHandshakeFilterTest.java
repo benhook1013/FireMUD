@@ -472,7 +472,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -483,6 +483,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -502,7 +503,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -513,6 +514,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -553,7 +555,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -564,6 +566,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -585,7 +588,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -596,6 +599,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")
@@ -618,7 +622,7 @@ class GameplayHandshakeFilterTest {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
-    HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
+    HeaderTrustFilter headerTrustFilter = HeaderTrustFilterTest.legacyFilter(props);
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
@@ -629,6 +633,7 @@ class GameplayHandshakeFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
             .header("X-Proxy-Connection-Id", "conn-123")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "1")

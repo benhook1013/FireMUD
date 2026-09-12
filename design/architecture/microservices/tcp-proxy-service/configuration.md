@@ -11,7 +11,7 @@ The security policy for these settings is owned by [Security](../../system-archi
 For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`), with `FIREMUD_GATEWAY_WS_*` variables configured so TCP Proxy authenticates the Gateway server and presents its own dedicated WebSocket client certificate.
-- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases.
+- The `certs/client.*` values shown below for Proxy -> Gateway and internal gRPC are local/dev convenience defaults only. Shared and player-facing startup/admission must load the effective private-key identities and fail closed when their public-key fingerprints are equal, including when the paths differ through symlinks or aliases. Transport-specific certificate leaves may intentionally carry the same canonical workload URI SAN, `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`; distinctness applies to the leaf/private-key material, not to inventing different principals for one workload.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns; the `0` defaults are reserved for local/dev and CI.
 - Public player-facing Telnet must select exactly one TLS mode per endpoint: edge termination with internal PROXY forwarding, or direct TLS termination at TCP Proxy. These modes must not be combined.
 - Shared and player-facing deployments set `TCP_PROXY_TELNET_MODE` explicitly to `EDGE_PROXY` or `DIRECT_TLS`; an unset mode is allowed only for local development and automated tests.
@@ -89,6 +89,8 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 
 When any `TCP_PROXY_DEFAULT_*` bootstrap variables are used together, local/bootstrap profiles must supply one coherent server-owned advisory bridge-metadata bundle: `worldSlug`, `realmSlug`, explicit `tenantId`, explicit `gameInstanceId`, and `pointerVersion`. These direct environment values are local/bootstrap inputs only: TCP Proxy neither resolves nor authorizes tenant or game-instance identity. Shared and player-facing deployments must obtain matching canonical gameplay-admission evidence and fail closed when that evidence is absent, malformed, stale, or inconsistent; forwarded metadata remains advisory and cannot replace or alter canonical authentication, routing, or gameplay-admission authority. Do not configure only the runtime ids while omitting the visible world/realm identity or pointer freshness, because that would recreate a partial routing shortcut prohibited by the canonical [realm-catalog and admission-pointer contract](../../system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
 
+Hosted preview and dev-demo Helm deployments select direct Telnet TLS with a dedicated Secret named `<release>-telnet-tls`; it is distinct from the HTTP Ingress and gRPC TLS Secrets and is mounted read-only at `/telnet-tls`. In standalone certificate-identity mode, the chart owns exactly one dedicated cert-manager `Certificate` that writes that Secret. In hosted-controller mode, the chart renders no Telnet `Certificate`; the retained hosted identity controller owns and projects the release-scoped Secret, and the TCP Proxy Service and Deployment carry matching explicit ownership labels. The public NodePort remains the selected TCP Proxy listener, now carrying TLS.
+
 When all three routing defaults are configured coherently, TCP Proxy forwards them as `X-World-Slug`, `X-Realm-Slug`, and positive `X-Pointer-Version` only on the authenticated Proxy -> Gateway WebSocket hop. Gateway rejects a partial or malformed bundle, removes connect-token carriers for that trusted transport, and forwards the validated advisory bundle to Game Session; the headers never bypass direct credential `LOGIN` / `PLAY` or become gameplay-admission authority. The complete trusted-hop header contract is [TCP Proxy API Contracts](./api-contracts.md#correlation-and-header-contract).
 
 ## WebSocket mTLS to Spring Cloud Gateway
@@ -99,7 +101,11 @@ In production, the TCP Proxy Service connects to Spring Cloud Gateway over `wss:
 
 - Client certificate and key are loaded from `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` and `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`.
 - The Gateway’s certificate is validated against `FIREMUD_GATEWAY_WS_CA_CERT_PATH`, with hostname verification enabled using the host from `GATEWAY_WS_URL`.
-- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts.
+- Certificate changes are picked up via the shared `TlsCertificateWatcher` so WebSocket clients can reload credentials without restarts. The watcher recognizes both ordinary watched-file changes and Kubernetes projected-Secret `..data` generation swaps, coalesces each short event burst into one reload, and treats a watch-service overflow as a reload signal so the client re-reads all configured material and fails closed if the resulting set is invalid.
+
+Ordinary renewal atomically replaces the client used for new bridges and readiness probes while already-negotiated WebSocket sessions finish naturally. This watcher behavior does not implement explicit certificate revocation, identity removal, or emergency trust withdrawal. Those events depend on the hosted identity controller enforcing disruptive termination of the old TCP Proxy pods and bridges, even when replacement credentials or replacement pods are unavailable; requesting a rollout without proving the old bridges stopped is not sufficient.
+
+The aggregate `tlsCertificateReloadHealthIndicator` remains a default-health and alerting surface, not a wholesale readiness dependency. TCP Proxy’s route-specific `trafficAdmissionReadiness` includes Gateway bridge readiness and fails closed for new Telnet sessions when that path’s watcher or active client material is unusable; unrelated watcher loss does not close this route. Established sessions remain usable while their negotiated path is safe, and controller-owned identity withdrawal remains a disruptive termination boundary. The canonical policy is in [Kubernetes Health Monitoring](../../infrastructure/deployment-environments.md#kubernetes-health-monitoring).
 
 The WebSocket client certificate must include the `clientAuth` extended key usage. This is intentionally decoupled from the proxy’s internal gRPC server certificate profile, which must include `serverAuth`.
 
@@ -111,6 +117,7 @@ When overriding `GATEWAY_WS_URL` in a `wss://` configuration, the host portion o
 
 The local environment consequence is:
 
+- Plaintext `ws://` requires a non-empty active-profile set where every profile is `local`, `dev`, or `test`; an empty set or any profile outside that allowlist fails closed rather than implicitly selecting local trust.
 - Proxy -> Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 - Shared and player-facing environments must use `wss://` to the internal-only Gateway mTLS listener; they must not serve player-facing traffic over `ws://`.
 - Player-facing environments must fail startup or admission if Proxy -> Gateway mTLS identity verification is unavailable.

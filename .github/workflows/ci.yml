@@ -249,7 +249,7 @@ jobs:
           sudo apt-get install -y cloc
 
       - name: 📦 Install Python script dependencies
-        run: python3 -m pip install --disable-pip-version-check PyYAML
+        run: python3 -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/ci.txt
 
       - name: 🧪 Validate dev tool contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
@@ -493,6 +493,20 @@ jobs:
 
       - name: 🧪 Validate rendered Helm manifests
         run: bash ./dev-tools/validation/validate-helm.sh render
+
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.14'
+
+      - name: 📦 Install Python script dependencies
+        run: python3 -m pip install --disable-pip-version-check --require-hashes -r .github/requirements/ci.txt
+
+      - name: 🧪 Validate hosted Telnet TLS contract
+        run: bash ./dev-tools/tests/hosted-telnet-tls-contract.sh
+
+      - name: 🧪 Validate hosted Gateway bridge contract
+        run: bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh
 
   # Docs and frontend validation
   docs-check:

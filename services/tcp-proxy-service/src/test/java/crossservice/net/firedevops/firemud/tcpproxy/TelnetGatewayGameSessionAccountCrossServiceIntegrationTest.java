@@ -130,6 +130,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void readinessEndpointReportsTrafficAdmissionReady() throws Exception {
     ensureTestServicesStarted();
+    awaitTrafficAdmissionReady();
     String body =
         HttpTestSupport.getBody("http://localhost:" + port + "/actuator/health/readiness");
     assertThat(body).contains("\"status\":\"UP\"");
@@ -778,8 +779,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new GatewayHolder(context, port);
   }
 
-  private GameplayTelnetDriver openTelnetClient() throws IOException {
+  private GameplayTelnetDriver openTelnetClient() throws Exception {
+    awaitTrafficAdmissionReady();
     return GameplayTelnetDriver.connect("localhost", telnetServer.getPort(), COMMAND_WAIT);
+  }
+
+  private void awaitTrafficAdmissionReady() throws InterruptedException {
+    HttpTestSupport.awaitReadiness(
+        "http://localhost:" + port + "/actuator/health/readiness", COMMAND_WAIT);
   }
 
   private GameplayTelnetDriver openAdmittedTelnetClient() throws Exception {

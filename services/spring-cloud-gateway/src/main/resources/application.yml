@@ -79,6 +79,28 @@ firemud:
         upstream-url: ${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_UPSTREAM_URL:ws://game-session-service:8080/ws/game}
         reconnect-attempts: 40
         reconnect-delay-ms: 250
+    tcp-proxy-listener:
+      enabled: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED:false}
+      bind-address: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS:0.0.0.0}
+      port: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT:8443}
+      certificate-chain-path: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH:}
+      private-key-path: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH:}
+      trusted-client-ca-path: ${FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH:}
+      environment: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT:}
+      trust-profile: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE:}
+      production-uri:
+        uri-san: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN:}
+      migration-dns:
+        dns-san: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_DNS_SAN:}
+        owner: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_OWNER:}
+        reason: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_REASON:}
+        expires-at: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_MIGRATION_EXPIRES_AT:}
+      breakglass-fingerprint:
+        sha256: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_FINGERPRINT_SHA256:}
+        incident-reference: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_INCIDENT_REFERENCE:}
+        expires-at: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_BREAKGLASS_EXPIRES_AT:}
+      development-cidr:
+        trusted-cidr: ${FIREMUD_GATEWAY_TCP_PROXY_TRUST_DEVELOPMENT_CIDR:}
     header-trust:
       forwarded-client-ip:
         trusted-proxy-cidrs:
@@ -114,7 +136,7 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,gameplayRouteReadiness
+          include: readinessState,gameplayRouteReadiness,tcpProxyTlsListenerReadiness
 
 ---
 
