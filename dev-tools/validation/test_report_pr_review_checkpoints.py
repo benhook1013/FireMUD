@@ -861,6 +861,36 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("not a parsed checkpoint", stderr.getvalue())
 
+    def test_main_rejects_invalid_pr_and_unscoped_hosted_source_before_fetching(self) -> None:
+        cases = (
+            (
+                self._arguments(pr=0),
+                "error: --pr must be a positive integer\n",
+            ),
+            (
+                self._arguments(source="hosted"),
+                "error: --source requires --rounds or --rejections\n",
+            ),
+        )
+        for arguments, message in cases:
+            with self.subTest(message=message):
+                stderr = io.StringIO()
+                with (
+                    patch.object(self.reporter, "parse_args", return_value=arguments),
+                    patch.object(self.reporter, "fetch_comments") as fetch_comments,
+                    patch.object(self.reporter, "fetch_hosted_reviews") as fetch_hosted_reviews,
+                    patch.object(self.reporter, "collect_rejections") as collect_rejections,
+                    redirect_stdout(io.StringIO()),
+                    redirect_stderr(stderr),
+                ):
+                    result = self.reporter.main()
+
+                self.assertEqual(result, 2)
+                self.assertEqual(stderr.getvalue(), message)
+                fetch_comments.assert_not_called()
+                fetch_hosted_reviews.assert_not_called()
+                collect_rejections.assert_not_called()
+
     def test_disposition_validation_distinguishes_rejections_conflict_from_missing_rounds(
         self,
     ) -> None:

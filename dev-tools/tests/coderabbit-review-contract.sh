@@ -1106,6 +1106,11 @@ comments = base["data"]["repository"]["pullRequest"]["comments"]["nodes"]
 comments[-1]["body"] = "Review completed.\n> Next review available in: 36 minutes"
 (root / "quoted-window-rate-limit.json").write_text(json.dumps(base))
 
+inline = json.loads((root / "quoted-rate-limit.json").read_text())
+inline_comments = inline["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+inline_comments[-1]["body"] = "The report quotes: More reviews will be available in 36 minutes"
+(root / "inline-window-rate-limit.json").write_text(json.dumps(inline))
+
 marker = json.loads((root / "edited-review-rate-limited.json").read_text())
 marker_comments = marker["data"]["repository"]["pullRequest"]["comments"]["nodes"]
 marker_comments[-1]["body"] = (
@@ -1118,6 +1123,11 @@ PY
 quoted_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-window-rate-limit.json")"
 grep -q "latest_review_request_rate_limited=false" <<<"$quoted_window_output"
 grep -q "retrigger_review_allowed=true" <<<"$quoted_window_output"
+
+inline_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/inline-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$inline_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$inline_window_output"
+grep -q "ok=true" <<<"$inline_window_output"
 
 expect_failure_output "$TMP_DIR/marker-quoted-window-rate-limit.json" "$TMP_DIR/marker-quoted-window-rate-limit.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

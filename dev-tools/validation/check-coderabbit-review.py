@@ -33,9 +33,15 @@ REVIEW_COMMAND_TYPES = {
 SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
 PLAN_REVIEW_SKIP_MARKER = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
-REVIEW_LIMIT_MESSAGE = "More reviews will be available in"
 REVIEW_LIMIT_STATUS_PATTERN = re.compile(
     r"^[ \t]*(?:[*_`#-]+[ \t]*)*review\s+rate\s+limited\b", re.IGNORECASE
+)
+REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN = re.compile(
+    r"^[ \t]*(?:full\s+review\s+finished\.\s*)?"
+    r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
+    r"|more\s+reviews\s+will\s+be\s+available\s+in"
+    r"|next\s+review\s+available\s+in)\b",
+    re.IGNORECASE,
 )
 REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
     r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
@@ -619,12 +625,12 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         body = comment.get("body", "")
         if is_substantive_review_body(body):
             continue
-        detection_body = body if REVIEW_LIMIT_MARKER in body else unquoted_body(body)
+        has_rate_limit_marker = REVIEW_LIMIT_MARKER in body
+        detection_body = body if has_rate_limit_marker else unquoted_body(body)
         if (
-            REVIEW_LIMIT_MARKER not in detection_body
-            and REVIEW_LIMIT_MESSAGE not in detection_body
+            not has_rate_limit_marker
             and REVIEW_LIMIT_STATUS_PATTERN.search(detection_body) is None
-            and REVIEW_LIMIT_WINDOW_PATTERN.search(detection_body) is None
+            and REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body) is None
         ):
             continue
         effective_at = comment_effective_timestamp(comment) or created_at_dt
