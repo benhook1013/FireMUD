@@ -1554,7 +1554,7 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
-  void multipleValidCertificateRequestsFailClosed() {
+  void multipleValidCertificateRequestsKeepMaterializationPendingForRetry() {
     StableBatchFixture fixture = stableBatchFixture();
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
@@ -1579,11 +1579,9 @@ class CertificateMaterialServiceTest {
                 sourceData,
                 true)));
 
-    IllegalStateException failure =
-        assertThrows(IllegalStateException.class, () -> fixture.batch().ingress());
+    CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
-    assertEquals(
-        "multiple CertificateRequests match the identity source Secret", failure.getMessage());
+    assertEquals(MATERIALIZATION_PENDING, material.state());
   }
 
   @Test

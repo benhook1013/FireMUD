@@ -17,11 +17,14 @@ import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
 import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Owns cert-manager ordering and public validation of materialized Secrets. */
 @Component
 public class CertificateMaterialService {
+  private static final Logger LOGGER = LoggerFactory.getLogger(CertificateMaterialService.class);
   private final CertificateResourceFactory certificateFactory;
   private final SecretMaterialValidator materialValidator;
   private final GrpcTransportBundleGenerator grpcBundleGenerator;
@@ -672,8 +675,10 @@ public class CertificateMaterialService {
             .limit(2)
             .count();
     if (validRequestCount > 1) {
-      throw new IllegalStateException(
-          "multiple CertificateRequests match the identity source Secret");
+      LOGGER.debug(
+          "Multiple CertificateRequests match identity source Secret for Certificate {}",
+          certificate.name());
+      return false;
     }
     return validRequestCount == 1;
   }

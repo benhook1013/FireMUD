@@ -115,6 +115,7 @@ assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
     "${{ needs.image-meta.outputs.image_tag }}"
 )
 smoke_run = smoke_step["run"]
+exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
 for required in (
     'trap \'docker rm --force "$container_name" >/dev/null 2>&1 || true\' EXIT',
     'docker run --detach',
@@ -128,16 +129,25 @@ for required in (
     '--connect-timeout 2 --max-time "$request_timeout"',
     '(( SECONDS < deadline )) && sleep 1',
     "http://127.0.0.1:8081/actuator/health/liveness",
-    "[[ \"$health\" == *'\"status\":\"UP\"'* ]]",
+    exact_health_predicate,
     'docker rm --force "$container_name"',
 ):
     assert required in smoke_run, required
 assert "--entrypoint" not in smoke_run
 assert 'for _ in {1..300}; do' not in smoke_run
+assert '[[ "$health" == *' not in smoke_run
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
 PY
+
+nested_status_health='{"components":{"controller":{"status":"UP"}}}'
+if jq -e '.status == "UP"' <<<"$nested_status_health" >/dev/null 2>&1; then
+  echo "controller health proof accepted a nested-only UP status" >&2
+  exit 1
+fi
+jq -e '.status == "UP"' <<<'{"status":"UP","components":{"controller":{"status":"DOWN"}}}' \
+  >/dev/null
 
 # The shared kubeconfig action is the only workflow credential-file writer.
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
@@ -197,6 +207,53 @@ if grep -Fq -- '--retry-all-errors' "$helm_action"; then
   echo "$helm_action must not retry non-transient curl failures" >&2
   exit 1
 fi
+python3 - "$helm_action" <<'PY'
+import os
+import subprocess
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as action_file:
+    action = yaml.safe_load(action_file)
+
+steps = action["runs"]["steps"]
+step_by_name = {step["name"]: step for step in steps}
+validation = step_by_name["Validate supported runner"]
+restore = step_by_name["Restore pinned Helm archive"]
+install = step_by_name["Install pinned Helm"]
+assert steps.index(validation) < steps.index(restore) < steps.index(install)
+
+validation_run = validation["run"]
+for runner_os, runner_arch, expected_returncode in (
+    ("Linux", "X64", 0),
+    ("Windows", "X64", 1),
+    ("Linux", "ARM64", 1),
+):
+    environment = os.environ.copy()
+    environment.update(RUNNER_OS=runner_os, RUNNER_ARCH=runner_arch)
+    result = subprocess.run(
+        ["bash", "-c", validation_run],
+        check=False,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == expected_returncode, (runner_os, runner_arch, result)
+
+install_run = install["run"]
+remove_index = install_run.index('rm -rf -- "$extraction_dir"')
+recreate_index = install_run.index('mkdir -p -- "$extraction_dir"')
+extract_index = install_run.index(
+    'tar -xzf "$archive_path" -C "$extraction_dir" -- linux-amd64/helm'
+)
+install_index = install_run.index(
+    'install -m 0755 "$extraction_dir/linux-amd64/helm" "$install_dir/helm"'
+)
+assert remove_index < recreate_index < extract_index < install_index
+assert 'tar -xzf "$archive_path" -C "$extraction_dir"\n' not in install_run
+PY
 contains "$trusted" 'uses: ./.github/actions/write-kubeconfig'
 if grep -Fq 'KUBECONFIG_PATH=' "$trusted"; then
   echo "$trusted must delegate protected kubeconfig writes to the shared composite action" >&2
@@ -313,7 +370,10 @@ contains "$dev_demo" 'ensure-grpc-tls-secret.sh'
 contains "$dev_demo" "steps.certificate-identity.outputs.mode == 'standalone'"
 
 python3 - "$trusted" "$preview" "$preview_annotator" "$dev_demo" "$publisher" "$credential_source" "$janitor" "$mode_action" "$runtime" <<'PY'
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -465,17 +525,21 @@ publisher_script = next(
     for step in publisher_steps
     if step.get("name") == "Publish fixed PR image tags"
 )
-missing_image_block = '''if ! docker image inspect "$image" >/dev/null 2>&1; then
-    echo "Required source artifact image for $service is missing: $image." >&2
-    exit 1
-  fi'''
-assert missing_image_block in publisher_script
+missing_image_check = 'if ! docker image inspect "$image" >/dev/null 2>&1; then'
+assert missing_image_check in publisher_script
 assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
 ) == 1
-assert publisher_script.index(
+assert 'missing_source_images+=("$image")' in publisher_script
+assert 'if (( ${#missing_source_images[@]} > 0 )); then' in publisher_script
+preflight_index = publisher_script.index(missing_image_check)
+failure_index = publisher_script.index(
+    'echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2'
+)
+publish_index = publisher_script.index(
     'if docker manifest inspect "$image" >/dev/null 2>&1; then'
-) < publisher_script.index(missing_image_block)
+)
+assert preflight_index < failure_index < publish_index
 for obsolete_optional_controller_fragment in (
     "hosted-environment-identity-controller; do",
     "hosted-environment-identity-controller\\n",
@@ -485,6 +549,53 @@ for obsolete_optional_controller_fragment in (
     "Source artifact does not contain optional",
 ):
     assert obsolete_optional_controller_fragment not in publisher_script
+
+with tempfile.TemporaryDirectory() as publisher_fixture_dir:
+    fixture_root = Path(publisher_fixture_dir)
+    docker_calls = fixture_root / "docker-calls"
+    fake_docker = fixture_root / "docker"
+    fake_docker.write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$DOCKER_CALLS"
+if [[ "$1 $2" == "image inspect" ]]; then
+  case "$3" in
+    *account-service*|*tcp-proxy-service*) exit 1 ;;
+    *) exit 0 ;;
+  esac
+fi
+if [[ "$1 $2" == "manifest inspect" ]]; then
+  exit 1
+fi
+if [[ "$1" == push ]]; then
+  exit 0
+fi
+exit 99
+""",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    fixture_env = os.environ.copy()
+    fixture_env.update(
+        DOCKER_CALLS=str(docker_calls),
+        IMAGE_TAG="fixture-head",
+        PATH=f"{fixture_root}:{fixture_env['PATH']}",
+    )
+    result = subprocess.run(
+        ["bash", "-c", publisher_script],
+        check=False,
+        env=fixture_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert result.returncode == 1, result
+    assert "account-service is missing" in result.stderr
+    assert "tcp-proxy-service is missing" in result.stderr
+    assert "2 runtime image(s) are missing. Nothing was published." in result.stderr
+    calls = docker_calls.read_text(encoding="utf-8").splitlines()
+    assert len([call for call in calls if call.startswith("image inspect ")]) == 11
+    assert not any(call.startswith("manifest inspect ") for call in calls)
+    assert not any(call.startswith("push ") for call in calls)
 
 runtime_jobs = runtime_workflow["jobs"]
 trusted_build = runtime_jobs["build-runtime-images"]
@@ -543,6 +654,7 @@ assert login_index < build_index < smoke_index < publish_index
 assert "--tag \"$CONTROLLER_IMAGE\"" in controller_steps[build_index]["run"]
 assert "ghcr.io/benhook1013/firemud-base@${{ needs.build-base-image.outputs.digest }}" in controller_steps[build_index]["run"]
 trusted_smoke_run = controller_steps[smoke_index]["run"]
+exact_health_predicate = 'jq -e \'.status == "UP"\' <<<"$health" >/dev/null 2>&1'
 for required in (
     'deadline=$((SECONDS + 300))',
     'while (( SECONDS < deadline )); do',
@@ -551,9 +663,11 @@ for required in (
     '(( request_timeout <= 5 )) || request_timeout=5',
     '--connect-timeout 2 --max-time "$request_timeout"',
     '(( SECONDS < deadline )) && sleep 1',
+    exact_health_predicate,
 ):
     assert required in trusted_smoke_run, required
 assert 'for _ in {1..300}; do' not in trusted_smoke_run
+assert '[[ "$health" == *' not in trusted_smoke_run
 assert 'docker push "$CONTROLLER_IMAGE"' in controller_steps[publish_index]["run"]
 publish_run = controller_steps[publish_index]["run"]
 assert "docker manifest inspect" not in publish_run
@@ -701,13 +815,29 @@ assert deploy_runtime_remember["run"] == (
 deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
 assert deploy_runtime_restore["if"] == "${{ always() }}"
 deploy_runtime_restore_run = deploy_runtime_restore["run"]
-assert '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
-assert "The runtime kubeconfig path was not initialized." in deploy_runtime_restore_run
+assert '[[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
+assert "Missing preview runtime kubeconfig" not in deploy_runtime_restore_run
 assert deploy_runtime_restore_run.index(
-    '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
+    '[[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
 ) < deploy_runtime_restore_run.index(
     'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
 )
+with tempfile.TemporaryDirectory() as restore_fixture_dir:
+    github_env = Path(restore_fixture_dir) / "github-env"
+    fixture_env = os.environ.copy()
+    fixture_env["GITHUB_ENV"] = str(github_env)
+    fixture_env.pop("PREVIEW_RUNTIME_KUBECONFIG", None)
+    subprocess.run(
+        ["bash", "-c", deploy_runtime_restore_run], check=True, env=fixture_env
+    )
+    assert not github_env.exists()
+    fixture_env["PREVIEW_RUNTIME_KUBECONFIG"] = "/tmp/preview-runtime.kubeconfig"
+    subprocess.run(
+        ["bash", "-c", deploy_runtime_restore_run], check=True, env=fixture_env
+    )
+    assert github_env.read_text(encoding="utf-8") == (
+        "KUBECONFIG=/tmp/preview-runtime.kubeconfig\n"
+    )
 assert "uses" not in deploy_runtime_restore
 assert (
     deploy_steps.index(deploy_runtime_write)

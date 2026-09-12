@@ -20,7 +20,6 @@ import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,6 +52,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class GrpcTransportBundleGenerator {
   private static final String TYPE = "Opaque";
+  private static final SecretMaterialValidator MATERIAL_VALIDATOR =
+      new SecretMaterialValidator();
   private static final SecureRandom SERIAL_RANDOM = new SecureRandom();
   private static final Pattern CERTIFICATE_PEM =
       Pattern.compile(
@@ -115,7 +116,9 @@ public class GrpcTransportBundleGenerator {
     long currentGeneration = issuanceGeneration(existing);
     validateAcceptedGeneration(currentGeneration, accepted);
     boolean trustAnchorChanged = trustAnchorChanged(existing, expectedTrustAnchorSha256);
-    if (!trustAnchorChanged && leafIsReusable(existing, plan, renewBefore, now)) {
+    if (!trustAnchorChanged
+        && leafIsReusable(
+            existing, plan, renewBefore, now, normalizeFingerprint(expectedTrustAnchorSha256))) {
       return existing;
     }
     String existingResourceVersion = existing.getMetadata().getResourceVersion();
@@ -276,42 +279,25 @@ public class GrpcTransportBundleGenerator {
   }
 
   private static boolean leafIsReusable(
-      Secret secret, EnvironmentIdentityPlan plan, Duration renewBefore, Instant now) {
+      Secret secret,
+      EnvironmentIdentityPlan plan,
+      Duration renewBefore,
+      Instant now,
+      String expectedTrustAnchorSha256) {
     try {
-      return leafDnsNamesMatch(secret, plan) && !renewalRequired(secret, renewBefore, now);
-    } catch (InvalidLeafCertificateException exception) {
+      MATERIAL_VALIDATOR.validateIdentity(
+          secret,
+          grpcDnsNames(plan),
+          List.of(),
+          TYPE,
+          true,
+          true,
+          expectedTrustAnchorSha256);
+      return !renewalRequired(secret, renewBefore, now);
+    } catch (
+        SecretMaterialValidator.MaterialValidationException
+            | InvalidLeafCertificateException exception) {
       return false;
-    }
-  }
-
-  private static boolean leafDnsNamesMatch(Secret secret, EnvironmentIdentityPlan plan) {
-    try {
-      X509Certificate certificate =
-          parseCertificate(
-              requiredData(secret, "tls.crt", "gRPC source leaf Secret"),
-              "gRPC source leaf Secret");
-      Collection<List<?>> subjectAlternativeNames = certificate.getSubjectAlternativeNames();
-      if (subjectAlternativeNames == null) {
-        return false;
-      }
-      List<String> actualDnsNames = new java.util.ArrayList<>();
-      for (List<?> subjectAlternativeName : subjectAlternativeNames) {
-        if (subjectAlternativeName == null
-            || subjectAlternativeName.size() != 2
-            || !(subjectAlternativeName.get(0) instanceof Integer nameType)) {
-          return false;
-        }
-        if (!Integer.valueOf(2).equals(nameType)) {
-          continue;
-        }
-        if (!(subjectAlternativeName.get(1) instanceof String name)) {
-          return false;
-        }
-        actualDnsNames.add(name.toLowerCase(Locale.ROOT));
-      }
-      return actualDnsNames.stream().distinct().sorted().toList().equals(grpcDnsNames(plan));
-    } catch (Exception exception) {
-      throw new InvalidLeafCertificateException(exception);
     }
   }
 

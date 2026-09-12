@@ -373,6 +373,7 @@ verify_grpc_ca_prerequisite() {
   command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
   command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
   local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
+  local ca_basic_constraints ca_key_usage
   local certificate_public_key_sha256 private_key_public_key_sha256
   secret_type="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
     -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
@@ -399,6 +400,32 @@ verify_grpc_ca_prerequisite() {
   )" || fail "firemud-grpc-ca ca.crt is not a valid certificate"
   [[ "$actual_fingerprint" == "${GRPC_TRUST_ANCHOR_SHA256,,}" ]] || \
     fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
+  if ! openssl verify \
+    -no-CAfile \
+    -no-CApath \
+    -no-CAstore \
+    -partial_chain \
+    -trusted <(printf '%s' "$encoded_certificate" | base64 --decode) \
+    <(printf '%s' "$encoded_certificate" | base64 --decode) \
+    >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.crt is not currently valid"
+  fi
+  ca_basic_constraints="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      LC_ALL=C openssl x509 -noout -ext basicConstraints 2>/dev/null
+  )" || fail "firemud-grpc-ca ca.crt Basic Constraints could not be parsed"
+  if ! grep -Eq '(^|[[:space:]])CA:TRUE([,[:space:]]|$)' <<<"$ca_basic_constraints"; then
+    fail "firemud-grpc-ca ca.crt Basic Constraints must identify it as a CA"
+  fi
+  ca_key_usage="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      LC_ALL=C openssl x509 -noout -ext keyUsage 2>/dev/null
+  )" || fail "firemud-grpc-ca ca.crt key usage could not be parsed"
+  if ! grep -Eq '(^|[[:space:],])Certificate Sign([,[:space:]]|$)' <<<"$ca_key_usage"; then
+    fail "firemud-grpc-ca ca.crt key usage must include keyCertSign"
+  fi
   if ! printf '%s' "$encoded_certificate" |
     base64 --decode |
     openssl x509 -pubkey -noout 2>/dev/null |

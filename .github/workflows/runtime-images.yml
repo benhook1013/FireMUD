@@ -434,7 +434,7 @@ jobs:
             if health="$(docker exec "$container_name" \
               curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
                 http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
-              && [[ "$health" == *'"status":"UP"'* ]]; then
+              && jq -e '.status == "UP"' <<<"$health" >/dev/null 2>&1; then
               healthy=true
               break
             fi
@@ -598,7 +598,7 @@ jobs:
             if health="$(docker exec "$container_name" \
               curl --fail --silent --show-error --connect-timeout 2 --max-time "$request_timeout" \
                 http://127.0.0.1:8081/actuator/health/liveness 2>/dev/null)" \
-              && [[ "$health" == *'"status":"UP"'* ]]; then
+              && jq -e '.status == "UP"' <<<"$health" >/dev/null 2>&1; then
               exit 0
             fi
             (( SECONDS < deadline )) && sleep 1

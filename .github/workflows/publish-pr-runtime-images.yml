@@ -80,26 +80,40 @@ jobs:
 
       - name: Publish fixed PR image tags
         run: |
-          for service in \
-            account-service \
-            automation-scripting-service \
-            entity-management-service \
-            game-design-service \
-            game-logic-service \
-            game-session-service \
-            logging-admin-service \
-            social-groups-service \
-            spring-cloud-gateway \
-            tcp-proxy-service \
-            world-management-service; do
+          set -euo pipefail
+
+          services=(
+            account-service
+            automation-scripting-service
+            entity-management-service
+            game-design-service
+            game-logic-service
+            game-session-service
+            logging-admin-service
+            social-groups-service
+            spring-cloud-gateway
+            tcp-proxy-service
+            world-management-service
+          )
+
+          missing_source_images=()
+          for service in "${services[@]}"; do
+            image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+              echo "Required source artifact image for $service is missing: $image." >&2
+              missing_source_images+=("$image")
+            fi
+          done
+          if (( ${#missing_source_images[@]} > 0 )); then
+            echo "Required source artifact is incomplete; ${#missing_source_images[@]} runtime image(s) are missing. Nothing was published." >&2
+            exit 1
+          fi
+
+          for service in "${services[@]}"; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               echo "Fixed image tag already exists; preserving first publication: $image"
               continue
-            fi
-            if ! docker image inspect "$image" >/dev/null 2>&1; then
-              echo "Required source artifact image for $service is missing: $image." >&2
-              exit 1
             fi
 
             max_push_attempts=3

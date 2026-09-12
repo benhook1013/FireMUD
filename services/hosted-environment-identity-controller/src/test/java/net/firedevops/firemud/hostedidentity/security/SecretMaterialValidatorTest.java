@@ -568,7 +568,7 @@ public class SecretMaterialValidatorTest {
   }
 
   @Test
-  void ensurePreservesCurrentBundleWithAdditionalNonDnsSan() throws Exception {
+  void ensureRepairsCurrentBundleWithAdditionalNonDnsSan() throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     Duration renewBefore = Duration.ofDays(7);
     EnvironmentIdentityPlan plan =
@@ -585,11 +585,38 @@ public class SecretMaterialValidatorTest {
             .anyMatch(name -> Integer.valueOf(6).equals(name.get(0))));
 
     IdentityClient identityClient = identityClient(plan, existing, ca);
+    Replacement replacement = stubReplacement(identityClient, "7");
 
-    assertSame(
-        existing, generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor));
-    verify(identityClient.identitySecrets(), org.mockito.Mockito.never())
-        .resource(org.mockito.ArgumentMatchers.any(Secret.class));
+    Secret repaired =
+        generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
+
+    assertSame(replacement.holder()[0], repaired);
+    assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
+  }
+
+  @Test
+  void ensureRepairsCurrentBundleWithMismatchedLeafPrivateKey() throws Exception {
+    Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    Duration renewBefore = Duration.ofDays(7);
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
+    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
+    Secret unrelated = generator.generate(plan, ca, 9, renewBefore, now);
+    existing.getMetadata().setResourceVersion("7");
+    Map<String, String> mismatchedData = new LinkedHashMap<>(existing.getData());
+    mismatchedData.put("tls.key", unrelated.getData().get("tls.key"));
+    existing.setData(mismatchedData);
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
+    IdentityClient identityClient = identityClient(plan, existing, ca);
+    Replacement replacement = stubReplacement(identityClient, "7");
+
+    Secret repaired =
+        generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
+
+    assertSame(replacement.holder()[0], repaired);
+    assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
   }
 
   @Test

@@ -1481,6 +1481,9 @@ for ca_proof in \
   'get secret firemud-grpc-ca' \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
+  "openssl verify" \
+  "openssl x509 -noout -ext basicConstraints" \
+  "openssl x509 -noout -ext keyUsage" \
   "openssl x509 -pubkey -noout" \
   "openssl rsa -pubin -noout" \
   "openssl pkcs8 -nocrypt -out /dev/null" \
@@ -1490,6 +1493,9 @@ for ca_proof in \
   'ca.key must be an unencrypted PKCS8 private key' \
   'ca.key must be RSA' \
   'does not match the configured fingerprint' \
+  'ca.crt is not currently valid' \
+  'ca.crt Basic Constraints must identify it as a CA' \
+  'ca.crt key usage must include keyCertSign' \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
@@ -1780,11 +1786,20 @@ bootstrap_mismatched_ca_key="$bootstrap_test_dir/mismatched-ca.key"
 bootstrap_ec_ca_cert="$bootstrap_test_dir/ec-ca.crt"
 bootstrap_ec_ca_key="$bootstrap_test_dir/ec-ca.key"
 bootstrap_pkcs1_ca_key="$bootstrap_test_dir/pkcs1-ca.key"
+bootstrap_expired_ca_cert="$bootstrap_test_dir/expired-ca.crt"
+bootstrap_expired_ca_key="$bootstrap_test_dir/expired-ca.key"
+bootstrap_expired_ca_request="$bootstrap_test_dir/expired-ca.csr"
+bootstrap_non_ca_cert="$bootstrap_test_dir/non-ca.crt"
+bootstrap_non_ca_key="$bootstrap_test_dir/non-ca.key"
+bootstrap_no_key_cert_sign_cert="$bootstrap_test_dir/no-key-cert-sign.crt"
+bootstrap_no_key_cert_sign_key="$bootstrap_test_dir/no-key-cert-sign.key"
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_ca_key" \
   -out "$bootstrap_ca_cert" \
   -days 1 \
   -subj '/CN=firemud-grpc-ca' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
   >/dev/null 2>&1 || fail "could not generate the RSA gRPC CA fixture"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
   -out "$bootstrap_mismatched_ca_key" >/dev/null 2>&1 || \
@@ -1794,10 +1809,42 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -out "$bootstrap_ec_ca_cert" \
   -days 1 \
   -subj '/CN=firemud-grpc-ca' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
   >/dev/null 2>&1 || fail "could not generate the EC gRPC CA fixture"
 openssl rsa -in "$bootstrap_ca_key" -traditional \
   -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1 || \
   fail "could not generate the PKCS#1 gRPC CA key fixture"
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$bootstrap_expired_ca_key" \
+  -out "$bootstrap_expired_ca_request" \
+  -subj '/CN=expired-firemud-grpc-ca' \
+  >/dev/null 2>&1 || fail "could not generate the expired RSA gRPC CA request fixture"
+openssl x509 -req \
+  -in "$bootstrap_expired_ca_request" \
+  -signkey "$bootstrap_expired_ca_key" \
+  -out "$bootstrap_expired_ca_cert" \
+  -days -1 \
+  -extfile <(printf '%s\n' \
+    'basicConstraints=critical,CA:TRUE' \
+    'keyUsage=critical,keyCertSign,cRLSign') \
+  >/dev/null 2>&1 || fail "could not generate the expired RSA gRPC CA fixture"
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$bootstrap_non_ca_key" \
+  -out "$bootstrap_non_ca_cert" \
+  -days 1 \
+  -subj '/CN=non-ca-firemud-grpc-cert' \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+  >/dev/null 2>&1 || fail "could not generate the non-CA RSA fixture"
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout "$bootstrap_no_key_cert_sign_key" \
+  -out "$bootstrap_no_key_cert_sign_cert" \
+  -days 1 \
+  -subj '/CN=non-signing-firemud-grpc-ca' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,cRLSign' \
+  >/dev/null 2>&1 || fail "could not generate the non-signing RSA CA fixture"
 bootstrap_image='ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 bootstrap_fingerprint="$(
   openssl x509 -in "$bootstrap_ca_cert" -outform DER |
@@ -2047,6 +2094,62 @@ fi
 require_literal "$bootstrap_error" "does not match the configured fingerprint"
 if grep -Fxq -- "apply:active" "$mismatch_event_log"; then
   fail "bootstrap applied active mode after a mismatched gRPC CA fingerprint"
+fi
+expired_fingerprint="$(
+  openssl x509 -in "$bootstrap_expired_ca_cert" -outform DER |
+    sha256sum |
+    awk '{print $1}'
+)"
+expired_event_log="$bootstrap_test_dir/expired-events"
+if FAKE_EVENT_LOG="$expired_event_log" \
+  FAKE_CA_CERT="$bootstrap_expired_ca_cert" FAKE_CA_KEY="$bootstrap_expired_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$expired_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an expired gRPC CA certificate"
+fi
+require_literal "$bootstrap_error" "ca.crt is not currently valid"
+if grep -Fxq -- "apply:active" "$expired_event_log"; then
+  fail "bootstrap applied active mode after an expired gRPC CA certificate"
+fi
+non_ca_fingerprint="$(
+  openssl x509 -in "$bootstrap_non_ca_cert" -outform DER |
+    sha256sum |
+    awk '{print $1}'
+)"
+non_ca_event_log="$bootstrap_test_dir/non-ca-events"
+if FAKE_EVENT_LOG="$non_ca_event_log" \
+  FAKE_CA_CERT="$bootstrap_non_ca_cert" FAKE_CA_KEY="$bootstrap_non_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$non_ca_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a certificate without CA Basic Constraints"
+fi
+require_literal "$bootstrap_error" "ca.crt Basic Constraints must identify it as a CA"
+if grep -Fxq -- "apply:active" "$non_ca_event_log"; then
+  fail "bootstrap applied active mode after a certificate without CA Basic Constraints"
+fi
+no_key_cert_sign_fingerprint="$(
+  openssl x509 -in "$bootstrap_no_key_cert_sign_cert" -outform DER |
+    sha256sum |
+    awk '{print $1}'
+)"
+no_key_cert_sign_event_log="$bootstrap_test_dir/no-key-cert-sign-events"
+if FAKE_EVENT_LOG="$no_key_cert_sign_event_log" \
+  FAKE_CA_CERT="$bootstrap_no_key_cert_sign_cert" \
+  FAKE_CA_KEY="$bootstrap_no_key_cert_sign_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$no_key_cert_sign_fingerprint" \
+  --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a gRPC CA certificate without keyCertSign"
+fi
+require_literal "$bootstrap_error" "ca.crt key usage must include keyCertSign"
+if grep -Fxq -- "apply:active" "$no_key_cert_sign_event_log"; then
+  fail "bootstrap applied active mode after a gRPC CA certificate without keyCertSign"
 fi
 key_list_error_event_log="$bootstrap_test_dir/key-list-error-events"
 if FAKE_EVENT_LOG="$key_list_error_event_log" FAKE_CA_KEY_LIST_ERROR=1 \

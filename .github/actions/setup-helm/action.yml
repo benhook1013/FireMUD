@@ -10,6 +10,15 @@ runs:
         echo 'version=v3.20.1' >> "$GITHUB_OUTPUT"
         echo 'sha256=0165ee4a2db012cc657381001e593e981f42aa5707acdd50658326790c9d0dc3' >> "$GITHUB_OUTPUT"
 
+    - name: Validate supported runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned Helm installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
+
     - name: Restore pinned Helm archive
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
@@ -26,16 +35,12 @@ runs:
 
         helm_version="${HELM_VERSION:?}"
         helm_sha256="${HELM_SHA256:?}"
-        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
-          echo "pinned Helm installer requires a Linux X64 runner" >&2
-          exit 1
-        fi
         helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"
         archive_path="${helm_root}/helm.tar.gz"
         extraction_dir="${helm_root}/extracted"
         install_dir="${helm_root}/bin"
 
-        mkdir -p -- "$extraction_dir" "$install_dir"
+        mkdir -p -- "$helm_root" "$install_dir"
         if [[ ! -f "$archive_path" ]] \
           || ! printf '%s  %s\n' "$helm_sha256" "$archive_path" \
             | sha256sum --check --status; then
@@ -51,7 +56,9 @@ runs:
         fi
         printf '%s  %s\n' "$helm_sha256" "$archive_path" \
           | sha256sum --check --status
-        tar -xzf "$archive_path" -C "$extraction_dir"
+        rm -rf -- "$extraction_dir"
+        mkdir -p -- "$extraction_dir"
+        tar -xzf "$archive_path" -C "$extraction_dir" -- linux-amd64/helm
         install -m 0755 "$extraction_dir/linux-amd64/helm" "$install_dir/helm"
 
         reported_version="$(

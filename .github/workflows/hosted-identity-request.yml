@@ -288,8 +288,8 @@ jobs:
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
-    # Keep the shared lifecycle lock only around allocation and deployment.
-    # The remaining bounded wait is the 15-minute identity-projection wait.
+    # Keep the shared lifecycle lock around allocation, identity projection,
+    # and deployment; the pre-apply projection wait is bounded to 15 minutes.
     timeout-minutes: 45
     runs-on:
       - self-hosted
@@ -443,11 +443,9 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          if [[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
-            echo "::error title=Missing preview runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
-            exit 1
+          if [[ -n "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
           fi
-          echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}
