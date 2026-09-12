@@ -14,7 +14,8 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `verify-compose-health.sh` – shared health gate used by the smoke entrypoints.
 - `validation/run-locked-gradle.sh` – canonical local verification wrapper that prevents overlapping service-level Gradle runs from writing the same test-result trees at once. For example: `bash dev-tools/validation/run-locked-gradle.sh :account-service:test`.
 - `validation/inspect-test-results.sh` – read-only JUnit XML summary helper for diagnosing quiet post-suite Gradle tails without guessing at process state. For example: `bash dev-tools/validation/inspect-test-results.sh account-service`. This is diagnostic evidence only and does not prove that the Gradle invocation completed cleanly.
-- `run-coderabbit-review.sh` – canonical full-candidate CodeRabbit CLI wrapper. It pins the live PR base, validates the committed candidate relationship, isolates the candidate worktree, and preserves private run logs under the Git common directory.
+- `validation/report-pr-review-checkpoints.py` – read-only, paginated extraction of existing Hosted and CLI checkpoint comments for PR reports. For example: `python3 dev-tools/validation/report-pr-review-checkpoints.py --repo owner/name --pr 123`; use `--json` for machine-readable output, `--details <comment-id>` to validate linked local evidence, `--hosted [REVIEW_ID]` to save or inspect an actual completed Hosted review, or `--rounds N --source cli|hosted --disposition all|accepted|rejected` to inspect recent rounds (`--rejections N` is the concise CLI rejected-only form). The overview interleaves standardized scope-change timeline comments; see [PR lifecycle](../design/developer-workflows/pr-lifecycle.md) for checkpoint markers, saved decisions, and evidence limitations.
+- `run-coderabbit-review.sh` – canonical full-candidate CodeRabbit CLI wrapper. It pins the live PR base, validates the committed candidate relationship, isolates the candidate worktree, preserves private run logs under the Git common directory, and emits the run marker used by checkpoint details.
 - `evidence_digest.py` – shared canonical RFC 8785-subset evidence digest helper imported by deployment and validation gates.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
@@ -27,7 +28,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `docs/` – documentation generation and validation helpers; see `docs/README.md` for the script map.
 - `kreya/` – Kreya gRPC client assets.
 - `load-testing/` – Gatling load-testing module.
-- `maintenance/` – non-canonical maintenance and analysis utilities that should not shape repo workflow.
+- `maintenance/` – maintenance and analysis utilities, including `cloc-report.py` for repository summaries and PR impact snippets. Report generation is read-only by default; `pr ... --update-pr` performs the guarded marked PR-body update defined by the [PR lifecycle](../design/developer-workflows/pr-lifecycle.md). Use `python3 dev-tools/maintenance/cloc-report.py --help` for invocation details.
 - `observability/` – observability contract and evidence validators.
 - `release/` – release/notice generation utilities.
 - `restores/` – restore, state-reset, and external-credential validation helpers; see `restores/README.md` for the script map.

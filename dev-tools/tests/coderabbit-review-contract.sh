@@ -414,9 +414,190 @@ cat >"$TMP_DIR/review-rate-limited.json" <<'JSON'
               "author": {
                 "login": "coderabbitai"
               },
-              "body": "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->",
-              "createdAt": "2026-07-03T02:40:05Z",
+              "body": "Review rate limited\nYour next included review will be available in 36 minutes",
+              "createdAt": "2026-07-03T02:39:55Z",
+              "updatedAt": "2026-07-03T02:40:05Z",
               "url": "https://example.test/rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/edited-review-rate-limited.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "abc123",
+                "committedDate": "2026-07-03T02:31:07Z"
+              }
+            }
+          ]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/edited-review"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "Review rate limited\nYour next included review will be available in 36 minutes",
+              "createdAt": "2099-07-03T02:40:01Z",
+              "updatedAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/edited-rate-limited"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/substantive-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/substantive-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nThe report quotes: More reviews will be available in 36 minutes",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/substantive-quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/actionable-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2026-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2026-07-03T02:40:00Z",
+              "url": "https://example.test/actionable-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\n**Actionable comments posted: 1**\n\nThe report quotes: Review rate limited",
+              "createdAt": "2026-07-03T02:40:05Z",
+              "url": "https://example.test/actionable-quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/quoted-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReview completed.",
+              "createdAt": "2099-07-03T02:40:02Z",
+              "url": "https://example.test/quoted-completion"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "The report quotes: review rate limited",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/quoted-rate-limit"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+
+cat >"$TMP_DIR/blockquote-quoted-rate-limit.json" <<'JSON'
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "headRefOid": "abc123",
+        "commits": {
+          "nodes": [{"commit": {"oid": "abc123", "committedDate": "2099-07-03T02:31:07Z"}}]
+        },
+        "reviewThreads": {"nodes": []},
+        "comments": {
+          "nodes": [
+            {
+              "author": {"login": "benhook1013"},
+              "body": "@coderabbitai full review",
+              "createdAt": "2099-07-03T02:40:00Z",
+              "url": "https://example.test/blockquote-request"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "<!-- walkthrough_start -->\nReview completed.",
+              "createdAt": "2099-07-03T02:40:02Z",
+              "url": "https://example.test/blockquote-completion"
+            },
+            {
+              "author": {"login": "coderabbitai"},
+              "body": "> Review rate limited",
+              "createdAt": "2099-07-03T02:40:05Z",
+              "url": "https://example.test/blockquote-rate-limit"
             }
           ]
         }
@@ -904,10 +1085,71 @@ grep -q "reason=latest explicit CodeRabbit review request was acknowledged witho
 expect_failure_output "$TMP_DIR/review-rate-limited.json" "$TMP_DIR/review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]
 grep -q "explicit_review_after_latest_commit=true" "$TMP_DIR/review-rate-limited.out"
-grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/review-rate-limited.out"
+grep -q "latest_review_request_rate_limited=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "retrigger_review_allowed=false" "$TMP_DIR/review-rate-limited.out"
 grep -q "manual_thread_resolution_required=false" "$TMP_DIR/review-rate-limited.out"
-grep -q "reason=latest CodeRabbit review attempt after the PR commit was rate limited; do not retrigger yet" "$TMP_DIR/review-rate-limited.out"
+
+expect_failure_output "$TMP_DIR/edited-review-rate-limited.json" "$TMP_DIR/edited-review-rate-limited.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/edited-review-rate-limited.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/edited-review-rate-limited.out"
+grep -q "retrigger_review_allowed=false" "$TMP_DIR/edited-review-rate-limited.out"
+
+python3 - "$TMP_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+base = json.loads((root / "quoted-rate-limit.json").read_text())
+comments = base["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+comments[-1]["body"] = "Review completed.\n> Next review available in: 36 minutes"
+(root / "quoted-window-rate-limit.json").write_text(json.dumps(base))
+
+inline = json.loads((root / "quoted-rate-limit.json").read_text())
+inline_comments = inline["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+inline_comments[-1]["body"] = "The report quotes: More reviews will be available in 36 minutes"
+(root / "inline-window-rate-limit.json").write_text(json.dumps(inline))
+
+marker = json.loads((root / "edited-review-rate-limited.json").read_text())
+marker_comments = marker["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+marker_comments[-1]["body"] = (
+    "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+    "> Next review available in: 36 minutes"
+)
+(root / "marker-quoted-window-rate-limit.json").write_text(json.dumps(marker))
+PY
+
+quoted_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_window_output"
+
+inline_window_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/inline-window-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$inline_window_output"
+grep -q "retrigger_review_allowed=true" <<<"$inline_window_output"
+grep -q "ok=true" <<<"$inline_window_output"
+
+expect_failure_output "$TMP_DIR/marker-quoted-window-rate-limit.json" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+[[ $EXPECT_FAILURE_STATUS -ne 0 ]]
+grep -q "latest_review_request_rate_limited=true" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+grep -q "review_rate_limit_until=2099-07-03T03:16:05+00:00" "$TMP_DIR/marker-quoted-window-rate-limit.out"
+
+substantive_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/substantive-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$substantive_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$substantive_quoted_rate_limit_output"
+
+actionable_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/actionable-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$actionable_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$actionable_quoted_rate_limit_output"
+
+quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$quoted_rate_limit_output"
+grep -q "ok=true" <<<"$quoted_rate_limit_output"
+
+blockquote_quoted_rate_limit_output="$(python3 "$SCRIPT" --repo benhook1013/FireMUD --pr 2364 --input "$TMP_DIR/blockquote-quoted-rate-limit.json")"
+grep -q "latest_review_request_rate_limited=false" <<<"$blockquote_quoted_rate_limit_output"
+grep -q "retrigger_review_allowed=true" <<<"$blockquote_quoted_rate_limit_output"
 
 expect_failure_output "$TMP_DIR/automatic-review-rate-limited.json" "$TMP_DIR/automatic-review-rate-limited.out"
 [[ $EXPECT_FAILURE_STATUS -ne 0 ]]

@@ -33,9 +33,20 @@ REVIEW_COMMAND_TYPES = {
 SUBSTANTIVE_REVIEW_MARKER = "<!-- walkthrough_start -->"
 PLAN_REVIEW_SKIP_MARKER = "<!-- This is an auto-generated comment: skip review by coderabbit.ai -->"
 REVIEW_LIMIT_MARKER = "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->"
-REVIEW_LIMIT_MESSAGE = "More reviews will be available in"
+REVIEW_LIMIT_STATUS_PATTERN = re.compile(
+    r"^[ \t]*(?:[*_`#-]+[ \t]*)*review\s+rate\s+limited\b", re.IGNORECASE
+)
+REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN = re.compile(
+    r"^[ \t]*(?:full\s+review\s+finished\.\s*)?"
+    r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
+    r"|more\s+reviews\s+will\s+be\s+available\s+in"
+    r"|next\s+review\s+available\s+in)\b",
+    re.IGNORECASE,
+)
 REVIEW_LIMIT_WINDOW_PATTERN = re.compile(
-    r"(?:next review available in|more reviews will be available in)\s*:?[\s*]*"
+    r"(?:(?:your\s+)?next\s+(?:included\s+)?reviews?\s+(?:will\s+be\s+)?available\s+in"
+    r"|more\s+reviews\s+will\s+be\s+available\s+in"
+    r"|next\s+review\s+available\s+in)\s*:?[\s*]*"
     r"(\d+)\s+(minutes?|hours?)(?:\*\*)?",
     re.IGNORECASE,
 )
@@ -165,6 +176,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
               body
               url
               createdAt
+              updatedAt
             }
           }
         }
@@ -178,6 +190,7 @@ query($owner:String!, $repo:String!, $number:Int!) {
           author { login }
           body
           createdAt
+          updatedAt
           url
         }
         pageInfo {
@@ -218,6 +231,7 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
               body
               url
               createdAt
+              updatedAt
             }
           }
         }
@@ -239,6 +253,7 @@ query($owner:String!, $repo:String!, $number:Int!, $after:String!) {
           author { login }
           body
           createdAt
+          updatedAt
           url
         }
         pageInfo {
@@ -346,6 +361,15 @@ def parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
+def comment_effective_timestamp(comment: dict[str, Any]) -> datetime | None:
+    timestamps = [
+        parsed
+        for value in (comment.get("createdAt"), comment.get("updatedAt"))
+        if (parsed := parse_timestamp(value)) is not None
+    ]
+    return max(timestamps, default=None)
+
+
 def normalize_command(body: str) -> str:
     return " ".join(body.strip().split()).lower()
 
@@ -390,6 +414,10 @@ def parse_review_rate_limit_until(body: str, created_at: datetime) -> datetime |
     amount = int(match.group(1))
     unit = match.group(2).lower()
     return created_at + timedelta(**{"minutes" if unit.startswith("minute") else "hours": amount})
+
+
+def unquoted_body(body: str) -> str:
+    return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
 
 
 def is_substantive_review_body(body: str) -> bool:
@@ -595,18 +623,23 @@ def summarize(repo: str, pr_number: int, payload: dict[str, Any]) -> ReviewSumma
         if created_at_dt is None:
             continue
         body = comment.get("body", "")
+        if is_substantive_review_body(body):
+            continue
+        has_rate_limit_marker = REVIEW_LIMIT_MARKER in body
+        detection_body = body if has_rate_limit_marker else unquoted_body(body)
         if (
-            REVIEW_LIMIT_MARKER not in body
-            and REVIEW_LIMIT_MESSAGE not in body
-            and REVIEW_LIMIT_WINDOW_PATTERN.search(body) is None
+            not has_rate_limit_marker
+            and REVIEW_LIMIT_STATUS_PATTERN.search(detection_body) is None
+            and REVIEW_LIMIT_COMPLETE_MESSAGE_PATTERN.search(detection_body) is None
         ):
             continue
+        effective_at = comment_effective_timestamp(comment) or created_at_dt
         if latest_review_trigger_dt is not None and created_at_dt < latest_review_trigger_dt:
             continue
         if latest_rate_limit_at_dt is not None and created_at_dt < latest_rate_limit_at_dt:
             continue
         latest_rate_limit_at_dt = created_at_dt
-        latest_rate_limit_until_dt = parse_review_rate_limit_until(body, created_at_dt)
+        latest_rate_limit_until_dt = parse_review_rate_limit_until(detection_body, effective_at)
         latest_rate_limit_without_expiry = latest_rate_limit_until_dt is None
 
     for comment in pr["comments"]["nodes"]:
