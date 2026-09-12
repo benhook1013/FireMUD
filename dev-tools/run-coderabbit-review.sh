@@ -5,11 +5,12 @@ usage() {
   cat <<'EOF'
 Usage: dev-tools/run-coderabbit-review.sh <pull-request-number> [--repo <owner/name>]
 
-Launches the CodeRabbit CLI for a complete committed candidate review using the pull
-request's current base; this consumes the separate CLI review quota. The source
-worktree may be dirty; its committed HEAD is reviewed from an isolated temporary
-worktree and uncommitted edits are preserved. For read-only checkpoint and local
-capture reporting, use dev-tools/validation/report-pr-review-checkpoints.py.
+Launches the CodeRabbit CLI for a complete committed candidate review. The recorded
+pull-request base validates the published scope, while the latest named base tip
+selects the candidate comparison base; this consumes the separate CLI review quota.
+The source worktree may be dirty; its committed HEAD is reviewed from an isolated
+temporary worktree and uncommitted edits are preserved. For read-only checkpoint and
+local capture reporting, use dev-tools/validation/report-pr-review-checkpoints.py.
 EOF
 }
 
@@ -139,7 +140,7 @@ pr_state="$(jq -er '.state | strings | ascii_upcase' "$log_dir/pull-request.json
 [[ "$pr_state" == "OPEN" ]] || die "pull request is not OPEN (state: $pr_state)"
 base_ref_name="$(jq -er '.baseRefName | select(type == "string" and length > 0)' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no base branch"
-base_sha="$(jq -er '.baseRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' "$log_dir/pull-request.json")" ||
+pr_base_sha="$(jq -er '.baseRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no full base commit"
 pr_head_sha="$(jq -er '.headRefOid | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' "$log_dir/pull-request.json")" ||
   die "pull request metadata has no full head commit"
@@ -151,13 +152,27 @@ expected_path_count="$(count_nul_paths "$log_dir/expected-files.nul")"
 [[ "$expected_path_count" == "$expected_files" ]] ||
   die "pull request file list/count mismatch (files: $expected_path_count, changedFiles: $expected_files)"
 
-git -C "$source_root" fetch --no-tags "$remote" "$base_sha" \
+git -C "$source_root" fetch --no-tags "$remote" "$pr_base_sha" \
   >"$log_dir/base-fetch.stdout" 2>"$log_dir/base-fetch.stderr" ||
-  die "could not fetch exact pull request base $base_sha from $base_ref_name"
+  die "could not fetch exact pull request base $pr_base_sha from $base_ref_name"
 fetched_base_sha="$(git -C "$source_root" rev-parse 'FETCH_HEAD^{commit}')" ||
   die "could not resolve fetched pull request base"
-[[ "${fetched_base_sha,,}" == "${base_sha,,}" ]] ||
-  die "fetched pull request base does not match metadata (expected $base_sha, fetched $fetched_base_sha)"
+[[ "${fetched_base_sha,,}" == "${pr_base_sha,,}" ]] ||
+  die "fetched pull request base does not match metadata (expected $pr_base_sha, fetched $fetched_base_sha)"
+
+gh api "repos/$repo/git/ref/heads/$base_ref_name" \
+  --jq '.object.sha' >"$log_dir/base-tip-sha" 2>"$log_dir/base-tip.stderr" ||
+  die "could not resolve current pull request base branch $base_ref_name from $repo"
+base_tip_sha="$(<"$log_dir/base-tip-sha")"
+[[ "$base_tip_sha" =~ ^[0-9a-fA-F]{40}$ ]] ||
+  die "current pull request base branch $base_ref_name did not resolve to a full commit"
+git -C "$source_root" fetch --no-tags "$remote" "$base_tip_sha" \
+  >"$log_dir/base-tip-fetch.stdout" 2>"$log_dir/base-tip-fetch.stderr" ||
+  die "could not fetch current pull request base branch tip $base_tip_sha from $base_ref_name"
+fetched_base_tip_sha="$(git -C "$source_root" rev-parse 'FETCH_HEAD^{commit}')" ||
+  die "could not resolve fetched pull request base branch tip"
+[[ "${fetched_base_tip_sha,,}" == "${base_tip_sha,,}" ]] ||
+  die "fetched pull request base branch tip does not match metadata (expected $base_tip_sha, fetched $fetched_base_tip_sha)"
 
 if ! git -C "$source_root" cat-file -e "$pr_head_sha^{commit}" 2>/dev/null; then
   git -C "$source_root" fetch --no-tags "$remote" "refs/pull/$pr_number/head" \
@@ -169,19 +184,29 @@ if ! git -C "$source_root" cat-file -e "$pr_head_sha^{commit}" 2>/dev/null; then
     die "pull request head changed during fetch; refusing an ambiguous candidate"
 fi
 
-git -C "$source_root" merge-base "$base_sha" "$candidate_sha" >"$log_dir/merge-base" ||
+published_merge_bases="$(git -C "$source_root" merge-base --all "$pr_base_sha" "$candidate_sha")" ||
   die "candidate and pull request base are unrelated histories"
+mapfile -t published_merge_base_list <<<"$published_merge_bases"
+[[ "${#published_merge_base_list[@]}" == 1 && -n "${published_merge_base_list[0]}" ]] ||
+  die "candidate and pull request base have ambiguous merge bases"
 git -C "$source_root" merge-base --is-ancestor "$pr_head_sha" "$candidate_sha" ||
   die "committed HEAD is neither the pull request head nor a descendant containing its fixes"
 
-merge_base="$(<"$log_dir/merge-base")"
-git -C "$source_root" diff --name-only -z "$base_sha...$pr_head_sha" >"$log_dir/published-files.nul" ||
+candidate_merge_bases="$(git -C "$source_root" merge-base --all "$base_tip_sha" "$candidate_sha")" ||
+  die "candidate and current pull request base tip are unrelated histories"
+mapfile -t candidate_merge_base_list <<<"$candidate_merge_bases"
+[[ "${#candidate_merge_base_list[@]}" == 1 && -n "${candidate_merge_base_list[0]}" ]] ||
+  die "candidate and current pull request base tip have ambiguous merge bases"
+merge_base="${candidate_merge_base_list[0]}"
+printf '%s\n' "$merge_base" >"$log_dir/merge-base"
+git -C "$source_root" diff --name-only -z "$pr_base_sha...$pr_head_sha" >"$log_dir/published-files.nul" ||
   die "could not calculate the published pull request scope"
 sort -z -o "$log_dir/published-files.nul" "$log_dir/published-files.nul"
 published_files="$(count_nul_paths "$log_dir/published-files.nul")"
 [[ "$published_files" != 0 ]] || die "pull request has zero changed files; refusing to spend review quota"
 cmp -s "$log_dir/expected-files.nul" "$log_dir/published-files.nul" ||
   die "published pull request file paths do not match GitHub's file list"
+base_sha="$merge_base"
 git -C "$source_root" diff --name-only -z "$base_sha...$candidate_sha" >"$log_dir/candidate-files.nul" ||
   die "could not calculate the candidate scope"
 sort -z -o "$log_dir/candidate-files.nul" "$log_dir/candidate-files.nul"
@@ -213,6 +238,8 @@ candidate_sha=$candidate_sha
 run_id=$run_name
 pr_head_sha=$pr_head_sha
 base_ref_name=$base_ref_name
+pr_base_sha=$pr_base_sha
+base_tip_sha=$base_tip_sha
 base_sha=$base_sha
 pinned_base_ref=$pinned_base_ref
 merge_base=$merge_base
@@ -231,6 +258,8 @@ printf 'repository=%s\n' "$repo"
 printf 'pull_request=%s\n' "$pr_number"
 printf 'candidate_sha=%s\n' "$candidate_sha"
 printf 'base_sha=%s\n' "$base_sha"
+printf 'pr_base_sha=%s\n' "$pr_base_sha"
+printf 'base_tip_sha=%s\n' "$base_tip_sha"
 printf 'pinned_base_ref=%s\n' "$pinned_base_ref"
 printf 'merge_base=%s\n' "$merge_base"
 printf 'expected_files=%s\n' "$expected_files"
