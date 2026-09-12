@@ -4118,7 +4118,9 @@ def validate_gateway_ws_values(
 
 def path_is_under_mount(path: str, mount_path: str) -> bool:
     """Return whether a path is the mount itself or one of its descendants."""
-    return path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    return bool(mount_path) and (
+        path == mount_path or path.startswith(mount_path.rstrip("/") + "/")
+    )
 
 
 def validate_hosted_telnet_tls_values(
@@ -4307,8 +4309,9 @@ def validate_hosted_telnet_tls_values(
                     "trusted hosted-controller TCP Proxy Telnet nodePort must equal "
                     f"{expected_hosted_telnet_node_port}"
                 )
-            if len(explicit_node_port_entries) != 1 or (
-                explicit_node_port_entries[0] is not telnet_ports[0]
+            if "nodePort" in telnet_ports[0] and (
+                len(explicit_node_port_entries) != 1
+                or explicit_node_port_entries[0] is not telnet_ports[0]
             ):
                 issues.append(
                     "trusted hosted-controller TCP Proxy Service must not declare any other explicit nodePorts"

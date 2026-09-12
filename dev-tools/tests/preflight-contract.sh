@@ -3463,6 +3463,30 @@ _, bridge_missing_grpc_mount_issues = module.validate_gateway_ws_values(
 if not any("dedicated read-only Secret-backed gRPC TLS mount" in issue for issue in bridge_missing_grpc_mount_issues):
     raise SystemExit(f"missing gRPC TLS mount was accepted: {bridge_missing_grpc_mount_issues}")
 
+bridge_empty_grpc_mount_documents = copy.deepcopy(rendered_documents)
+bridge_empty_grpc_mount = next(
+    mount
+    for document in bridge_empty_grpc_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+    for container in document["spec"]["template"]["spec"]["containers"]
+    if container.get("name") == "tcp-proxy-service"
+    for mount in container["volumeMounts"]
+    if mount.get("name") == "grpc-tls"
+)
+bridge_empty_grpc_mount["mountPath"] = ""
+_, bridge_empty_grpc_mount_issues = module.validate_gateway_ws_values(
+    bridge_empty_grpc_mount_documents,
+    yaml.safe_load(current_expected_path.read_text(encoding="utf-8")),
+)
+if not any(
+    "dedicated read-only Secret-backed gRPC TLS mount" in issue
+    for issue in bridge_empty_grpc_mount_issues
+):
+    raise SystemExit(
+        f"empty gRPC TLS mountPath was accepted: {bridge_empty_grpc_mount_issues}"
+    )
+
 bridge_writable_grpc_mount_documents = copy.deepcopy(rendered_documents)
 bridge_writable_grpc_mount = next(
     mount
@@ -9046,6 +9070,33 @@ if missing_listener_issues.count(
     raise SystemExit(
         "hosted-bridge emitted cascading nodePort diagnostics for a missing Telnet listener: "
         f"{missing_listener_issues}"
+    )
+
+missing_node_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+missing_node_port_service = next(
+    document
+    for document in missing_node_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+del missing_node_port_service["spec"]["ports"][0]["nodePort"]
+missing_node_port_issues = module.validate_hosted_telnet_tls_values(
+    missing_node_port_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if missing_node_port_issues.count(
+    "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
+) != 1 or any(
+    "must not declare any other explicit nodePorts" in issue
+    for issue in missing_node_port_issues
+):
+    raise SystemExit(
+        "hosted-bridge emitted cascading surplus-nodePort diagnostics for a missing Telnet nodePort: "
+        f"{missing_node_port_issues}"
     )
 
 independent_telnet_mount_documents = list(

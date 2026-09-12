@@ -976,15 +976,7 @@ public class CertificateMaterialService {
     if (path.isEmpty() && "duration".equals(key)) {
       return "2160h".equals(value);
     }
-    if (path.isEmpty() && "revisionHistoryLimit".equals(key)) {
-      return equivalentNumber(value, 1);
-    }
     return false;
-  }
-
-  private static boolean equivalentNumber(Object value, int expected) {
-    return value instanceof Number number
-        && new BigDecimal(number.toString()).compareTo(BigDecimal.valueOf(expected)) == 0;
   }
 
   static CertificateRevision readyRevision(GenericKubernetesResource resource) {

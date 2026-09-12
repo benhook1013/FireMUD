@@ -185,6 +185,7 @@ class CertificateResourceFactoryTest {
     assertEquals("Always", privateKey.get("rotationPolicy"));
     assertEquals(false, certificateSpec.get("isCA"));
     assertEquals(true, certificateSpec.get("encodeUsagesInRequest"));
+    assertEquals(1, certificateSpec.get("revisionHistoryLimit"));
   }
 
   private static void assertSecretTemplate(

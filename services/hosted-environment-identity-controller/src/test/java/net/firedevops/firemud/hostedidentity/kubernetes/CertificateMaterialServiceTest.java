@@ -162,6 +162,18 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void controlledCertificateRevisionHistoryLimitDriftIsRepairedThroughCas() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("revisionHistoryLimit", 2);
+
+    fixture.apply();
+
+    assertEquals("7", fixture.desired().getMetadata().getResourceVersion());
+    verify(fixture.replacementResource()).lockResourceVersion("7");
+    verify(fixture.lockedReplacementResource()).replace();
+  }
+
+  @Test
   void unknownCertificateSpecDriftIsRejected() {
     CertificateApplyFixture fixture = certificateApplyFixture();
     fixture.existingSpec().put("commonName", "unexpected.example.test");
@@ -919,6 +931,8 @@ class CertificateMaterialServiceTest {
             true,
             "isCA",
             false,
+            "revisionHistoryLimit",
+            1,
             "privateKey",
             Map.of("algorithm", "RSA", "size", 2048),
             "dnsNames",
