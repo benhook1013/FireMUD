@@ -860,7 +860,12 @@ def render_pr_report(report: dict[str, object]) -> str:
         name = str(raw_row.get("name", ""))
         depth = int(raw_row.get("depth", 0))
         section_name = "Production" if name == "prod" else name.replace("_", " ").capitalize()
-        label = "Overall" if name == "repo" else f"{'↳ ' if depth >= 2 else ''}{section_name}"
+        if name == "repo":
+            label = "**Overall**"
+        elif depth == 1:
+            label = f"&emsp;**{section_name}**"
+        else:
+            label = f"&emsp;&emsp;↳ {section_name}"
         percent = raw_row.get("change_percent")
         change = format_change(percent, int(delta_counts["lines"]), int(head_counts["lines"]))
         output.append(
