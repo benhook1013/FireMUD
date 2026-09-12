@@ -62,7 +62,7 @@ spec:
                     - Retired
                   default: Active
               x-kubernetes-validations:
-                - rule: "!has(oldSelf.desiredState) || self.desiredState == oldSelf.desiredState || (oldSelf.desiredState == 'Active' && self.desiredState == 'Retired')"
+                - rule: "self.desiredState == oldSelf.desiredState || (oldSelf.desiredState == 'Active' && self.desiredState == 'Retired')"
                   message: desiredState is monotonic; Active may transition only to Retired
             status:
               type: object

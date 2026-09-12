@@ -149,6 +149,7 @@ extract_named_yaml_document() {
       document = ""
       document_kind = ""
       document_name = ""
+      in_metadata = 0
     }
     function emit_matching_document() {
       if (document_kind == expected_kind && document_name == expected_name) {
@@ -167,7 +168,12 @@ extract_named_yaml_document() {
       if ($0 ~ /^kind:[[:space:]]*/) {
         document_kind = $0
         sub(/^kind:[[:space:]]*/, "", document_kind)
-      } else if ($0 ~ /^  name:[[:space:]]*/) {
+      }
+      if ($0 ~ /^metadata:[[:space:]]*$/) {
+        in_metadata = 1
+      } else if ($0 ~ /^[^[:space:]]/) {
+        in_metadata = 0
+      } else if (in_metadata && document_name == "" && $0 ~ /^  name:[[:space:]]*/) {
         document_name = $0
         sub(/^  name:[[:space:]]*/, "", document_name)
       }

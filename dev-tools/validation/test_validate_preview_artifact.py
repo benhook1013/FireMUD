@@ -29,10 +29,11 @@ def load_validator():
     return module
 
 
+VALIDATOR = load_validator()
+
+
 class PreviewArtifactSecretReferenceTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     def test_expected_chart_label_comes_from_trusted_metadata(self):
         self.assertEqual(
@@ -298,9 +299,7 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
 
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     def _document(self, name, spec):
         return {
@@ -372,9 +371,7 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
 
 
 class PreviewArtifactMetadataTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     @staticmethod
     def _metadata_fixture(manifest_path):
@@ -507,9 +504,7 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
 
 
 class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     def _tcp_proxy_service(self, spec, *, namespace=None):
         metadata = {
@@ -648,9 +643,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
 
 class PreviewArtifactCommandLineTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     def test_subcommand_wrong_arity_reports_subcommand_usage(self):
         cases = (
@@ -685,9 +678,7 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
 
 
 class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.validator = load_validator()
+    validator = VALIDATOR
 
     def _sanitize_config_map_data(self, data):
         document = {

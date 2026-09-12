@@ -18,6 +18,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class RuntimeProfileService {
+  private static final int PREVIEW_TELNET_PORT_ALLOCATION_WIDTH = 16;
+
   private final HostedIdentityProperties properties;
 
   @SuppressFBWarnings(
@@ -160,7 +162,10 @@ public class RuntimeProfileService {
       return port == properties.getDevDemoTelnetPort();
     }
     int base = properties.getPreviewTelnetPortBase();
-    return base >= 1 && base <= 65520 && port >= base && port <= base + 15;
+    return base >= 1
+        && base <= 65536 - PREVIEW_TELNET_PORT_ALLOCATION_WIDTH
+        && port >= base
+        && port < base + PREVIEW_TELNET_PORT_ALLOCATION_WIDTH;
   }
 
   static void validateRuntimeLabels(EnvironmentIdentityPlan plan, Map<String, String> labels) {

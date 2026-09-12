@@ -338,7 +338,7 @@ for arg in "$@"; do
     has_jq=true
   fi
 done
-encode_fake_labels() {
+fake_labels_json() {
   local priority="$1"
   local labels_valid="$2"
   local labels_json='[]'
@@ -347,7 +347,7 @@ encode_fake_labels() {
   elif [[ "$priority" == true ]]; then
     labels_json='[{"name":"preview:priority"}]'
   fi
-  printf '%s' "$labels_json" | base64 | tr -d '\n'
+  printf '%s' "$labels_json"
 }
 if [[ "$1" == run && "$2" == list ]]; then
   exit 0
@@ -392,7 +392,7 @@ case "$resource" in
       if [[ "${FAKE_TARGET_RAW_QUERY_FAIL:-false}" == true ]]; then
         exit 1
       fi
-      labels_json="$(encode_fake_labels "$priority" "$labels_valid" | base64 --decode)"
+      labels_json="$(fake_labels_json "$priority" "$labels_valid")"
       jq -cn \
         --arg state "${FAKE_TARGET_STATE:-open}" \
         --arg head "$FAKE_TARGET_HEAD" \
@@ -415,7 +415,7 @@ case "$resource" in
     if [[ "${FAKE_TARGET_LOSES_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=false
     fi
-    printf '%s\t%s\t%s\n' "${FAKE_TARGET_STATE:-open}" "$FAKE_TARGET_HEAD" "$(encode_fake_labels "$priority" "$labels_valid")"
+    printf '%s\t%s\t%s\n' "${FAKE_TARGET_STATE:-open}" "$FAKE_TARGET_HEAD" "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
     ;;
   */pulls/101)
     if [[ "${FAKE_PRUNE_QUERY_FAIL:-false}" == "true" ]]; then
@@ -449,13 +449,13 @@ case "$resource" in
     if [[ "${FAKE_PR_101_GAINS_PRIORITY:-false}" == "true" && "$count" -gt 1 ]]; then
       priority=true
     fi
-    printf 'open\thead-101\t%s\n' "$(encode_fake_labels "$priority" "$labels_valid")"
+    printf 'open\thead-101\t%s\n' "$(fake_labels_json "$priority" "$labels_valid" | base64 | tr -d '\n')"
   ;;
   */pulls/102)
     if [[ "${FAKE_PRUNE_MULTI_TEST:-false}" == true ]]; then
-      printf 'open\tfeature/stack\thuman\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" valid)"
+      printf 'open\tfeature/stack\thuman\t%s\n' "$(fake_labels_json "${FAKE_PR_102_PRIORITY:-true}" valid | base64 | tr -d '\n')"
     else
-      printf 'open\thead-102\t%s\n' "$(encode_fake_labels "${FAKE_PR_102_PRIORITY:-true}" valid)"
+      printf 'open\thead-102\t%s\n' "$(fake_labels_json "${FAKE_PR_102_PRIORITY:-true}" valid | base64 | tr -d '\n')"
     fi
     ;;
   */issues/comments/*)
@@ -2106,7 +2106,7 @@ assert 'candidate limit exceeded' in body
 assert "--paginate" not in body
 PY
 
-if printf '%s\n' "901${TAB:-$'\t'}${priority_candidate_head}${TAB:-$'\t'}example/FireMUD${TAB:-$'\t'}human${TAB:-$'\t'}develop${TAB:-$'\t'}open${TAB:-$'\t'}${priority_labels_base64}" |
+if printf '%s\n' "901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}" |
   python3 "$eligibility_script" --batch-deploy-candidates --expected-repository '' \
   >"$TEMP_DIR/empty-expected-repository.output" 2>"$TEMP_DIR/empty-expected-repository.error"; then
   echo "batch candidate evaluation accepted an empty expected repository" >&2

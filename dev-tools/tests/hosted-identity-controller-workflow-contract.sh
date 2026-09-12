@@ -63,6 +63,37 @@ from pathlib import Path
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+image_meta = workflow["jobs"]["image-meta"]
+assert image_meta["outputs"]["controller_smoke_required"] == (
+    "${{ steps.controller_scope.outputs.controller_smoke_required }}"
+)
+assert image_meta["permissions"]["pull-requests"] == "read"
+controller_scope = next(
+    step
+    for step in image_meta["steps"]
+    if step.get("name") == "Detect controller image changes"
+)
+assert controller_scope["id"] == "controller_scope"
+controller_scope_script = controller_scope["with"]["script"]
+for required in (
+    "let controllerSmokeRequired = true;",
+    "github.rest.pulls.listFiles",
+    "context.payload.pull_request.changed_files",
+    "file.previous_filename",
+    "services/hosted-environment-identity-controller/",
+    "docker/base.Dockerfile",
+    ".github/workflows/runtime-images.yml",
+    "Controller change detection was incomplete; running its local smoke.",
+    "Controller change detection failed; running its local smoke:",
+    'core.setOutput("controller_smoke_required", String(controllerSmokeRequired))',
+):
+    assert required in controller_scope_script, required
+for unrelated_service in (
+    "services/account-service/",
+    "services/game-session-service/",
+    "services/tcp-proxy-service/",
+):
+    assert unrelated_service not in controller_scope_script
 steps = workflow["jobs"]["pr-local-smoke"]["steps"]
 steps_by_name = {
     step.get("name"): step for step in steps if isinstance(step, dict)
@@ -70,7 +101,15 @@ steps_by_name = {
 build_step = steps_by_name["Build controller image for credential-free local validation"]
 smoke_step = steps_by_name["Smoke controller image entrypoint and paused health"]
 export_step = steps_by_name["Export fixed-tag preview image artifact"]
+upload_step = steps_by_name["Upload preview image artifact"]
 assert steps.index(build_step) < steps.index(smoke_step) < steps.index(export_step)
+controller_condition = (
+    "${{ needs.image-meta.outputs.controller_smoke_required == 'true' }}"
+)
+assert build_step["if"] == controller_condition
+assert smoke_step["if"] == controller_condition
+assert "if" not in export_step
+assert "if" not in upload_step
 assert smoke_step["env"]["CONTROLLER_IMAGE"] == (
     "firemud-hosted-identity-controller-local:"
     "${{ needs.image-meta.outputs.image_tag }}"
@@ -1011,7 +1050,7 @@ credential_step = next(
 assert credential_step["run"] == (
     "bash ./dev-tools/hosted/preview/provision-runtime-credentials.sh"
 )
-credential_step = Path(sys.argv[6]).read_text(encoding="utf-8")
+credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
 for fragment in (
     'read_secret_if_present firemud-secret',
     'read_secret_if_present minio-credentials',
@@ -1046,7 +1085,7 @@ for fragment in (
     'purpose:"shared-hmac-secret-path-fingerprint"',
     'sha256:$fingerprint',
 ):
-    assert fragment in credential_step, fragment
+    assert fragment in credential_source_text, fragment
 for explicit_result_flow in (
     'firemud_secret_json="$(read_secret_if_present firemud-secret)"',
     'minio_secret_json="$(read_secret_if_present minio-credentials)"',
@@ -1055,14 +1094,14 @@ for explicit_result_flow in (
     'postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$firemud_secret_json")"',
     'validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"',
 ):
-    assert explicit_result_flow in credential_step, explicit_result_flow
+    assert explicit_result_flow in credential_source_text, explicit_result_flow
 for ambient_result_flow in (
     "if read_secret_if_present",
     "if read_configmap_if_present",
     'postgres_user="$decoded_secret_value"',
 ):
-    assert ambient_result_flow not in credential_step, ambient_result_flow
-assert "canonical non-empty keys" not in credential_step
+    assert ambient_result_flow not in credential_source_text, ambient_result_flow
+assert "canonical non-empty keys" not in credential_source_text
 for forbidden in (
     '--from-literal',
     '--from-literal=FIREMUD_POSTGRES_PASSWORD=firemud',
@@ -1073,7 +1112,7 @@ for forbidden in (
     'k:$key',
     '--arg key "$signing_key"',
 ):
-    assert forbidden not in credential_step, forbidden
+    assert forbidden not in credential_source_text, forbidden
 PY
 
 fixture_signing_key="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -1109,6 +1148,25 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+bootstrap_extract_source="$(sed -n '/^extract_named_yaml_document() {$/,/^}$/p' "$bootstrap")"
+eval "$bootstrap_extract_source"
+cat >"$TEMP_DIR/bootstrap-document.yaml" <<'YAML'
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+prelude:
+  name: earlier-non-metadata-name
+metadata:
+  name: expected-policy
+spec:
+  name: later-nested-name
+YAML
+extract_named_yaml_document \
+  "$TEMP_DIR/bootstrap-document.yaml" \
+  ValidatingAdmissionPolicy \
+  expected-policy \
+  "$TEMP_DIR/extracted-bootstrap-document.yaml"
+cmp -s "$TEMP_DIR/bootstrap-document.yaml" "$TEMP_DIR/extracted-bootstrap-document.yaml"
 
 controller_publish_step="$TEMP_DIR/controller-publish-step.sh"
 python3 - "$runtime" "$controller_publish_step" <<'PY'

@@ -85,7 +85,7 @@ public class SecretMaterialValidatorTest {
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source = generatedGrpcBundle(plan);
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(source);
     var summary =
         new SecretMaterialValidator()
@@ -99,12 +99,9 @@ public class SecretMaterialValidatorTest {
     X509Certificate leaf = certificate(source.getData().get("tls.crt"));
     X509Certificate root = certificate(source.getData().get("ca.crt"));
     JcaX509ExtensionUtils extensionUtils = new JcaX509ExtensionUtils();
-    byte[] rootSubjectKeyIdentifier = subjectKeyIdentifier(root);
+    byte[] rootSubjectKeyIdentifier =
+        extensionUtils.createSubjectKeyIdentifier(root.getPublicKey()).getKeyIdentifier();
     byte[] leafSubjectKeyIdentifier = subjectKeyIdentifier(leaf);
-    assertArrayEquals(
-        extensionUtils.createSubjectKeyIdentifier(root.getPublicKey()).getKeyIdentifier(),
-        rootSubjectKeyIdentifier);
-    assertArrayEquals(rootSubjectKeyIdentifier, authorityKeyIdentifier(root));
     assertArrayEquals(
         extensionUtils.createSubjectKeyIdentifier(leaf.getPublicKey()).getKeyIdentifier(),
         leafSubjectKeyIdentifier);
@@ -171,7 +168,7 @@ public class SecretMaterialValidatorTest {
   void grpcTransportIdentityValidationRequiresExactSanAndEkuProfiles() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret grpc = new GrpcTransportBundleGenerator().generate(plan);
+    Secret grpc = generatedGrpcBundle(plan);
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(grpc);
     var validator = new SecretMaterialValidator();
 
@@ -265,7 +262,7 @@ public class SecretMaterialValidatorTest {
   void grpcBundleRenewalIsExpiryDrivenWhileAcceptedGenerationRemainsAnAntiRollbackFloor() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source = generatedGrpcBundle(plan);
     assertEquals(
         false,
         GrpcTransportBundleGenerator.renewalRequired(source, Duration.ofDays(7), Instant.now()));
@@ -282,7 +279,7 @@ public class SecretMaterialValidatorTest {
   void grpcBundleRenewalReportsMissingLeafMaterialAgainstTheLeafSecret() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source = generatedGrpcBundle(plan);
     source.getData().remove("tls.crt");
 
     IllegalStateException failure =
@@ -301,7 +298,7 @@ public class SecretMaterialValidatorTest {
   void grpcBundleRenewalReportsInvalidLeafPemAgainstTheLeafSecret() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    Secret generated = generatedGrpcBundle(plan);
     Map<String, String> invalidLeafData = new LinkedHashMap<>(generated.getData());
     invalidLeafData.put(
         "tls.crt",
@@ -330,7 +327,7 @@ public class SecretMaterialValidatorTest {
   void conflictRereadMustFindTheWinningSecret() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret winner = new GrpcTransportBundleGenerator().generate(plan);
+    Secret winner = generatedGrpcBundle(plan);
     winner
         .getMetadata()
         .getAnnotations()
@@ -355,7 +352,7 @@ public class SecretMaterialValidatorTest {
   void conflictRereadRejectsEveryUnownedWinningSecret(String ownershipLabel) {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret winner = new GrpcTransportBundleGenerator().generate(plan);
+    Secret winner = generatedGrpcBundle(plan);
     winner
         .getMetadata()
         .getAnnotations()
@@ -396,7 +393,7 @@ public class SecretMaterialValidatorTest {
   void generatedCaCanSignAndHasCaOnlyKeyUsages() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source = generatedGrpcBundle(plan);
     X509Certificate ca = certificate(source.getData().get("ca.crt"));
     X509Certificate leaf = certificate(source.getData().get("tls.crt"));
 
@@ -719,7 +716,6 @@ public class SecretMaterialValidatorTest {
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, oldCa, 4, renewBefore, now);
     existing.getMetadata().setResourceVersion("7");
-    String oldTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(oldCa);
     Secret rotatedCa =
         generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_TWO);
     String rotatedTrustAnchor = SecretMaterialValidator.trustAnchorFingerprint(rotatedCa);
@@ -750,7 +746,7 @@ public class SecretMaterialValidatorTest {
   void ensureRejectsUnownedExistingBundleBeforeCaReadOrIdentityWrite() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret existing = new GrpcTransportBundleGenerator().generate(plan);
+    Secret existing = generatedGrpcBundle(plan);
     existing
         .getMetadata()
         .getLabels()
@@ -910,7 +906,7 @@ public class SecretMaterialValidatorTest {
   void grpcCaRejectsNonCanonicalKeysAndMismatchedPrivateKey() throws Exception {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    Secret generated = generatedGrpcBundle(plan);
     String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(generated);
     Secret fallbackShape =
         new SecretBuilder(generated)
@@ -963,7 +959,7 @@ public class SecretMaterialValidatorTest {
   void materialValidationRequiresCanonicalCertificateAndPrivateKeyPemLabels() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret generated = new GrpcTransportBundleGenerator().generate(plan);
+    Secret generated = generatedGrpcBundle(plan);
     String fingerprint = SecretMaterialValidator.trustAnchorFingerprint(generated);
     Map<String, String> wrongCertificate = new LinkedHashMap<>(generated.getData());
     wrongCertificate.put(
@@ -996,7 +992,7 @@ public class SecretMaterialValidatorTest {
   void validatesTheCompletePresentedChainAndRejectsMissingTrustConfiguration() {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
-    Secret source = new GrpcTransportBundleGenerator().generate(plan);
+    Secret source = generatedGrpcBundle(plan);
     String leaf = pemText(source.getData().get("tls.crt"));
     String anchor = pemText(source.getData().get("ca.crt"));
     Map<String, String> data = new LinkedHashMap<>(source.getData());
@@ -1225,7 +1221,20 @@ public class SecretMaterialValidatorTest {
     private GrpcMaterialFixture() {}
 
     public static Secret generate(EnvironmentIdentityPlan plan) {
-      return new GrpcTransportBundleGenerator().generate(plan);
+      return generatedGrpcBundle(plan);
+    }
+  }
+
+  private static Secret generatedGrpcBundle(EnvironmentIdentityPlan plan) {
+    try {
+      Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+      Secret caSource = generatedCa(now, Duration.ofDays(60));
+      String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(caSource);
+      GrpcTransportBundleGenerator.validateCa(caSource, trustAnchor);
+      return new GrpcTransportBundleGenerator()
+          .generate(plan, caSource, 1, Duration.ofDays(7), now);
+    } catch (Exception exception) {
+      throw new AssertionError("unable to create configured-CA gRPC test fixture", exception);
     }
   }
 

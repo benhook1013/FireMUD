@@ -141,47 +141,6 @@ public class GrpcTransportBundleGenerator {
     }
   }
 
-  Secret generate(EnvironmentIdentityPlan plan) {
-    try {
-      if (Security.getProvider("BC") == null) {
-        Security.addProvider(new BouncyCastleProvider());
-      }
-      KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-      keyPairGenerator.initialize(2048);
-      KeyPair root = keyPairGenerator.generateKeyPair();
-      KeyPair leaf = keyPairGenerator.generateKeyPair();
-      Instant now = Instant.now();
-      X509Certificate rootCertificate =
-          certificate(
-              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
-              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
-              root,
-              root,
-              List.of(),
-              true,
-              now,
-              null);
-      X509Certificate leafCertificate =
-          certificate(
-              new X500Name("CN=FireMUD hosted transport, O=FireMUD"),
-              new X500Name("CN=FireMUD hosted transport root, O=FireMUD"),
-              leaf,
-              root,
-              grpcDnsNames(plan),
-              false,
-              now,
-              rootCertificate.getNotAfter().toInstant());
-      Map<String, String> data = new LinkedHashMap<>();
-      data.put("tls.crt", pem(leafCertificate));
-      data.put("tls.key", pem(leaf.getPrivate()));
-      data.put("ca.crt", pem(rootCertificate));
-      return secret(plan, data, 1);
-    } catch (Exception exception) {
-      throw new IllegalStateException(
-          "unable to generate hosted gRPC transport material", exception);
-    }
-  }
-
   Secret generate(
       EnvironmentIdentityPlan plan,
       Secret caSource,
@@ -224,6 +183,8 @@ public class GrpcTransportBundleGenerator {
               now,
               caNotAfter);
       Map<String, String> data = new LinkedHashMap<>();
+      // ca.crt is the directly pinned issuing trust anchor, so tls.crt intentionally contains
+      // only the leaf certificate rather than duplicating that anchor in the presented chain.
       data.put("tls.crt", pem(leafCertificate));
       data.put("tls.key", pem(leaf.getPrivate()));
       data.put("ca.crt", requiredData(caSource, "ca.crt"));

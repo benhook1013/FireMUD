@@ -226,25 +226,8 @@ class ServedEnvironmentProbeTest {
     String leaf = fingerprint(material.getData().get("tls.crt"));
     String identityHostname = "account-service.pr-42.svc.cluster.local";
 
-    try (SSLServerSocket server =
-        (SSLServerSocket)
-            ServedEnvironmentProbe.grpcSslContext(material, trustAnchor)
-                .getServerSocketFactory()
-                .createServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-      server.setNeedClientAuth(true);
-      var serverParameters = server.getSSLParameters();
-      serverParameters.setApplicationProtocols(new String[] {"h2"});
-      server.setSSLParameters(serverParameters);
-      CompletableFuture<Void> accepted =
-          CompletableFuture.runAsync(
-              () -> {
-                try (SSLSocket peer = (SSLSocket) server.accept()) {
-                  peer.startHandshake();
-                } catch (Exception exception) {
-                  throw new IllegalStateException(exception);
-                }
-              });
-
+    try (SSLServerSocket server = mutualTlsServer(material, trustAnchor, "h2")) {
+      CompletableFuture<Void> accepted = acceptOne(server);
       try (SSLSocket client =
           ServedEnvironmentProbe.openGrpcTlsSocket(
               InetAddress.getLoopbackAddress().getHostAddress(),
@@ -378,14 +361,19 @@ class ServedEnvironmentProbeTest {
     return SecretMaterialValidatorTest.GrpcMaterialFixture.generate(plan);
   }
 
-  private static SSLServerSocket mutualTlsServer(Secret material, String trustAnchor)
-      throws Exception {
+  private static SSLServerSocket mutualTlsServer(
+      Secret material, String trustAnchor, String... applicationProtocols) throws Exception {
     SSLServerSocket server =
         (SSLServerSocket)
             ServedEnvironmentProbe.grpcSslContext(material, trustAnchor)
                 .getServerSocketFactory()
                 .createServerSocket(0, 1, InetAddress.getLoopbackAddress());
     server.setNeedClientAuth(true);
+    if (applicationProtocols.length > 0) {
+      var serverParameters = server.getSSLParameters();
+      serverParameters.setApplicationProtocols(applicationProtocols);
+      server.setSSLParameters(serverParameters);
+    }
     return server;
   }
 

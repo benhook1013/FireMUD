@@ -678,26 +678,26 @@ spec:
            (!has(oldObject.metadata.finalizers) || oldObject.metadata.finalizers.size() == 0) &&
            (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.size() == 0) &&
            has(oldObject.metadata.labels) &&
-           (oldObject.metadata.labels.size() == 4 ||
-            (oldObject.metadata.labels.size() == 5 &&
-             oldObject.metadata.labels['kubernetes.io/metadata.name'] == request.name)) &&
            oldObject.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            oldObject.metadata.labels['firemud.dev/identity-name'] == (request.name == 'dev-identity' ? 'dev-demo' : request.name.substring(0, request.name.size() - 9)) &&
            oldObject.metadata.labels['firemud.dev/environment-class'] == (request.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
-           oldObject.metadata.labels['firemud.dev/retention'] == 'retained') ||
+           oldObject.metadata.labels['firemud.dev/retention'] == 'retained' &&
+           oldObject.metadata.labels.all(k,
+             !k.startsWith('firemud.dev/') ||
+             k in ['firemud.dev/managed-by', 'firemud.dev/identity-name', 'firemud.dev/environment-class', 'firemud.dev/retention'])) ||
           (request.operation != 'DELETE' &&
            object.metadata.name.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&
            (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
            (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
            (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
            has(object.metadata.labels) &&
-           (object.metadata.labels.size() == 4 ||
-            (object.metadata.labels.size() == 5 &&
-             object.metadata.labels['kubernetes.io/metadata.name'] == object.metadata.name)) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
            object.metadata.labels['firemud.dev/identity-name'] == (object.metadata.name == 'dev-identity' ? 'dev-demo' : object.metadata.name.substring(0, object.metadata.name.size() - 9)) &&
            object.metadata.labels['firemud.dev/environment-class'] == (object.metadata.name == 'dev-identity' ? 'dev-demo-cluster' : 'pr-preview') &&
-           object.metadata.labels['firemud.dev/retention'] == 'retained')))
+           object.metadata.labels['firemud.dev/retention'] == 'retained' &&
+           object.metadata.labels.all(k,
+             !k.startsWith('firemud.dev/') ||
+             k in ['firemud.dev/managed-by', 'firemud.dev/identity-name', 'firemud.dev/environment-class', 'firemud.dev/retention']))))
       message: firemud-system and retained identity Namespace CREATE/DELETE operations require system:masters; only firemud-system permits no-op updates, and ordinary retained identity lifecycle is controller-managed
       reason: Forbidden
 ---

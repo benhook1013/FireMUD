@@ -484,6 +484,9 @@ public class HostedIdentityScopeService {
   }
 
   private static Map<String, String> labelsWithoutClass(Map<String, String> labels) {
+    // The RoleBinding admission boundary derives the environment class from its exact
+    // namespace/name tuple and permits only managed-by and identity-name FireMUD labels.
+    // Omitting the duplicate class label keeps that single classification authority intact.
     return labels.entrySet().stream()
         .filter(entry -> !"firemud.dev/environment-class".equals(entry.getKey()))
         .collect(

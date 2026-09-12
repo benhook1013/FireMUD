@@ -65,6 +65,10 @@ jobs:
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
+      controller_smoke_required: ${{ steps.controller_scope.outputs.controller_smoke_required }}
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -93,6 +97,60 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "base_image=${BASE_IMAGE}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Detect controller image changes
+        id: controller_scope
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            let controllerSmokeRequired = true;
+            if (context.eventName === "pull_request") {
+              try {
+                const changedFiles = await github.paginate(
+                  github.rest.pulls.listFiles,
+                  {
+                    ...context.repo,
+                    pull_number: context.payload.pull_request.number,
+                    per_page: 100,
+                  },
+                  (response) => response.data
+                );
+                const expectedFileCount = context.payload.pull_request.changed_files;
+                if (!Number.isInteger(expectedFileCount) || changedFiles.length !== expectedFileCount) {
+                  core.warning("Controller change detection was incomplete; running its local smoke.");
+                } else {
+                  const paths = changedFiles.flatMap((file) =>
+                    [file.filename, file.previous_filename].filter(Boolean)
+                  );
+                  const controllerPrefixes = [
+                    "buildSrc/",
+                    "gradle/",
+                    "services/hosted-environment-identity-controller/",
+                  ];
+                  const controllerFiles = new Set([
+                    ".dockerignore",
+                    ".github/workflows/runtime-images.yml",
+                    "build.gradle.kts",
+                    "dev-tools/build-local-smoke-images.sh",
+                    "docker/base.Dockerfile",
+                    "gradle.properties",
+                    "gradlew",
+                    "gradlew.bat",
+                    "settings.gradle.kts",
+                  ]);
+                  controllerSmokeRequired = paths.some(
+                    (path) =>
+                      controllerFiles.has(path) ||
+                      controllerPrefixes.some((prefix) => path.startsWith(prefix))
+                  );
+                }
+              } catch (error) {
+                core.warning(
+                  `Controller change detection failed; running its local smoke: ${error.message}`
+                );
+              }
+            }
+            core.setOutput("controller_smoke_required", String(controllerSmokeRequired));
 
   build-base-image:
     name: Build Runtime Base Image
@@ -497,6 +555,7 @@ jobs:
         run: bash ./dev-tools/verify-smoke-images.sh
 
       - name: Build controller image for credential-free local validation
+        if: ${{ needs.image-meta.outputs.controller_smoke_required == 'true' }}
         env:
           CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
         run: |
@@ -509,6 +568,7 @@ jobs:
             services/hosted-environment-identity-controller/build/libs
 
       - name: Smoke controller image entrypoint and paused health
+        if: ${{ needs.image-meta.outputs.controller_smoke_required == 'true' }}
         env:
           CONTROLLER_IMAGE: firemud-hosted-identity-controller-local:${{ needs.image-meta.outputs.image_tag }}
         run: |
@@ -584,7 +644,7 @@ jobs:
             echo "- Built and smoke-tested PR merge SHA: \`${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment. The locally validated hosted identity controller image is excluded from the artifact."
+            echo "This read-only PR workflow built and smoke-tested the PR merge commit. The trusted default-branch publisher uploads the preview service images in that successful artifact under the fixed PR head-SHA tag used by preview deployment. When controller-specific inputs change, this workflow also validates a local hosted identity controller image; that image is excluded from the artifact."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure

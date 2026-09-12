@@ -221,7 +221,8 @@ forbid_literal "$CRD" "additionalProperties: false"
 require_literal "$CRD" "desiredState"
 require_literal "$CRD" "- Active"
 require_literal "$CRD" "- Retired"
-require_literal "$CRD" "!has(oldSelf.desiredState)"
+forbid_literal "$CRD" "!has(oldSelf.desiredState)"
+require_literal "$CRD" "self.desiredState == oldSelf.desiredState || (oldSelf.desiredState == 'Active' && self.desiredState == 'Retired')"
 forbid_literal "$CRD" "self.metadata.namespace == 'firemud-system'"
 forbid_literal "$CRD" "x-kubernetes-preserve-unknown-fields"
 require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
@@ -783,6 +784,49 @@ assert "(request.subResource == 'finalize' || object.spec == oldObject.spec)" in
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller'" in namespace_expression
 assert "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
 assert "object.metadata.labels['firemud.dev/retention'] == 'retained'" in namespace_expression
+assert "oldObject.metadata.labels.size() ==" not in namespace_expression
+assert "object.metadata.labels.size() ==" not in namespace_expression
+assert "oldObject.metadata.labels.all(k," in namespace_expression
+assert "object.metadata.labels.all(k," in namespace_expression
+assert "!k.startsWith('firemud.dev/')" in namespace_expression
+
+
+def retained_identity_namespace_labels_are_valid(namespace_name, labels):
+    identity_name = (
+        "dev-demo" if namespace_name == "dev-identity" else namespace_name.removesuffix("-identity")
+    )
+    environment_class = "dev-demo-cluster" if namespace_name == "dev-identity" else "pr-preview"
+    required = {
+        "firemud.dev/managed-by": "hosted-identity-controller",
+        "firemud.dev/identity-name": identity_name,
+        "firemud.dev/environment-class": environment_class,
+        "firemud.dev/retention": "retained",
+    }
+    return all(labels.get(key) == value for key, value in required.items()) and all(
+        not key.startswith("firemud.dev/") or key in required for key in labels
+    )
+
+
+retained_namespace_labels = {
+    "firemud.dev/managed-by": "hosted-identity-controller",
+    "firemud.dev/identity-name": "pr-42",
+    "firemud.dev/environment-class": "pr-preview",
+    "firemud.dev/retention": "retained",
+}
+assert retained_identity_namespace_labels_are_valid(
+    "pr-42-identity",
+    {
+        **retained_namespace_labels,
+        "kubernetes.io/metadata.name": "pr-42-identity",
+        "example.test/owner": "platform",
+    },
+)
+assert not retained_identity_namespace_labels_are_valid(
+    "pr-42-identity", {**retained_namespace_labels, "firemud.dev/unowned": "drift"}
+)
+assert not retained_identity_namespace_labels_are_valid(
+    "pr-42-identity", {**retained_namespace_labels, "firemud.dev/retention": "ephemeral"}
+)
 for field in optional_metadata_fields:
     assert f"has(object.metadata.{field}) == has(oldObject.metadata.{field})" in namespace_expression
     assert (
@@ -994,6 +1038,20 @@ for forbidden_requester_permission in secrets certificates; do
     fail "requester role has forbidden $forbidden_requester_permission access"
   fi
 done
+REQUESTER_RBAC="$requester_rbac" python3 - <<'PY'
+import os
+
+import yaml
+
+role = yaml.safe_load(os.environ["REQUESTER_RBAC"])
+assert role["rules"] == [
+    {
+        "apiGroups": ["platform.firemud.dev"],
+        "resources": ["hostedenvironmentidentities"],
+        "verbs": ["get", "create", "update", "patch", "delete"],
+    }
+]
+PY
 controller_rbac="$(
   select_named_yaml_document "$RBAC" Role firemud-hosted-identity-controller
 )"
