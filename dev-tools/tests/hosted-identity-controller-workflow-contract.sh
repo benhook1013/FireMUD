@@ -1373,7 +1373,9 @@ action_validation = '[[ "$ACTION" != deploy && "$ACTION" != destroy ]]'
 assert pr_number_validation in preview_derive_run
 assert action_validation in preview_derive_run
 assert '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
+assert '[[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
 assert 'HEAD_SHA="${HEAD_SHA,,}"' in preview_derive_run
+assert 'BASE_SHA="${BASE_SHA,,}"' in preview_derive_run
 assert 'PR_NUMBER="$INPUT_PR_NUMBER"' in preview_derive_run
 assert 'HEAD_SHA="$INPUT_HEAD_SHA"' in preview_derive_run
 assert 'ACTION="$INPUT_ACTION"' in preview_derive_run
@@ -1386,6 +1388,12 @@ assert 'IMAGE_TAG="${HEAD_SHA}"' in preview_derive_run
 image_tag_validation = '[[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]'
 assert image_tag_validation in preview_derive_run
 assert "Invalid preview domain" in preview_derive_run
+assert preview_derive_run.count(
+    'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"'
+) == 1
+assert "PULL_REQUEST_JSON=" in preview_derive_run
+assert ".head.sha" in preview_derive_run
+assert ".base.sha" in preview_derive_run
 for output in (
     'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"',
     'echo "hostname=${PREVIEW_HOSTNAME}"',
@@ -1976,17 +1984,17 @@ mkdir -p "$preview_derive_stub_dir"
 cat >"$preview_derive_stub_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == api && "$2" == repos/example/FireMUD/pulls/901 && "$3" == --jq ]]
+[[ $# -eq 2 && "$1" == api && "$2" == repos/example/FireMUD/pulls/901 ]]
 printf '%s\n' "$*" >>"${PREVIEW_DERIVE_GH_LOG:?}"
-case "$4" in
-  .base.sha) printf '%s\n' base-901 ;;
-  *) exit 2 ;;
-esac
+printf '%s\n' "${PREVIEW_DERIVE_PR_JSON:?}"
 SH
 chmod +x "$preview_derive_stub_dir/gh"
 
 preview_derive_head_upper=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 preview_derive_head_lower=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+preview_derive_base_upper=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+preview_derive_base_lower=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+preview_derive_pr_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\"},\"base\":{\"sha\":\"$preview_derive_base_upper\"}}"
 run_preview_derive_dispatch() {
   local input_pr_number="$1"
   local input_head_sha="$2"
@@ -2009,6 +2017,7 @@ run_preview_derive_dispatch() {
     INPUT_IMAGE_TAG="$input_image_tag" \
     GITHUB_REPOSITORY=example/FireMUD \
     GITHUB_SHA="$preview_derive_head_lower" \
+    PREVIEW_DERIVE_PR_JSON="${PREVIEW_DERIVE_PR_JSON:-$preview_derive_pr_json}" \
     PREVIEW_DERIVE_GH_LOG="${output_path}.gh.log" \
     GITHUB_OUTPUT="$output_path" \
     bash "$preview_derive_step" >"${output_path}.stdout" 2>"$error_path"
@@ -2026,9 +2035,49 @@ run_preview_derive_dispatch \
   "$preview_derive_error"
 grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
 grep -Fxq 'image_tag=Pr-901-CustomTag' "$preview_derive_output"
-grep -Fxq 'base_sha=base-901' "$preview_derive_output"
-grep -Fxq 'api repos/example/FireMUD/pulls/901 --jq .base.sha' \
-  "${preview_derive_output}.gh.log"
+grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
+test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 1
+grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
+
+preview_derive_snapshot_output="$TEMP_DIR/preview-derive-snapshot.output"
+run_preview_derive_dispatch \
+  901 \
+  '' \
+  deploy \
+  '' \
+  preview.firedevops.net \
+  "$preview_derive_snapshot_output" \
+  "$TEMP_DIR/preview-derive-snapshot.error"
+grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_snapshot_output"
+grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_snapshot_output"
+test "$(wc -l <"${preview_derive_snapshot_output}.gh.log")" -eq 1
+
+for invalid_snapshot_case in missing-head malformed-base; do
+  invalid_snapshot_output="$TEMP_DIR/preview-derive-${invalid_snapshot_case}.output"
+  case "$invalid_snapshot_case" in
+    missing-head)
+      invalid_snapshot_json="{\"base\":{\"sha\":\"$preview_derive_base_upper\"}}"
+      expected_snapshot_error='::error title=Invalid pull request metadata::Expected string head and base SHAs.'
+      ;;
+    malformed-base)
+      invalid_snapshot_json="{\"head\":{\"sha\":\"$preview_derive_head_upper\"},\"base\":{\"sha\":\"not-a-sha\"}}"
+      expected_snapshot_error='::error title=Invalid preview base SHA::Expected exactly 40 hexadecimal characters.'
+      ;;
+  esac
+  if PREVIEW_DERIVE_PR_JSON="$invalid_snapshot_json" run_preview_derive_dispatch \
+    901 \
+    '' \
+    deploy \
+    '' \
+    preview.firedevops.net \
+    "$invalid_snapshot_output" \
+    "$TEMP_DIR/preview-derive-${invalid_snapshot_case}.error"; then
+    echo "preview plan accepted ${invalid_snapshot_case} pull request metadata" >&2
+    exit 1
+  fi
+  grep -Fxq "$expected_snapshot_error" \
+    "$TEMP_DIR/preview-derive-${invalid_snapshot_case}.error"
+done
 
 preview_derive_invalid_output="$TEMP_DIR/preview-derive-invalid.output"
 preview_derive_invalid_error="$TEMP_DIR/preview-derive-invalid.error"

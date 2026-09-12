@@ -137,23 +137,11 @@ jobs:
             echo "::error title=Invalid preview action::Expected deploy or destroy." >&2
             exit 1
           fi
-          if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
-          fi
-          if [ -z "$HEAD_SHA" ]; then
-            HEAD_SHA="${GITHUB_SHA}"
-          fi
-          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+          if [ -n "$HEAD_SHA" ] && [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
             echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
             exit 1
           fi
-          # Keep an explicitly supplied image tag unchanged; only the requested
-          # head identity is normalized for every downstream lifecycle boundary.
-          HEAD_SHA="${HEAD_SHA,,}"
-          if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG="${HEAD_SHA}"
-          fi
-          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+          if [ -n "$IMAGE_TAG" ] && [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo "::error title=Invalid preview image tag::Expected a non-empty tag of at most 128 safe characters." >&2
             exit 1
           fi
@@ -167,8 +155,39 @@ jobs:
             echo "::error title=Invalid preview domain::Derived preview hostname exceeds 253 characters." >&2
             exit 1
           fi
-          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            PULL_REQUEST_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+            if ! PR_HEAD_SHA="$(jq -er '.head.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")" ||
+              ! BASE_SHA="$(jq -er '.base.sha | select(type == "string")' <<<"$PULL_REQUEST_JSON")"; then
+              echo "::error title=Invalid pull request metadata::Expected string head and base SHAs." >&2
+              exit 1
+            fi
+            if [[ ! "$PR_HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+              exit 1
+            fi
+            if [[ ! "$BASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+              echo "::error title=Invalid preview base SHA::Expected exactly 40 hexadecimal characters." >&2
+              exit 1
+            fi
+            PR_HEAD_SHA="${PR_HEAD_SHA,,}"
+            BASE_SHA="${BASE_SHA,,}"
+            if [ -z "$HEAD_SHA" ]; then
+              HEAD_SHA="$PR_HEAD_SHA"
+            fi
+          fi
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA="${GITHUB_SHA}"
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
+          # Keep an explicitly supplied image tag unchanged; only the requested
+          # head identity is normalized for every downstream lifecycle boundary.
+          HEAD_SHA="${HEAD_SHA,,}"
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG="${HEAD_SHA}"
           fi
           {
             echo "action=${ACTION}"
