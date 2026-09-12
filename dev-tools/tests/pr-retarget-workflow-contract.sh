@@ -436,7 +436,14 @@ require_contains "$preview_reconciler_path" '--workflow "${preview_workflow_name
 require_contains "$preview_reconciler_path" '--branch "${head_ref}"'
 require_contains "$preview_reconciler_path" "gh api --paginate \"repos/\${GITHUB_REPOSITORY}/pulls?state=open&per_page=100\""
 require_contains "$preview_reconciler_path" "sort -t \$'\\t' -k1,1n -k2,2n"
-require_contains "$preview_reconciler_path" "--jq 'first(.[] | select(.status == \"requested\" or .status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\") | .databaseId) // empty'"
+require_contains "$preview_reconciler_path" '--json databaseId,status,headSha'
+# shellcheck disable=SC2016 # These assertions intentionally match literal shell and jq source.
+require_contains "$preview_reconciler_path" '--arg head_sha "${head_sha}"'
+# shellcheck disable=SC2016 # This assertion intentionally matches literal jq source.
+require_contains "$preview_reconciler_path" '.headSha == $head_sha'
+for active_status in requested queued in_progress waiting pending; do
+  require_contains "$preview_reconciler_path" ".status == \"${active_status}\""
+done
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
   echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2
