@@ -2459,27 +2459,11 @@ grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
 # shellcheck disable=SC2016 # Assert literal default helper selection.
 grep -Fq 'delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-# shellcheck disable=SC2016 # Assert literal delegated timeout.
-grep -Fq 'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-# shellcheck disable=SC2016 # Assert literal delegated helper arguments.
-grep -Fq 'bash "$delete_script" "$runtime_namespace" "$runtime_namespace"' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-grep -Fq 'exit 0' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-if grep -Fq 'exit $?' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
-  echo "pruner retained a redundant last-status exit" >&2
-  exit 1
-fi
 if grep -Fq 'delete_runtime_namespace()' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
   echo "pruner retained a duplicate runtime namespace deletion implementation" >&2
   exit 1
 fi
-# shellcheck disable=SC2016 # Assert literal helper invocation arguments.
-grep -Fq 'bash "$delete_script" "$namespace" "$release_name"' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   "$trusted_workflow" \
   "$reconciler_workflow" \

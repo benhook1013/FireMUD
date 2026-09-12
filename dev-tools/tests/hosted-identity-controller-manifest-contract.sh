@@ -220,8 +220,11 @@ require_literal "$MANIFEST_DIR/namespace.yaml" "name: firemud-system"
 require_literal "$MANIFEST_DIR/namespace.yaml" "fixed control-plane labels must be restored"
 for namespace_label in \
   "pod-security.kubernetes.io/enforce: restricted" \
+  "pod-security.kubernetes.io/enforce-version: v1.34" \
   "pod-security.kubernetes.io/audit: restricted" \
-  "pod-security.kubernetes.io/warn: restricted"; do
+  "pod-security.kubernetes.io/audit-version: v1.34" \
+  "pod-security.kubernetes.io/warn: restricted" \
+  "pod-security.kubernetes.io/warn-version: v1.34"; do
   require_literal "$MANIFEST_DIR/namespace.yaml" "$namespace_label"
 done
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-controller"

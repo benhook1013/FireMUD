@@ -156,8 +156,10 @@ subjects:
 # Kubernetes cannot use resourceNames to constrain CREATE and cannot inspect a
 # Role's rules during RBAC authorization.  The controller therefore has the
 # narrowly named scope-writer verbs below, while the fail-closed admission
-# policies enforce the exact derived Role/RoleBinding shape and namespace.  If
-# those policies are unavailable, the controller must remain paused.
+# bindings firemud-hosted-identity-scope-roles and
+# firemud-hosted-identity-scope-rolebindings enforce the exact derived
+# Role/RoleBinding shape and namespace.  The controller must remain paused
+# whenever either binding is absent.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
