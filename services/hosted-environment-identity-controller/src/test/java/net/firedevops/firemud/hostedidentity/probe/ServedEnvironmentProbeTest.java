@@ -106,6 +106,30 @@ class ServedEnvironmentProbeTest {
   }
 
   @Test
+  void failureClassificationUsesStableProbeNamesRatherThanListPositions() {
+    ServedEnvironmentProbe.ProbeResult rejected =
+        new ServedEnvironmentProbe.ProbeResult(false, "rejected");
+
+    assertEquals(
+        List.of("grpc-rejected", "https-rejected", "bridge-rejected", "telnet-rejected"),
+        List.of(
+                ServedEnvironmentProbe.ProbeName.GRPC,
+                ServedEnvironmentProbe.ProbeName.HTTPS,
+                ServedEnvironmentProbe.ProbeName.BRIDGE,
+                ServedEnvironmentProbe.ProbeName.TELNET)
+            .stream()
+            .map(name -> ServedEnvironmentProbe.prefixedResult(name, rejected).reason())
+            .toList());
+    assertEquals(
+        "grpc-material-or-configuration-invalid",
+        ServedEnvironmentProbe.prefixedResult(
+                ServedEnvironmentProbe.ProbeName.GRPC,
+                new ServedEnvironmentProbe.ProbeResult(
+                    false, "grpc-material-or-configuration-invalid"))
+            .reason());
+  }
+
+  @Test
   void readinessProbeSuppliesEachDerivedEndpointToItsProbeSeam() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");

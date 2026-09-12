@@ -119,14 +119,12 @@ public class ServedEnvironmentProbe {
       Duration timeout) {
     List<RunningProbe> probes =
         List.of(
+            startProbe(ProbeName.HTTPS, () -> httpsProbe.check(plan.hostname(), 443)),
+            startProbe(ProbeName.TELNET, () -> telnetProbe.check(plan.hostname(), telnetPort)),
             startProbe(
-                "https", () -> httpsProbe.check(plan.hostname(), 443)),
+                ProbeName.BRIDGE, () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
             startProbe(
-                "telnet", () -> telnetProbe.check(plan.hostname(), telnetPort)),
-            startProbe(
-                "bridge", () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
-            startProbe(
-                "grpc",
+                ProbeName.GRPC,
                 () -> {
                   try {
                     return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
@@ -140,18 +138,18 @@ public class ServedEnvironmentProbe {
                 }));
     long deadline = System.nanoTime() + timeout.toNanos();
     try {
-      ProbeResult[] results = new ProbeResult[probes.size()];
-      for (int index = 0; index < probes.size(); index++) {
+      List<CompletedProbe> results = new ArrayList<>(probes.size());
+      for (RunningProbe probe : probes) {
         long remaining = deadline - System.nanoTime();
         if (remaining <= 0) {
           throw new TimeoutException();
         }
-        results[index] = probes.get(index).task().get(remaining, TimeUnit.NANOSECONDS);
+        results.add(new CompletedProbe(probe, probe.task().get(remaining, TimeUnit.NANOSECONDS)));
       }
-      for (int index = 0; index < results.length; index++) {
-        if (!results[index].ready()) {
+      for (CompletedProbe completedProbe : results) {
+        if (!completedProbe.result().ready()) {
           cancelOutstanding(probes);
-          return prefixedResult(index, results[index]);
+          return prefixedResult(completedProbe.probe().name(), completedProbe.result());
         }
       }
       return new ProbeResult(true, "served-bridge-and-grpc-accepted");
@@ -178,7 +176,7 @@ public class ServedEnvironmentProbe {
     }
   }
 
-  private static RunningProbe startProbe(String name, Callable<ProbeResult> operation) {
+  private static RunningProbe startProbe(ProbeName name, Callable<ProbeResult> operation) {
     ProbeAttempt attempt = new ProbeAttempt();
     FutureTask<ProbeResult> task =
         new FutureTask<>(
@@ -191,8 +189,8 @@ public class ServedEnvironmentProbe {
                 CURRENT_ATTEMPT.remove();
               }
             });
-    Thread.ofVirtual().name("served-environment-probe-" + name).start(task);
-    return new RunningProbe(task, attempt);
+    Thread.ofVirtual().name("served-environment-probe-" + name.label()).start(task);
+    return new RunningProbe(name, task, attempt);
   }
 
   private static void cancelOutstanding(List<RunningProbe> probes) {
@@ -204,18 +202,12 @@ public class ServedEnvironmentProbe {
     }
   }
 
-  private static ProbeResult prefixedResult(int index, ProbeResult result) {
-    if (index == 3 && "grpc-material-or-configuration-invalid".equals(result.reason())) {
+  static ProbeResult prefixedResult(ProbeName probeName, ProbeResult result) {
+    if (probeName == ProbeName.GRPC
+        && "grpc-material-or-configuration-invalid".equals(result.reason())) {
       return result;
     }
-    String prefix = switch (index) {
-      case 0 -> "https-";
-      case 1 -> "telnet-";
-      case 2 -> "bridge-";
-      case 3 -> "grpc-";
-      default -> throw new IllegalArgumentException("unknown endpoint probe index: " + index);
-    };
-    return new ProbeResult(false, prefix + result.reason());
+    return new ProbeResult(false, probeName.failurePrefix() + result.reason());
   }
 
   private ProbeResult bridge(
@@ -596,7 +588,30 @@ public class ServedEnvironmentProbe {
     }
   }
 
-  private record RunningProbe(FutureTask<ProbeResult> task, ProbeAttempt attempt) {}
+  enum ProbeName {
+    HTTPS("https"),
+    TELNET("telnet"),
+    BRIDGE("bridge"),
+    GRPC("grpc");
+
+    private final String label;
+
+    ProbeName(String label) {
+      this.label = label;
+    }
+
+    String label() {
+      return label;
+    }
+
+    String failurePrefix() {
+      return label + "-";
+    }
+  }
+
+  private record RunningProbe(ProbeName name, FutureTask<ProbeResult> task, ProbeAttempt attempt) {}
+
+  private record CompletedProbe(RunningProbe probe, ProbeResult result) {}
 
   private static final class ProbeAttempt {
     private Socket openSocket;
