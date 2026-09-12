@@ -736,7 +736,14 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
                     f"{container_path}.securityContext.{security_field} must be a positive numeric identity"
                 )
         capabilities = security.get("capabilities")
-        if not isinstance(capabilities, dict) or "ALL" not in (capabilities.get("drop") or []):
+        dropped_capabilities = (
+            capabilities.get("drop") if isinstance(capabilities, dict) else None
+        )
+        if (
+            not isinstance(dropped_capabilities, list)
+            or not all(isinstance(value, str) for value in dropped_capabilities)
+            or "ALL" not in dropped_capabilities
+        ):
             fail(f"{container_path}.securityContext.capabilities must drop ALL")
         additions = set(capabilities.get("add") or [])
         if not additions <= RESTRICTED_CAPABILITY_ADDITIONS:

@@ -575,7 +575,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     validateSourceLabels(material.source(), plan, role);
     if (material.projectionDeferred()) {
       return SecretProjectionService.ProjectionResult.awaiting(
-          material.state().statusValue(), material.revision());
+          material.state().statusValue(),
+          SecretProjectionService.revisionForRole(material.role(), material.source().getData()));
     }
     String provenance =
         HostedIdentityContract.GRPC_ROLE.equals(role)

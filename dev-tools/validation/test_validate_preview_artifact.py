@@ -282,6 +282,20 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
         ):
             self._validate_manifest(document)
 
+    def test_manifest_rejects_scalar_capability_drop(self):
+        document = self._manifest_fixture({"emptyDir": {}})
+        document["spec"]["template"]["spec"]["containers"][0]["securityContext"][
+            "capabilities"
+        ]["drop"] = "NOTALL"
+        with self.assertRaisesRegex(
+            ValueError,
+            re.escape(
+                "Deployment/account-service.spec.template.spec.containers[0]."
+                "securityContext.capabilities must drop ALL"
+            ),
+        ):
+            self._validate_manifest(document)
+
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
     @classmethod

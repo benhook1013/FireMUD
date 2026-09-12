@@ -70,14 +70,6 @@ if ! namespace_uid="$(
   exit 1
 fi
 
-helm_status=0
-helm uninstall "$release_name" \
-  --namespace "$namespace" \
-  --ignore-not-found || helm_status=$?
-if ((helm_status != 0)); then
-  echo "Helm uninstall failed for hosted release ${release_name}; continuing namespace deletion." >&2
-fi
-
 delete_options="$(
   jq -cn \
     --arg uid "$namespace_uid" \

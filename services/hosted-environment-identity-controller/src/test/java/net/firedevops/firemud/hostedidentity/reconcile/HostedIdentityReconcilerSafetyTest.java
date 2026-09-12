@@ -80,7 +80,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityReconcilerSafetyTest {
   @Test
-  void deferredDriftReturnsNonsyncedWithoutWritingAProjection() {
+  void deferredDriftReturnsCanonicalSecretRevisionWithoutWritingAProjection() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlanner planner = new EnvironmentIdentityPlanner(properties);
     var plan = planner.plan("pr-42");
@@ -111,13 +111,17 @@ class HostedIdentityReconcilerSafetyTest {
             .withType("kubernetes.io/tls")
             .withData(Map.of("tls.crt", "accepted", "tls.key", "accepted"))
             .build();
-    String revision = "1".repeat(64);
+    String certificateFingerprint = "1".repeat(64);
     var material =
         new CertificateMaterialService.RoleMaterial(
             HostedIdentityContract.TELNET_ROLE,
             accepted,
             new SecretMaterialValidator.MaterialSummary(
-                revision, "2".repeat(64), Instant.EPOCH, Instant.MAX, "3".repeat(64)),
+                certificateFingerprint,
+                "2".repeat(64),
+                Instant.EPOCH,
+                Instant.MAX,
+                "3".repeat(64)),
             1,
             1,
             "cert-manager",
@@ -132,7 +136,10 @@ class HostedIdentityReconcilerSafetyTest {
             HostedIdentityContract.TELNET_ROLE);
 
     assertEquals("serialized-deferred-drift", result.state());
-    assertEquals(revision, result.revision());
+    assertEquals(
+        SecretProjectionService.revisionForRole(
+            HostedIdentityContract.TELNET_ROLE, accepted.getData()),
+        result.revision());
     assertEquals(false, result.isSynced());
     verifyNoInteractions(projectionService);
   }
