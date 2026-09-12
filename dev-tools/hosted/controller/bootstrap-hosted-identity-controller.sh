@@ -372,6 +372,10 @@ verify_grpc_ca_prerequisite() {
   command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
   command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
   command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
+  if ! LC_ALL=C openssl verify -help 2>&1 |
+    grep -Eq -- '(^|[[:space:]])-no-CAstore([[:space:]]|$)'; then
+    fail "openssl verify must support -no-CAstore to validate the gRPC CA"
+  fi
   local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
   local ca_basic_constraints ca_key_usage
   local certificate_public_key_sha256 private_key_public_key_sha256

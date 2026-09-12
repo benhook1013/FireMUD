@@ -4295,8 +4295,7 @@ def validate_hosted_telnet_tls_values(
                 if isinstance(port, dict) and "nodePort" in port
             ]
             if (
-                len(telnet_ports) == 1
-                and isinstance(telnet_ports[0].get("nodePort"), int)
+                isinstance(telnet_ports[0].get("nodePort"), int)
                 and not isinstance(telnet_ports[0].get("nodePort"), bool)
                 and telnet_ports[0]["nodePort"] != expected_hosted_telnet_node_port
             ):
@@ -4305,8 +4304,7 @@ def validate_hosted_telnet_tls_values(
                     f"{expected_hosted_telnet_node_port}"
                 )
             if len(explicit_node_port_entries) != 1 or (
-                len(telnet_ports) != 1
-                or explicit_node_port_entries[0] is not telnet_ports[0]
+                explicit_node_port_entries[0] is not telnet_ports[0]
             ):
                 issues.append(
                     "trusted hosted-controller TCP Proxy Service must not declare any other explicit nodePorts"
@@ -6555,11 +6553,15 @@ def wait_for_secret_key_requirements(
             if remaining_seconds <= 0:
                 break
             time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
-    reported_attempts = attempts_completed
     return [
         (
-            f"{latest_issues[secret_name]} (still not ready after "
-            f"{reported_attempts} attempts; elapsed "
+            f"{latest_issues[secret_name]} ("
+            + (
+                f"still not ready after {attempts_completed} attempts"
+                if attempts_completed
+                else "no Secret lookups attempted"
+            )
+            + "; elapsed "
             f"{max(0.0, time.monotonic() - readiness_started_at):.1f}s of "
             f"{ready_timeout_seconds}s readiness budget)"
         )

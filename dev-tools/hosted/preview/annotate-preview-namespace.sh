@@ -21,6 +21,14 @@ if [[ "$namespace" != "pr-${pr_number}" ]]; then
   echo "namespace must equal pr-${pr_number}" >&2
   exit 1
 fi
+if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "head_sha must be exactly 40 lowercase hexadecimal characters" >&2
+  exit 1
+fi
+if ! [[ "$image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+  echo "image_tag must be a non-empty canonical image tag of at most 128 safe characters" >&2
+  exit 1
+fi
 if ! [[ "$telnet_port" =~ ^32(00[0-9]|01[0-5])$ ]]; then
   echo "telnet_port must be an allocated port from 32000 through 32015" >&2
   exit 1

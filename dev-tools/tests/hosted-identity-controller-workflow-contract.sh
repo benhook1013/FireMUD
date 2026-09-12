@@ -1181,11 +1181,36 @@ assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
+preview_plan_checkouts = [
+    step
+    for step in preview_plan_steps
+    if step.get("uses", "").startswith("actions/checkout@")
+]
+assert preview_plan_checkouts == [
+    {
+        "name": "Check out preview candidate",
+        "if": "${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {"persist-credentials": False},
+    },
+    {
+        "name": "Check out trusted default branch for close lifecycle",
+        "if": "${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+            "ref": "${{ github.event.repository.default_branch }}",
+            "persist-credentials": False,
+        },
+    },
+]
 assert preview_plan_outputs["close_certificate_identity_mode"] == (
     "${{ steps.close-certificate-identity.outputs.mode }}"
 )
 close_mode_step = next(
     step for step in preview_plan_steps if step.get("id") == "close-certificate-identity"
+)
+assert preview_plan_steps.index(preview_plan_checkouts[1]) < preview_plan_steps.index(
+    close_mode_step
 )
 assert close_mode_step == {
     "name": "Resolve close lifecycle certificate identity owner",
@@ -1607,6 +1632,51 @@ for invalid_preview_annotator_case in "${invalid_preview_annotator_cases[@]}"; d
   fi
   if [[ -s "$preview_annotator_log" ]]; then
     echo "preview namespace annotator mutated Kubernetes before rejecting invalid target metadata" >&2
+    exit 1
+  fi
+done
+
+invalid_preview_annotator_heads=(
+  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+)
+for invalid_preview_annotator_head in "${invalid_preview_annotator_heads[@]}"; do
+  : >"$preview_annotator_log"
+  if run_preview_annotator \
+    pr-42 42 "$invalid_preview_annotator_head" \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 32000 2026-09-13T01:02:03Z \
+    >"$TEMP_DIR/invalid-preview-annotator-head.output" \
+    2>"$TEMP_DIR/invalid-preview-annotator-head.error"; then
+    echo "preview namespace annotator accepted invalid head SHA: $invalid_preview_annotator_head" >&2
+    exit 1
+  fi
+  if [[ -s "$preview_annotator_log" ]]; then
+    echo "preview namespace annotator mutated Kubernetes before rejecting an invalid head SHA" >&2
+    exit 1
+  fi
+done
+
+preview_image_tag_129="$(printf 'z%.0s' {1..129})"
+invalid_preview_annotator_image_tags=(
+  ""
+  "bad/tag"
+  "bad:tag"
+  "-bad"
+  "$preview_image_tag_129"
+)
+for invalid_preview_annotator_image_tag in "${invalid_preview_annotator_image_tags[@]}"; do
+  : >"$preview_annotator_log"
+  if run_preview_annotator \
+    pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    "$invalid_preview_annotator_image_tag" 32000 2026-09-13T01:02:03Z \
+    >"$TEMP_DIR/invalid-preview-annotator-image-tag.output" \
+    2>"$TEMP_DIR/invalid-preview-annotator-image-tag.error"; then
+    echo "preview namespace annotator accepted invalid image tag: $invalid_preview_annotator_image_tag" >&2
+    exit 1
+  fi
+  if [[ -s "$preview_annotator_log" ]]; then
+    echo "preview namespace annotator mutated Kubernetes before rejecting an invalid image tag" >&2
     exit 1
   fi
 done
@@ -3698,6 +3768,36 @@ run_waiter_rejects_timeout() {
 run_waiter_rejects_timeout projections --projections pr-42 pr-42 3601
 run_waiter_rejects_timeout retired --retired pr-42 3601
 run_waiter_rejects_timeout active pr-42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-42 3601
+
+# Every waiter mode rejects a non-canonical identity through the shared
+# identity-name validator before any Kubernetes read.
+run_waiter_rejects_identity() {
+  local suffix="$1"
+  shift
+  local kubectl_log="$TEMP_DIR/identity-${suffix}.kubectl.log"
+  local error="$TEMP_DIR/identity-${suffix}.error"
+  local output="$TEMP_DIR/identity-${suffix}.output"
+  local status
+
+  : >"$kubectl_log"
+  set +e
+  env \
+    PATH="$waiter_stub_dir:$PATH" \
+    WAITER_KUBECTL_LOG="$kubectl_log" \
+    bash "$waiter" "$@" >"$output" 2>"$error"
+  status=$?
+  set -e
+
+  [[ "$status" -eq 2 ]]
+  grep -Fxq 'identity name is not canonical: pr-042' "$error"
+  [[ ! -s "$kubectl_log" ]]
+}
+
+# shellcheck disable=SC2016 # Assert the literal shared validator call sites.
+test "$(grep -Fc 'validate_identity_name "$identity_name"' "$waiter")" -eq 2
+run_waiter_rejects_identity projections --projections pr-042 pr-042 60
+run_waiter_rejects_identity retired --retired pr-042 60
+run_waiter_rejects_identity active pr-042 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pr-042 60
 
 run_waiter_accepts_timeout() {
   local scenario="$1"

@@ -497,5 +497,8 @@ public class HostedIdentityScopeService {
         || namespace.getMetadata().getUid() == null) {
       throw new IllegalStateException(kind + " Namespace is absent or has no UID");
     }
+    if (namespace.getMetadata().getDeletionTimestamp() != null) {
+      throw new IllegalStateException(kind + " Namespace is terminating");
+    }
   }
 }

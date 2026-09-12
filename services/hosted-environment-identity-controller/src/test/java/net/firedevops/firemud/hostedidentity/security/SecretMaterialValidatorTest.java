@@ -40,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -129,8 +130,7 @@ public class SecretMaterialValidatorTest {
     assertEquals(1, GrpcTransportBundleGenerator.issuanceGeneration(source));
     assertEquals(
         plan.grpcConsumers().size() * 4, GrpcTransportBundleGenerator.grpcDnsNames(plan).size());
-    assertEquals(
-        true,
+    assertTrue(
         GrpcTransportBundleGenerator.grpcDnsNames(plan)
             .contains("account-service.pr-42.svc.cluster.local"));
     assertThrows(
@@ -276,15 +276,13 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret source = generatedGrpcBundle(plan);
-    assertEquals(
-        false,
+    assertFalse(
         GrpcTransportBundleGenerator.renewalRequired(source, Duration.ofDays(7), Instant.now()));
     GrpcTransportBundleGenerator.validateAcceptedGeneration(2, 1);
     assertThrows(
         IllegalStateException.class,
         () -> GrpcTransportBundleGenerator.validateAcceptedGeneration(1, 2));
-    assertEquals(
-        true,
+    assertTrue(
         GrpcTransportBundleGenerator.renewalRequired(source, Duration.ofDays(31), Instant.now()));
   }
 
@@ -590,7 +588,7 @@ public class SecretMaterialValidatorTest {
     Secret repaired =
         generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
 
-    assertSame(replacement.holder()[0], repaired);
+    assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
   }
 
@@ -615,7 +613,7 @@ public class SecretMaterialValidatorTest {
     Secret repaired =
         generator.ensure(identityClient.client(), plan, 4L, renewBefore, trustAnchor);
 
-    assertSame(replacement.holder()[0], repaired);
+    assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
   }
 
@@ -701,7 +699,7 @@ public class SecretMaterialValidatorTest {
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
     verify(replacement.resource()).lockResourceVersion("7");
     verify(replacement.lockedResource()).replace();
-    assertSame(replacement.holder()[0], repaired);
+    assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
     assertEquals(ca.getData().get("ca.crt"), repaired.getData().get("ca.crt"));
   }
@@ -736,7 +734,7 @@ public class SecretMaterialValidatorTest {
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
     verify(replacement.resource()).lockResourceVersion("7");
     verify(replacement.lockedResource()).replace();
-    assertSame(replacement.holder()[0], repaired);
+    assertSame(replacement.holder().get(), repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(repaired));
     assertEquals(ca.getData().get("ca.crt"), repaired.getData().get("ca.crt"));
   }
@@ -799,7 +797,7 @@ public class SecretMaterialValidatorTest {
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
     verify(replacement.resource()).lockResourceVersion("7");
     verify(replacement.lockedResource()).replace();
-    Secret rotated = replacement.holder()[0];
+    Secret rotated = replacement.holder().get();
     assertSame(rotated, repaired);
     assertEquals(5, GrpcTransportBundleGenerator.issuanceGeneration(rotated));
     assertEquals("7", rotated.getMetadata().getResourceVersion());
@@ -1253,20 +1251,22 @@ public class SecretMaterialValidatorTest {
       IdentityClient identityClient, String resourceVersion) {
     Resource<Secret> resource = mock(Resource.class);
     ReplaceDeletable<Secret> lockedResource = mock(ReplaceDeletable.class);
-    Secret[] holder = new Secret[1];
+    AtomicReference<Secret> holder = new AtomicReference<>();
     when(identityClient.identitySecrets().resource(org.mockito.ArgumentMatchers.any(Secret.class)))
         .thenAnswer(
             invocation -> {
-              holder[0] = invocation.getArgument(0, Secret.class);
+              holder.set(invocation.getArgument(0, Secret.class));
               return resource;
             });
     when(resource.lockResourceVersion(resourceVersion)).thenReturn(lockedResource);
-    when(lockedResource.replace()).thenAnswer(invocation -> holder[0]);
+    when(lockedResource.replace()).thenAnswer(invocation -> holder.get());
     return new Replacement(resource, lockedResource, holder);
   }
 
   private record Replacement(
-      Resource<Secret> resource, ReplaceDeletable<Secret> lockedResource, Secret[] holder) {}
+      Resource<Secret> resource,
+      ReplaceDeletable<Secret> lockedResource,
+      AtomicReference<Secret> holder) {}
 
   private static String pemText(String encoded) {
     return new String(Base64.getDecoder().decode(encoded), StandardCharsets.US_ASCII);

@@ -2348,7 +2348,8 @@ try:
         len(immediate_deadline_issues) != 1
         or "Secret readiness deadline expired before lookup"
         not in immediate_deadline_issues[0]
-        or "still not ready after 0 attempts" not in immediate_deadline_issues[0]
+        or "no Secret lookups attempted" not in immediate_deadline_issues[0]
+        or "still not ready after" in immediate_deadline_issues[0]
         or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
     ):
         raise SystemExit(

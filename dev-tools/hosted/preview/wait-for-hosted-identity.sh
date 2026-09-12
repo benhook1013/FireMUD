@@ -13,14 +13,20 @@ resolve_runtime_namespace() {
   fi
 }
 
-validate_canonical_names() {
+validate_identity_name() {
   local identity_name="$1"
-  local runtime_namespace="$2"
 
   if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]{0,50})$ ]]; then
     echo "identity name is not canonical: ${identity_name}" >&2
     exit 2
   fi
+}
+
+validate_canonical_names() {
+  local identity_name="$1"
+  local runtime_namespace="$2"
+
+  validate_identity_name "$identity_name"
   if [[ ! "$runtime_namespace" =~ ^(dev|pr-[1-9][0-9]{0,50})$ ]]; then
     echo "runtime namespace is not canonical: ${runtime_namespace}" >&2
     exit 2
@@ -139,10 +145,7 @@ if [[ "${1:-}" == "--retired" ]]; then
   fi
   identity_name="$2"
   timeout_seconds="${3:-600}"
-  if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]{0,50})$ ]]; then
-    echo "identity name is not canonical: ${identity_name}" >&2
-    exit 2
-  fi
+  validate_identity_name "$identity_name"
   validate_timeout_seconds "$timeout_seconds"
 
   deadline=$((SECONDS + timeout_seconds))

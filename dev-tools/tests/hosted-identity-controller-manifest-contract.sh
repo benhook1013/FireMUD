@@ -1495,6 +1495,7 @@ for ca_proof in \
   "ca.crt\\nca.key" \
   "openssl x509 -outform DER" \
   "openssl verify" \
+  "openssl verify must support -no-CAstore" \
   "openssl x509 -noout -ext basicConstraints" \
   "openssl x509 -noout -ext keyUsage" \
   "openssl x509 -pubkey -noout" \
@@ -2099,6 +2100,34 @@ done
   fail "active bootstrap read the CA before all authorization probes completed"
 (( active_apply_index > first_ca_index )) || \
   fail "active bootstrap applied active mode before verifying the gRPC CA"
+unsupported_openssl_dir="$bootstrap_test_dir/unsupported-openssl"
+mkdir -p "$unsupported_openssl_dir"
+cat >"$unsupported_openssl_dir/openssl" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" == "verify" && "${2:-}" == "-help" ]]; then
+  printf '%s\n' 'Usage: verify [options]' ' -no-CAfile' ' -no-CApath' >&2
+  exit 0
+fi
+printf 'unexpected fake openssl invocation: %s\n' "$*" >&2
+exit 2
+SH
+chmod +x "$unsupported_openssl_dir/openssl"
+unsupported_openssl_event_log="$bootstrap_test_dir/unsupported-openssl-events"
+if FAKE_EVENT_LOG="$unsupported_openssl_event_log" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$unsupported_openssl_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted openssl verify without -no-CAstore support"
+fi
+require_literal "$bootstrap_error" "openssl verify must support -no-CAstore"
+if grep -Fxq -- "ca-read" "$unsupported_openssl_event_log"; then
+  fail "bootstrap read the gRPC CA before rejecting unsupported openssl verify"
+fi
+if grep -Fxq -- "apply:active" "$unsupported_openssl_event_log"; then
+  fail "bootstrap applied active mode after rejecting unsupported openssl verify"
+fi
 mismatch_event_log="$bootstrap_test_dir/mismatch-events"
 if FAKE_EVENT_LOG="$mismatch_event_log" \
   FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \

@@ -81,6 +81,36 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void terminatingRuntimeNamespaceDoesNotCreateRetainedIdentityNamespace() {
+    EnvironmentIdentityPlan plan = plan();
+    KubernetesClient client = mock(KubernetesClient.class);
+    NonNamespaceOperation<Namespace, NamespaceList, Resource<Namespace>> namespaces =
+        mock(NonNamespaceOperation.class);
+    Resource<Namespace> runtimeNamespace = mock(Resource.class);
+    when(client.namespaces()).thenReturn(namespaces);
+    when(namespaces.withName(plan.runtimeNamespace())).thenReturn(runtimeNamespace);
+    when(runtimeNamespace.get())
+        .thenReturn(
+            new NamespaceBuilder()
+                .withNewMetadata()
+                .withName(plan.runtimeNamespace())
+                .withUid("runtime-uid")
+                .withDeletionTimestamp("2026-09-13T00:00:00Z")
+                .endMetadata()
+                .build());
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new HostedIdentityScopeService().ensure(client, plan));
+
+    assertEquals("runtime Namespace is terminating", failure.getMessage());
+    verify(namespaces, never()).withName(plan.identityNamespace());
+    verify(namespaces, never()).resource(org.mockito.ArgumentMatchers.any(Namespace.class));
+  }
+
+  @Test
   void identityNamespaceCreateConflictAcceptsCanonicalWinner() {
     EnvironmentIdentityPlan plan = plan();
     NamespaceClient fixture = namespaceClient(plan);

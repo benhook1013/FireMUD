@@ -891,6 +891,27 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
 
                 self.assertFalse(destination.exists())
 
+    def test_sanitize_rejects_jwt_jwks_config_map_as_unapproved(self):
+        self.assertNotIn("jwt-jwks", self.validator.EXPECTED_NAMES["ConfigMap"])
+        document = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "jwt-jwks"},
+            "data": {"jwks.json": '{"keys": []}'},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.yaml"
+            destination = Path(directory) / "sanitized.yaml"
+            source.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                re.escape("ConfigMap/jwt-jwks is not an approved preview object"),
+            ):
+                self.validator.sanitize(source, destination)
+
+            self.assertFalse(destination.exists())
+
     def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
         sanitized = self._sanitize_config_map_data(
             {

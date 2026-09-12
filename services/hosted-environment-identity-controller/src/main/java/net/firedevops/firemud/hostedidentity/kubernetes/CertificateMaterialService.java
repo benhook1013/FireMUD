@@ -675,7 +675,7 @@ public class CertificateMaterialService {
             .limit(2)
             .count();
     if (validRequestCount > 1) {
-      LOGGER.debug(
+      LOGGER.warn(
           "Multiple CertificateRequests match identity source Secret for Certificate {}",
           certificate.name());
       return false;

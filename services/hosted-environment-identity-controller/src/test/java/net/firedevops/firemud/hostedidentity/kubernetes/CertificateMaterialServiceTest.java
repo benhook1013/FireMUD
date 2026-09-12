@@ -42,10 +42,14 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import net.firedevops.firemud.hostedidentity.security.GrpcTransportBundleGenerator;
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class CertificateMaterialServiceTest {
   @Test
   void roleMaterialStatesRetainCanonicalStatusValues() {
@@ -1554,7 +1558,8 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
-  void multipleValidCertificateRequestsKeepMaterializationPendingForRetry() {
+  void multipleValidCertificateRequestsWarnAndKeepMaterializationPendingForRetry(
+      CapturedOutput output) {
     StableBatchFixture fixture = stableBatchFixture();
     EnvironmentIdentityPlan plan = fixture.plan();
     Map<String, String> sourceData = fixture.acceptedData();
@@ -1582,6 +1587,9 @@ class CertificateMaterialServiceTest {
     CertificateMaterialService.RoleMaterial material = fixture.batch().ingress();
 
     assertEquals(MATERIALIZATION_PENDING, material.state());
+    org.assertj.core.api.Assertions.assertThat(output.getOut())
+        .contains(
+            "Multiple CertificateRequests match identity source Secret for Certificate pr-42-tls");
   }
 
   @Test

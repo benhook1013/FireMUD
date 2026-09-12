@@ -588,10 +588,8 @@ def _validate_image_reference(
         fail(f"{location} uses an unapproved image")
 
 
-def _clean_config_map(document: dict) -> dict | None:
+def _clean_config_map(document: dict) -> dict:
     metadata = document.get("metadata") or {}
-    if metadata.get("name") == "jwt-jwks":
-        return None
     if metadata.get("name") != "firemud-config":
         return document
     _validate_firemud_config_shape(document)
@@ -850,8 +848,6 @@ def sanitize(source: Path, destination: Path) -> None:
                 f"{kind}/{metadata['name']}.spec.template.spec",
             )
         sanitized = _clean_config_map(copy.deepcopy(raw))
-        if sanitized is None:
-            continue
         if sanitized.get("kind") == "Service":
             name = sanitized["metadata"]["name"]
             spec = _require_mapping(sanitized.get("spec"), f"Service/{name}.spec")
