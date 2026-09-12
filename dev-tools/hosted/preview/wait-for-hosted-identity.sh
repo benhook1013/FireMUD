@@ -95,6 +95,7 @@ if [[ "${1:-}" == "--projections" ]]; then
   deadline=$((SECONDS + timeout_seconds))
   max_transport_retries=2
   kubectl_error_file="$(mktemp)"
+  # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
   cleanup_kubectl_error_file() {
     rm -f -- "$kubectl_error_file"
   }
