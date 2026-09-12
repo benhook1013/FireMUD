@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -71,8 +72,12 @@ import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
 import net.firedevops.firemud.hostedidentity.security.SecretMaterialValidator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityReconcilerSafetyTest {
   @Test
   void deferredDriftReturnsNonsyncedWithoutWritingAProjection() {
@@ -382,7 +387,7 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void identityProjectionFenceNamesTheProtectedAction() {
+  void identityProjectionFenceNamesTheProtectedAction(CapturedOutput output) {
     var expected =
         new RuntimeProfileService.RuntimeProfile(
             "uid", "a".repeat(40), "a".repeat(40), 32016, true);
@@ -418,6 +423,59 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         "runtime profile became malformed before identity projection; identity projection is withheld: invalid runtime profile",
         condition.getMessage());
+    assertTrue(
+        output
+            .getOut()
+            .contains(
+                "Hosted identity reconciliation fenced for environment 'dev-demo' and runtime Namespace 'dev'"));
+    assertTrue(output.getOut().contains("RuntimeProfileFenceException:"));
+    assertTrue(output.getOut().contains("IllegalStateException: invalid runtime profile"));
+  }
+
+  @Test
+  void unexpectedReconcileFailureLogsContextAndStackBeforeReturningBlockedStatus(
+      CapturedOutput output) {
+    HostedIdentityProperties properties =
+        initializedProperties(HostedIdentityProperties.ActivationMode.ACTIVE);
+    EnvironmentIdentityPlanner planner = new EnvironmentIdentityPlanner(properties);
+    EnvironmentIdentityPlan plan = planner.plan("pr-42");
+    KubernetesClient client = mock(KubernetesClient.class);
+    RuntimeProfileService runtime = mock(RuntimeProfileService.class);
+    when(runtime.read(client, plan))
+        .thenReturn(
+            new RuntimeProfileService.RuntimeProfile(
+                "runtime-uid", "a".repeat(40), "a".repeat(40), 32042, true));
+    HostedIdentityScopeService scope = mock(HostedIdentityScopeService.class);
+    doThrow(new IllegalStateException("unexpected scope failure")).when(scope).ensure(client, plan);
+    HostedIdentityReconciler reconciler =
+        new HostedIdentityReconciler(
+            client,
+            mock(AdmissionValidator.class),
+            planner,
+            mock(CertificateMaterialService.class),
+            mock(SecretProjectionService.class),
+            scope,
+            runtime,
+            mock(DeploymentRolloutService.class),
+            mock(ServedEnvironmentProbe.class),
+            new HostedStatusService(planner),
+            properties);
+    HostedEnvironmentIdentity resource = resource();
+    resource.getMetadata().setFinalizers(java.util.List.of(HostedIdentityContract.FINALIZER));
+
+    UpdateControl<HostedEnvironmentIdentity> result =
+        reconciler.reconcile(resource, mock(Context.class));
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Blocked, status.getPhase());
+    assertEquals("ReconciliationBlocked", status.getConditions().get(0).getReason());
+    assertEquals("unexpected scope failure", status.getConditions().get(0).getMessage());
+    assertTrue(
+        output
+            .getOut()
+            .contains(
+                "Hosted identity reconciliation failed for environment 'pr-42' and runtime Namespace 'pr-42'"));
+    assertTrue(output.getOut().contains("IllegalStateException: unexpected scope failure"));
   }
 
   @Test

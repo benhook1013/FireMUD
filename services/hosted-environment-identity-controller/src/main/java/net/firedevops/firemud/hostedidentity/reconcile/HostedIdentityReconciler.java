@@ -31,6 +31,8 @@ import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentitySpec
 import net.firedevops.firemud.hostedidentity.model.HostedEnvironmentIdentityStatus;
 import net.firedevops.firemud.hostedidentity.probe.ServedEnvironmentProbe;
 import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Narrow, periodic reconciler for one closed HostedEnvironmentIdentity resource. */
@@ -39,6 +41,7 @@ import org.springframework.stereotype.Component;
     finalizerName = HostedIdentityContract.FINALIZER,
     informer = @Informer(namespaces = {HostedIdentityContract.CONTROL_NAMESPACE}))
 public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIdentity> {
+  private static final Logger LOGGER = LoggerFactory.getLogger(HostedIdentityReconciler.class);
   private final KubernetesClient client;
   private final AdmissionValidator admissionValidator;
   private final EnvironmentIdentityPlanner planner;
@@ -82,9 +85,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   @Override
   public UpdateControl<HostedEnvironmentIdentity> reconcile(
       HostedEnvironmentIdentity resource, Context<HostedEnvironmentIdentity> context) {
+    EnvironmentIdentityPlan plannedEnvironment = null;
     try {
       admissionValidator.validate(resource);
       EnvironmentIdentityPlan plan = planner.plan(resource.getMetadata().getName());
+      plannedEnvironment = plan;
       HostedIdentityProperties.ActivationMode activationMode = properties.activationMode();
       if (activationMode != HostedIdentityProperties.ActivationMode.ACTIVE) {
         return statusWithoutBridgeRoles(
@@ -377,6 +382,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           tcpProxyBridge,
           grpc);
     } catch (RuntimeProfileFenceException exception) {
+      LOGGER.warn(
+          "Hosted identity reconciliation fenced for environment '{}' and runtime Namespace '{}'",
+          resourceName(resource),
+          runtimeNamespace(plannedEnvironment),
+          exception);
       return statusWithoutBridgeRoles(
           resource,
           exception.phase(),
@@ -388,6 +398,11 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null,
           null);
     } catch (Exception exception) {
+      LOGGER.error(
+          "Hosted identity reconciliation failed for environment '{}' and runtime Namespace '{}'",
+          resourceName(resource),
+          runtimeNamespace(plannedEnvironment),
+          exception);
       return statusWithoutBridgeRoles(
           resource,
           HostedEnvironmentIdentityStatus.Phase.Blocked,
@@ -399,6 +414,20 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           null,
           null);
     }
+  }
+
+  private static String resourceName(HostedEnvironmentIdentity resource) {
+    if (resource == null
+        || resource.getMetadata() == null
+        || resource.getMetadata().getName() == null
+        || resource.getMetadata().getName().isBlank()) {
+      return "<unknown>";
+    }
+    return resource.getMetadata().getName();
+  }
+
+  private static String runtimeNamespace(EnvironmentIdentityPlan plan) {
+    return plan == null ? "<unresolved>" : plan.runtimeNamespace();
   }
 
   static ReadinessStatus readinessStatus(

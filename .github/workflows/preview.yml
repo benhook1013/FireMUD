@@ -86,24 +86,39 @@ jobs:
         id: derive
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+          INPUT_PREVIEW_DOMAIN: ${{ inputs.preview_domain }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
+            IMAGE_TAG=""
             if [ "${{ github.event.action }}" = "closed" ]; then
               ACTION="destroy"
             else
               ACTION="deploy"
             fi
           else
-            PR_NUMBER="${{ inputs.pr_number }}"
-            HEAD_SHA="${{ inputs.head_sha }}"
+            PR_NUMBER="$INPUT_PR_NUMBER"
+            HEAD_SHA="$INPUT_HEAD_SHA"
             BASE_SHA=""
-            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
-            ACTION="${{ inputs.action }}"
-            IMAGE_TAG="${{ inputs.image_tag }}"
+            PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"
+            ACTION="$INPUT_ACTION"
+            IMAGE_TAG="$INPUT_IMAGE_TAG"
+          fi
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
+          fi
+          if [[ "$ACTION" != deploy && "$ACTION" != destroy ]]; then
+            echo "::error title=Invalid preview action::Expected deploy or destroy." >&2
+            exit 1
           fi
           if [ -z "$HEAD_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
             HEAD_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
@@ -118,18 +133,32 @@ jobs:
           # Keep an explicitly supplied image tag unchanged; only the requested
           # head identity is normalized for every downstream lifecycle boundary.
           HEAD_SHA="${HEAD_SHA,,}"
-          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
-            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
-          fi
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
+          fi
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error title=Invalid preview image tag::Expected a non-empty tag of at most 128 safe characters." >&2
+            exit 1
+          fi
+          if ((${#PREVIEW_DOMAIN} > 253)) ||
+            [[ ! "$PREVIEW_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]]; then
+            echo "::error title=Invalid preview domain::Expected a lowercase DNS domain of at most 253 characters." >&2
+            exit 1
+          fi
+          PREVIEW_HOSTNAME="pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+          if ((${#PREVIEW_HOSTNAME} > 253)); then
+            echo "::error title=Invalid preview domain::Derived preview hostname exceeds 253 characters." >&2
+            exit 1
+          fi
+          if [ -z "$BASE_SHA" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            BASE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.base.sha')"
           fi
           {
             echo "action=${ACTION}"
             echo "pr_number=${PR_NUMBER}"
             echo "namespace=pr-${PR_NUMBER}"
             echo "release_name=pr-${PR_NUMBER}"
-            echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+            echo "hostname=${PREVIEW_HOSTNAME}"
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"

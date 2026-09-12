@@ -205,6 +205,36 @@ class HostedIdentityScopeServiceTest {
     assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(apiRoundTripped, plan));
   }
 
+  @Test
+  void retainedIdentityNamespaceAllowsUnrelatedForeignLabels() {
+    EnvironmentIdentityPlan plan = plan();
+    Namespace valid = identityNamespace(plan);
+    Namespace externallyLabelled =
+        new NamespaceBuilder(valid)
+            .editMetadata()
+            .addToLabels("tooling.example/managed-by", "cluster-tool")
+            .endMetadata()
+            .build();
+
+    assertTrue(HostedIdentityScopeService.isExpectedIdentityNamespace(externallyLabelled, plan));
+  }
+
+  @Test
+  void retainedIdentityNamespaceRejectsMissingExpectedLabel() {
+    EnvironmentIdentityPlan plan = plan();
+    Namespace valid = identityNamespace(plan);
+    Map<String, String> incompleteLabels = new HashMap<>(valid.getMetadata().getLabels());
+    incompleteLabels.remove(HostedIdentityContract.RETENTION_LABEL);
+    Namespace incomplete =
+        new NamespaceBuilder(valid)
+            .editMetadata()
+            .withLabels(incompleteLabels)
+            .endMetadata()
+            .build();
+
+    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(incomplete, plan));
+  }
+
   @ParameterizedTest(name = "{0}")
   @MethodSource("rejectedRetainedIdentityNamespaces")
   void retainedIdentityNamespaceRejectsOwnedMetadataDrift(
@@ -710,10 +740,6 @@ class HostedIdentityScopeServiceTest {
 
     Map<String, String> unexpectedLabels = new HashMap<>(devNamespace.getMetadata().getLabels());
     unexpectedLabels.put("firemud.dev/other", "unexpected");
-    Map<String, String> arbitraryExtraLabels =
-        new HashMap<>(devNamespace.getMetadata().getLabels());
-    arbitraryExtraLabels.put("tooling.example/managed-by", "cluster-tool");
-
     return Stream.of(
         Arguments.of(
             "managed-by label mismatch",
@@ -737,14 +763,6 @@ class HostedIdentityScopeServiceTest {
             new NamespaceBuilder(devNamespace)
                 .editMetadata()
                 .withLabels(unexpectedLabels)
-                .endMetadata()
-                .build()),
-        Arguments.of(
-            "arbitrary extra label",
-            devPlan,
-            new NamespaceBuilder(devNamespace)
-                .editMetadata()
-                .withLabels(arbitraryExtraLabels)
                 .endMetadata()
                 .build()),
         Arguments.of(

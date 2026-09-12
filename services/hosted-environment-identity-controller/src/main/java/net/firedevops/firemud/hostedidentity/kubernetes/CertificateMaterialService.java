@@ -829,44 +829,49 @@ public class CertificateMaterialService {
             .inNamespace(namespace)
             .resource(desired)
             .create();
+        return;
       } catch (KubernetesClientException exception) {
         if (exception.getCode() != 409) {
           throw exception;
         }
-      }
-    } else {
-      if (!"cert-manager.io/v1".equals(existing.getApiVersion())
-          || !"Certificate".equals(existing.getKind())
-          || existing.getMetadata() == null
-          || !containsDesiredLabels(
-              existing.getMetadata().getLabels(), desired.getMetadata().getLabels())) {
-        throw new IllegalStateException("owned Certificate identity metadata drifted");
-      }
-      Object desiredSpec = desired.getAdditionalProperties().get("spec");
-      Object existingSpec =
-          existing.getAdditionalProperties() == null
-              ? null
-              : existing.getAdditionalProperties().get("spec");
-      if (!hasOnlyDesiredShape(desiredSpec, existingSpec, "")) {
-        throw new IllegalStateException("owned Certificate spec has unknown drift");
-      }
-      if (!desiredSubsetEquivalent(desiredSpec, existingSpec)) {
-        String resourceVersion = existing.getMetadata().getResourceVersion();
-        if (resourceVersion == null || resourceVersion.isBlank()) {
-          throw new IllegalStateException("owned Certificate has no resourceVersion for repair");
+        existing = operation.get();
+        if (existing == null) {
+          throw new IllegalStateException(
+              "Certificate create conflict winner is absent", exception);
         }
-        desired.getMetadata().setResourceVersion(resourceVersion);
-        try {
-          client
-              .genericKubernetesResources(ResourceContexts.CERTIFICATES)
-              .inNamespace(namespace)
-              .resource(desired)
-              .lockResourceVersion(resourceVersion)
-              .replace();
-        } catch (KubernetesClientException exception) {
-          if (exception.getCode() != 409) {
-            throw exception;
-          }
+      }
+    }
+    if (!"cert-manager.io/v1".equals(existing.getApiVersion())
+        || !"Certificate".equals(existing.getKind())
+        || existing.getMetadata() == null
+        || !containsDesiredLabels(
+            existing.getMetadata().getLabels(), desired.getMetadata().getLabels())) {
+      throw new IllegalStateException("owned Certificate identity metadata drifted");
+    }
+    Object desiredSpec = desired.getAdditionalProperties().get("spec");
+    Object existingSpec =
+        existing.getAdditionalProperties() == null
+            ? null
+            : existing.getAdditionalProperties().get("spec");
+    if (!hasOnlyDesiredShape(desiredSpec, existingSpec, "")) {
+      throw new IllegalStateException("owned Certificate spec has unknown drift");
+    }
+    if (!desiredSubsetEquivalent(desiredSpec, existingSpec)) {
+      String resourceVersion = existing.getMetadata().getResourceVersion();
+      if (resourceVersion == null || resourceVersion.isBlank()) {
+        throw new IllegalStateException("owned Certificate has no resourceVersion for repair");
+      }
+      desired.getMetadata().setResourceVersion(resourceVersion);
+      try {
+        client
+            .genericKubernetesResources(ResourceContexts.CERTIFICATES)
+            .inNamespace(namespace)
+            .resource(desired)
+            .lockResourceVersion(resourceVersion)
+            .replace();
+      } catch (KubernetesClientException exception) {
+        if (exception.getCode() != 409) {
+          throw exception;
         }
       }
     }

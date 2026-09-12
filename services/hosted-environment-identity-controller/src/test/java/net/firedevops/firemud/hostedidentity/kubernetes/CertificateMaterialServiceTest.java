@@ -58,6 +58,82 @@ class CertificateMaterialServiceTest {
   }
 
   @Test
+  void certificateCreateConflictAcceptsExactWinningCertificate() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.replacementResource())
+        .create();
+
+    assertDoesNotThrow(fixture::apply);
+
+    verify(fixture.existingResource(), org.mockito.Mockito.times(2)).get();
+    verify(fixture.replacementResource(), never())
+        .lockResourceVersion(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void certificateCreateConflictAcceptsCanonicalServerDefaults() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("duration", "2160h");
+    fixture.existingSpec().put("revisionHistoryLimit", 1);
+    when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.replacementResource())
+        .create();
+
+    assertDoesNotThrow(fixture::apply);
+
+    verify(fixture.replacementResource(), never())
+        .lockResourceVersion(org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void certificateCreateConflictRejectsMissingWinner() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    when(fixture.existingResource().get()).thenReturn(null, (GenericKubernetesResource) null);
+    KubernetesClientException conflict = new KubernetesClientException("conflict", 409, null);
+    org.mockito.Mockito.doThrow(conflict).when(fixture.replacementResource()).create();
+
+    IllegalStateException failure = assertThrows(IllegalStateException.class, fixture::apply);
+
+    assertEquals("Certificate create conflict winner is absent", failure.getMessage());
+    assertSame(conflict, failure.getCause());
+  }
+
+  @Test
+  void certificateCreateConflictRejectsWrongWinningCertificate() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture
+        .existing()
+        .getMetadata()
+        .getLabels()
+        .put(HostedIdentityContract.MANAGED_BY_LABEL, "other-controller");
+    when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.replacementResource())
+        .create();
+
+    IllegalStateException failure = assertThrows(IllegalStateException.class, fixture::apply);
+
+    assertEquals("owned Certificate identity metadata drifted", failure.getMessage());
+  }
+
+  @Test
+  void certificateCreateConflictRejectsUnknownWinningSpec() {
+    CertificateApplyFixture fixture = certificateApplyFixture();
+    fixture.existingSpec().put("commonName", "unexpected.example.test");
+    when(fixture.existingResource().get()).thenReturn(null, fixture.existing());
+    org.mockito.Mockito.doThrow(new KubernetesClientException("conflict", 409, null))
+        .when(fixture.replacementResource())
+        .create();
+
+    IllegalStateException failure = assertThrows(IllegalStateException.class, fixture::apply);
+
+    assertEquals("owned Certificate spec has unknown drift", failure.getMessage());
+  }
+
+  @Test
   void controlledCertificateSecretNameDriftIsRepairedThroughCas() {
     CertificateApplyFixture fixture = certificateApplyFixture();
     fixture.existingSpec().put("secretName", "obsolete-secret-name");
@@ -1764,7 +1840,7 @@ class CertificateMaterialServiceTest {
     when(certificate.get())
         .thenReturn(
             null,
-            readyCertificate(plan, plan.ingressCertificateName(), revision),
+            readyOwnedIngressCertificate(plan, revision),
             readyCertificate(plan, plan.ingressCertificateName(), finalCertificateRevision));
     Resource<Secret> sourceResource = mock(Resource.class);
     when(secretClient.identitySecrets().withName(plan.ingressSecretName()))
@@ -1903,6 +1979,19 @@ class CertificateMaterialServiceTest {
                         "status", "True",
                         "observedGeneration", revision)))));
     return ready;
+  }
+
+  private static GenericKubernetesResource readyOwnedIngressCertificate(
+      EnvironmentIdentityPlan plan, long revision) {
+    GenericKubernetesResource desired = new CertificateResourceFactory().ingress(plan);
+    GenericKubernetesResource ready =
+        readyCertificate(plan, plan.ingressCertificateName(), revision);
+    desired.getMetadata().setUid(ready.getMetadata().getUid());
+    desired.getMetadata().setGeneration(ready.getMetadata().getGeneration());
+    Map<String, Object> properties = new LinkedHashMap<>(desired.getAdditionalProperties());
+    properties.put("status", ready.getAdditionalProperties().get("status"));
+    desired.setAdditionalProperties(properties);
+    return desired;
   }
 
   @SuppressWarnings("unchecked")
@@ -2069,6 +2158,7 @@ class CertificateMaterialServiceTest {
         existing,
         existingSpec,
         client,
+        existingResource,
         replacementResource,
         lockedReplacementResource);
   }
@@ -2201,6 +2291,7 @@ class CertificateMaterialServiceTest {
       GenericKubernetesResource existing,
       Map<String, Object> existingSpec,
       KubernetesClient client,
+      Resource<GenericKubernetesResource> existingResource,
       Resource<GenericKubernetesResource> replacementResource,
       ReplaceDeletable<GenericKubernetesResource> lockedReplacementResource) {
     private void apply() {

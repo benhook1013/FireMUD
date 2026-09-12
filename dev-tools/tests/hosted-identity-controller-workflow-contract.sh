@@ -444,10 +444,11 @@ publish_run = controller_steps[publish_index]["run"]
 assert "docker manifest inspect" not in publish_run
 assert "current_image_id" in publish_run
 assert "pushed_digest" in publish_run
-assert "docker buildx imagetools inspect" in publish_run
-assert "--format '{{.Manifest.Digest}}'" in publish_run
-assert "push_output" not in publish_run
-assert "sed -n" not in publish_run
+assert "docker buildx imagetools inspect" not in publish_run
+assert "push_output" in publish_run
+assert "pushed_digests" in publish_run
+assert '${#pushed_digests[@]} != 1' in publish_run
+assert "BASH_REMATCH[1]" in publish_run
 attest_step = next(step for step in controller_steps if step.get("uses") == "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
 assert attest_step["with"]["subject-name"] == "${{ env.CONTROLLER_IMAGE_NAME }}"
 assert attest_step["with"]["subject-digest"] == "${{ steps.publish.outputs.digest }}"
@@ -800,13 +801,44 @@ preview_derive_step = next(
     step for step in preview_plan_steps if step.get("id") == "derive"
 )
 preview_derive_run = preview_derive_step["run"]
+for input_name, env_name in (
+    ("action", "INPUT_ACTION"),
+    ("head_sha", "INPUT_HEAD_SHA"),
+    ("image_tag", "INPUT_IMAGE_TAG"),
+    ("preview_domain", "INPUT_PREVIEW_DOMAIN"),
+    ("pr_number", "INPUT_PR_NUMBER"),
+):
+    assert preview_derive_step["env"][env_name] == f"${{{{ inputs.{input_name} }}}}"
+assert "${{ inputs." not in preview_derive_run
+assert "set -euo pipefail" in preview_derive_run
+pr_number_validation = '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]'
+action_validation = '[[ "$ACTION" != deploy && "$ACTION" != destroy ]]'
+assert pr_number_validation in preview_derive_run
+assert action_validation in preview_derive_run
 assert '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_derive_run
 assert 'HEAD_SHA="${HEAD_SHA,,}"' in preview_derive_run
-assert 'IMAGE_TAG="${{ inputs.image_tag }}"' in preview_derive_run
+assert 'PR_NUMBER="$INPUT_PR_NUMBER"' in preview_derive_run
+assert 'HEAD_SHA="$INPUT_HEAD_SHA"' in preview_derive_run
+assert 'ACTION="$INPUT_ACTION"' in preview_derive_run
+assert 'IMAGE_TAG="$INPUT_IMAGE_TAG"' in preview_derive_run
+assert 'PREVIEW_DOMAIN="$INPUT_PREVIEW_DOMAIN"' in preview_derive_run
 assert preview_derive_run.index('HEAD_SHA="${HEAD_SHA,,}"') < preview_derive_run.index(
     'if [ -z "$IMAGE_TAG" ]'
 )
 assert 'IMAGE_TAG="${HEAD_SHA}"' in preview_derive_run
+image_tag_validation = '[[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]'
+assert image_tag_validation in preview_derive_run
+assert "Invalid preview domain" in preview_derive_run
+for output in (
+    'gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"',
+    'echo "hostname=${PREVIEW_HOSTNAME}"',
+    'echo "image_tag=${IMAGE_TAG}"',
+):
+    assert preview_derive_run.index(pr_number_validation) < preview_derive_run.index(output)
+    assert preview_derive_run.index(action_validation) < preview_derive_run.index(output)
+for output in ('echo "hostname=${PREVIEW_HOSTNAME}"', 'echo "image_tag=${IMAGE_TAG}"'):
+    assert preview_derive_run.index(image_tag_validation) < preview_derive_run.index(output)
+    assert preview_derive_run.index("Invalid preview domain") < preview_derive_run.index(output)
 assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 60
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_mode_step = next(
@@ -1073,6 +1105,119 @@ PY
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
+controller_publish_step="$TEMP_DIR/controller-publish-step.sh"
+python3 - "$runtime" "$controller_publish_step" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+publish_step = next(
+    step
+    for step in workflow["jobs"]["build-hosted-identity-controller"]["steps"]
+    if step.get("name") == "Publish exact smoke-tested controller image"
+)
+Path(sys.argv[2]).write_text(
+    "#!/usr/bin/env bash\n" + publish_step["run"],
+    encoding="utf-8",
+)
+PY
+chmod +x "$controller_publish_step"
+
+controller_publish_stub_dir="$TEMP_DIR/controller-publish-stubs"
+mkdir -p "$controller_publish_stub_dir"
+cat >"$controller_publish_stub_dir/docker" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == image && "$2" == inspect ]]; then
+  printf '%s\n' "${SMOKED_IMAGE_ID:?}"
+  exit 0
+fi
+if [[ "$1" != push || "$2" != "${CONTROLLER_IMAGE:?}" ]]; then
+  echo "unexpected docker invocation: $*" >&2
+  exit 2
+fi
+
+push_count=0
+if [[ -f "${CONTROLLER_PUSH_COUNT:?}" ]]; then
+  push_count="$(<"$CONTROLLER_PUSH_COUNT")"
+fi
+push_count=$((push_count + 1))
+printf '%s\n' "$push_count" >"$CONTROLLER_PUSH_COUNT"
+
+failed_digest="sha256:$(printf '1%.0s' {1..64})"
+successful_digest="sha256:$(printf '2%.0s' {1..64})"
+case "${CONTROLLER_PUSH_MODE:?}" in
+  failed-then-success)
+    if ((push_count == 1)); then
+      printf 'misleading: digest: %s size: 1\n' "$failed_digest"
+      exit 1
+    fi
+    printf 'trusted: digest: %s size: 2\n' "$successful_digest"
+    ;;
+  duplicate-success)
+    printf 'trusted: digest: %s size: 2\n' "$successful_digest"
+    printf 'duplicate: digest: %s size: 2\n' "$successful_digest"
+    ;;
+  *)
+    echo "unexpected controller push mode: $CONTROLLER_PUSH_MODE" >&2
+    exit 2
+    ;;
+esac
+SH
+chmod +x "$controller_publish_stub_dir/docker"
+cat >"$controller_publish_stub_dir/sleep" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$1" >>"${CONTROLLER_SLEEP_LOG:?}"
+SH
+chmod +x "$controller_publish_stub_dir/sleep"
+
+controller_image="ghcr.io/example/controller:trusted"
+controller_image_id="sha256:smoke-tested-controller"
+controller_push_count="$TEMP_DIR/controller-push-count"
+controller_sleep_log="$TEMP_DIR/controller-sleep.log"
+controller_publish_output="$TEMP_DIR/controller-publish.output"
+controller_publish_stdout="$TEMP_DIR/controller-publish.stdout"
+successful_digest="sha256:$(printf '2%.0s' {1..64})"
+env \
+  PATH="$controller_publish_stub_dir:$PATH" \
+  CONTROLLER_IMAGE="$controller_image" \
+  SMOKED_IMAGE_ID="$controller_image_id" \
+  CONTROLLER_PUSH_MODE=failed-then-success \
+  CONTROLLER_PUSH_COUNT="$controller_push_count" \
+  CONTROLLER_SLEEP_LOG="$controller_sleep_log" \
+  GITHUB_OUTPUT="$controller_publish_output" \
+  bash "$controller_publish_step" >"$controller_publish_stdout"
+test "$(<"$controller_push_count")" -eq 2
+grep -Fxq '5' "$controller_sleep_log"
+grep -Fxq "digest=$successful_digest" "$controller_publish_output"
+if grep -Fq "sha256:$(printf '1%.0s' {1..64})" "$controller_publish_output"; then
+  echo "failed controller push digest leaked into the attestation output" >&2
+  exit 1
+fi
+
+controller_duplicate_count="$TEMP_DIR/controller-duplicate-count"
+controller_duplicate_output="$TEMP_DIR/controller-duplicate.output"
+if env \
+  PATH="$controller_publish_stub_dir:$PATH" \
+  CONTROLLER_IMAGE="$controller_image" \
+  SMOKED_IMAGE_ID="$controller_image_id" \
+  CONTROLLER_PUSH_MODE=duplicate-success \
+  CONTROLLER_PUSH_COUNT="$controller_duplicate_count" \
+  CONTROLLER_SLEEP_LOG="$TEMP_DIR/controller-duplicate-sleep.log" \
+  GITHUB_OUTPUT="$controller_duplicate_output" \
+  bash "$controller_publish_step" >"$TEMP_DIR/controller-duplicate.stdout" \
+  2>"$TEMP_DIR/controller-duplicate.stderr"; then
+  echo "controller publication accepted more than one successful push digest" >&2
+  exit 1
+fi
+grep -Fq 'did not report exactly one exact sha256 digest' \
+  "$TEMP_DIR/controller-duplicate.stderr"
+test ! -s "$controller_duplicate_output"
+
 preview_derive_step="$TEMP_DIR/preview-derive-step.sh"
 python3 - "$preview" "$preview_derive_step" <<'PY'
 import sys
@@ -1093,11 +1238,6 @@ for source, target in {
     "${{ github.event.pull_request.number }}": "$EVENT_PR_NUMBER",
     "${{ github.event.pull_request.head.sha }}": "$EVENT_HEAD_SHA",
     "${{ github.event.pull_request.base.sha }}": "$EVENT_BASE_SHA",
-    "${{ inputs.pr_number }}": "$INPUT_PR_NUMBER",
-    "${{ inputs.head_sha }}": "$INPUT_HEAD_SHA",
-    "${{ inputs.preview_domain }}": "$INPUT_PREVIEW_DOMAIN",
-    "${{ inputs.action }}": "$INPUT_ACTION",
-    "${{ inputs.image_tag }}": "$INPUT_IMAGE_TAG",
 }.items():
     body = body.replace(source, target)
 Path(sys.argv[2]).write_text(
@@ -1122,59 +1262,180 @@ chmod +x "$preview_derive_stub_dir/gh"
 
 preview_derive_head_upper=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 preview_derive_head_lower=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+run_preview_derive_dispatch() {
+  local input_pr_number="$1"
+  local input_head_sha="$2"
+  local input_action="$3"
+  local input_image_tag="$4"
+  local input_preview_domain="$5"
+  local output_path="$6"
+  local error_path="$7"
+  env \
+    PATH="$preview_derive_stub_dir:$PATH" \
+    EVENT_NAME=workflow_dispatch \
+    EVENT_ACTION='' \
+    EVENT_PR_NUMBER='' \
+    EVENT_HEAD_SHA='' \
+    EVENT_BASE_SHA='' \
+    INPUT_PR_NUMBER="$input_pr_number" \
+    INPUT_HEAD_SHA="$input_head_sha" \
+    INPUT_PREVIEW_DOMAIN="$input_preview_domain" \
+    INPUT_ACTION="$input_action" \
+    INPUT_IMAGE_TAG="$input_image_tag" \
+    GITHUB_REPOSITORY=example/FireMUD \
+    GITHUB_SHA="$preview_derive_head_lower" \
+    PREVIEW_DERIVE_GH_LOG="${output_path}.gh.log" \
+    GITHUB_OUTPUT="$output_path" \
+    bash "$preview_derive_step" >"${output_path}.stdout" 2>"$error_path"
+}
+
 preview_derive_output="$TEMP_DIR/preview-derive-uppercase.output"
 preview_derive_error="$TEMP_DIR/preview-derive-uppercase.error"
-env \
-  PATH="$preview_derive_stub_dir:$PATH" \
-  EVENT_NAME=workflow_dispatch \
-  EVENT_ACTION='' \
-  EVENT_PR_NUMBER='' \
-  EVENT_HEAD_SHA='' \
-  EVENT_BASE_SHA='' \
-  INPUT_PR_NUMBER=901 \
-  INPUT_HEAD_SHA="$preview_derive_head_upper" \
-  INPUT_PREVIEW_DOMAIN=preview.firedevops.net \
-  INPUT_ACTION=deploy \
-  INPUT_IMAGE_TAG=Pr-901-CustomTag \
-  GITHUB_REPOSITORY=example/FireMUD \
-  GITHUB_SHA="$preview_derive_head_lower" \
-  PREVIEW_DERIVE_GH_LOG="$TEMP_DIR/preview-derive-uppercase.gh.log" \
-  GITHUB_OUTPUT="$preview_derive_output" \
-  bash "$preview_derive_step" >"$TEMP_DIR/preview-derive-uppercase.stdout" \
-  2>"$preview_derive_error"
+run_preview_derive_dispatch \
+  901 \
+  "$preview_derive_head_upper" \
+  deploy \
+  Pr-901-CustomTag \
+  preview.firedevops.net \
+  "$preview_derive_output" \
+  "$preview_derive_error"
 grep -Fxq "head_sha=$preview_derive_head_lower" "$preview_derive_output"
 grep -Fxq 'image_tag=Pr-901-CustomTag' "$preview_derive_output"
 grep -Fxq 'base_sha=base-901' "$preview_derive_output"
 grep -Fxq 'api repos/example/FireMUD/pulls/901 --jq .base.sha' \
-  "$TEMP_DIR/preview-derive-uppercase.gh.log"
+  "${preview_derive_output}.gh.log"
 
 preview_derive_invalid_output="$TEMP_DIR/preview-derive-invalid.output"
 preview_derive_invalid_error="$TEMP_DIR/preview-derive-invalid.error"
-if env \
-  PATH="$preview_derive_stub_dir:$PATH" \
-  EVENT_NAME=workflow_dispatch \
-  EVENT_ACTION='' \
-  EVENT_PR_NUMBER='' \
-  EVENT_HEAD_SHA='' \
-  EVENT_BASE_SHA='' \
-  INPUT_PR_NUMBER=901 \
-  INPUT_HEAD_SHA=not-a-sha \
-  INPUT_PREVIEW_DOMAIN=preview.firedevops.net \
-  INPUT_ACTION=deploy \
-  INPUT_IMAGE_TAG=Pr-901-CustomTag \
-  GITHUB_REPOSITORY=example/FireMUD \
-  GITHUB_SHA="$preview_derive_head_lower" \
-  PREVIEW_DERIVE_GH_LOG="$TEMP_DIR/preview-derive-invalid.gh.log" \
-  GITHUB_OUTPUT="$preview_derive_invalid_output" \
-  bash "$preview_derive_step" >"$TEMP_DIR/preview-derive-invalid.stdout" \
-  2>"$preview_derive_invalid_error"; then
+if run_preview_derive_dispatch \
+  901 \
+  not-a-sha \
+  deploy \
+  Pr-901-CustomTag \
+  preview.firedevops.net \
+  "$preview_derive_invalid_output" \
+  "$preview_derive_invalid_error"; then
   echo "preview plan accepted a noncanonical workflow-dispatch head SHA" >&2
   exit 1
 fi
 grep -Fxq \
   '::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters.' \
   "$preview_derive_invalid_error"
-test ! -e "$TEMP_DIR/preview-derive-invalid.gh.log"
+test ! -e "${preview_derive_invalid_output}.gh.log"
+
+preview_derive_default_output="$TEMP_DIR/preview-derive-default.output"
+run_preview_derive_dispatch \
+  901 \
+  "$preview_derive_head_upper" \
+  deploy \
+  '' \
+  preview.firedevops.net \
+  "$preview_derive_default_output" \
+  "$TEMP_DIR/preview-derive-default.error"
+grep -Fxq "image_tag=${preview_derive_head_lower}" "$preview_derive_default_output"
+
+hostile_dispatch_marker="$TEMP_DIR/hostile-dispatch-executed"
+hostile_dispatch_payload="\"; printf injected >\"$hostile_dispatch_marker\"; #"
+invalid_dispatch_index=0
+for invalid_dispatch_case in hostile-pr hostile-sha invalid-action; do
+  invalid_dispatch_index=$((invalid_dispatch_index + 1))
+  invalid_dispatch_output="$TEMP_DIR/preview-derive-invalid-dispatch-${invalid_dispatch_index}.output"
+  invalid_dispatch_error="$TEMP_DIR/preview-derive-invalid-dispatch-${invalid_dispatch_index}.error"
+  input_pr_number=901
+  input_head_sha="$preview_derive_head_upper"
+  input_action=deploy
+  expected_error=''
+  case "$invalid_dispatch_case" in
+    hostile-pr)
+      input_pr_number="$hostile_dispatch_payload"
+      expected_error='::error title=Invalid preview PR number::'
+      ;;
+    hostile-sha)
+      input_head_sha="$hostile_dispatch_payload"
+      expected_error='::error title=Invalid preview head SHA::'
+      ;;
+    invalid-action)
+      input_action='deploy; destroy'
+      expected_error='::error title=Invalid preview action::'
+      ;;
+  esac
+  if run_preview_derive_dispatch \
+    "$input_pr_number" \
+    "$input_head_sha" \
+    "$input_action" \
+    Pr-901-CustomTag \
+    preview.firedevops.net \
+    "$invalid_dispatch_output" \
+    "$invalid_dispatch_error"; then
+    echo "preview plan accepted invalid workflow-dispatch identity input" >&2
+    exit 1
+  fi
+  grep -Fq "$expected_error" "$invalid_dispatch_error"
+  test ! -s "$invalid_dispatch_output"
+  test ! -e "${invalid_dispatch_output}.gh.log"
+  test ! -e "$hostile_dispatch_marker"
+done
+
+preview_image_tag_128="$(printf 'z%.0s' {1..128})"
+preview_derive_tag_128_output="$TEMP_DIR/preview-derive-tag-128.output"
+run_preview_derive_dispatch \
+  901 \
+  "$preview_derive_head_upper" \
+  deploy \
+  "$preview_image_tag_128" \
+  preview.firedevops.net \
+  "$preview_derive_tag_128_output" \
+  "$TEMP_DIR/preview-derive-tag-128.error"
+grep -Fxq "image_tag=${preview_image_tag_128}" "$preview_derive_tag_128_output"
+grep -Fxq 'hostname=pr-901.preview.firedevops.net' "$preview_derive_tag_128_output"
+
+preview_image_tag_129="$(printf 'z%.0s' {1..129})"
+invalid_image_index=0
+for invalid_image_tag in \
+  "$preview_image_tag_129" \
+  'bad/tag' \
+  $'bad"\nforged-output'; do
+  invalid_image_index=$((invalid_image_index + 1))
+  invalid_image_output="$TEMP_DIR/preview-derive-invalid-image-${invalid_image_index}.output"
+  invalid_image_error="$TEMP_DIR/preview-derive-invalid-image-${invalid_image_index}.error"
+  if run_preview_derive_dispatch \
+    901 \
+    "$preview_derive_head_upper" \
+    deploy \
+    "$invalid_image_tag" \
+    preview.firedevops.net \
+    "$invalid_image_output" \
+    "$invalid_image_error"; then
+    echo "preview plan accepted invalid workflow-dispatch image tag" >&2
+    exit 1
+  fi
+  grep -Fq '::error title=Invalid preview image tag::' "$invalid_image_error"
+  test ! -s "$invalid_image_output"
+  test ! -e "${invalid_image_output}.gh.log"
+done
+
+invalid_domain_index=0
+for invalid_preview_domain in \
+  'preview."invalid' \
+  $'preview.firedevops.net\nforged-output'; do
+  invalid_domain_index=$((invalid_domain_index + 1))
+  invalid_domain_output="$TEMP_DIR/preview-derive-invalid-domain-${invalid_domain_index}.output"
+  invalid_domain_error="$TEMP_DIR/preview-derive-invalid-domain-${invalid_domain_index}.error"
+  if run_preview_derive_dispatch \
+    901 \
+    "$preview_derive_head_upper" \
+    deploy \
+    Pr-901-CustomTag \
+    "$invalid_preview_domain" \
+    "$invalid_domain_output" \
+    "$invalid_domain_error"; then
+    echo "preview plan accepted invalid workflow-dispatch preview domain" >&2
+    exit 1
+  fi
+  grep -Fq '::error title=Invalid preview domain::' "$invalid_domain_error"
+  test ! -s "$invalid_domain_output"
+  test ! -e "${invalid_domain_output}.gh.log"
+done
 
 # Execute the shared rollout inventory with a strict kubectl stub. This proves
 # every canonical deployment is checked in order with the caller-supplied

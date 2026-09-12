@@ -1271,6 +1271,15 @@ grep -qx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -qx '600' "$FAKE_DELETE_TIMEOUT_LOG"
 test ! -e "$FAKE_RUNTIME_KUBECTL_LOG"
 
+for invalid_runtime_namespace in dev production pr-0 pr-01; do
+  reset_case
+  if bash "$PRUNER" --delete-runtime "$invalid_runtime_namespace"; then
+    echo "pruner accepted noncanonical direct runtime namespace ${invalid_runtime_namespace}" >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_DELETE_LOG"
+done
+
 for invalid_preview_delete_timeout in 0 invalid 3601 99999999999999999999; do
   reset_case
   export PREVIEW_DELETE_TIMEOUT="$invalid_preview_delete_timeout"
@@ -2172,11 +2181,11 @@ grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
 # shellcheck disable=SC2016 # Assert literal default helper selection.
 grep -Fq 'delete_script="${PREVIEW_DELETE_SCRIPT:-${script_dir}/../shared/delete-hosted-namespace.sh}"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-# shellcheck disable=SC2016 # Assert literal delegated timeout and arguments.
+# shellcheck disable=SC2016 # Assert literal delegated timeout.
 grep -Fq 'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 # shellcheck disable=SC2016 # Assert literal delegated helper arguments.
-grep -Fq 'bash "$delete_script" "$2" "$2"' \
+grep -Fq 'bash "$delete_script" "$runtime_namespace" "$runtime_namespace"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 if grep -Fq 'delete_runtime_namespace()' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then

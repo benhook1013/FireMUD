@@ -78,9 +78,11 @@ public class HostedIdentityScopeService {
     boolean labelsMatch =
         expectedLabels.entrySet().stream()
                 .allMatch(entry -> entry.getValue().equals(labels.get(entry.getKey())))
-            && (labels.size() == expectedLabels.size()
-                || (labels.size() == expectedLabels.size() + 1
-                    && plan.identityNamespace().equals(labels.get("kubernetes.io/metadata.name"))));
+            && labels.entrySet().stream()
+                .filter(entry -> entry.getKey().startsWith("firemud.dev/"))
+                .allMatch(entry -> entry.getValue().equals(expectedLabels.get(entry.getKey())))
+            && (!labels.containsKey("kubernetes.io/metadata.name")
+                || plan.identityNamespace().equals(labels.get("kubernetes.io/metadata.name")));
     if (!plan.identityNamespace().equals(namespace.getMetadata().getName())
         || (namespace.getMetadata().getGenerateName() != null
             && !namespace.getMetadata().getGenerateName().isBlank())

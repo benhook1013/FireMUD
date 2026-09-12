@@ -406,9 +406,11 @@ jobs:
           max_push_attempts=3
           push_attempt=1
           while true; do
-            if docker push "$CONTROLLER_IMAGE"; then
+            if push_output="$(docker push "$CONTROLLER_IMAGE" 2>&1)"; then
+              printf '%s\n' "$push_output"
               break
             fi
+            printf '%s\n' "$push_output"
             if ((push_attempt >= max_push_attempts)); then
               echo "Failed to publish $CONTROLLER_IMAGE after ${push_attempt} attempts." >&2
               exit 1
@@ -419,10 +421,19 @@ jobs:
             push_attempt=$((push_attempt + 1))
           done
 
-          pushed_digest="$(docker buildx imagetools inspect \
-            --format '{{.Manifest.Digest}}' "$CONTROLLER_IMAGE")"
+          pushed_digests=()
+          while IFS= read -r output_line; do
+            if [[ "$output_line" =~ ^[^[:space:]]+:[[:space:]]digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size:[[:space:]][0-9]+$ ]]; then
+              pushed_digests+=("${BASH_REMATCH[1]}")
+            fi
+          done <<< "$push_output"
+          if ((${#pushed_digests[@]} != 1)); then
+            echo "Successful push did not report exactly one exact sha256 digest for $CONTROLLER_IMAGE." >&2
+            exit 1
+          fi
+          pushed_digest="${pushed_digests[0]}"
           [[ "$pushed_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "Registry did not return an exact sha256 digest for $CONTROLLER_IMAGE." >&2
+            echo "Successful push did not return an exact sha256 digest for $CONTROLLER_IMAGE." >&2
             exit 1
           }
           echo "digest=$pushed_digest" >> "$GITHUB_OUTPUT"
