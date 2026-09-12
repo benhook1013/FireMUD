@@ -158,8 +158,8 @@ subjects:
 # narrowly named scope-writer verbs below, while the fail-closed admission
 # bindings firemud-hosted-identity-scope-roles and
 # firemud-hosted-identity-scope-rolebindings enforce the exact derived
-# Role/RoleBinding shape and namespace.  The controller must remain paused
-# whenever either binding is absent.
+# Role/RoleBinding shape and namespace.  The trusted active-bootstrap gate
+# refuses activation unless both bindings exist with validationActions Deny.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
