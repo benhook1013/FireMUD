@@ -177,8 +177,18 @@ if [[ "${1:-}" == "--retired" ]]; then
   validate_timeout_seconds "$timeout_seconds"
 
   deadline=$((SECONDS + timeout_seconds))
+  max_transport_retries=2
+  transport_retries=0
+  kubectl_error_file="$(mktemp)"
+  # shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+  cleanup_kubectl_error_file() {
+    rm -f -- "$kubectl_error_file"
+  }
+  trap cleanup_kubectl_error_file EXIT
   while (( SECONDS < deadline )); do
-    if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
+    : >"$kubectl_error_file"
+    if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
+      transport_retries=0
       if [[ -z "$identity_json" ]]; then
         printf 'identity=%s\nphase=Retired\n' "$identity_name"
         exit 0
@@ -197,6 +207,17 @@ if [[ "${1:-}" == "--retired" ]]; then
       fi
     else
       kubectl_status=$?
+      kubectl_error="$(<"$kubectl_error_file")"
+      if [[ -n "$kubectl_error" ]]; then
+        printf '%s\n' "$kubectl_error" >&2
+      fi
+      if is_retryable_kubectl_transport_failure "$kubectl_error" &&
+        ((transport_retries < max_transport_retries)); then
+        ((transport_retries += 1))
+        echo "Transient kubectl transport failure reading HostedEnvironmentIdentity/${identity_name}; retry ${transport_retries}/${max_transport_retries}." >&2
+        sleep 5
+        continue
+      fi
       echo "Unable to determine retirement state for HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
       exit "$kubectl_status"
     fi
@@ -235,8 +256,19 @@ validate_timeout_seconds "$timeout_seconds"
 validate_identity_runtime_pairing "$identity_name" "$runtime_namespace"
 
 deadline=$((SECONDS + timeout_seconds))
+max_transport_retries=2
+namespace_transport_retries=0
+identity_transport_retries=0
+kubectl_error_file="$(mktemp)"
+# shellcheck disable=SC2317 # ShellCheck does not follow EXIT trap callbacks.
+cleanup_kubectl_error_file() {
+  rm -f -- "$kubectl_error_file"
+}
+trap cleanup_kubectl_error_file EXIT
 while (( SECONDS < deadline )); do
-  if namespace_json="$(kubectl get namespace "$runtime_namespace" --ignore-not-found -o json)"; then
+  : >"$kubectl_error_file"
+  if namespace_json="$(kubectl get namespace "$runtime_namespace" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
+    namespace_transport_retries=0
     if [[ -z "$namespace_json" ]]; then
       echo "Waiting for runtime namespace ${runtime_namespace} to appear..."
       sleep 5
@@ -244,6 +276,17 @@ while (( SECONDS < deadline )); do
     fi
   else
     kubectl_status=$?
+    kubectl_error="$(<"$kubectl_error_file")"
+    if [[ -n "$kubectl_error" ]]; then
+      printf '%s\n' "$kubectl_error" >&2
+    fi
+    if is_retryable_kubectl_transport_failure "$kubectl_error" &&
+      ((namespace_transport_retries < max_transport_retries)); then
+      ((namespace_transport_retries += 1))
+      echo "Transient kubectl transport failure reading namespace/${runtime_namespace}; retry ${namespace_transport_retries}/${max_transport_retries}." >&2
+      sleep 5
+      continue
+    fi
     echo "Unable to determine runtime namespace ${runtime_namespace}; kubectl get failed (exit ${kubectl_status})." >&2
     exit "$kubectl_status"
   fi
@@ -293,7 +336,9 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
+  : >"$kubectl_error_file"
+  if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json 2>"$kubectl_error_file")"; then
+    identity_transport_retries=0
     if [[ -z "$identity_json" ]]; then
       echo "Waiting for HostedEnvironmentIdentity/${identity_name} to appear..."
       sleep 5
@@ -301,6 +346,17 @@ while (( SECONDS < deadline )); do
     fi
   else
     kubectl_status=$?
+    kubectl_error="$(<"$kubectl_error_file")"
+    if [[ -n "$kubectl_error" ]]; then
+      printf '%s\n' "$kubectl_error" >&2
+    fi
+    if is_retryable_kubectl_transport_failure "$kubectl_error" &&
+      ((identity_transport_retries < max_transport_retries)); then
+      ((identity_transport_retries += 1))
+      echo "Transient kubectl transport failure reading HostedEnvironmentIdentity/${identity_name}; retry ${identity_transport_retries}/${max_transport_retries}." >&2
+      sleep 5
+      continue
+    fi
     echo "Unable to determine HostedEnvironmentIdentity/${identity_name}; kubectl get failed (exit ${kubectl_status})." >&2
     exit "$kubectl_status"
   fi

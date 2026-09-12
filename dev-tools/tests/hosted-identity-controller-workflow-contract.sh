@@ -3468,7 +3468,8 @@ env \
   "deployed-head=firemud.dev/last-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]]
 
 # The retired waiter treats kubectl's structured NotFound result as successful
-# terminal absence, while permission/API failures remain immediately fatal.
+# terminal absence, retries bounded transport failures, and keeps permission
+# failures immediately fatal.
 retirement_stub_dir="$TEMP_DIR/retirement-waiter-stubs"
 mkdir -p "$retirement_stub_dir"
 real_sleep_path="$(command -v sleep)"
@@ -3477,6 +3478,12 @@ cat >"$retirement_stub_dir/kubectl" <<'SH'
 set -euo pipefail
 printf '%s\n' "$*" >>"${WAITER_KUBECTL_LOG:?}"
 [[ "$*" == "-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" ]]
+count=0
+if [[ -f "${WAITER_COUNT_FILE:?}" ]]; then
+  count="$(<"$WAITER_COUNT_FILE")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$WAITER_COUNT_FILE"
 case "${WAITER_SCENARIO:?}" in
   not-found)
     exit 0
@@ -3485,7 +3492,14 @@ case "${WAITER_SCENARIO:?}" in
     printf 'Error from server (Forbidden): hostedenvironmentidentities is forbidden\n' >&2
     exit 42
     ;;
-  api-error)
+  transport-recovery)
+    if (( count > 2 )); then
+      exit 0
+    fi
+    printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+    exit 43
+    ;;
+  transport-exhaustion)
     printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
     exit 43
     ;;
@@ -3510,10 +3524,14 @@ run_retirement_waiter_fixture() {
   local sleep_log="$TEMP_DIR/retirement-${scenario}.sleep.log"
   local output="$TEMP_DIR/retirement-${scenario}.output"
   local error="$TEMP_DIR/retirement-${scenario}.error"
+  local count_file="$TEMP_DIR/retirement-${scenario}.count"
+  local expected_kubectl_calls="${3:-1}"
+  local expected_sleep_calls="${4:-0}"
   local status
 
   : >"$kubectl_log"
   : >"$sleep_log"
+  : >"$count_file"
   set +e
   env \
     PATH="$retirement_stub_dir:$PATH" \
@@ -3521,6 +3539,7 @@ run_retirement_waiter_fixture() {
     WAITER_SCENARIO="$scenario" \
     WAITER_KUBECTL_LOG="$kubectl_log" \
     WAITER_SLEEP_LOG="$sleep_log" \
+    WAITER_COUNT_FILE="$count_file" \
     bash "$waiter" --retired pr-42 60 \
     >"$output" 2>"$error"
   status=$?
@@ -3528,29 +3547,24 @@ run_retirement_waiter_fixture() {
 
   [[ "$status" -eq "$expected_status" ]]
   [[ "$(head -n 1 "$kubectl_log")" == "-n firemud-system get hostedenvironmentidentity pr-42 --ignore-not-found -o json" ]]
-  if [[ "$scenario" == not-found ]]; then
-    [[ "$(wc -l <"$kubectl_log")" -eq 1 ]]
-    [[ ! -s "$sleep_log" ]]
+  [[ "$(wc -l <"$kubectl_log")" -eq "$expected_kubectl_calls" ]]
+  [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
+  if [[ "$expected_status" -eq 0 ]]; then
     grep -Fq 'phase=Retired' "$output"
-    [[ ! -s "$error" ]]
   else
-    [[ "$(wc -l <"$kubectl_log")" -eq 1 ]]
-    [[ ! -s "$sleep_log" ]]
     grep -Fq 'kubectl get failed' "$error"
-    case "$scenario" in
-      forbidden)
-        grep -Fq 'Error from server (Forbidden)' "$error"
-        ;;
-      api-error)
-        grep -Fq 'Unable to connect to the server' "$error"
-        ;;
-    esac
+    if [[ "$scenario" == forbidden ]]; then
+      grep -Fq 'Error from server (Forbidden)' "$error"
+    else
+      grep -Fq 'Unable to connect to the server' "$error"
+    fi
   fi
 }
 
 run_retirement_waiter_fixture not-found 0
 run_retirement_waiter_fixture forbidden 42
-run_retirement_waiter_fixture api-error 43
+run_retirement_waiter_fixture transport-recovery 0 3 2
+run_retirement_waiter_fixture transport-exhaustion 43 3 2
 
 # Projection namespace mismatches fail before any Secret read, including the
 # dev-demo-to-dev and PR-identity-to-identical-PR namespace boundaries.
@@ -3634,8 +3648,9 @@ run_active_namespace_mismatch_fixture \
   pr-42-dev
 
 # Active waiter reads treat a successful empty --ignore-not-found response as
-# absence, while a kubectl failure is an immediately fatal API/auth/transport
-# error. Nonempty incomplete projection state remains retryable.
+# absence, retry bounded transport failures independently for namespace and
+# identity reads, and keep authorization failures immediately fatal. Nonempty
+# incomplete projection state remains retryable.
 waiter_stub_dir="$TEMP_DIR/active-waiter-stubs"
 mkdir -p "$waiter_stub_dir"
 cat >"$waiter_stub_dir/kubectl" <<'SH'
@@ -3773,6 +3788,17 @@ if [[ "$1" == get && "$2" == namespace ]]; then
     printf 'Error from server (Forbidden): namespaces are forbidden\n' >&2
     exit 43
   fi
+  if [[ "$scenario" == namespace-transport-recovery ]]; then
+    namespace_transport_count="$(next_count namespace-transport)"
+    if (( namespace_transport_count <= 2 )); then
+      printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 45
+    fi
+  fi
+  if [[ "$scenario" == namespace-transport-exhaustion ]]; then
+    printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+    exit 45
+  fi
   if [[ "$scenario" == namespace-absence ]]; then
     namespace_count="$(next_count namespace)"
     if (( namespace_count == 1 )); then
@@ -3788,6 +3814,17 @@ if [[ "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" == hostedenvir
   if [[ "$scenario" == identity-command-failure ]]; then
     printf 'Error from server (Forbidden): hostedenvironmentidentities are forbidden\n' >&2
     exit 44
+  fi
+  if [[ "$scenario" == identity-transport-recovery ]]; then
+    identity_transport_count="$(next_count identity-transport)"
+    if (( identity_transport_count <= 2 )); then
+      printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+      exit 46
+    fi
+  fi
+  if [[ "$scenario" == identity-transport-exhaustion ]]; then
+    printf 'Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout\n' >&2
+    exit 46
   fi
   if [[ "$scenario" == identity-absence ]]; then
     identity_count="$(next_count identity)"
@@ -3865,6 +3902,7 @@ run_active_waiter_fixture() {
   local expected_status="$2"
   local expected_kubectl_calls="$3"
   local expected_sleep_calls="$4"
+  local expected_error="${5:-Error from server (Forbidden)}"
   local kubectl_log="$TEMP_DIR/${scenario}.kubectl.log"
   local sleep_log="$TEMP_DIR/${scenario}.sleep.log"
   local count_root="$TEMP_DIR/${scenario}.counts"
@@ -3897,7 +3935,7 @@ run_active_waiter_fixture() {
     grep -Fq 'telnetPort=32000' "$output"
   else
     grep -Fq 'kubectl get failed' "$error"
-    grep -Fq 'Error from server (Forbidden)' "$error"
+    grep -Fq "$expected_error" "$error"
   fi
 }
 
@@ -3906,6 +3944,10 @@ run_active_waiter_fixture identity-absence 0 4 1
 run_active_waiter_fixture telnet-port-mismatch 0 4 1
 run_active_waiter_fixture namespace-command-failure 43 1 0
 run_active_waiter_fixture identity-command-failure 44 2 0
+run_active_waiter_fixture namespace-transport-recovery 0 4 2
+run_active_waiter_fixture namespace-transport-exhaustion 45 3 2 'Unable to connect to the server'
+run_active_waiter_fixture identity-transport-recovery 0 6 2
+run_active_waiter_fixture identity-transport-exhaustion 46 6 2 'Unable to connect to the server'
 
 # Every waiter mode keeps the existing positive-integer diagnostic while
 # enforcing the shared bounded timeout ceiling.
