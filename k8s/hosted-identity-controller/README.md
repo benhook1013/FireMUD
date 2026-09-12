@@ -45,6 +45,26 @@ The NetworkPolicy permits DNS and TCP/443 plus TCP/6443 for the Kubernetes API a
 
 The checked-in Deployment contains fail-closed image and activation markers. `bootstrap-hosted-identity-controller.sh` accepts only the approved image repository with a full SHA-256 digest and an explicit `paused`, `observe`, or `active` mode. Before invoking `kubectl`, it uses GitHub CLI attestation verification to require default SLSA provenance from this repository's `runtime-images.yml` workflow on exactly `develop` or `main` and rejects self-hosted-runner provenance. The trusted operator context therefore requires Python 3 with PyYAML, `gh` authenticated for GitHub API and private-repository attestation reads, read authentication for the private GHCR image, and network access to GitHub API, GHCR, and the Sigstore trust services used by GitHub attestations. After verification, bootstrap substitutes the image, gRPC trust-anchor fingerprint, and mode in a private render. It applies and reads back the fail-closed namespace guard and its `Deny` binding before applying the namespace-lifecycle ClusterRoleBinding, then uses server-side apply without force-conflict takeover for the complete install. Its default is `paused`; Active bootstrap retains the later gate that verifies every required validating admission policy and binding before the controller is permitted to reconcile.
 
+The private controller image's Pod explicitly references the canonical `ghcr-preview-pull` Secret. Before bootstrap applies any installation resource, it requires `firemud-system/ghcr-preview-pull` to be a usable `kubernetes.io/dockerconfigjson` credential containing a nonempty `ghcr.io` basic-auth entry. Bootstrap neither accepts nor writes registry credentials. On a fresh cluster, a `system:masters` operator must select the trusted Kubernetes context, create the fixed namespace from the checked-in manifest, create or update the Secret with the shared helper, and only then run bootstrap (which defaults to `paused`):
+
+```bash
+kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}' \
+  | grep -Fx system:masters >/dev/null
+kubectl apply --server-side \
+  --field-manager=firemud-hosted-identity-bootstrap \
+  -f k8s/hosted-identity-controller/namespace.yaml
+PREVIEW_GHCR_USERNAME='<registry-user>' \
+PREVIEW_GHCR_TOKEN='<read-package-token>' \
+  dev-tools/hosted/shared/ensure-ghcr-pull-secret.sh firemud-system
+FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh \
+  --image 'ghcr.io/benhook1013/firemud-hosted-identity-controller@sha256:<64-hex-digest>' \
+  --grpc-trust-anchor-sha256 '<64-hex-fingerprint>' \
+  --activation-mode paused
+```
+
+Supply the registry values through the operator's secret mechanism; the placeholders above are sequencing documentation, not literal values. A missing, wrong-type, invalidly encoded, or credential-empty pull Secret stops bootstrap before the namespace guard or controller Deployment is applied. Rotate the credential by rerunning the shared helper, then rerun paused bootstrap before considering `observe` or `active` mode.
+
 ## Secret admission break-glass recovery
 
 Use this recovery only when the `firemud-hosted-identity-secret-boundary` binding itself is incorrectly denying Secret writes needed to repair the hosted identity installation. From the repository root at a trusted commit, first select a trusted Kubernetes context and verify that the authenticated user belongs to `system:masters`. Only then reapply the currently deployed, attested controller image and configured gRPC trust anchor in `paused` mode. Bootstrap waits for that paused Deployment rollout; the final readback must also return exactly `paused` before admission state changes:

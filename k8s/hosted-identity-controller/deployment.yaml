@@ -27,6 +27,8 @@ spec:
         firemud.dev/managed-by: hosted-identity-controller
     spec:
       serviceAccountName: firemud-hosted-identity-controller
+      imagePullSecrets:
+        - name: ghcr-preview-pull
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: 30
       securityContext:

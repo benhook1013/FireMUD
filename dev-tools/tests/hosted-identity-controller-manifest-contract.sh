@@ -174,6 +174,13 @@ for break_glass_marker in \
   "not a live admission probe"; do
   require_literal "$MANIFEST_DIR/README.md" "$break_glass_marker"
 done
+for pull_secret_marker in \
+  "ghcr-preview-pull" \
+  "ensure-ghcr-pull-secret.sh firemud-system" \
+  "Bootstrap neither accepts nor writes registry credentials" \
+  "stops bootstrap before the namespace guard or controller Deployment is applied"; do
+  require_literal "$MANIFEST_DIR/README.md" "$pull_secret_marker"
+done
 python3 - "$MANIFEST_DIR/README.md" <<'PY'
 import sys
 from pathlib import Path
@@ -1385,6 +1392,8 @@ import yaml
 
 deployment = yaml.safe_load(Path(os.environ["DEPLOYMENT"]).read_text(encoding="utf-8"))
 pod_spec = deployment["spec"]["template"]["spec"]
+assert pod_spec["serviceAccountName"] == "firemud-hosted-identity-controller"
+assert pod_spec["imagePullSecrets"] == [{"name": "ghcr-preview-pull"}]
 tmp_volumes = [volume for volume in pod_spec["volumes"] if volume.get("name") == "tmp"]
 assert tmp_volumes == [
     {"name": "tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "64Mi"}}
@@ -1473,6 +1482,8 @@ for text_value in \
   'kubectl kustomize' \
   'rollout status' \
   'kubectl auth can-i' \
+  'get secret ghcr-preview-pull -o json' \
+  'kubernetes.io/dockerconfigjson' \
   'paused|observe|active' \
   --grpc-trust-anchor-sha256 \
   'GRPC_TRUST_ANCHOR_SHA256" =~ ^[0-9a-f]{64}$' \
@@ -1496,7 +1507,8 @@ policy_apply = source.index('-f "$namespace_guard_policy_manifest"')
 binding_apply = source.index('-f "$namespace_guard_binding_manifest"', policy_apply)
 policy_read = source.index("namespace_guard_failure_policy=", binding_apply)
 full_apply = source.index('-f "$temporary_manifest"', policy_read)
-assert policy_apply < binding_apply < policy_read < full_apply
+pull_secret_read = source.index('get secret ghcr-preview-pull -o json')
+assert pull_secret_read < policy_apply < binding_apply < policy_read < full_apply
 PY
 for admission_name in \
   firemud-hosted-identity-main \
@@ -1754,6 +1766,29 @@ if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "
 fi
 if [[ "${1:-}" == "get" && "${2:-}" == "crd" ]]; then
   printf '%s\n' "${FAKE_CRD_ESTABLISHED:-True}"
+  exit 0
+fi
+if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "ghcr-preview-pull" ]]; then
+  record_event pull-secret-read
+  case "${FAKE_PULL_SECRET_MODE:-valid}" in
+    missing)
+      printf 'not found\n' >&2
+      exit 1
+      ;;
+    wrong-type)
+      printf '%s\n' '{"type":"Opaque","data":{".dockerconfigjson":"eyJhdXRocyI6eyJnaGNyLmlvIjp7ImF1dGgiOiJkWE5sY2pwMGIydGxiZz09In19fQ=="}}'
+      ;;
+    invalid-data)
+      printf '%s\n' '{"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"@@@"}}'
+      ;;
+    empty-auth)
+      printf '%s\n' '{"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"eyJhdXRocyI6eyJnaGNyLmlvIjp7ImF1dGgiOiJPZz09In19fQ=="}}'
+      ;;
+    valid)
+      printf '%s\n' '{"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"eyJhdXRocyI6eyJnaGNyLmlvIjp7ImF1dGgiOiJkWE5sY2pwMGIydGxiZz09In19fQ=="}}'
+      ;;
+    *) exit 2 ;;
+  esac
   exit 0
 fi
 if [[ "${1:-}" == "-n" && "${2:-}" == "firemud-system" && "${3:-}" == "get" && "${4:-}" == "secret" && "${5:-}" == "firemud-grpc-ca" ]]; then
@@ -2058,6 +2093,23 @@ require_literal "$bootstrap_error" "unable to verify the current Kubernetes oper
 if grep -Eq '^(guard-policy|guard-binding|apply:)' "$operator_lookup_error_events"; then
   fail "bootstrap installed resources after operator identity lookup failed"
 fi
+for pull_secret_mode in missing wrong-type invalid-data empty-auth; do
+  pull_secret_events="$bootstrap_test_dir/pull-secret-${pull_secret_mode}-events"
+  if FAKE_PULL_SECRET_MODE="$pull_secret_mode" FAKE_EVENT_LOG="$pull_secret_events" \
+    FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+    bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted a ${pull_secret_mode} controller pull Secret"
+  fi
+  require_literal "$bootstrap_error" \
+    "required Secret firemud-system/ghcr-preview-pull is missing or is not a usable kubernetes.io/dockerconfigjson credential for ghcr.io"
+  grep -Fxq pull-secret-read "$pull_secret_events" || \
+    fail "bootstrap did not inspect the ${pull_secret_mode} controller pull Secret"
+  if grep -Eq '^(guard-policy|guard-binding|apply:|rollout)$' "$pull_secret_events"; then
+    fail "bootstrap installed resources after rejecting the ${pull_secret_mode} controller pull Secret"
+  fi
+done
 duplicate_guard_events="$bootstrap_test_dir/duplicate-guard-events"
 if FAKE_DUPLICATE_NAMESPACE_GUARD_POLICY=1 \
   FAKE_EVENT_LOG="$duplicate_guard_events" \
@@ -2129,7 +2181,9 @@ require_literal "$bootstrap_output" "activation=active"
 mapfile -t active_events <"$active_event_log"
 [[ "${active_events[0]:-}" == "operator-whoami" ]] || \
   fail "active bootstrap did not verify the operator identity first"
-[[ "${active_events[1]:-}" == "apply:paused" ]] || \
+[[ "${active_events[1]:-}" == "pull-secret-read" ]] || \
+  fail "active bootstrap did not verify the controller pull Secret before apply"
+[[ "${active_events[2]:-}" == "apply:paused" ]] || \
   fail "active bootstrap did not apply paused mode first"
 [[ "${active_events[-2]:-}" == "apply:active" ]] || \
   fail "active bootstrap did not replace paused mode with active"

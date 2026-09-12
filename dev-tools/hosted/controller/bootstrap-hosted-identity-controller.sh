@@ -156,6 +156,35 @@ operator_groups="$(kubectl auth whoami \
 grep -Fxq 'system:masters' <<<"$operator_groups" || \
   fail "current Kubernetes operator identity must belong to system:masters before installing the namespace guard"
 
+# The controller image is private. Require the canonical pull credential before
+# applying any installation resource so a malformed prerequisite cannot leave a
+# newly applied Deployment waiting indefinitely in ImagePullBackOff.
+if ! kubectl -n "$CONTROL_NAMESPACE" get secret ghcr-preview-pull -o json | \
+  python3 -c '
+import base64
+import binascii
+import json
+import sys
+
+secret = json.load(sys.stdin)
+if secret.get("type") != "kubernetes.io/dockerconfigjson":
+    raise SystemExit(1)
+encoded_config = secret.get("data", {}).get(".dockerconfigjson")
+if not isinstance(encoded_config, str) or not encoded_config:
+    raise SystemExit(1)
+try:
+    docker_config = json.loads(base64.b64decode(encoded_config, validate=True))
+    encoded_auth = docker_config["auths"]["ghcr.io"]["auth"]
+    decoded_auth = base64.b64decode(encoded_auth, validate=True).decode("utf-8")
+except (binascii.Error, KeyError, TypeError, UnicodeDecodeError, ValueError):
+    raise SystemExit(1)
+username, separator, token = decoded_auth.partition(":")
+if not separator or not username or not token:
+    raise SystemExit(1)
+'; then
+  fail "required Secret $CONTROL_NAMESPACE/ghcr-preview-pull is missing or is not a usable kubernetes.io/dockerconfigjson credential for ghcr.io"
+fi
+
 replace_manifest() {
   temporary_rendered_manifest="$(mktemp)"
   sed "$@" "$temporary_manifest" >"$temporary_rendered_manifest"
