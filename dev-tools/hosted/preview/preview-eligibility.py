@@ -254,6 +254,12 @@ def main() -> int:
             parser.error(
                 f"--inspect-labels cannot be combined with: {', '.join(unrelated)}"
             )
+        if args.labels_json is None:
+            parser.error("the following arguments are required: --labels-json")
+        labels_valid, priority = parse_labels(args.labels_json)
+        print(f"labels_valid={'true' if labels_valid else 'false'}")
+        print(f"priority={'true' if priority else 'false'}")
+        return 0
 
     if args.batch_deploy_candidates:
         if args.expected_repository is None:
@@ -285,15 +291,6 @@ def main() -> int:
             return 1
         return 0
 
-    if args.labels_json is None:
-        parser.error("the following arguments are required: --labels-json")
-
-    if args.inspect_labels:
-        labels_valid, priority = parse_labels(args.labels_json)
-        print(f"labels_valid={'true' if labels_valid else 'false'}")
-        print(f"priority={'true' if priority else 'false'}")
-        return 0
-
     missing = [
         name
         for name, value in (
@@ -301,6 +298,7 @@ def main() -> int:
             ("--state", args.state),
             ("--base-ref", args.base_ref),
             ("--author", args.author),
+            ("--labels-json", args.labels_json),
         )
         if value is None
     ]

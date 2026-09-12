@@ -158,6 +158,50 @@ for file in \
 done
 require_file "$ARTIFACT_VALIDATOR"
 
+for break_glass_marker in \
+  "bootstrap-hosted-identity-controller.sh" \
+  "--activation-mode paused" \
+  "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE" \
+  "kubectl auth whoami -o jsonpath=" \
+  "grep -Fx system:masters" \
+  "kubectl delete validatingadmissionpolicybinding.admissionregistration.k8s.io firemud-hosted-identity-secret-boundary" \
+  "BEGIN INCIDENT-SPECIFIC SECRET REPAIR" \
+  "Run only the reviewed kubectl command or commands required to repair" \
+  "Immediately restore the complete checked-in boundary" \
+  "spec.policyName" \
+  "spec.validationActions[*]" \
+  "grep -Fx Deny" \
+  "not a live admission probe"; do
+  require_literal "$MANIFEST_DIR/README.md" "$break_glass_marker"
+done
+python3 - "$MANIFEST_DIR/README.md" <<'PY'
+import sys
+from pathlib import Path
+
+readme = Path(sys.argv[1]).read_text(encoding="utf-8")
+break_glass = readme.split("## Secret admission break-glass recovery", maxsplit=1)[-1]
+ordered_markers = [
+    "kubectl auth whoami -o jsonpath=",
+    "| grep -Fx system:masters",
+    "bootstrap-hosted-identity-controller.sh",
+    "--activation-mode paused",
+    "| grep -Fx paused",
+    "kubectl delete validatingadmissionpolicybinding.admissionregistration.k8s.io firemud-hosted-identity-secret-boundary",
+    "BEGIN INCIDENT-SPECIFIC SECRET REPAIR",
+    "END INCIDENT-SPECIFIC SECRET REPAIR",
+    "Immediately restore the complete checked-in boundary",
+    "spec.policyName",
+    "spec.validationActions[*]",
+    "not a live admission probe",
+]
+positions = [break_glass.find(marker) for marker in ordered_markers]
+if any(position < 0 for position in positions) or positions != sorted(positions):
+    raise SystemExit(
+        "Secret admission break-glass recovery is missing its authorization-first, pause-first, "
+        "repair, immediate restore, or configured-state-only ordering"
+    )
+PY
+
 KUSTOMIZATION="$MANIFEST_DIR/kustomization.yaml"
 CRD="$MANIFEST_DIR/crd.yaml"
 ADMISSION="$MANIFEST_DIR/admission.yaml"

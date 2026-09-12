@@ -261,12 +261,27 @@ jobs:
                 --workflow "${preview_workflow_name}" \
                 --branch "${head_ref}" \
                 --limit 20 \
-                --json databaseId,status \
-                --jq 'first(.[] | select(.status == "requested" or .status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .databaseId) // empty'
+                --json databaseId,status,headSha \
+                | jq -r --arg head_sha "${head_sha}" '
+                    first(
+                      .[]
+                      | select(
+                          .headSha == $head_sha
+                          and (
+                            .status == "requested"
+                            or .status == "queued"
+                            or .status == "in_progress"
+                            or .status == "waiting"
+                            or .status == "pending"
+                          )
+                        )
+                      | .databaseId
+                    ) // ""
+                  '
             )"
 
             if [[ -n "${active_preview_run_id}" ]]; then
-              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} is already queued or in progress."
+              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} for head ${head_sha} is already queued or in progress."
               continue
             fi
 

@@ -107,7 +107,8 @@ find_unsatisfied_priority_pr() {
   local page
   local page_rows
   local open_pr_page_size=100
-  local max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))
+  local max_open_pr_pages
+  local overflow_page
   local overflow_row
   local open_pr_jq='.[] | [
           (.number // ""),
@@ -120,6 +121,16 @@ find_unsatisfied_priority_pr() {
         ] | @tsv'
 
   open_pr_rows=""
+  if (( max_open_pr_candidates <= 0 || open_pr_page_size <= 0 )); then
+    echo "Open pull request pagination bounds must be positive" >&2
+    return 1
+  fi
+  if (( max_open_pr_candidates % open_pr_page_size != 0 )); then
+    echo "Open pull request candidate limit must be divisible by the page size" >&2
+    return 1
+  fi
+  max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))
+  overflow_page=$((max_open_pr_pages + 1))
   for ((page = 1; page <= max_open_pr_pages; page++)); do
     if ! page_rows="$(gh api \
       "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${open_pr_page_size}&page=${page}" \
@@ -145,7 +156,7 @@ find_unsatisfied_priority_pr() {
   done
   if (( page > max_open_pr_pages )); then
     if ! overflow_row="$(gh api \
-      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=1&page=$((max_open_pr_candidates + 1))" \
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${open_pr_page_size}&page=${overflow_page}" \
       --jq "$open_pr_jq")"; then
       echo "Unable to query open pull requests for priority evaluation" >&2
       return 1

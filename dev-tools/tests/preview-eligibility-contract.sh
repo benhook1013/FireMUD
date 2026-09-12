@@ -145,6 +145,14 @@ inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"
 grep -q '^labels_valid=true$' <<<"$inspect_priority"
 grep -q '^priority=true$' <<<"$inspect_priority"
 
+if python3 "$SCRIPT" --inspect-labels \
+  >"$TEMP_DIR/inspect-missing-labels.out" 2>"$TEMP_DIR/inspect-missing-labels.err"; then
+  echo "Label inspection accepted a missing --labels-json argument" >&2
+  exit 1
+fi
+grep -Fq 'the following arguments are required: --labels-json' \
+  "$TEMP_DIR/inspect-missing-labels.err"
+
 for unrelated_inspection_argument in \
   '--operation deploy' '--state open' '--base-ref develop' '--author human'; do
   read -r -a unrelated_inspection_fields <<<"$unrelated_inspection_argument"
@@ -242,6 +250,18 @@ assert_conflicting_modes_refused --inspect-labels --revalidate-deploy
 assert_conflicting_modes_refused --revalidate-deploy --inspect-labels
 assert_conflicting_modes_refused --revalidate-deploy --revalidate-cleanup
 assert_conflicting_modes_refused --batch-deploy-candidates --inspect-labels
+
+if python3 "$SCRIPT" \
+  --operation deploy \
+  --state open \
+  --base-ref develop \
+  --author human \
+  >"$TEMP_DIR/evaluate-missing-labels.out" 2>"$TEMP_DIR/evaluate-missing-labels.err"; then
+  echo "Default eligibility evaluation accepted a missing --labels-json argument" >&2
+  exit 1
+fi
+grep -Fq 'the following arguments are required: --labels-json' \
+  "$TEMP_DIR/evaluate-missing-labels.err"
 
 for malformed_labels in 'null' '{}' '[{"name":1}]' '{not-json'; do
   inspect_malformed="$(python3 "$SCRIPT" --inspect-labels --labels-json "$malformed_labels")"

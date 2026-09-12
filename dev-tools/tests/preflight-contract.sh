@@ -2346,8 +2346,9 @@ try:
         )
     if (
         len(immediate_deadline_issues) != 1
-        or "Secret readiness deadline expired before lookup"
+        or "Secret readiness deadline left less than the"
         not in immediate_deadline_issues[0]
+        or "2s minimum lookup window" not in immediate_deadline_issues[0]
         or "no Secret lookups attempted" not in immediate_deadline_issues[0]
         or "still not ready after" in immediate_deadline_issues[0]
         or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
@@ -2355,6 +2356,160 @@ try:
         raise SystemExit(
             "Secret readiness did not stop before its first expired-deadline lookup: "
             f"{immediate_deadline_issues}"
+        )
+
+    below_floor_times = iter((0.0, 4.0, 4.0))
+    below_floor_lookup_calls = [0]
+
+    def below_floor_lookup(*args, **kwargs):
+        below_floor_lookup_calls[0] += 1
+        raise SystemExit("Secret readiness started a lookup below its usable timeout floor")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", below_floor_lookup),
+        patch.object(module.time, "monotonic", lambda: next(below_floor_times)),
+    ):
+        below_floor_issues = module.wait_for_secret_key_requirements(
+            [("below-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if below_floor_lookup_calls[0] != 0:
+        raise SystemExit("Secret readiness performed a lookup below its usable timeout floor")
+    if (
+        len(below_floor_issues) != 1
+        or "2s minimum lookup window" not in below_floor_issues[0]
+        or "no Secret lookups attempted" not in below_floor_issues[0]
+        or "elapsed 4.0s of 5s readiness budget" not in below_floor_issues[0]
+    ):
+        raise SystemExit(
+            f"Secret readiness did not report its below-floor deadline: {below_floor_issues}"
+        )
+
+    exact_floor_times = iter((0.0, 3.0, 3.0))
+    exact_floor_lookup_calls = [0]
+
+    def exact_floor_lookup(args, **kwargs):
+        exact_floor_lookup_calls[0] += 1
+        if kwargs.get("timeout") != 2.0:
+            raise SystemExit("Secret readiness did not preserve the exact usable timeout floor")
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", exact_floor_lookup),
+        patch.object(module.time, "monotonic", lambda: next(exact_floor_times)),
+    ):
+        exact_floor_issues = module.wait_for_secret_key_requirements(
+            [("exact-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if exact_floor_lookup_calls[0] != 1 or exact_floor_issues:
+        raise SystemExit(
+            "Secret readiness did not allow a lookup at the exact usable timeout floor: "
+            f"{exact_floor_issues}"
+        )
+
+    one_second_floor_times = iter((0.0, 0.0, 0.0))
+    one_second_floor_lookup_calls = [0]
+
+    def one_second_floor_lookup(args, **kwargs):
+        one_second_floor_lookup_calls[0] += 1
+        if kwargs.get("timeout") != 1.0:
+            raise SystemExit("one-second Secret readiness did not fund one exact lookup")
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", one_second_floor_lookup),
+        patch.object(module.time, "monotonic", lambda: next(one_second_floor_times)),
+    ):
+        one_second_floor_issues = module.wait_for_secret_key_requirements(
+            [("one-second-floor", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=1,
+            ready_timeout_seconds=1,
+        )
+    if one_second_floor_lookup_calls[0] != 1 or one_second_floor_issues:
+        raise SystemExit(
+            "one-second Secret readiness did not preserve its supported exact lookup: "
+            f"{one_second_floor_issues}"
+        )
+
+    one_second_residual_times = iter((0.0, 0.1, 0.1))
+    one_second_residual_lookup_calls = [0]
+
+    def one_second_residual_lookup(*args, **kwargs):
+        one_second_residual_lookup_calls[0] += 1
+        raise SystemExit("one-second Secret readiness started a lookup below its usable floor")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", one_second_residual_lookup),
+        patch.object(
+            module.time,
+            "monotonic",
+            lambda: next(one_second_residual_times),
+        ),
+    ):
+        one_second_residual_issues = module.wait_for_secret_key_requirements(
+            [("one-second-residual", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=1,
+            ready_timeout_seconds=1,
+        )
+    if one_second_residual_lookup_calls[0] != 0:
+        raise SystemExit("one-second Secret readiness used a sub-floor residual")
+    if (
+        len(one_second_residual_issues) != 1
+        or "1s minimum lookup window" not in one_second_residual_issues[0]
+        or "no Secret lookups attempted" not in one_second_residual_issues[0]
+        or "elapsed 0.1s of 1s readiness budget" not in one_second_residual_issues[0]
+    ):
+        raise SystemExit(
+            "one-second Secret readiness did not report its sub-floor residual: "
+            f"{one_second_residual_issues}"
+        )
+
+    authoritative_deadline_now = [0.0]
+    authoritative_deadline_calls = [0]
+
+    def retry_before_floor(args, **kwargs):
+        authoritative_deadline_calls[0] += 1
+        authoritative_deadline_now[0] = 4.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    with (
+        patch.object(module.subprocess, "run", retry_before_floor),
+        patch.object(
+            module.time,
+            "monotonic",
+            lambda: authoritative_deadline_now[0],
+        ),
+    ):
+        authoritative_deadline_issues = module.wait_for_secret_key_requirements(
+            [("deadline-authoritative", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if authoritative_deadline_calls[0] != 1:
+        raise SystemExit("Secret readiness retried after losing its usable timeout window")
+    if (
+        len(authoritative_deadline_issues) != 1
+        or "2s minimum lookup window" not in authoritative_deadline_issues[0]
+        or "missing keys" in authoritative_deadline_issues[0]
+        or "still not ready after 1 attempts" not in authoritative_deadline_issues[0]
+        or "elapsed 4.0s of 5s readiness budget"
+        not in authoritative_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness did not make its aggregate deadline diagnostic authoritative: "
+            f"{authoritative_deadline_issues}"
         )
 
     monotonic_now = [0.0]
@@ -2413,13 +2568,29 @@ try:
         for issue in mid_iteration_expiry_issues
         if "pr-42/deadline-skipped" in issue
     )
+    looked_up_issue = next(
+        issue
+        for issue in mid_iteration_expiry_issues
+        if "pr-42/looked-up" in issue
+    )
     if (
-        "Secret readiness deadline expired before lookup" not in skipped_issue
-        or "still not ready after 1 attempts" not in skipped_issue
+        "Secret readiness deadline left less than the" not in skipped_issue
+        or "2s minimum lookup window" not in skipped_issue
+        or "no Secret lookups attempted" not in skipped_issue
+        or "still not ready after" in skipped_issue
         or "elapsed 6.0s of 5s readiness budget" not in skipped_issue
     ):
         raise SystemExit(
             f"mid-iteration Secret readiness expiry was not reported: {mid_iteration_expiry_issues}"
+        )
+    if (
+        "Secret readiness deadline left less than the" not in looked_up_issue
+        or "still not ready after 1 attempts" not in looked_up_issue
+        or "no Secret lookups attempted" in looked_up_issue
+    ):
+        raise SystemExit(
+            "Secret readiness did not retain the per-Secret lookup count before expiry: "
+            f"{mid_iteration_expiry_issues}"
         )
 finally:
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts

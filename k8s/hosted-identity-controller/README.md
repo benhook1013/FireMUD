@@ -44,3 +44,48 @@ Kubernetes RBAC cannot constrain `create`, `escalate`, or `bind` with `resourceN
 The NetworkPolicy permits DNS and TCP/443 plus TCP/6443 for the Kubernetes API and fixed public HTTPS probes; its IPv4/IPv6 destinations exclude link-local `169.254.0.0/16` and `fe80::/10`. The hosted k3s cluster uses flannel VXLAN with kube-router policy enforcement: `kubernetes.default` is exposed on ClusterIP `:443`, DNATed to the hosted node API endpoint `:6443`, and kube-router evaluates the effective post-DNAT destination port. Both API ports are therefore required, while the destination-broad 443 allowance also carries the exact Gateway TLS probe because a selector rule cannot narrow the union. It also permits destination-broad Telnet egress on TCP/32000-32016 (the preview allocator's 32000-32015 range plus fixed dev-demo port 32016). Only TCP/6565 to Account is label-scoped to runtime Namespaces carrying the externally owned canonical preview or dev-demo label. Kubernetes NetworkPolicy cannot identify an API server or public hostname, so the controller must enforce the derived SNI/SAN/issuer allowlist itself; these rules are explicit infrastructure allowances, not unrestricted identity trust.
 
 The checked-in Deployment contains fail-closed image and activation markers. `bootstrap-hosted-identity-controller.sh` accepts only the approved image repository with a full SHA-256 digest and an explicit `paused`, `observe`, or `active` mode. Before invoking `kubectl`, it uses GitHub CLI attestation verification to require default SLSA provenance from this repository's `runtime-images.yml` workflow on exactly `develop` or `main` and rejects self-hosted-runner provenance. The trusted operator context therefore requires Python 3 with PyYAML, `gh` authenticated for GitHub API and private-repository attestation reads, read authentication for the private GHCR image, and network access to GitHub API, GHCR, and the Sigstore trust services used by GitHub attestations. After verification, bootstrap substitutes the image, gRPC trust-anchor fingerprint, and mode in a private render. It applies and reads back the fail-closed namespace guard and its `Deny` binding before applying the namespace-lifecycle ClusterRoleBinding, then uses server-side apply without force-conflict takeover for the complete install. Its default is `paused`; Active bootstrap retains the later gate that verifies every required validating admission policy and binding before the controller is permitted to reconcile.
+
+## Secret admission break-glass recovery
+
+Use this recovery only when the `firemud-hosted-identity-secret-boundary` binding itself is incorrectly denying Secret writes needed to repair the hosted identity installation. From the repository root at a trusted commit, first select a trusted Kubernetes context and verify that the authenticated user belongs to `system:masters`. Only then reapply the currently deployed, attested controller image and configured gRPC trust anchor in `paused` mode. Bootstrap waits for that paused Deployment rollout; the final readback must also return exactly `paused` before admission state changes:
+
+```bash
+kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}' \
+  | grep -Fx system:masters
+controller_image="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].image}')"
+grpc_trust_anchor_sha256="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256")].value}')"
+FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh \
+  --image "$controller_image" \
+  --grpc-trust-anchor-sha256 "$grpc_trust_anchor_sha256" \
+  --activation-mode paused
+kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}{"\n"}' \
+  | grep -Fx paused
+```
+
+Only after both the initial identity check and the final paused-mode readback succeed, remove the affected binding:
+
+```bash
+kubectl delete validatingadmissionpolicybinding.admissionregistration.k8s.io firemud-hosted-identity-secret-boundary
+```
+
+The deletion removes the fail-closed Secret boundary; it is not permission to reactivate the controller. While the controller remains paused, perform only the reviewed, incident-specific Secret repair that the binding blocked:
+
+```text
+BEGIN INCIDENT-SPECIFIC SECRET REPAIR
+Run only the reviewed kubectl command or commands required to repair the affected hosted identity Secret.
+END INCIDENT-SPECIFIC SECRET REPAIR
+```
+
+Immediately restore the complete checked-in boundary by rerunning the same bootstrap command above in `paused` mode. Then read back the repaired binding's exact policy reference and sole validation action:
+
+```bash
+kubectl get validatingadmissionpolicybinding.admissionregistration.k8s.io firemud-hosted-identity-secret-boundary \
+  -o jsonpath='{.spec.policyName}{"\n"}' \
+  | grep -Fx firemud-hosted-identity-secret-boundary
+kubectl get validatingadmissionpolicybinding.admissionregistration.k8s.io firemud-hosted-identity-secret-boundary \
+  -o jsonpath='{.spec.validationActions[*]}{"\n"}' \
+  | grep -Fx Deny
+```
+
+These readbacks confirm only the configured paused mode and admission binding fields; they are not a live admission probe. Keep the controller paused if any command or readback fails, and do not consider `observe` or `active` mode until the incident repair has been independently validated.

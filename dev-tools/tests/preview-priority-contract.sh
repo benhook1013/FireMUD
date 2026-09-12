@@ -344,6 +344,7 @@ fake_labels_json() {
   printf '%s' "$labels_json"
 }
 if [[ "$1" == run && "$2" == list ]]; then
+  printf '%s' "${FAKE_ACTIVE_PREVIEW_RUNS_JSON:-[]}"
   exit 0
 fi
 if [[ "$*" == *"actions/workflows/preview.yml/dispatches"* ]]; then
@@ -649,6 +650,7 @@ reset_case() {
   export FAKE_OPEN_PRIORITY_ROWS=''
   export FAKE_PRIORITY_OVERFLOW=false
   export FAKE_PRIORITY_QUERY_FAIL=false
+  export FAKE_ACTIVE_PREVIEW_RUNS_JSON='[]'
   export FAKE_PR_901_OWNER=''
   export FAKE_PR_901_HEAD=''
   export FAKE_PR_901_REQUESTED_HEAD=''
@@ -1755,9 +1757,14 @@ for repair_status_assignment in \
 done
 # shellcheck disable=SC2016 # Assert the literal repair status dispatch in workflow source.
 grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
-grep -Fq -- \
-  '--jq '\''first(.[] | select(.status == "requested" or .status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .databaseId) // empty'\''' \
-  "$RECONCILER_RUN"
+grep -Fq -- '--json databaseId,status,headSha' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the active-run lookup is fenced to the candidate head.
+grep -Fq -- '--arg head_sha "${head_sha}"' "$RECONCILER_RUN"
+# shellcheck disable=SC2016 # Assert the literal jq head comparison in workflow source.
+grep -Fq -- '.headSha == $head_sha' "$RECONCILER_RUN"
+for active_status in requested queued in_progress waiting pending; do
+  grep -Fq -- ".status == \"${active_status}\"" "$RECONCILER_RUN"
+done
 if grep -Fq '| head -n 1' "$RECONCILER_RUN"; then
   echo "reconciler must select an active preview run without a pipefail-unsafe head" >&2
   exit 1
@@ -1810,6 +1817,37 @@ grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' 
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
 grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+
+reset_case
+reconciler_stale_active_run_output="$TEMP_DIR/reconciler-stale-active-run.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":41,"status":"in_progress","headSha":"stale-head"}]' \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_stale_active_run_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_stale_active_run_output"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  "$FAKE_DISPATCH_LOG"
+
+reset_case
+reconciler_current_active_run_output="$TEMP_DIR/reconciler-current-active-run.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_NAMESPACE_ABSENT=true \
+    FAKE_ACTIVE_PREVIEW_RUNS_JSON='[{"databaseId":42,"status":"queued","headSha":"head-901"}]' \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_current_active_run_output"
+grep -qx \
+  'Skipping dispatch for PR #901: preview run 42 for head head-901 is already queued or in progress.' \
+  "$reconciler_current_active_run_output"
+test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-absent-on-recheck.out"
