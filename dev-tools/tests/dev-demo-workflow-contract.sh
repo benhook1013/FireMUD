@@ -143,18 +143,18 @@ for required in (
         raise SystemExit(f"dev-demo plan lacks pre-mutation validation: {required}")
 normalization = 'HEAD_SHA="${HEAD_SHA,,}"'
 image_tag_default = 'IMAGE_TAG="${HEAD_SHA}"'
-head_validation = '[[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]'
+head_validation = '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]'
 head_output = 'echo "head_sha=${HEAD_SHA}"'
 for required in (normalization, image_tag_default, head_validation, head_output):
     if required not in derive_run:
         raise SystemExit(f"dev-demo plan lacks normalized head handling: {required}")
 if not (
-    derive_run.index(normalization)
+    derive_run.index(head_validation)
+    < derive_run.index(normalization)
     < derive_run.index(image_tag_default)
-    < derive_run.index(head_validation)
     < derive_run.index(head_output)
 ):
-    raise SystemExit("dev-demo head normalization must precede tag derivation, validation, and output")
+    raise SystemExit("dev-demo must validate the original head before normalization, tag derivation, and output")
 
 with tempfile.NamedTemporaryFile() as output:
     derive_fixture = derive_run.replace(

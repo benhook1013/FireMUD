@@ -23,11 +23,14 @@ import io.fabric8.kubernetes.client.dsl.Resource;
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
@@ -568,9 +571,10 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     GrpcTransportBundleGenerator generator = new GrpcTransportBundleGenerator();
-    Secret ca = generatedCa(now, Duration.ofDays(60));
+    Secret ca =
+        generatedCaWithDistinctKeyPair(now, Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
     Secret existing = generator.generate(plan, ca, 4, renewBefore, now);
-    existing = withAdditionalUriSan(existing, plan, now);
+    existing = withAdditionalUriSan(existing, ca, plan, now);
     existing.getMetadata().setResourceVersion("7");
     String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(ca);
     assertTrue(
@@ -1355,9 +1359,9 @@ public class SecretMaterialValidatorTest {
   }
 
   private static Secret withAdditionalUriSan(
-      Secret source, EnvironmentIdentityPlan plan, Instant now) throws Exception {
+      Secret bundle, Secret caSource, EnvironmentIdentityPlan plan, Instant now) throws Exception {
     KeyPair leafKeyPair = generateRsaKeyPair();
-    X509Certificate ca = certificate(source.getData().get("ca.crt"));
+    X509Certificate ca = certificate(caSource.getData().get("ca.crt"));
     var builder =
         new JcaX509v3CertificateBuilder(
             new X500Name(ca.getSubjectX500Principal().getName()),
@@ -1386,14 +1390,14 @@ public class SecretMaterialValidatorTest {
         Extension.subjectAlternativeName,
         false,
         new GeneralNames(names.toArray(GeneralName[]::new)));
-    var signer =
-        new JcaContentSignerBuilder("SHA256withRSA").build(FIXTURE_CA_KEY_PAIR.getPrivate());
+    PrivateKey caPrivateKey = privateKey(caSource.getData().get("ca.key"));
+    var signer = new JcaContentSignerBuilder("SHA256withRSA").build(caPrivateKey);
     X509Certificate leaf =
         new JcaX509CertificateConverter().setProvider("BC").getCertificate(builder.build(signer));
-    Map<String, String> data = new LinkedHashMap<>(source.getData());
+    Map<String, String> data = new LinkedHashMap<>(bundle.getData());
     data.put("tls.crt", pem("CERTIFICATE", leaf.getEncoded()));
     data.put("tls.key", pem("PRIVATE KEY", leafKeyPair.getPrivate().getEncoded()));
-    return new SecretBuilder(source).withData(data).build();
+    return new SecretBuilder(bundle).withData(data).build();
   }
 
   /** Compile-time test seam for cross-package probe coverage of generated transport material. */
@@ -1422,6 +1426,16 @@ public class SecretMaterialValidatorTest {
     return (X509Certificate)
         CertificateFactory.getInstance("X.509")
             .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(encoded)));
+  }
+
+  private static PrivateKey privateKey(String encoded) throws Exception {
+    String pem = pemText(encoded);
+    String body =
+        pem.replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replaceAll("\\s", "");
+    return KeyFactory.getInstance("RSA")
+        .generatePrivate(new PKCS8EncodedKeySpec(Base64.getDecoder().decode(body)));
   }
 
   private static byte[] subjectKeyIdentifier(X509Certificate certificate) throws Exception {

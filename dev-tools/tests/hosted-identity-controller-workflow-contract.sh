@@ -219,10 +219,8 @@ import sys
 from pathlib import Path
 
 source = Path(sys.argv[1]).read_text(encoding="utf-8")
-start = source.index('if ! rendered_activation_mode="$(python3')
-end = source.index(
-    '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]', start
-)
+start = source.index("controller_activation_mode() {")
+end = source.index("\n}\n\nextract_named_yaml_document()", start)
 probe = source[start:end]
 assert "sed " not in probe
 for required in (
@@ -233,9 +231,17 @@ for required in (
     'entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"',
     "len(deployments) != 1",
     "len(controller_containers) != 1",
-    "len(activation_values) != 1",
+    "len(activation_entries) != 1",
+    'operation == "read"',
+    'operation == "replace"',
 ):
     assert required in probe, required
+assert source.count("controller_activation_mode read") == 2
+assert (
+    'controller_activation_mode replace \\\n'
+    '    "$initial_activation_mode" "$ACTIVATION_MODE"'
+) in source
+assert "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;" not in source
 PY
 
 # Shared lifecycle helpers retain the complete controller projection boundary.
@@ -718,6 +724,29 @@ assert deploy_requester_cleanup["run"] == (
 assert deploy_steps.index(deploy_runtime_restore) < (
     deploy_steps.index(deploy_requester_cleanup)
 )
+runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
+runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
+runtime_kubeconfig_jobs = set()
+for job_name, job in jobs.items():
+    steps = job.get("steps", [])
+    writes = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and isinstance(step.get("with"), dict)
+        and step["with"].get("path") == runtime_kubeconfig_path
+    ]
+    if not writes:
+        continue
+    runtime_kubeconfig_jobs.add(job_name)
+    assert len(writes) == 1, job_name
+    cleanup = next(
+        step for step in steps if step.get("name") == "Remove runtime kubeconfig"
+    )
+    assert cleanup["if"] == "${{ always() }}", job_name
+    assert cleanup["run"] == runtime_kubeconfig_cleanup, job_name
+    assert steps[-1] == cleanup, job_name
+assert runtime_kubeconfig_jobs == {"deploy-runtime", "verify-runtime", "destroy-runtime"}
 assert "Set up Helm" not in deploy_by_name
 requested_step_index = next(
     index
@@ -1303,6 +1332,17 @@ for ambient_result_flow in (
 ):
     assert ambient_result_flow not in credential_source_text, ambient_result_flow
 assert "canonical non-empty keys" not in credential_source_text
+assert credential_source_text.count(
+    '"$asset_store_access_key" != "$minio_access_key"'
+) == 1
+assert credential_source_text.count(
+    '"$asset_store_secret_key" != "$minio_secret_key"'
+) == 1
+assert (
+    'if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]]; then\n'
+    "  validate_matching_minio_credentials\n"
+    "fi"
+) in credential_source_text
 for forbidden in (
     '--from-literal',
     '--from-literal=FIREMUD_POSTGRES_PASSWORD=firemud',

@@ -898,11 +898,10 @@ public class CertificateMaterialService {
       return true;
     }
     if (desired instanceof Collection<?> desiredCollection) {
-      if (!(existing instanceof Collection<?> existingCollection)) {
+      if (!(existing instanceof Collection<?> existingCollection)
+          || desiredCollection.size() != existingCollection.size()) {
         return false;
       }
-      // Collection cardinality is controlled value drift. The exact comparison below repairs it;
-      // this pass only rejects unknown nested shape.
       var desiredIterator = desiredCollection.iterator();
       var existingIterator = existingCollection.iterator();
       while (desiredIterator.hasNext() && existingIterator.hasNext()) {

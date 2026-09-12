@@ -549,6 +549,10 @@ jobs:
               staleDescription: "trusted preview deployment failure",
             });
 
+      - name: Remove runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+
   verify-runtime:
     name: Verify Hosted Preview Runtime
     timeout-minutes: 60
@@ -706,6 +710,10 @@ jobs:
               staleDescription: "trusted preview verification failure",
             });
 
+      - name: Remove runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
+
   destroy-runtime:
     name: Delete Preview Runtime
     timeout-minutes: 60
@@ -773,6 +781,10 @@ jobs:
               telnetPort: "unavailable",
               staleDescription: "trusted preview removal",
             });
+
+      - name: Remove runtime kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"
 
   retire-identity:
     name: Retire Hosted Identity After Runtime Deletion

@@ -90,16 +90,16 @@ jobs:
           if [ -z "$HEAD_SHA" ]; then
             HEAD_SHA="${GITHUB_SHA}"
           fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
           HEAD_SHA="${HEAD_SHA,,}"
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="${HEAD_SHA}"
           fi
           if [[ "$ACTION" != "deploy" && "$ACTION" != "destroy" ]]; then
             echo "::error title=Invalid dev-demo action::Expected deploy or destroy." >&2
-            exit 1
-          fi
-          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
             exit 1
           fi
           if [[ -z "$IMAGE_TAG" || ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then

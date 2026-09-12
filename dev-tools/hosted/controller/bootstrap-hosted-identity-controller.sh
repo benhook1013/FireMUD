@@ -158,6 +158,82 @@ replace_manifest() {
   temporary_rendered_manifest=""
 }
 
+controller_activation_mode() {
+  local operation="$1"
+  local expected_mode="${2:-}"
+  local replacement_mode="${3:-}"
+  python3 - \
+    "$temporary_manifest" \
+    "$DEPLOYMENT_NAME" \
+    "$operation" \
+    "$expected_mode" \
+    "$replacement_mode" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path = Path(sys.argv[1])
+deployment_name = sys.argv[2]
+operation = sys.argv[3]
+expected_mode = sys.argv[4]
+replacement_mode = sys.argv[5]
+documents = list(yaml.safe_load_all(source_path.read_text(encoding="utf-8")))
+deployments = [
+    document
+    for document in documents
+    if isinstance(document, dict)
+    and document.get("kind") == "Deployment"
+    and isinstance(document.get("metadata"), dict)
+    and document["metadata"].get("name") == deployment_name
+]
+if len(deployments) != 1:
+    raise SystemExit(1)
+deployment_spec = deployments[0].get("spec")
+if not isinstance(deployment_spec, dict):
+    raise SystemExit(1)
+pod_template = deployment_spec.get("template")
+if not isinstance(pod_template, dict):
+    raise SystemExit(1)
+pod_spec = pod_template.get("spec")
+if not isinstance(pod_spec, dict):
+    raise SystemExit(1)
+containers = pod_spec.get("containers")
+if not isinstance(containers, list):
+    raise SystemExit(1)
+controller_containers = [
+    container
+    for container in containers
+    if isinstance(container, dict) and container.get("name") == "controller"
+]
+if len(controller_containers) != 1:
+    raise SystemExit(1)
+environment = controller_containers[0].get("env")
+if not isinstance(environment, list):
+    raise SystemExit(1)
+activation_entries = [
+    entry
+    for entry in environment
+    if isinstance(entry, dict)
+    and entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"
+]
+if len(activation_entries) != 1 or not isinstance(
+    activation_entries[0].get("value"), str
+):
+    raise SystemExit(1)
+activation_entry = activation_entries[0]
+if operation == "read":
+    print(activation_entry["value"])
+elif operation == "replace":
+    if activation_entry["value"] != expected_mode:
+        raise SystemExit(1)
+    activation_entry["value"] = replacement_mode
+    yaml.safe_dump_all(documents, sys.stdout, sort_keys=False)
+else:
+    raise SystemExit(1)
+PY
+}
+
 extract_named_yaml_document() {
   local source_path="$1"
   local expected_kind="$2"
@@ -200,57 +276,7 @@ replace_manifest \
   -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
 grep -Fq -- "value: $GRPC_TRUST_ANCHOR_SHA256" "$temporary_manifest" || fail "gRPC trust-anchor replacement did not occur"
-if ! rendered_activation_mode="$(python3 - "$temporary_manifest" "$DEPLOYMENT_NAME" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-source_path = Path(sys.argv[1])
-deployment_name = sys.argv[2]
-deployments = [
-    document
-    for document in yaml.safe_load_all(source_path.read_text(encoding="utf-8"))
-    if isinstance(document, dict)
-    and document.get("kind") == "Deployment"
-    and isinstance(document.get("metadata"), dict)
-    and document["metadata"].get("name") == deployment_name
-]
-if len(deployments) != 1:
-    raise SystemExit(1)
-deployment_spec = deployments[0].get("spec")
-if not isinstance(deployment_spec, dict):
-    raise SystemExit(1)
-pod_template = deployment_spec.get("template")
-if not isinstance(pod_template, dict):
-    raise SystemExit(1)
-pod_spec = pod_template.get("spec")
-if not isinstance(pod_spec, dict):
-    raise SystemExit(1)
-containers = pod_spec.get("containers")
-if not isinstance(containers, list):
-    raise SystemExit(1)
-controller_containers = [
-    container
-    for container in containers
-    if isinstance(container, dict) and container.get("name") == "controller"
-]
-if len(controller_containers) != 1:
-    raise SystemExit(1)
-environment = controller_containers[0].get("env")
-if not isinstance(environment, list):
-    raise SystemExit(1)
-activation_values = [
-    entry.get("value")
-    for entry in environment
-    if isinstance(entry, dict)
-    and entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"
-]
-if len(activation_values) != 1 or not isinstance(activation_values[0], str):
-    raise SystemExit(1)
-print(activation_values[0])
-PY
-)"; then
+if ! rendered_activation_mode="$(controller_activation_mode read)"; then
   fail "activation mode replacement did not produce exactly one expected value"
 fi
 [[ "$rendered_activation_mode" == "$initial_activation_mode" ]] || \
@@ -457,8 +483,16 @@ if [[ "$ACTIVATION_MODE" == "active" ]]; then
   # Re-rendering is unnecessary: the only changed value is the enum-validated
   # activation field. Re-applying the complete private manifest keeps the
   # transition under the same server-side field manager as bootstrap.
-  replace_manifest "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/value: $initial_activation_mode/value: $ACTIVATION_MODE/;}"
-  rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
+  temporary_rendered_manifest="$(mktemp)"
+  if ! controller_activation_mode replace \
+    "$initial_activation_mode" "$ACTIVATION_MODE" >"$temporary_rendered_manifest"; then
+    fail "active activation replacement did not produce exactly one active value"
+  fi
+  mv -f "$temporary_rendered_manifest" "$temporary_manifest"
+  temporary_rendered_manifest=""
+  if ! rendered_activation_mode="$(controller_activation_mode read)"; then
+    fail "active activation replacement did not produce exactly one active value"
+  fi
   [[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]] || \
     fail "active activation replacement did not produce exactly one active value"
   kubectl apply \

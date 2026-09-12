@@ -108,7 +108,8 @@ class CertificateResourceFactoryTest {
   void certificateFactoryHasNoGrpcCertificateFactoryMethod() {
     assertTrue(
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
-            .noneMatch(method -> method.getName().equals("grpc")));
+            .noneMatch(
+                method -> method.getName().toLowerCase(java.util.Locale.ROOT).contains("grpc")));
   }
 
   @Test

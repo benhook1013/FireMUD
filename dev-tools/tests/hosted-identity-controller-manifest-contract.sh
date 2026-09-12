@@ -1527,7 +1527,12 @@ for forbidden_controller_root_operation in ("create", "update", "delete"):
     ) in source
 assert source.count("expect_can_i ") == 14
 assert "hostedenvironmentidentities/finalizers.platform.firemud.dev" not in source
-assert 'rendered_activation_mode="$(sed -n ' in source
+assert source.count("controller_activation_mode read") == 2
+assert (
+    'controller_activation_mode replace \\\n'
+    '    "$initial_activation_mode" "$ACTIVATION_MODE"'
+) in source
+assert "/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;" not in source
 assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
 assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
 assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 1
@@ -1569,8 +1574,8 @@ spec:
           env:
             - name: FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256
               value: __GRPC_TRUST_ANCHOR_SHA256_REQUIRED__
-            - name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
-              value: __ACTIVATION_MODE_REQUIRED__
+            - value: __ACTIVATION_MODE_REQUIRED__
+              name: FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -1631,7 +1636,37 @@ if [[ "${1:-}" == "apply" ]]; then
     [[ "${FAKE_EVENT_LOG:-}" == *active-events ]] || record_event guard-binding
     exit 0
   fi
-  activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$manifest")"
+  activation_mode="$(python3 - "$manifest" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+documents = yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+deployments = [
+    document
+    for document in documents
+    if isinstance(document, dict)
+    and document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name")
+    == "firemud-hosted-identity-controller"
+]
+if len(deployments) != 1:
+    raise SystemExit(1)
+containers = deployments[0]["spec"]["template"]["spec"]["containers"]
+controllers = [container for container in containers if container.get("name") == "controller"]
+if len(controllers) != 1:
+    raise SystemExit(1)
+values = [
+    entry.get("value")
+    for entry in controllers[0]["env"]
+    if entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"
+]
+if len(values) != 1 or not isinstance(values[0], str):
+    raise SystemExit(1)
+print(values[0])
+PY
+)"
   record_event "apply:${activation_mode}"
   exit 0
 fi

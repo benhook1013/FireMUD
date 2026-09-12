@@ -206,9 +206,7 @@ if [[ -n "$minio_secret_json" ]]; then
   load_minio_secret "$minio_secret_json"
 fi
 
-if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]] &&
-  [[ "$asset_store_access_key" != "$minio_access_key" ||
-    "$asset_store_secret_key" != "$minio_secret_key" ]]; then
+if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]]; then
   validate_matching_minio_credentials
 fi
 
