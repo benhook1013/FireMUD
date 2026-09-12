@@ -278,6 +278,7 @@ while (( SECONDS < deadline )); do
   observed_generation="$(jq -r '.status.observedGeneration // empty' <<<"$identity_json")"
   phase="$(jq -r '.status.phase // empty' <<<"$identity_json")"
   ready_status="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .status) // empty' <<<"$identity_json")"
+  ready_generation="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .observedGeneration) // empty' <<<"$identity_json")"
   ready_reason="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .reason) // empty' <<<"$identity_json")"
   ready_message="$(jq -r 'first(.status.conditions[]? | select(.type == "Ready") | .message) // empty' <<<"$identity_json")"
   profile_uid="$(jq -r '.status.profile.runtimeNamespaceUid // empty' <<<"$identity_json")"
@@ -311,8 +312,8 @@ while (( SECONDS < deadline )); do
       continue
       ;;
   esac
-  if [[ "$observed_generation" != "$generation" || "$ready_status" != "True" ]]; then
-    echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation} Ready=True (observed=${observed_generation:-missing}, reason=${ready_reason:-unknown})."
+  if [[ "$observed_generation" != "$generation" || "$ready_status" != "True" || "$ready_generation" != "$generation" ]]; then
+    echo "Waiting for HostedEnvironmentIdentity/${identity_name} generation ${generation} Ready=True (observed=${observed_generation:-missing}, conditionObserved=${ready_generation:-missing}, reason=${ready_reason:-unknown})."
     sleep 5
     continue
   fi

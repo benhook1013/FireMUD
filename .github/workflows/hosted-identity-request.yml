@@ -176,13 +176,27 @@ jobs:
         run: |
           set -euo pipefail
           render_run_id="$SOURCE_RUN_ID"
-          test -n "$render_run_id"
+          [[ -n "$render_run_id" ]] || {
+            echo "::error title=Missing source run id::Expected a non-empty workflow run id; actual value was empty." >&2
+            exit 1
+          }
           source_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${render_run_id}")"
-          test "$(jq -r '.conclusion' <<<"$source_json")" = success
-          test "$(jq -r '.head_sha' <<<"$source_json")" = "$HEAD_SHA"
-          test "$(jq -r '.path' <<<"$source_json")" = '.github/workflows/preview.yml'
-          test "$(jq -r '.event' <<<"$source_json")" = pull_request
-          test "$(jq -r '.repository.full_name' <<<"$source_json")" = "$GITHUB_REPOSITORY"
+          require_source_field() {
+            local label="$1"
+            local expected="$2"
+            local actual="$3"
+            [[ "$actual" == "$expected" ]] || {
+              printf '::error title=Unexpected source run %s::Expected %q; actual %q.\n' \
+                "$label" "$expected" "$actual" >&2
+              exit 1
+            }
+          }
+          require_source_field conclusion success "$(jq -r '.conclusion' <<<"$source_json")"
+          require_source_field head "$HEAD_SHA" "$(jq -r '.head_sha' <<<"$source_json")"
+          require_source_field path '.github/workflows/preview.yml' "$(jq -r '.path' <<<"$source_json")"
+          require_source_field event pull_request "$(jq -r '.event' <<<"$source_json")"
+          require_source_field repository "$GITHUB_REPOSITORY" \
+            "$(jq -r '.repository.full_name' <<<"$source_json")"
           {
             echo "render_run_id=${render_run_id}"
             echo "artifact_name=preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"

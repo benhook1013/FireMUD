@@ -85,6 +85,16 @@ annotator = annotator_path.read_text(encoding="utf-8")
 reconcile_script = reconcile_script_path.read_text(encoding="utf-8")
 mode_action = yaml.safe_load(mode_action_path.read_text(encoding="utf-8"))
 
+dispatch_inputs = workflow[True]["workflow_dispatch"]["inputs"]
+if dispatch_inputs["hostname"]["description"] != (
+    "Only dev.preview.firedevops.net is accepted"
+):
+    raise SystemExit("dev-demo hostname input must document its only accepted value")
+if dispatch_inputs["telnet_port"]["description"] != (
+    "Only TCP NodePort 32016 is accepted"
+):
+    raise SystemExit("dev-demo Telnet port input must document its only accepted value")
+
 expected_mode_step = {
     "name": "Resolve certificate identity mode",
     "id": "certificate-identity",
@@ -413,6 +423,9 @@ for required in (
     '[[ -n "${KUBECONFIG:-}" ]]',
     "Develop head lookup failed",
     "Unable to resolve the develop head from the GitHub API",
+    "repair_requested_head_annotation",
+    "Develop push run lookup failed",
+    "Unable to find the develop push run anchor",
     "--ignore-not-found",
     '[[ -n "${candidate_status}" && "${candidate_status}" != completed ]]',
     '"${candidate_conclusion}" == success',
@@ -461,6 +474,8 @@ for required in (
 ):
     if required not in reconcile_run:
         raise SystemExit(f"dev-demo reconciler lacks {required}")
+if "repair_requested_head_if_aligned" in reconcile_run:
+    raise SystemExit("dev-demo requested-head repair retained its misleading old name")
 aligned_guard = 'if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then'
 if reconcile_run.index(aligned_guard) > reconcile_run.index("develop_push_run="):
     raise SystemExit("dev-demo alignment must short-circuit before retry history is consumed")
@@ -984,6 +999,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
     --arg requested "${FAKE_REQUESTED_HEAD:?}" \
     --arg deployed "${FAKE_DEPLOYED_HEAD:?}" \
     --arg profile_uid "${FAKE_PROFILE_UID:?}" \
+    --arg ready_generation "${FAKE_READY_GENERATION:-7}" \
     --argjson telnet_port "${FAKE_PROFILE_TELNET_PORT:?}" \
     --arg revision "$revision" \
     --arg grpc_revision "$grpc_revision" '
@@ -992,7 +1008,7 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
         status:{
           observedGeneration:7,
           phase:"Ready",
-          conditions:[{type:"Ready",status:"True",reason:"Reconciled",message:"served"}],
+          conditions:[{type:"Ready",status:"True",observedGeneration:($ready_generation | tonumber?),reason:"Reconciled",message:"served"}],
           profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
@@ -1030,6 +1046,7 @@ assert_waiter_rejects() {
   local expected_message="$8"
   local namespace_telnet_port="${9:-32016}"
   local profile_telnet_port="${10:-$namespace_telnet_port}"
+  local ready_generation="${11:-7}"
   local output="$fixture_dir/waiter-${name}.out"
   local actual_status
 
@@ -1043,6 +1060,7 @@ assert_waiter_rejects() {
     FAKE_DEPLOYED_HEAD="$deployed_head" \
     FAKE_PROFILE_UID="$profile_uid" \
     FAKE_PROFILE_TELNET_PORT="$profile_telnet_port" \
+    FAKE_READY_GENERATION="$ready_generation" \
     FAKE_MISSING_ROLE="$missing_role" \
     bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$output" 2>&1
   actual_status=$?
@@ -1109,6 +1127,14 @@ assert_waiter_rejects \
   projection-missing "$expected_waiter_head" "$expected_waiter_head" \
   "$expected_waiter_head" "$expected_waiter_head" runtime-uid grpc \
   "Ready identity has incomplete projected revisions"
+assert_waiter_rejects \
+  ready-condition-generation-missing "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "conditionObserved=missing" 32016 32016 __missing__
+assert_waiter_rejects \
+  ready-condition-generation-stale "$expected_waiter_head" "$expected_waiter_head" \
+  "$expected_waiter_head" "$expected_waiter_head" runtime-uid "" \
+  "conditionObserved=6" 32016 32016 6
 
 waiter_success_output="$fixture_dir/waiter-success.out"
 uppercase_waiter_head="${expected_waiter_head^^}"
@@ -1392,6 +1418,10 @@ if [[ "$event" == push ]]; then
     exit 2
   fi
   printf 'anchor\n' >>"$TEST_GH_TRACE"
+  if [[ "$TEST_SCENARIO" == develop-push-run-api-failure ]]; then
+    echo "simulated develop push run API failure" >&2
+    exit 3
+  fi
   if [[ "$TEST_SCENARIO" == bootstrap-two-failures \
     || "$TEST_SCENARIO" == bootstrap-missing-created-at ]]; then
     printf '%s\n' '{"workflow_runs":[]}'
@@ -1706,6 +1736,8 @@ run_reconcile_fixture() {
 
 run_reconcile_fixture empty 0 1 "Dispatching dev-demo deploy"
 run_reconcile_fixture develop-head-api-failure 1 0 "Develop head lookup failed"
+run_reconcile_fixture develop-push-run-api-failure 1 0 \
+  "Develop push run lookup failed::Unable to find the develop push run anchor"
 run_reconcile_fixture history-page-api-failure 1 0 \
   "Dev-demo run history lookup failed::Unable to list dev-demo runs page 1."
 run_reconcile_fixture aligned-no-record 0 0 "no retry or redispatch required" "$test_head_sha" "$test_head_sha"

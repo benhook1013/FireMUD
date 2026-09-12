@@ -26,12 +26,12 @@ on:
         default: ""
         type: string
       hostname:
-        description: Fixed dev-demo hostname
+        description: Only dev.preview.firedevops.net is accepted
         required: false
         default: dev.preview.firedevops.net
         type: string
       telnet_port:
-        description: Fixed dev-demo TCP NodePort
+        description: Only TCP NodePort 32016 is accepted
         required: false
         default: "32016"
         type: string

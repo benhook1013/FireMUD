@@ -31,7 +31,7 @@ class CertificateResourceFactoryTest {
         java.util.List.of("pr-42.preview.firedevops.net"), certificateSpec.get("dnsNames"));
     assertEquals("letsencrypt-prod", issuerName(certificateSpec));
     assertCertificateDefaults(certificateSpec);
-    assertFalse(certificateSpec.containsKey("duration"));
+    assertEquals("2160h", certificateSpec.get("duration"));
     assertFalse(certificateSpec.containsKey("renewBefore"));
     assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.INGRESS_ROLE);
   }
@@ -53,7 +53,7 @@ class CertificateResourceFactoryTest {
     assertEquals("letsencrypt-prod", issuerName(certificateSpec));
     assertCertificateDefaults(certificateSpec);
     assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.TELNET_ROLE);
-    assertFalse(certificateSpec.containsKey("duration"));
+    assertEquals("2160h", certificateSpec.get("duration"));
     assertFalse(certificateSpec.containsKey("renewBefore"));
   }
 

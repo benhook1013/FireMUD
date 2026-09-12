@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 /** Builds cert-manager Certificates without depending on a generated cert-manager Java model. */
 @Component
 public class CertificateResourceFactory {
+  private static final Duration PUBLIC_CERTIFICATE_DURATION = Duration.ofDays(90);
+
   public GenericKubernetesResource ingress(EnvironmentIdentityPlan plan) {
     return certificate(
         plan,
@@ -25,7 +27,7 @@ public class CertificateResourceFactory {
         List.of(plan.hostname()),
         List.of(),
         List.of("digital signature", "key encipherment", "server auth"),
-        null,
+        PUBLIC_CERTIFICATE_DURATION,
         null);
   }
 
@@ -39,7 +41,7 @@ public class CertificateResourceFactory {
         List.of(plan.hostname()),
         List.of(),
         List.of("digital signature", "key encipherment", "server auth"),
-        null,
+        PUBLIC_CERTIFICATE_DURATION,
         null);
   }
 

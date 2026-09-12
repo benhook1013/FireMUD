@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 import yaml
 
 
+@functools.lru_cache(maxsize=1)
 def _expected_chart_label(chart_metadata_path: Path) -> str:
     try:
         chart_metadata = yaml.safe_load(chart_metadata_path.read_text(encoding="utf-8"))

@@ -64,7 +64,7 @@ if ! namespace_uid="$(
           end
         )
       | .metadata.uid
-    ' <<<"$namespace_json" 2>/dev/null
+    ' <<<"$namespace_json"
 )"; then
   echo "hosted namespace ${namespace} identity or ownership metadata is invalid" >&2
   exit 1

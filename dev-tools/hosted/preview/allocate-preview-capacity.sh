@@ -94,8 +94,8 @@ get_pr_state() {
 }
 
 find_unsatisfied_priority_pr() {
-  local max_priority_candidates=1000
-  local priority_rows
+  local max_open_pr_candidates=1000
+  local open_pr_rows
   local priority_candidates
   local candidate_row
   local pr_number
@@ -106,10 +106,10 @@ find_unsatisfied_priority_pr() {
   local namespace_head
   local page
   local page_rows
-  local priority_page_size=100
-  local max_priority_pages=$((max_priority_candidates / priority_page_size))
+  local open_pr_page_size=100
+  local max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))
   local overflow_row
-  local priority_jq='.[] | [
+  local open_pr_jq='.[] | [
           .number,
           .head.sha,
           .head.repo.full_name,
@@ -119,40 +119,40 @@ find_unsatisfied_priority_pr() {
           (.labels | tojson | @base64)
         ] | @tsv'
 
-  priority_rows=""
-  for ((page = 1; page <= max_priority_pages; page++)); do
+  open_pr_rows=""
+  for ((page = 1; page <= max_open_pr_pages; page++)); do
     if ! page_rows="$(gh api \
-      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${priority_page_size}&page=${page}" \
-      --jq "$priority_jq")"; then
-      echo "Unable to query current priority pull requests" >&2
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=${open_pr_page_size}&page=${page}" \
+      --jq "$open_pr_jq")"; then
+      echo "Unable to query open pull requests for priority evaluation" >&2
       return 1
     fi
     if [[ -z "$page_rows" ]]; then
       break
     fi
-    priority_rows+="$page_rows"$'\n'
-    if (( $(grep -c . <<<"$page_rows") < priority_page_size )); then
+    open_pr_rows+="$page_rows"$'\n'
+    if (( $(grep -c . <<<"$page_rows") < open_pr_page_size )); then
       break
     fi
   done
-  if (( page > max_priority_pages )); then
+  if (( page > max_open_pr_pages )); then
     if ! overflow_row="$(gh api \
-      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=1&page=$((max_priority_candidates + 1))" \
-      --jq "$priority_jq")"; then
-      echo "Unable to query current priority pull requests" >&2
+      "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=1&page=$((max_open_pr_candidates + 1))" \
+      --jq "$open_pr_jq")"; then
+      echo "Unable to query open pull requests for priority evaluation" >&2
       return 1
     fi
     if [[ -n "$overflow_row" ]]; then
-      echo "Unable to evaluate priority pull requests: candidate limit exceeded" >&2
+      echo "Unable to evaluate open pull requests for priority intent: candidate limit exceeded" >&2
       return 1
     fi
   fi
   if ! priority_candidates="$(
-    printf '%s' "$priority_rows" | python3 "$eligibility_script" \
+    printf '%s' "$open_pr_rows" | python3 "$eligibility_script" \
       --batch-deploy-candidates \
       --expected-repository "$GITHUB_REPOSITORY"
   )"; then
-    echo "Unable to evaluate preview eligibility for priority pull requests" >&2
+    echo "Unable to evaluate preview eligibility for open pull requests" >&2
     return 1
   fi
   while IFS= read -r candidate_row; do

@@ -98,6 +98,74 @@ jobs:
             ' <<<"$1"
           }
 
+          readonly repair_success=0
+          readonly repair_skip=10
+          readonly repair_dispatch=11
+          readonly repair_abort=20
+
+          repair_requested_head() {
+            local namespace="$1"
+            local pr_number="$2"
+            local head_sha="$3"
+            local requested_head_sha="$4"
+            local fresh_namespace_json
+            local fresh_namespace_heads
+            local fresh_head_sha
+            local fresh_requested_head_sha
+            local fresh_namespace_resource_version
+            local annotation_failure_namespace_json
+
+            if ! fresh_namespace_json="$(
+              kubectl get namespace "${namespace}" --ignore-not-found -o json
+            )"; then
+              echo "Unable to recheck namespace ${namespace} before annotation repair." >&2
+              return "$repair_abort"
+            fi
+            if [[ -z "${fresh_namespace_json}" ]]; then
+              return "$repair_dispatch"
+            fi
+            if ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
+              echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
+              return "$repair_skip"
+            fi
+            IFS='|' read -r fresh_head_sha fresh_requested_head_sha fresh_namespace_resource_version <<<"${fresh_namespace_heads}"
+            if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
+              return "$repair_skip"
+            fi
+            if [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
+              echo "Preview ${namespace} already aligned to ${head_sha}"
+              return "$repair_success"
+            fi
+            if [[ "${fresh_requested_head_sha}" != "${requested_head_sha}" ]]; then
+              echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
+              return "$repair_skip"
+            fi
+            if ! kubectl annotate namespace "${namespace}" \
+              "firemud.dev/requested-preview-head-sha=${head_sha}" \
+              --overwrite \
+              --resource-version "${fresh_namespace_resource_version}" >/dev/null; then
+              if ! annotation_failure_namespace_json="$(
+                kubectl get namespace "${namespace}" --ignore-not-found -o json
+              )"; then
+                echo "Unable to recheck namespace ${namespace} after annotation failure; refusing preview reconcile." >&2
+                return "$repair_abort"
+              fi
+              if [[ -n "${annotation_failure_namespace_json}" ]]; then
+                echo "Skipping PR #${pr_number}: unable to annotate namespace ${namespace}; namespace still exists." >&2
+                return "$repair_skip"
+              fi
+              echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
+              return "$repair_skip"
+            fi
+            if [[ -z "${requested_head_sha}" ]]; then
+              echo "Repaired missing requested head for aligned preview ${namespace}"
+            else
+              echo "Repaired stale requested head for aligned preview ${namespace}"
+            fi
+            return "$repair_success"
+          }
+
           active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
           available_slots=$((max_active - active_count))
           dispatch_sent=false
@@ -148,54 +216,28 @@ jobs:
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
               if [[ "${requested_head_sha}" != "${head_sha}" ]]; then
-                if ! fresh_namespace_json="$(
-                  kubectl get namespace "${namespace}" --ignore-not-found -o json
-                )"; then
-                  echo "Unable to recheck namespace ${namespace} before annotation repair." >&2
-                  exit 1
-                fi
-                if [[ -z "${fresh_namespace_json}" ]]; then
-                  namespace_exists=false
-                elif ! fresh_namespace_heads="$(parse_namespace_heads "${fresh_namespace_json}")"; then
-                  echo "Skipping PR #${pr_number}: unable to parse namespace ${namespace} recheck." >&2
-                  continue
+                repair_status="$repair_success"
+                if repair_requested_head \
+                  "$namespace" "$pr_number" "$head_sha" "$requested_head_sha"; then
+                  repair_status="$repair_success"
                 else
-                  IFS='|' read -r fresh_head_sha fresh_requested_head_sha fresh_namespace_resource_version <<<"${fresh_namespace_heads}"
-                  if [[ "${fresh_head_sha}" != "${head_sha}" ]]; then
-                    echo "Skipping preview repair for PR #${pr_number}: deployed head changed during annotation repair check."
-                    continue
-                  elif [[ "${fresh_requested_head_sha}" == "${head_sha}" ]]; then
-                    echo "Preview ${namespace} already aligned to ${head_sha}"
-                    continue
-                  elif [[ "${fresh_requested_head_sha}" != "${requested_head_sha}" ]]; then
-                    echo "Skipping preview repair for PR #${pr_number}: requested head changed during annotation repair check."
-                    continue
-                  else
-                    if ! kubectl annotate namespace "${namespace}" \
-                      "firemud.dev/requested-preview-head-sha=${head_sha}" \
-                      --overwrite \
-                      --resource-version "${fresh_namespace_resource_version}" >/dev/null; then
-                      if ! annotation_failure_namespace_json="$(
-                        kubectl get namespace "${namespace}" --ignore-not-found -o json
-                      )"; then
-                        echo "Unable to recheck namespace ${namespace} after annotation failure; refusing preview reconcile." >&2
-                        exit 1
-                      fi
-                      if [[ -n "${annotation_failure_namespace_json}" ]]; then
-                        echo "Skipping PR #${pr_number}: unable to annotate namespace ${namespace}; namespace still exists." >&2
-                        continue
-                      fi
-                      echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
-                      continue
-                    fi
-                    if [[ -z "${requested_head_sha}" ]]; then
-                      echo "Repaired missing requested head for aligned preview ${namespace}"
-                    else
-                      echo "Repaired stale requested head for aligned preview ${namespace}"
-                    fi
-                    continue
-                  fi
+                  repair_status=$?
                 fi
+                case "$repair_status" in
+                  "$repair_success" | "$repair_skip")
+                    continue
+                    ;;
+                  "$repair_dispatch")
+                    namespace_exists=false
+                    ;;
+                  "$repair_abort")
+                    exit 1
+                    ;;
+                  *)
+                    echo "Unexpected requested-head repair status: ${repair_status}" >&2
+                    exit 1
+                    ;;
+                esac
               else
                 echo "Preview ${namespace} already aligned to ${head_sha}"
                 continue

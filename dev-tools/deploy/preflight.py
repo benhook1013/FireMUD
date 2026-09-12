@@ -90,11 +90,26 @@ SECRET_LOOKUP_TIMEOUT_SECONDS = 30
 HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS = 300
 HOSTED_BRIDGE_SECRET_READY_MAX_TIMEOUT_SECONDS = 900
 HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 2
+
+
+def _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds: int) -> int:
+    """Convert a wall-clock readiness timeout to a polling-attempt budget."""
+    return max(
+        1,
+        (
+            timeout_seconds
+            + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+            - 1
+        )
+        // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS,
+    )
+
+
 HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = (
-    HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
-    + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
-    - 1
-) // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
+    _hosted_bridge_secret_ready_attempts_for_timeout(
+        HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    )
+)
 JWT_CUSTODY_MODES = (
     "LEGACY_SECRET_DIAGNOSTIC",
     "INTERIM_ACCOUNT_ONLY_MOUNTED_FALLBACK",
@@ -6478,15 +6493,7 @@ def hosted_bridge_secret_ready_attempts(timeout_seconds: int | None = None) -> i
         )
     if HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS <= 0:
         raise ValueError("HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS must be positive")
-    return max(
-        1,
-        (
-            timeout_seconds
-            + HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
-            - 1
-        )
-        // HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS,
-    )
+    return _hosted_bridge_secret_ready_attempts_for_timeout(timeout_seconds)
 
 
 def wait_for_secret_key_requirements(

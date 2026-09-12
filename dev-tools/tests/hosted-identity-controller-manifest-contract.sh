@@ -1054,6 +1054,7 @@ controller_delete_expression = controller_certificate_expression.split(
 assert "firemud-grpc-tls" not in controller_delete_expression
 assert "request.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
+assert "object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9))" in certificate_match
 assert (
     "object.metadata.labels['firemud.dev/role'] in "
     "['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge']"
@@ -2084,6 +2085,16 @@ module_spec = importlib.util.spec_from_file_location(
 )
 validator = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(validator)
+
+validator._expected_chart_label.cache_clear()
+first_chart_label = validator._expected_chart_label(validator.TRUSTED_CHART_METADATA)
+second_chart_label = validator._expected_chart_label(validator.TRUSTED_CHART_METADATA)
+chart_label_cache = validator._expected_chart_label.cache_info()
+if first_chart_label != second_chart_label or (
+    chart_label_cache.hits,
+    chart_label_cache.misses,
+) != (1, 1):
+    raise SystemExit("trusted Chart.yaml label lookup was not cached")
 
 
 def assert_rejected(call, expected):

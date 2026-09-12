@@ -327,6 +327,7 @@ spec:
           (request.operation != 'DELETE' &&
            has(object.metadata.labels) &&
            object.metadata.labels['firemud.dev/managed-by'] == 'hosted-identity-controller' &&
+           object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9)) &&
            object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge'] &&
            object.metadata.name.matches('^(dev|pr-[1-9][0-9]*)-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$') &&
            object.metadata.name.startsWith(

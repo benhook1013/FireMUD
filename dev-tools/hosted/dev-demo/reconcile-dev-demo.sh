@@ -31,7 +31,7 @@ fi
 current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
 current_requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}')"
 
-repair_requested_head_if_aligned() {
+repair_requested_head_annotation() {
   if [[ "${current_requested_head_sha}" != "${desired_head_sha}" ]]; then
     kubectl annotate namespace "${namespace}" \
       "firemud.dev/requested-dev-demo-head-sha=${desired_head_sha}" --overwrite
@@ -40,7 +40,7 @@ repair_requested_head_if_aligned() {
 }
 
 if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
-  repair_requested_head_if_aligned
+  repair_requested_head_annotation
   echo "Dev demo already aligned to develop head ${desired_head_sha}; no retry or redispatch required."
   exit 0
 fi
@@ -74,7 +74,7 @@ list_run_page() {
   run_page_result="${run_page_cache[$page]}"
 }
 
-develop_push_run="$(
+if ! develop_push_run="$(
   gh api \
     --method GET \
     "${workflow_runs_api}" \
@@ -82,7 +82,10 @@ develop_push_run="$(
     -f event=push \
     -f "head_sha=${desired_head_sha}" \
     -F per_page=1
-)"
+)"; then
+  echo "::error title=Develop push run lookup failed::Unable to find the develop push run anchor for ${desired_head_sha}." >&2
+  exit 1
+fi
 history_not_before="$(jq -r '.workflow_runs[0].created_at // empty' <<<"${develop_push_run}")"
 if [[ -z "$history_not_before" ]]; then
   # The current develop head can predate this workflow, so it may
@@ -273,7 +276,7 @@ fi
 current_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/last-dev-demo-head-sha}')"
 current_requested_head_sha="$(kubectl get namespace "${namespace}" --ignore-not-found -o jsonpath='{.metadata.annotations.firemud\.dev/requested-dev-demo-head-sha}')"
 if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
-  repair_requested_head_if_aligned
+  repair_requested_head_annotation
   echo "Dev demo already aligned to develop head ${desired_head_sha}; no retry or redispatch required."
   exit 0
 fi

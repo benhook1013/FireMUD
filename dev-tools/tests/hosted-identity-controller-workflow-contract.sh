@@ -312,7 +312,11 @@ assert resolve_step["shell"] == "bash"
 assert resolve_step["env"] == {"VALUES_FILE": "${{ inputs['values-file'] }}"}
 resolve_run = resolve_step["run"]
 assert '[[ -n "$VALUES_FILE" ]]' in resolve_run
-assert "resolve-certificate-identity-mode.py" in resolve_run
+assert (
+    '"$GITHUB_ACTION_PATH/../../../dev-tools/hosted/shared/'
+    'resolve-certificate-identity-mode.py"'
+) in resolve_run
+assert "$GITHUB_WORKSPACE" not in resolve_run
 assert 'case "$mode" in' in resolve_run
 assert "standalone|hosted-controller) ;;" in resolve_run
 assert "Resolver output must be exactly standalone or hosted-controller." in resolve_run
@@ -420,6 +424,9 @@ assert missing_image_block in publisher_script
 assert publisher_script.count(
     'echo "Required source artifact image for $service is missing: $image." >&2'
 ) == 1
+assert publisher_script.index(
+    'if docker manifest inspect "$image" >/dev/null 2>&1; then'
+) < publisher_script.index(missing_image_block)
 for obsolete_optional_controller_fragment in (
     "hosted-environment-identity-controller; do",
     "hosted-environment-identity-controller\\n",
@@ -600,6 +607,17 @@ source_script = source_step["run"]
 assert 'render_run_id="$SOURCE_RUN_ID"' in source_script
 assert 'if [[ -z "$render_run_id" ]]' not in source_script
 assert 'actions/workflows/preview.yml/runs?' not in source_script
+assert 'test -n "$render_run_id"' not in source_script
+assert 'Missing source run id::Expected a non-empty workflow run id' in source_script
+for source_field, expected in (
+    ("conclusion", "success"),
+    ("head", '"$HEAD_SHA"'),
+    ("path", "'.github/workflows/preview.yml'"),
+    ("event", "pull_request"),
+    ("repository", '"$GITHUB_REPOSITORY"'),
+):
+    assert f"require_source_field {source_field} {expected}" in source_script
+assert "Expected %q; actual %q." in source_script
 
 deploy_steps = jobs["deploy-runtime"]["steps"]
 deploy_by_name = {
@@ -3556,6 +3574,80 @@ artifact_name=preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc
 EOF
 )"
 test "$(cat "$source_gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+
+missing_source_stderr="$TEMP_DIR/source-missing-id.stderr"
+missing_source_gh_log="$TEMP_DIR/source-missing-id-gh.log"
+: >"$missing_source_gh_log"
+if (
+  cd "$ROOT_DIR"
+  PATH="$TEMP_DIR/bin:$PATH" \
+    GH_TOKEN=fake \
+    GITHUB_REPOSITORY=example/FireMUD \
+    SOURCE_RUN_ID='' \
+    HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+    PR_NUMBER=900 \
+    SOURCE_GH_LOG="$missing_source_gh_log" \
+    GITHUB_OUTPUT="$TEMP_DIR/source-missing-id-output" \
+    bash "$source_step"
+) 2>"$missing_source_stderr"; then
+  echo "source validation must reject a missing workflow run id" >&2
+  exit 1
+fi
+grep -Fxq \
+  '::error title=Missing source run id::Expected a non-empty workflow run id; actual value was empty.' \
+  "$missing_source_stderr"
+test ! -s "$missing_source_gh_log"
+
+run_invalid_source_field() {
+  local scenario="$1"
+  local source_json="$2"
+  local expected_diagnostic="$3"
+  local output="$TEMP_DIR/source-${scenario}-output"
+  local stderr="$TEMP_DIR/source-${scenario}.stderr"
+  local gh_log="$TEMP_DIR/source-${scenario}-gh.log"
+
+  : >"$gh_log"
+  if (
+    cd "$ROOT_DIR"
+    PATH="$TEMP_DIR/bin:$PATH" \
+      GH_TOKEN=fake \
+      GITHUB_REPOSITORY=example/FireMUD \
+      SOURCE_RUN_ID=42 \
+      HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
+      PR_NUMBER=900 \
+      FAKE_WORKFLOW_RUN_JSON="$source_json" \
+      SOURCE_GH_LOG="$gh_log" \
+      GITHUB_OUTPUT="$output" \
+      bash "$source_step"
+  ) 2>"$stderr"; then
+    echo "source validation must reject an unexpected ${scenario}" >&2
+    exit 1
+  fi
+  grep -Fxq "$expected_diagnostic" "$stderr"
+  test ! -s "$output"
+  test "$(cat "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+}
+
+run_invalid_source_field \
+  conclusion \
+  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run conclusion::Expected success; actual failure.'
+run_invalid_source_field \
+  head \
+  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run head::Expected cccccccccccccccccccccccccccccccccccccccc; actual dddddddddddddddddddddddddddddddddddddddd.'
+run_invalid_source_field \
+  path \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/other.yml.'
+run_invalid_source_field \
+  event \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"push","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run event::Expected pull_request; actual push.'
+run_invalid_source_field \
+  repository \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"fork/FireMUD"}}' \
+  '::error title=Unexpected source run repository::Expected example/FireMUD; actual fork/FireMUD.'
 
 target_python_log="$TEMP_DIR/closed-target-python.log"
 closed_target_bin="$TEMP_DIR/closed-target-bin"

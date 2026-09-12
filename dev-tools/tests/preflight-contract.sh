@@ -2180,6 +2180,10 @@ try:
     default_attempts = module.hosted_bridge_secret_ready_attempts()
     if default_attempts != module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS:
         raise SystemExit("default hosted bridge Secret readiness budget was not preserved")
+    if default_attempts != module._hosted_bridge_secret_ready_attempts_for_timeout(
+        module.HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
+    ):
+        raise SystemExit("default hosted bridge Secret readiness budget bypassed its shared formula")
     if (
         default_attempts * module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
         < module.HOSTED_BRIDGE_SECRET_READY_TIMEOUT_SECONDS
@@ -2196,6 +2200,14 @@ try:
     ) // module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS
     if module.hosted_bridge_secret_ready_attempts() != expected_max_attempts:
         raise SystemExit("maximum hosted bridge Secret readiness budget was not honored")
+
+    try:
+        module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = 7
+        os.environ[secret_ready_timeout_env] = "15"
+        if module.hosted_bridge_secret_ready_attempts() != 3:
+            raise SystemExit("configured readiness budget bypassed its shared ceiling formula")
+    finally:
+        module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay
 
     os.environ[secret_ready_timeout_env] = "1"
     if module.hosted_bridge_secret_ready_attempts() != 1:

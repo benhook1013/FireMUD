@@ -74,6 +74,8 @@ fi
 eligibility_script="${PREVIEW_ELIGIBILITY_SCRIPT:-${script_dir}/preview-eligibility.py}"
 identity_request_script="${HOSTED_IDENTITY_REQUEST_SCRIPT:-${script_dir}/../shared/request-hosted-identity.sh}"
 identity_wait_script="${HOSTED_IDENTITY_WAIT_SCRIPT:-${script_dir}/wait-for-hosted-identity.sh}"
+eligible=""
+reason=""
 
 evaluate_retention_eligibility() {
   local subject="$1"
@@ -81,6 +83,9 @@ evaluate_retention_eligibility() {
   local pr_metadata metadata_without_tabs metadata_tab_count
   local pr_state pr_base_ref pr_author pr_labels_base64 pr_labels_json eligibility_output
   local eligibility_first_line eligibility_second_line
+
+  eligible=""
+  reason=""
 
   if ! pr_metadata="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \

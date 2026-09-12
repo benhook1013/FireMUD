@@ -93,13 +93,13 @@ jobs:
             tcp-proxy-service \
             world-management-service; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if ! docker image inspect "$image" >/dev/null 2>&1; then
-              echo "Required source artifact image for $service is missing: $image." >&2
-              exit 1
-            fi
             if docker manifest inspect "$image" >/dev/null 2>&1; then
               echo "Fixed image tag already exists; preserving first publication: $image"
               continue
+            fi
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+              echo "Required source artifact image for $service is missing: $image." >&2
+              exit 1
             fi
 
             max_push_attempts=3

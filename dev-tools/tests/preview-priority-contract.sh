@@ -93,7 +93,8 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     [[ "${FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR:-false}" == true && "$count" -gt 1 ]]; then
     exit 1
   fi
-  if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]]; then
+  if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]] ||
+    [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK:-false}" == true && "$count" -gt 1 ]]; then
     exit 0
   fi
   if [[ "${FAKE_NAMESPACE_SNAPSHOT_PARSE_FAIL:-false}" == true ]] ||
@@ -638,6 +639,7 @@ reset_case() {
   export FAKE_PR_901_HEAD=''
   export FAKE_PR_901_REQUESTED_HEAD=''
   export FAKE_PR_901_NAMESPACE_ABSENT=false
+  export FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=false
   unset FAKE_PR_901_RECHECK_HEAD FAKE_PR_901_RECHECK_REQUESTED_HEAD
   export FAKE_NAMESPACE_SNAPSHOT_ERROR=false
   export FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=false
@@ -1679,6 +1681,16 @@ extract_workflow_step_run \
   "Dispatch preview deploys for drifted PRs" \
   "$RECONCILER_RUN"
 grep -Fq 'set -euo pipefail' "$RECONCILER_RUN"
+grep -Fq 'repair_requested_head() {' "$RECONCILER_RUN"
+for repair_status_assignment in \
+  'readonly repair_success=0' \
+  'readonly repair_skip=10' \
+  'readonly repair_dispatch=11' \
+  'readonly repair_abort=20'; do
+  grep -Fq "$repair_status_assignment" "$RECONCILER_RUN"
+done
+# shellcheck disable=SC2016 # Assert the literal repair status dispatch in workflow source.
+grep -Fq 'case "$repair_status" in' "$RECONCILER_RUN"
 grep -Fq -- \
   '--jq '\''first(.[] | select(.status == "requested" or .status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "pending") | .databaseId) // empty'\''' \
   "$RECONCILER_RUN"
@@ -1734,6 +1746,23 @@ grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' 
 test ! -e "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 1
 grep -Fqx 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+
+reset_case
+reconciler_namespace_absent_on_recheck_output="$TEMP_DIR/reconciler-namespace-absent-on-recheck.out"
+(
+  cd "$ROOT_DIR"
+  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+    FAKE_PR_901_HEAD=head-901 \
+    FAKE_PR_901_REQUESTED_HEAD='' \
+    FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK=true \
+    PREVIEW_MAX_ACTIVE=3 \
+    bash "$RECONCILER_RUN"
+) > "$reconciler_namespace_absent_on_recheck_output"
+grep -qx 'Dispatching preview deploy for PR #901 (head-901) on ref feature-901' \
+  "$reconciler_namespace_absent_on_recheck_output"
+test ! -e "$FAKE_ANNOTATE_LOG"
+test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+test "$(grep -Fc 'get namespace pr-901 --ignore-not-found -o json' "$FAKE_NAMESPACE_SNAPSHOT_LOG")" -eq 2
 
 reset_case
 reconciler_namespace_error_output="$TEMP_DIR/reconciler-namespace-error.out"
@@ -2129,7 +2158,7 @@ grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 grep -q -- '--batch-deploy-candidates' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 grep -q -- '--expected-repository "$GITHUB_REPOSITORY"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
-grep -q 'max_priority_candidates=1000' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
+grep -q 'max_open_pr_candidates=1000' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -2142,10 +2171,10 @@ assert "inspect_labels" not in body
 assert "--batch-deploy-candidates" in body
 assert body.count('python3 "$eligibility_script"') == 1
 assert "--operation deploy" not in body
-assert "priority_page_size=100" in body
-assert "max_priority_pages=$((max_priority_candidates / priority_page_size))" in body
+assert "open_pr_page_size=100" in body
+assert "max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))" in body
 assert 'page=${page}' in body
-assert 'per_page=1&page=$((max_priority_candidates + 1))' in body
+assert 'per_page=1&page=$((max_open_pr_candidates + 1))' in body
 assert 'candidate limit exceeded' in body
 assert "--paginate" not in body
 PY
@@ -2173,7 +2202,7 @@ if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
   exit 1
 fi
 if grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-limit.output"; then
-  echo "exactly max_priority_candidates was rejected" >&2
+  echo "exactly max_open_pr_candidates was rejected" >&2
   exit 1
 fi
 grep -Fq 'Yielding ordinary PR #900' "$TEMP_DIR/priority-limit.output"
@@ -2192,8 +2221,6 @@ grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-overflow.output"
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
-grep -Fq 'local eligibility_first_line eligibility_second_line' \
-  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 PRUNER_PATH="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh" python3 - <<'PY'
 import os
 from pathlib import Path

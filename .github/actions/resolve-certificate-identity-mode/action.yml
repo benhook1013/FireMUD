@@ -22,7 +22,7 @@ runs:
           echo "::error title=Missing certificate identity values file::A Helm values file is required." >&2
           exit 1
         }
-        mode="$(python3 "$GITHUB_WORKSPACE/dev-tools/hosted/shared/resolve-certificate-identity-mode.py" \
+        mode="$(python3 "$GITHUB_ACTION_PATH/../../../dev-tools/hosted/shared/resolve-certificate-identity-mode.py" \
           "$VALUES_FILE")"
         case "$mode" in
           standalone|hosted-controller) ;;
