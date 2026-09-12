@@ -60,12 +60,21 @@ public class HostedIdentityScopeService {
         }
       }
     }
+    if (current.getMetadata() != null && current.getMetadata().getDeletionTimestamp() != null) {
+      throw new IllegalStateException("identity Namespace is terminating");
+    }
     if (!isExpectedIdentityNamespace(current, plan)) {
       throw new IllegalStateException("identity Namespace ownership or labels drifted");
     }
   }
 
   public static boolean isExpectedIdentityNamespace(
+      Namespace namespace, EnvironmentIdentityPlan plan) {
+    return hasExpectedIdentityNamespaceMetadata(namespace, plan)
+        && namespace.getMetadata().getDeletionTimestamp() == null;
+  }
+
+  public static boolean hasExpectedIdentityNamespaceMetadata(
       Namespace namespace, EnvironmentIdentityPlan plan) {
     if (namespace == null || namespace.getMetadata() == null) {
       return false;

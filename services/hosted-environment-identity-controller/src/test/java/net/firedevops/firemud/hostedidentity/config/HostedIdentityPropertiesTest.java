@@ -10,17 +10,13 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.YamlPropertySourceLoader;
-import org.springframework.boot.test.system.CapturedOutput;
-import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ClassPathResource;
 
-@ExtendWith(OutputCaptureExtension.class)
 class HostedIdentityPropertiesTest {
   @Test
   void applicationYamlBindsAllPreviewAndDevDemoAnnotationKeys() throws Exception {
@@ -354,29 +350,26 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
-  void activationDefaultsAndInvalidValuesFailClosedToPaused() {
+  void activationDefaultsAndValidValuesResolve() {
     assertActivationMode(null, HostedIdentityProperties.ActivationMode.PAUSED);
+    assertActivationMode("paused", HostedIdentityProperties.ActivationMode.PAUSED);
     assertActivationMode("observe", HostedIdentityProperties.ActivationMode.OBSERVE);
-    assertActivationMode("unexpected", HostedIdentityProperties.ActivationMode.PAUSED);
     assertActivationMode("active", HostedIdentityProperties.ActivationMode.ACTIVE);
     assertActivationMode("ACTIVE", HostedIdentityProperties.ActivationMode.ACTIVE);
-    assertActivationMode(" \t ", HostedIdentityProperties.ActivationMode.PAUSED);
     assertActivationMode(" active ", HostedIdentityProperties.ActivationMode.ACTIVE);
   }
 
   @Test
-  void invalidActivationModeLogsTheRejectedNonSecretSelector(CapturedOutput output) {
-    HostedIdentityProperties properties = new HostedIdentityProperties();
-    properties.setActivationMode("unexpected-mode");
-    properties.afterPropertiesSet();
+  void presentInvalidActivationModesFailStartup() {
+    for (String invalidMode : new String[] {"", " \t ", "unexpected-mode"}) {
+      HostedIdentityProperties properties = new HostedIdentityProperties();
+      properties.setActivationMode(invalidMode);
 
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    // The second read proves the invalid-mode fallback is memoized and warns only once.
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    String warning =
-        "Rejected hosted identity activation mode 'unexpected-mode'; defaulting to paused";
-    assertTrue(output.getOut().contains(warning));
-    assertEquals(1, countOccurrences(output.getOut(), warning));
+      IllegalStateException failure =
+          assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      assertEquals("activation mode must be paused, observe, or active", failure.getMessage());
+      assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
+    }
   }
 
   private static void assertActivationMode(
@@ -389,15 +382,5 @@ class HostedIdentityPropertiesTest {
     properties.afterPropertiesSet();
     assertEquals(expected, properties.activationMode());
     assertEquals(Duration.ofDays(7), properties.getGrpcRenewBefore());
-  }
-
-  private static int countOccurrences(String value, String needle) {
-    int count = 0;
-    int offset = 0;
-    while ((offset = value.indexOf(needle, offset)) >= 0) {
-      count++;
-      offset += needle.length();
-    }
-    return count;
   }
 }

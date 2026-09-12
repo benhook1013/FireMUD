@@ -3,14 +3,11 @@ package net.firedevops.firemud.hostedidentity.config;
 import java.time.Duration;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "firemud.hosted-identity")
 public class HostedIdentityProperties implements InitializingBean {
-  private static final Logger LOGGER = LoggerFactory.getLogger(HostedIdentityProperties.class);
   private static final int MAX_HOSTNAME_LENGTH = 253;
   private static final Pattern HOSTNAME_PATTERN =
       Pattern.compile(
@@ -183,7 +180,7 @@ public class HostedIdentityProperties implements InitializingBean {
     this.activationMode = activationMode;
   }
 
-  /** Invalid or missing activation is deliberately treated as paused. */
+  /** Missing activation is deliberately treated as paused. */
   public ActivationMode activationMode() {
     return resolvedActivationMode;
   }
@@ -195,9 +192,8 @@ public class HostedIdentityProperties implements InitializingBean {
     try {
       return ActivationMode.valueOf(activationMode.trim().toUpperCase(java.util.Locale.ROOT));
     } catch (IllegalArgumentException exception) {
-      LOGGER.warn(
-          "Rejected hosted identity activation mode '{}'; defaulting to paused", activationMode);
-      return ActivationMode.PAUSED;
+      throw new IllegalStateException(
+          "activation mode must be paused, observe, or active", exception);
     }
   }
 

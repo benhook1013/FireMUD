@@ -824,7 +824,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       return true;
     }
     boolean namespaceTerminating = isTerminating(identityNamespace);
-    if (!HostedIdentityScopeService.isExpectedIdentityNamespace(identityNamespace, plan)
+    if (!HostedIdentityScopeService.hasExpectedIdentityNamespaceMetadata(identityNamespace, plan)
         || !isOwnedIdentityNamespace(identityNamespace, plan, namespaceTerminating)) {
       return false;
     }
@@ -890,7 +890,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       if (deletingNamespace == null) {
         return true;
       }
-      if (!HostedIdentityScopeService.isExpectedIdentityNamespace(deletingNamespace, plan)
+      if (!HostedIdentityScopeService.hasExpectedIdentityNamespaceMetadata(deletingNamespace, plan)
           || !isTerminating(deletingNamespace)) {
         return false;
       }

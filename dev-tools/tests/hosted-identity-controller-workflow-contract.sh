@@ -673,6 +673,31 @@ deployed_step = deploy_steps[deployed_step_index]
 assert apply_step["id"] == "deploy-runtime-artifact"
 assert deployed_step["if"] == "${{ steps.deploy-runtime-artifact.outcome == 'success' }}"
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" in deployed_step["run"]
+privileged_validation_guards = {
+    "Allocate stable preview Telnet port": (
+        ('[[ "$port" =~ ^32(00[0-9]|01[0-5])$ ]] || {', "Invalid allocated Telnet port"),
+    ),
+    "Create and annotate exact preview runtime namespace": (
+        ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
+        ('[[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {', "Invalid allocated Telnet port"),
+        (
+            '[[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {',
+            "Invalid allocation timestamp",
+        ),
+    ),
+    "Record exact deployed preview head": (
+        ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
+        ('[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {', "Invalid preview head SHA"),
+    ),
+    "Revalidate prepared preview runtime target": (
+        ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
+    ),
+}
+for step_name, guards in privileged_validation_guards.items():
+    step_run = deploy_by_name[step_name]["run"]
+    for predicate, error_title in guards:
+        assert predicate in step_run
+        assert f"::error title={error_title}::" in step_run
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
 assert "Validate trusted preview runtime target" not in deploy_by_name

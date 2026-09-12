@@ -121,6 +121,28 @@ class HostedIdentityScopeServiceTest {
   }
 
   @Test
+  void activeEnsureRejectsCanonicalTerminatingIdentityNamespaceDistinctly() {
+    EnvironmentIdentityPlan plan = plan();
+    NamespaceClient fixture = namespaceClient(plan);
+    Namespace terminating =
+        new NamespaceBuilder(identityNamespace(plan))
+            .editMetadata()
+            .withDeletionTimestamp("2026-09-13T00:00:00Z")
+            .endMetadata()
+            .build();
+    when(fixture.operation().get()).thenReturn(terminating);
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () -> HostedIdentityScopeService.ensureIdentityNamespace(fixture.client(), plan));
+
+    assertEquals("identity Namespace is terminating", failure.getMessage());
+    assertFalse(HostedIdentityScopeService.isExpectedIdentityNamespace(terminating, plan));
+    assertTrue(HostedIdentityScopeService.hasExpectedIdentityNamespaceMetadata(terminating, plan));
+  }
+
+  @Test
   void identityNamespaceCreatePropagatesNonConflictFailure() {
     EnvironmentIdentityPlan plan = plan();
     NamespaceClient fixture = namespaceClient(plan);
