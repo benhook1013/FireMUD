@@ -2507,7 +2507,7 @@ if grep -Fq 'Restore preview runtime kubeconfig' "$janitor_workflow"; then
   exit 1
 fi
 # shellcheck disable=SC2016 # Assert explicit kubeconfig selection on janitor consumers.
-grep -Fq 'KUBECONFIG: ${{ runner.temp }}/preview-kubeconfig.yaml' "$janitor_workflow"
+grep -Fq 'KUBECONFIG: ${{ env.PREVIEW_RUNTIME_KUBECONFIG }}' "$janitor_workflow"
 # shellcheck disable=SC2016 # Assert labels are encoded as one safe row field.
 grep -Fq '(.labels | map({name: .name}) | tojson | @base64)' "$reconciler_workflow"
 # shellcheck disable=SC2016 # Assert decoded labels reach the centralized parser.
