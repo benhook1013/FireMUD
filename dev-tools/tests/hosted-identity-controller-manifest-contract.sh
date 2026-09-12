@@ -1058,7 +1058,7 @@ assert role["rules"] == [
     {
         "apiGroups": ["platform.firemud.dev"],
         "resources": ["hostedenvironmentidentities"],
-        "verbs": ["get", "create", "update", "patch", "delete"],
+        "verbs": ["get", "list", "create", "update", "patch", "delete"],
     }
 ]
 PY

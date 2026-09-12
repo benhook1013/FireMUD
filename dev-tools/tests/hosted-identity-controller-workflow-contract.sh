@@ -860,6 +860,30 @@ assert "python3 ./dev-tools/deploy/preflight.py hosted-bridge" in operator_run
 assert '--expected-hosted-telnet-node-port "$TELNET_PORT"' in operator_run
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
+preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
+assert preview_plan_outputs["close_certificate_identity_mode"] == (
+    "${{ steps.close-certificate-identity.outputs.mode }}"
+)
+close_mode_step = next(
+    step for step in preview_plan_steps if step.get("id") == "close-certificate-identity"
+)
+assert close_mode_step == {
+    "name": "Resolve close lifecycle certificate identity owner",
+    "id": "close-certificate-identity",
+    "if": "${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}",
+    "uses": "./.github/actions/resolve-certificate-identity-mode",
+    "with": {
+        "values-file": "k8s/helm/firemud/values-hosted-shared.example.yaml",
+    },
+}
+preview_destroy_condition = preview_workflow["jobs"]["preview-destroy"]["if"]
+for required in (
+    "needs.preview-plan.outputs.action == 'destroy'",
+    "github.event_name != 'pull_request'",
+    "github.event.action != 'closed'",
+    "needs.preview-plan.outputs.close_certificate_identity_mode == 'standalone'",
+):
+    assert required in preview_destroy_condition, required
 preview_derive_step = next(
     step for step in preview_plan_steps if step.get("id") == "derive"
 )

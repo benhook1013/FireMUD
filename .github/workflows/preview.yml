@@ -72,6 +72,7 @@ jobs:
       base_sha: ${{ steps.derive.outputs.base_sha }}
       eligible: ${{ steps.eligibility.outputs.eligible }}
       eligibility_reason: ${{ steps.eligibility.outputs.reason }}
+      close_certificate_identity_mode: ${{ steps.close-certificate-identity.outputs.mode }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
@@ -81,6 +82,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Resolve close lifecycle certificate identity owner
+        id: close-certificate-identity
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+        uses: ./.github/actions/resolve-certificate-identity-mode
+        with:
+          values-file: k8s/helm/firemud/values-hosted-shared.example.yaml
 
       - name: Derive preview identifiers
         id: derive
@@ -765,7 +773,7 @@ jobs:
       - self-hosted
       - preview
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' && (github.event_name != 'pull_request' || github.event.action != 'closed' || needs.preview-plan.outputs.close_certificate_identity_mode == 'standalone') }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle

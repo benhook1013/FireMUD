@@ -223,6 +223,7 @@ if [[ "$1" == annotate && "$2" == namespace ]]; then
 fi
 if [[ "$*" == "-n firemud-system get hostedenvironmentidentities.platform.firemud.dev -o json" ]]; then
   printf '%s\n' "$*" >> "$FAKE_IDENTITY_LOG"
+  printf '%s\n' "${KUBECONFIG:-}" >> "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG"
   if [[ "${FAKE_IDENTITY_LIST_FAIL:-false}" == true ]]; then
     exit 1
   fi
@@ -592,6 +593,7 @@ export FAKE_RUNTIME_NAMESPACE_DELETED_MARKER="$TEMP_DIR/runtime-namespace-delete
 export FAKE_RUNTIME_WAIT_MARKER="$TEMP_DIR/runtime-wait-failed"
 export FAKE_HELM_LOG="$TEMP_DIR/helm.log"
 export FAKE_IDENTITY_LOG="$TEMP_DIR/identity.log"
+export FAKE_IDENTITY_LIST_KUBECONFIG_LOG="$TEMP_DIR/identity-list-kubeconfig.log"
 export FAKE_IDENTITY_REQUEST_LOG="$TEMP_DIR/identity-request.log"
 export FAKE_IDENTITY_WAIT_LOG="$TEMP_DIR/identity-wait.log"
 export FAKE_OPERATION_SEQUENCE="$TEMP_DIR/operation-sequence.log"
@@ -608,7 +610,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -1175,6 +1177,8 @@ for stranded_phase in RuntimeAbsent Retiring Retired; do
   test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
   test ! -e "$FAKE_DELETE_LOG"
   grep -Fqx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+  grep -Fqx "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" \
+    "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG"
   grep -Fq "Recovering HostedEnvironmentIdentity/pr-101 from phase ${stranded_phase}" \
     "$TEMP_DIR/recover-${stranded_phase}.out"
 done
@@ -1201,6 +1205,8 @@ if bash "$PRUNER" --apply --retire-terminal-identities \
 fi
 grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/recover-list-failure.out"
+grep -Fqx "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" \
+  "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG"
 
 reset_case
 export FAKE_NAMESPACE_ROWS=$'pr-101\t101\npr-102\t102\n'

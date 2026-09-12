@@ -20,6 +20,9 @@ rules:
       - hostedenvironmentidentities
     verbs:
       - get
+      # The trusted terminal janitor uses this namespaced read to rediscover
+      # retained identity requests after their runtime namespace is absent.
+      - list
       - create
       - update
       - patch

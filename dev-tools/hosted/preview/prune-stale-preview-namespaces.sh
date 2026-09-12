@@ -199,7 +199,8 @@ recover_stranded_hosted_identities() {
   local identity_list_json candidate_rows candidate_row identity_json identity_name phase pr_number
 
   if ! identity_list_json="$(
-    kubectl -n firemud-system get hostedenvironmentidentities.platform.firemud.dev -o json
+    KUBECONFIG="$hosted_identity_requester_kubeconfig" \
+      kubectl -n firemud-system get hostedenvironmentidentities.platform.firemud.dev -o json
   )"; then
     echo "Unable to list HostedEnvironmentIdentity recovery candidates; retirement recovery is incomplete." >&2
     return 1

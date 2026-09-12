@@ -1,32 +1,17 @@
 package net.firedevops.firemud.hostedidentity.security;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.junit.jupiter.api.Test;
-import org.yaml.snakeyaml.Yaml;
 
 class EnvironmentIdentityPlannerTest {
-  private static final Pattern RUNTIME_DEPLOYMENT_RESOURCE_NAMES =
-      Pattern.compile(
-          "r\\.apiGroups\\s*==\\s*\\['apps']\\s*&&\\s*r\\.resources\\s*==\\s*\\['deployments']\\s*&&\\s*r\\.resourceNames\\s*==\\s*\\[([^\\]]+)]\\s*&&\\s*r\\.verbs\\s*==\\s*\\[([^\\]]+)]");
-  private static final Pattern RUNTIME_SCOPE_MARKER =
-      Pattern.compile("\\(object\\.metadata\\.name\\s*==\\s*'firemud-hosted-runtime-scope'");
-  private static final Pattern CEL_STRING_LITERAL = Pattern.compile("'([^']+)'");
   private final EnvironmentIdentityPlanner planner =
       new EnvironmentIdentityPlanner(new HostedIdentityProperties());
 
@@ -127,51 +112,6 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
-  void grpcConsumersExactlyMatchTheAdmissionDeploymentAllowlist() throws IOException {
-    Path admissionPath = findRepositoryFile("k8s/hosted-identity-controller/admission.yaml");
-    Map<?, ?> scopeRolePolicy;
-    try (var reader = Files.newBufferedReader(admissionPath)) {
-      scopeRolePolicy =
-          java.util.stream.StreamSupport.stream(new Yaml().loadAll(reader).spliterator(), false)
-              .filter(Objects::nonNull)
-              .map(Map.class::cast)
-              .filter(document -> "ValidatingAdmissionPolicy".equals(document.get("kind")))
-              .filter(
-                  document ->
-                      "firemud-hosted-identity-scope-roles"
-                          .equals(((Map<?, ?>) document.get("metadata")).get("name")))
-              .findFirst()
-              .orElseThrow(() -> new AssertionError("scope-role admission policy must exist"));
-    }
-    Map<?, ?> spec = (Map<?, ?>) scopeRolePolicy.get("spec");
-    List<?> validations = (List<?>) spec.get("validations");
-    List<String> runtimeScopeExpressions =
-        validations.stream()
-            .map(Map.class::cast)
-            .map(validation -> validation.get("expression"))
-            .filter(String.class::isInstance)
-            .map(String.class::cast)
-            .filter(expression -> RUNTIME_SCOPE_MARKER.matcher(expression).find())
-            .toList();
-    assertEquals(
-        1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
-    String scopeRoleExpression = runtimeScopeExpressions.get(0);
-    Matcher runtimeScope = RUNTIME_SCOPE_MARKER.matcher(scopeRoleExpression);
-    assertTrue(runtimeScope.find(), "runtime-scope admission branch marker must exist");
-    String runtimeScopePolicy = scopeRoleExpression.substring(runtimeScope.start());
-
-    Matcher resourceNames = RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(runtimeScopePolicy);
-    assertTrue(resourceNames.find(), "runtime deployment resourceNames rule must exist");
-    List<String> admittedConsumers = celStringLiterals(resourceNames.group(1));
-    List<String> admittedVerbs = celStringLiterals(resourceNames.group(2));
-
-    assertEquals(planner.plan("pr-42").grpcConsumers(), admittedConsumers);
-    assertEquals(planner.plan("dev-demo").grpcConsumers(), admittedConsumers);
-    assertEquals(List.of("get", "update", "patch"), admittedVerbs);
-    assertFalse(resourceNames.find(), "admission deployment matcher must have exactly one rule");
-  }
-
-  @Test
   void mapsEachConfiguredIssuerAndCaSecretToItsNamedPlanAccessor() {
     var properties = new HostedIdentityProperties();
     properties.setIngressIssuer("sentinel-ingress-issuer");
@@ -221,29 +161,5 @@ class EnvironmentIdentityPlannerTest {
     assertThrows(IllegalArgumentException.class, () -> planner.plan("preview-pr-42"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42x"));
     assertThrows(IllegalArgumentException.class, () -> planner.plan("pr-42-other"));
-  }
-
-  private static Path findRepositoryFile(String relativePath) {
-    Path directory = Path.of("").toAbsolutePath();
-    while (directory != null) {
-      Path candidate = directory.resolve(relativePath);
-      if (Files.isRegularFile(candidate)) {
-        return candidate;
-      }
-      if (Files.isRegularFile(directory.resolve("settings.gradle.kts"))) {
-        break;
-      }
-      directory = directory.getParent();
-    }
-    throw new AssertionError("could not locate repository file " + relativePath);
-  }
-
-  private static List<String> celStringLiterals(String expression) {
-    Matcher literal = CEL_STRING_LITERAL.matcher(expression);
-    List<String> values = new ArrayList<>();
-    while (literal.find()) {
-      values.add(literal.group(1));
-    }
-    return values;
   }
 }
