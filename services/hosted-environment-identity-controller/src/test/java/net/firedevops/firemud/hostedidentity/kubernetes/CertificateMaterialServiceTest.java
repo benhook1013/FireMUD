@@ -1826,7 +1826,6 @@ class CertificateMaterialServiceTest {
         secretClient.runtimeSecrets());
   }
 
-  @SuppressWarnings("unchecked")
   private static Resource<GenericKubernetesResource> stubCertificate(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
@@ -1841,7 +1840,6 @@ class CertificateMaterialServiceTest {
         Map.of("tls.crt", encoded("certificate"), "tls.key", encoded("key")));
   }
 
-  @SuppressWarnings("unchecked")
   private static Resource<GenericKubernetesResource> stubCertificate(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,

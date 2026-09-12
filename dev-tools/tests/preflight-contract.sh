@@ -8852,6 +8852,67 @@ if "hosted TCP Proxy TLS requires exactly one /telnet-tls mount" not in duplicat
         f"{duplicate_mount_issues}"
     )
 
+missing_listener_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+missing_listener_service = next(
+    document
+    for document in missing_listener_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+missing_listener_service["spec"]["ports"] = []
+missing_listener_issues = module.validate_hosted_telnet_tls_values(
+    missing_listener_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+if missing_listener_issues.count(
+    "TCP Proxy Service requires exactly one direct TLS listener with port 2323, targetPort 2323, and protocol TCP"
+) != 1 or any("nodePort" in issue for issue in missing_listener_issues):
+    raise SystemExit(
+        "hosted-bridge emitted cascading nodePort diagnostics for a missing Telnet listener: "
+        f"{missing_listener_issues}"
+    )
+
+independent_telnet_mount_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+independent_telnet_deployment = next(
+    document
+    for document in independent_telnet_mount_documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)
+independent_telnet_pod = independent_telnet_deployment["spec"]["template"]["spec"]
+independent_telnet_mount = next(
+    mount
+    for mount in independent_telnet_pod["containers"][0]["volumeMounts"]
+    if mount.get("mountPath") == "/telnet-tls"
+)
+independent_telnet_mount["readOnly"] = False
+next(
+    volume
+    for volume in independent_telnet_pod["volumes"]
+    if volume.get("name") == independent_telnet_mount["name"]
+)["secret"]["secretName"] = "wrong-telnet-secret"
+independent_telnet_mount_issues = module.validate_hosted_telnet_tls_values(
+    independent_telnet_mount_documents,
+    required_identity_mode="hosted-controller",
+    expected_hosted_telnet_node_port=node_port,
+    target_namespace=namespace,
+)
+for expected_issue in (
+    "hosted TCP Proxy TLS requires a read-only /telnet-tls mount",
+    "/telnet-tls must reference the dedicated Telnet TLS Secret",
+):
+    if expected_issue not in independent_telnet_mount_issues:
+        raise SystemExit(
+            "hosted-bridge did not report independent Telnet mount defects: "
+            f"{independent_telnet_mount_issues}"
+        )
+
 required_telnet_tls_paths = {
     "TCP_PROXY_TLS_CERT": "/telnet-tls/tls.crt",
     "TCP_PROXY_TLS_KEY": "/telnet-tls/tls.key",

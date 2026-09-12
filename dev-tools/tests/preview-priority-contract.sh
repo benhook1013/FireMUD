@@ -2356,6 +2356,13 @@ grep -Fq 'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"' \
 # shellcheck disable=SC2016 # Assert literal delegated helper arguments.
 grep -Fq 'bash "$delete_script" "$runtime_namespace" "$runtime_namespace"' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -Fq 'exit 0' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+if grep -Fq 'exit $?' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
+  echo "pruner retained a redundant last-status exit" >&2
+  exit 1
+fi
 if grep -Fq 'delete_runtime_namespace()' \
   "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"; then
   echo "pruner retained a duplicate runtime namespace deletion implementation" >&2

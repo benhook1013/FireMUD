@@ -35,6 +35,10 @@ public class SecretMaterialValidator {
           "\\A\\s*-----BEGIN PRIVATE KEY-----(.*?)-----END PRIVATE KEY-----\\s*\\z",
           Pattern.DOTALL);
 
+  /**
+   * Validates transport material using subset EKU matching. Use {@link #validateIdentity} when the
+   * identity profile requires an exact EKU set.
+   */
   public MaterialSummary validate(
       Secret secret,
       String expectedHostname,
@@ -52,6 +56,10 @@ public class SecretMaterialValidator {
         expectedTrustAnchorSha256);
   }
 
+  /**
+   * Validates transport material using subset EKU matching. Use {@link #validateIdentity} when the
+   * identity profile requires an exact EKU set.
+   */
   public MaterialSummary validate(
       Secret secret,
       Collection<String> expectedDnsNames,

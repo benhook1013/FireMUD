@@ -1499,6 +1499,7 @@ for ca_proof in \
   "openssl x509 -noout -ext keyUsage" \
   "openssl x509 -pubkey -noout" \
   "openssl rsa -pubin -noout" \
+  "-----BEGIN PRIVATE KEY-----" \
   "openssl pkcs8 -nocrypt -out /dev/null" \
   "openssl rsa -check -noout" \
   "openssl pkey -pubout -outform DER" \
@@ -1799,6 +1800,7 @@ bootstrap_mismatched_ca_key="$bootstrap_test_dir/mismatched-ca.key"
 bootstrap_ec_ca_cert="$bootstrap_test_dir/ec-ca.crt"
 bootstrap_ec_ca_key="$bootstrap_test_dir/ec-ca.key"
 bootstrap_pkcs1_ca_key="$bootstrap_test_dir/pkcs1-ca.key"
+bootstrap_encrypted_ca_key="$bootstrap_test_dir/encrypted-ca.key"
 bootstrap_expired_ca_cert="$bootstrap_test_dir/expired-ca.crt"
 bootstrap_expired_ca_key="$bootstrap_test_dir/expired-ca.key"
 bootstrap_expired_ca_request="$bootstrap_test_dir/expired-ca.csr"
@@ -1828,6 +1830,9 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
 openssl rsa -in "$bootstrap_ca_key" -traditional \
   -out "$bootstrap_pkcs1_ca_key" >/dev/null 2>&1 || \
   fail "could not generate the PKCS#1 gRPC CA key fixture"
+openssl pkcs8 -topk8 -in "$bootstrap_ca_key" \
+  -out "$bootstrap_encrypted_ca_key" -passout pass:firemud-test >/dev/null 2>&1 || \
+  fail "could not generate the encrypted PKCS8 gRPC CA key fixture"
 openssl req -newkey rsa:2048 -nodes \
   -keyout "$bootstrap_expired_ca_key" \
   -out "$bootstrap_expired_ca_request" \
@@ -2233,6 +2238,19 @@ fi
 require_literal "$bootstrap_error" "ca.key must be an unencrypted PKCS8 private key"
 if grep -Fxq -- "apply:active" "$pkcs1_event_log"; then
   fail "bootstrap applied active mode after a non-PKCS8 gRPC CA private key"
+fi
+encrypted_key_event_log="$bootstrap_test_dir/encrypted-key-events"
+if FAKE_EVENT_LOG="$encrypted_key_event_log" \
+  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_encrypted_ca_key" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --activation-mode active --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an encrypted PKCS8 gRPC CA private key"
+fi
+require_literal "$bootstrap_error" "ca.key must be an unencrypted PKCS8 private key"
+if grep -Fxq -- "apply:active" "$encrypted_key_event_log"; then
+  fail "bootstrap applied active mode after an encrypted PKCS8 gRPC CA private key"
 fi
 if FAKE_CAN_I_ERROR=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \

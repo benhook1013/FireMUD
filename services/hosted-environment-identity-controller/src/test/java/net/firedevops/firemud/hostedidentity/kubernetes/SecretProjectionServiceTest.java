@@ -5,6 +5,7 @@ import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMateri
 import static net.firedevops.firemud.hostedidentity.kubernetes.CertificateMaterialService.RoleMaterialState.SOURCE_READY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -755,12 +756,26 @@ class SecretProjectionServiceTest {
     assertEquals("projected", repair.state());
     assertEquals(desiredData, repaired.getData());
     assertEquals("7", repaired.getMetadata().getResourceVersion());
-    assertEquals(
-        revision,
+    assertNull(
         repaired
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION));
+    assertNull(
+        repaired
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.ACCEPTED_SOURCE_GENERATION_ANNOTATION));
+    assertNull(
+        repaired
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION));
+    assertNull(
+        repaired
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.ACCEPTED_SPKI_SHA256_ANNOTATION));
     assertEquals(
         "pending",
         repaired

@@ -831,8 +831,9 @@ def sanitize(source: Path, destination: Path) -> None:
         metadata = raw.get("metadata")
         if not isinstance(metadata, dict) or not metadata.get("name"):
             fail(f"{kind} has no metadata.name")
-        if kind == "NetworkPolicy" and metadata["name"] not in EXPECTED_NAMES[kind]:
-            fail(f"NetworkPolicy/{metadata['name']} is not an approved runtime policy")
+        name = metadata["name"]
+        if not isinstance(name, str) or name not in EXPECTED_NAMES[kind]:
+            fail(f"{kind}/{name} is not an approved preview object")
         if metadata.get("namespace") in {"firemud-system", "kube-system"}:
             fail(f"{kind}/{metadata['name']} targets a control namespace")
         if kind in {"Deployment", "Job"}:

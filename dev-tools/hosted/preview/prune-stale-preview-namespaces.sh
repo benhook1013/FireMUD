@@ -24,7 +24,7 @@ if [[ "${1:-}" == "--delete-runtime" ]]; then
   fi
   PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
     bash "$delete_script" "$runtime_namespace" "$runtime_namespace"
-  exit $?
+  exit 0
 fi
 
 apply=false

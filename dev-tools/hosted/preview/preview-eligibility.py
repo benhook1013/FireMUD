@@ -138,6 +138,11 @@ def _revalidate_target(
     if not isinstance(pull_request, dict):
         return "current pull request metadata is malformed", None
 
+    if not isinstance(expected_head_sha, str) or not GIT_COMMIT_SHA_RE.fullmatch(
+        expected_head_sha
+    ):
+        return "expected head SHA must be exactly 40 hexadecimal characters", None
+
     state = _nested_value(pull_request, "state")
     head_sha = _nested_value(pull_request, "head", "sha")
     head_repository = _nested_value(pull_request, "head", "repo", "full_name")
@@ -146,8 +151,6 @@ def _revalidate_target(
             f"pull request is not {expected_state} (state={_display_value(state)})",
             None,
         )
-    if not isinstance(expected_head_sha, str) or not GIT_COMMIT_SHA_RE.fullmatch(expected_head_sha):
-        return "expected head SHA must be exactly 40 hexadecimal characters", None
     if (
         not isinstance(head_sha, str)
         or not GIT_COMMIT_SHA_RE.fullmatch(head_sha)

@@ -1043,6 +1043,37 @@ assert 'telnetPort: "unavailable"' in failure_script
 assert 'failureStage: "verify-runtime"' in failure_script
 assert verify_failure["uses"] == verify_success["uses"]
 
+destroy_steps = jobs["destroy-runtime"]["steps"]
+destroy_by_name = {
+    step.get("name"): step for step in destroy_steps if isinstance(step, dict)
+}
+destroy_success = destroy_by_name["Publish trusted preview removal"]
+destroy_failure = destroy_by_name["Publish trusted preview removal failure"]
+assert destroy_success["if"] == "${{ success() }}"
+assert destroy_failure["if"] == "${{ !cancelled() && failure() }}"
+assert destroy_failure["uses"] == destroy_success["uses"]
+assert destroy_failure["env"] == {
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+}
+destroy_failure_script = destroy_failure["with"]["script"]
+for fragment in (
+    "publishPreviewComment",
+    'mode: "failure"',
+    'markerPolicy: "replace"',
+    'statePolicy: "expected-closed"',
+    'telnetPort: "unavailable"',
+    'failureStage: "destroy-runtime"',
+    'staleDescription: "trusted preview removal failure"',
+):
+    assert fragment in destroy_failure_script, fragment
+assert destroy_steps.index(destroy_success) < destroy_steps.index(destroy_failure)
+assert destroy_steps.index(destroy_failure) < destroy_steps.index(
+    destroy_by_name["Remove runtime kubeconfig"]
+)
+
 dev_demo_steps = dev_demo_workflow["jobs"]["dev-demo-deploy"]["steps"]
 dev_demo_by_name = {
     step.get("name"): step
@@ -1420,6 +1451,10 @@ for fragment in (
     'supported on its Linux preview runner only',
     'for required_command in jq base64 openssl sha256sum; do',
     'command -v "$required_command"',
+    'base64 --wrap=0 2>/dev/null',
+    'base64 --decode 2>/dev/null',
+    'base64 --wrap=0 support is required',
+    'base64 --decode support is required',
     '[[ -z "${RUNNER_TEMP:-}" || ! -d "$RUNNER_TEMP" ]]',
     'RUNNER_TEMP must name an existing directory',
     'credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP}/firemud-runtime-credentials.XXXXXX")"',
@@ -1519,6 +1554,62 @@ PY
 # successful workflow run with no validated artifact. It must emit only no-op.
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
+
+preview_annotator_stub_dir="$TEMP_DIR/preview-annotator-stubs"
+preview_annotator_log="$TEMP_DIR/preview-annotator-kubectl.log"
+mkdir -p "$preview_annotator_stub_dir"
+cat >"$preview_annotator_stub_dir/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${PREVIEW_ANNOTATOR_KUBECTL_LOG:?}"
+SH
+chmod +x "$preview_annotator_stub_dir/kubectl"
+
+run_preview_annotator() {
+  env \
+    PATH="$preview_annotator_stub_dir:$PATH" \
+    PREVIEW_ANNOTATOR_KUBECTL_LOG="$preview_annotator_log" \
+    bash "$preview_annotator" "$@"
+}
+
+: >"$preview_annotator_log"
+run_preview_annotator \
+  pr-42 42 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  32015 2026-09-13T01:02:03Z
+mapfile -t preview_annotator_calls <"$preview_annotator_log"
+[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
+[[ "${preview_annotator_calls[0]}" == \
+  "annotate namespace pr-42 firemud.dev/requested-preview-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa firemud.dev/last-preview-telnet-port=32015 firemud.dev/preview-allocated-at=2026-09-13T01:02:03Z "*" --overwrite" ]]
+[[ "${preview_annotator_calls[1]}" == \
+  "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 --overwrite" ]]
+
+invalid_preview_annotator_cases=(
+  "pr-042|042|32000|2026-09-13T01:02:03Z"
+  "pr-43|42|32000|2026-09-13T01:02:03Z"
+  "pr-42|42|31999|2026-09-13T01:02:03Z"
+  "pr-42|42|32016|2026-09-13T01:02:03Z"
+  "pr-42|42|032000|2026-09-13T01:02:03Z"
+  "pr-42|42|32000|2026-02-30T01:02:03Z"
+  "pr-42|42|32000|2026-09-13T01:02:03+00:00"
+  "pr-42|42|32000|2026-09-13T01:02:03Z injected"
+)
+for invalid_preview_annotator_case in "${invalid_preview_annotator_cases[@]}"; do
+  IFS='|' read -r invalid_namespace invalid_pr invalid_port invalid_timestamp \
+    <<<"$invalid_preview_annotator_case"
+  : >"$preview_annotator_log"
+  if run_preview_annotator \
+    "$invalid_namespace" "$invalid_pr" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$invalid_port" "$invalid_timestamp" \
+    >"$TEMP_DIR/invalid-preview-annotator.output" \
+    2>"$TEMP_DIR/invalid-preview-annotator.error"; then
+    echo "preview namespace annotator accepted invalid target metadata: $invalid_preview_annotator_case" >&2
+    exit 1
+  fi
+  if [[ -s "$preview_annotator_log" ]]; then
+    echo "preview namespace annotator mutated Kubernetes before rejecting invalid target metadata" >&2
+    exit 1
+  fi
+done
 
 bootstrap_extract_source="$(sed -n '/^extract_named_yaml_document() {$/,/^}$/p' "$bootstrap")"
 eval "$bootstrap_extract_source"
@@ -2185,6 +2276,40 @@ for missing_dependency in jq openssl base64 sha256sum; do
     exit 1
   fi
   test "$(<"$missing_dependency_error")" = "$missing_dependency is required"
+done
+
+real_base64="$(command -v base64)"
+for unsupported_base64_option in wrap decode; do
+  unsupported_base64_dir="$credential_state_root/unsupported-base64-${unsupported_base64_option}"
+  mkdir -p "$unsupported_base64_dir"
+  cat >"$unsupported_base64_dir/base64" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${UNSUPPORTED_BASE64_OPTION:?}" == wrap && "${1:-}" == --wrap=0 ]] ||
+  [[ "$UNSUPPORTED_BASE64_OPTION" == decode && "${1:-}" == --decode ]]; then
+  exit 2
+fi
+exec "${REAL_BASE64:?}" "$@"
+SH
+  chmod +x "$unsupported_base64_dir/base64"
+  unsupported_base64_error="$TEMP_DIR/unsupported-base64-${unsupported_base64_option}.error"
+  if env \
+    PATH="$unsupported_base64_dir:$credential_stub_dir:$PATH" \
+    REAL_BASE64="$real_base64" \
+    UNSUPPORTED_BASE64_OPTION="$unsupported_base64_option" \
+    RUNTIME_NAMESPACE=pr-42 \
+    RUNNER_TEMP="$unsupported_base64_dir" \
+    "$BASH" "$credential_script" \
+    >"$TEMP_DIR/unsupported-base64-${unsupported_base64_option}.output" \
+    2>"$unsupported_base64_error"; then
+    echo "credential step succeeded without base64 --${unsupported_base64_option} support" >&2
+    exit 1
+  fi
+  if [[ "$unsupported_base64_option" == wrap ]]; then
+    test "$(<"$unsupported_base64_error")" = 'base64 --wrap=0 support is required'
+  else
+    test "$(<"$unsupported_base64_error")" = 'base64 --decode support is required'
+  fi
 done
 
 create_once_state="$credential_state_root/create-once"

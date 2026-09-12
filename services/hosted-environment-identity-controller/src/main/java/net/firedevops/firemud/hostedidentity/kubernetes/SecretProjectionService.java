@@ -46,6 +46,7 @@ public class SecretProjectionService {
     runtimeProfileFence.run();
     var operation = client.secrets().inNamespace(plan.runtimeNamespace()).withName(name);
     Secret existing = operation.get();
+    boolean existingMaterialMatchesRevision = false;
     if (existing != null) {
       requireOwned(existing, plan.name(), role, "runtime projection Secret");
       Map<String, String> old = existing.getMetadata().getAnnotations();
@@ -56,6 +57,7 @@ public class SecretProjectionService {
       String oldSpki = value(old, HostedIdentityContract.SPKI_SHA256_ANNOTATION);
       requireRevision(oldRevision, "runtime revision");
       requireFingerprint(oldSpki, "runtime SPKI fingerprint");
+      existingMaterialMatchesRevision = materialMatchesRevision(existing, role, oldRevision);
       if (revision.equals(oldRevision)) {
         if (sourceGeneration != oldGeneration
             || sourceObjectGeneration != oldObjectGeneration
@@ -65,12 +67,16 @@ public class SecretProjectionService {
         }
         if (data.equals(existing.getData())
             && Objects.equals(source.getType(), existing.getType())) {
+          if (!existingMaterialMatchesRevision) {
+            throw new IllegalStateException(
+                "runtime projection revision does not match its material");
+          }
           return accepted(old, oldRevision, oldGeneration, oldObjectGeneration, oldSpki)
               ? ProjectionResult.synced(revision)
               : ProjectionResult.awaiting("awaiting-acceptance", revision);
         }
       } else {
-        if (!materialMatchesRevision(existing, role, oldRevision)) {
+        if (!existingMaterialMatchesRevision) {
           throw new IllegalStateException(
               "runtime projection revision does not match its material");
         }
@@ -102,7 +108,10 @@ public class SecretProjectionService {
     annotations.put(HostedIdentityContract.PROVENANCE_ANNOTATION, provenance);
     annotations.put(HostedIdentityContract.CONVERGENCE_STATE_ANNOTATION, "pending");
     if (existing != null) {
-      carryAcceptedSnapshot(existing.getMetadata().getAnnotations(), annotations);
+      carryAcceptedSnapshot(
+          existing.getMetadata().getAnnotations(),
+          annotations,
+          existingMaterialMatchesRevision);
     }
     Secret candidate =
         new SecretBuilder()
@@ -360,7 +369,9 @@ public class SecretProjectionService {
   }
 
   private static void carryAcceptedSnapshot(
-      Map<String, String> existing, Map<String, String> candidate) {
+      Map<String, String> existing,
+      Map<String, String> candidate,
+      boolean currentMaterialMatchesRevision) {
     var acceptedKeys =
         java.util.List.of(
             HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION,
@@ -377,7 +388,15 @@ public class SecretProjectionService {
       if (value == null || value.isBlank()) {
         throw new IllegalStateException("accepted projection snapshot is incomplete");
       }
-      candidate.put(key, value);
+    }
+    if (!currentMaterialMatchesRevision
+        && Objects.equals(
+            value(existing, HostedIdentityContract.REVISION_ANNOTATION),
+            value(existing, HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION))) {
+      return;
+    }
+    for (String key : acceptedKeys) {
+      candidate.put(key, value(existing, key));
     }
   }
 

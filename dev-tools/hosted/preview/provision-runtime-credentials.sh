@@ -18,6 +18,14 @@ for required_command in jq base64 openssl sha256sum; do
     exit 2
   fi
 done
+if [[ "$(printf 'f' | base64 --wrap=0 2>/dev/null)" != "Zg==" ]]; then
+  echo "base64 --wrap=0 support is required" >&2
+  exit 2
+fi
+if [[ "$(printf 'Zg==' | base64 --decode 2>/dev/null)" != "f" ]]; then
+  echo "base64 --decode support is required" >&2
+  exit 2
+fi
 if [[ -z "${RUNNER_TEMP:-}" || ! -d "$RUNNER_TEMP" ]]; then
   echo "RUNNER_TEMP must name an existing directory" >&2
   exit 2

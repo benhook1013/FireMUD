@@ -91,6 +91,17 @@ if invalid_expected_output="$(
   exit 1
 fi
 test "$invalid_expected_output" = 'expected head SHA must be exactly 40 hexadecimal characters'
+if invalid_expected_closed_output="$(
+  printf '%s' "$valid_cleanup_pull_request" | python3 "$SCRIPT" \
+    --revalidate-deploy \
+    --expected-repository example/FireMUD \
+    --expected-head-sha head-123
+)"; then
+  echo "Revalidation unexpectedly accepted a noncanonical expected head SHA for a closed PR" >&2
+  exit 1
+fi
+test "$invalid_expected_closed_output" = \
+  'expected head SHA must be exactly 40 hexadecimal characters'
 
 assert_revalidation_refused \
   '{not-json' \

@@ -4269,11 +4269,11 @@ def validate_hosted_telnet_tls_values(
             issues.append(
                 "hosted-controller TCP Proxy Service requires an allocated Telnet port annotation"
             )
-        if len(telnet_ports) != 1 or "nodePort" not in telnet_ports[0]:
+        if len(telnet_ports) == 1 and "nodePort" not in telnet_ports[0]:
             issues.append(
                 "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
             )
-        else:
+        elif len(telnet_ports) == 1:
             telnet_node_port = telnet_ports[0]["nodePort"]
             if not isinstance(telnet_node_port, int) or isinstance(
                 telnet_node_port, bool
@@ -4288,7 +4288,7 @@ def validate_hosted_telnet_tls_values(
                 issues.append(
                     "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
                 )
-        if expected_hosted_telnet_node_port is not None:
+        if expected_hosted_telnet_node_port is not None and len(telnet_ports) == 1:
             explicit_node_port_entries = [
                 port
                 for port in service_ports
@@ -4423,10 +4423,10 @@ def validate_hosted_telnet_tls_values(
     ]
     if len(telnet_mounts) != 1:
         issues.append("hosted TCP Proxy TLS requires exactly one /telnet-tls mount")
-    elif telnet_mounts[0].get("readOnly") is not True:
-        issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
     else:
         mount = telnet_mounts[0]
+        if mount.get("readOnly") is not True:
+            issues.append("hosted TCP Proxy TLS requires a read-only /telnet-tls mount")
         volume = volumes.get(mount.get("name")) or {}
         secret_name = ((volume.get("secret") or {}).get("secretName"))
         if secret_name != certificate_secret:

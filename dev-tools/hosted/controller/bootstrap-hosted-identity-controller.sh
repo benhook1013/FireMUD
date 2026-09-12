@@ -434,6 +434,11 @@ verify_grpc_ca_prerequisite() {
   fi
   if ! printf '%s' "$encoded_key" |
     base64 --decode |
+    python3 -c 'import re, sys; data = sys.stdin.buffer.read(); raise SystemExit(0 if re.fullmatch(rb"-----BEGIN PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/]+={0,2}\r?\n)+-----END PRIVATE KEY-----\r?\n?", data) else 1)'; then
+    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
     openssl pkcs8 -nocrypt -out /dev/null >/dev/null 2>&1; then
     fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
   fi

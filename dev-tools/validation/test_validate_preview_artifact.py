@@ -865,6 +865,32 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
                     "pr-42.preview.example.test",
                 )
 
+    def test_sanitize_rejects_unapproved_name_for_every_supported_kind(self):
+        api_versions = {
+            kind: api_version
+            for api_version, kind in self.validator.EXPECTED_KINDS
+        }
+        for kind in self.validator.EXPECTED_NAMES:
+            document = {
+                "apiVersion": api_versions[kind],
+                "kind": kind,
+                "metadata": {"name": "unapproved-preview-object"},
+            }
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "source.yaml"
+                destination = Path(directory) / "sanitized.yaml"
+                source.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape(
+                        f"{kind}/unapproved-preview-object is not an approved preview object"
+                    ),
+                ):
+                    self.validator.sanitize(source, destination)
+
+                self.assertFalse(destination.exists())
+
     def test_sanitize_strips_sensitive_tokens_anywhere_case_insensitively(self):
         sanitized = self._sanitize_config_map_data(
             {
