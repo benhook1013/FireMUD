@@ -150,7 +150,17 @@ if printf '905\t5555555555555555555555555555555555555555\texample/FireMUD\thuman
   echo "Batch eligibility accepted malformed same-repository label transport" >&2
   exit 1
 fi
-grep -Fxq 'priority PR #905 has malformed label transport' "$TEMP_DIR/batch-malformed.err"
+grep -Fxq 'candidate PR #905 has malformed label transport' "$TEMP_DIR/batch-malformed.err"
+
+malformed_labels_base64="$(printf '%s' '{}' | base64 | tr -d '\n')"
+if printf '905\t5555555555555555555555555555555555555555\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "$malformed_labels_base64" |
+  python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
+    >"$TEMP_DIR/batch-malformed-metadata.out" 2>"$TEMP_DIR/batch-malformed-metadata.err"; then
+  echo "Batch eligibility accepted malformed same-repository label metadata" >&2
+  exit 1
+fi
+grep -Fxq 'candidate PR #905 has malformed label metadata' \
+  "$TEMP_DIR/batch-malformed-metadata.err"
 
 if printf '906\tnot-a-commit-sha\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "$priority_labels_base64" |
   python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \

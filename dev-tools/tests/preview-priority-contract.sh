@@ -1229,6 +1229,10 @@ grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/multiple-retire.out"
+# A successful retirement returns explicitly; recovery accounts for each failed
+# retirement itself and returns success after continuing through all candidates.
+retire_function_tail="$(sed -n '/^retire_hosted_identity()/,/^}/p' "$PRUNER" | tail -n 2)"
+test "$retire_function_tail" = $'  return 0\n}'
 
 for identity_failure in request wait delete; do
   reset_case

@@ -622,8 +622,14 @@ assert active_request["run"] == (
 deploy_runtime_write = deploy_by_name["Write runtime kubeconfig"]
 deploy_requester_write = deploy_by_name["Write requester kubeconfig"]
 deploy_runtime_remember = deploy_by_name["Remember preview runtime kubeconfig"]
+assert deploy_runtime_write["with"]["path"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
+)
+assert deploy_runtime_remember["env"]["PREVIEW_RUNTIME_KUBECONFIG_PATH"] == (
+    "${{ runner.temp }}/preview-runtime.kubeconfig"
+)
 assert deploy_runtime_remember["run"] == (
-    'echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"'
+    'echo "PREVIEW_RUNTIME_KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG_PATH" >> "$GITHUB_ENV"'
 )
 deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
 assert deploy_runtime_restore["if"] == "${{ always() }}"
@@ -1062,7 +1068,23 @@ assert preview_steps.index(preview_cleanup) < preview_projection_index
 assert preview_projection_index < preview_render_index < preview_deploy_index
 preview_deployed_step = preview_steps[preview_deployed_index]
 assert "steps.deploy-release.outcome == 'success'" in preview_deployed_step["if"]
-assert '[[ "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]' in preview_deployed_step["run"]
+preview_deployed_guards = (
+    (
+        '[[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]',
+        "::error title=Invalid preview PR number::Expected a canonical positive decimal integer.",
+    ),
+    (
+        '[[ "$RUNTIME_NAMESPACE" != "pr-${PR_NUMBER}" ]]',
+        "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}.",
+    ),
+    (
+        '[[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]',
+        "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters.",
+    ),
+)
+for predicate, diagnostic in preview_deployed_guards:
+    assert predicate in preview_deployed_step["run"]
+    assert diagnostic in preview_deployed_step["run"]
 assert 'head_sha="${HEAD_SHA,,}"' in preview_deployed_step["run"]
 assert "firemud.dev/last-preview-head-sha=${head_sha}" in preview_deployed_step["run"]
 assert "firemud.dev/last-preview-head-sha=${HEAD_SHA}" not in preview_deployed_step["run"]
@@ -1152,6 +1174,8 @@ for fragment in (
     'asset_store_access_key="$(openssl rand -hex 16)"',
     'asset_store_secret_key="$(openssl rand -hex 32)"',
     'umask 077',
+    'Canonical Base64 round-trip validation uses GNU coreutils --decode and --wrap=0',
+    'supported on its Linux preview runner only',
     'for required_command in jq base64 openssl sha256sum; do',
     'command -v "$required_command"',
     '[[ -z "${RUNNER_TEMP:-}" || ! -d "$RUNNER_TEMP" ]]',

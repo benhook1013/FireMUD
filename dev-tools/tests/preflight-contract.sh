@@ -2343,6 +2343,40 @@ try:
         or "elapsed 6.0s of 5s readiness budget" not in deadline_issues[0]
     ):
         raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
+
+    monotonic_now = [0.0]
+    expiry_lookup_calls = [0]
+
+    def expiry_during_iteration(args, **kwargs):
+        expiry_lookup_calls[0] += 1
+        if expiry_lookup_calls[0] > 1:
+            raise SystemExit("readiness loop performed a lookup after its deadline expired")
+        monotonic_now[0] += 6.0
+        return module.subprocess.CompletedProcess(args, 0, json.dumps({"data": {}}), "")
+
+    with (
+        patch.object(module.subprocess, "run", expiry_during_iteration),
+        patch.object(module.time, "monotonic", lambda: monotonic_now[0]),
+    ):
+        mid_iteration_expiry_issues = module.wait_for_secret_key_requirements(
+            [("looked-up", {"tls.crt"}), ("deadline-skipped", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    skipped_issue = next(
+        issue
+        for issue in mid_iteration_expiry_issues
+        if "pr-42/deadline-skipped" in issue
+    )
+    if (
+        "Secret readiness deadline expired before lookup" not in skipped_issue
+        or "still not ready after 1 attempts" not in skipped_issue
+        or "elapsed 6.0s of 5s readiness budget" not in skipped_issue
+    ):
+        raise SystemExit(
+            f"mid-iteration Secret readiness expiry was not reported: {mid_iteration_expiry_issues}"
+        )
 finally:
     module.HOSTED_BRIDGE_SECRET_READY_ATTEMPTS = original_secret_ready_attempts
     module.HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS = original_secret_retry_delay

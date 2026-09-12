@@ -756,13 +756,19 @@ def _validate_restricted_pod_security(pod: object, path: str) -> None:
             )
         if "procMount" in security and security["procMount"] != "Default":
             fail(f"{container_path}.securityContext.procMount must be Default")
-        for mount_index, mount in enumerate(container.get("volumeMounts") or []):
-            if isinstance(mount, dict) and mount.get("mountPropagation") not in (None, "None"):
+        volume_mounts = _require_mapping_list(
+            container.get("volumeMounts", []), f"{container_path}.volumeMounts"
+        )
+        for mount_index, mount in enumerate(volume_mounts):
+            if mount.get("mountPropagation") not in (None, "None"):
                 fail(
                     f"{container_path}.volumeMounts[{mount_index}].mountPropagation is forbidden"
                 )
-        for port_index, port in enumerate(container.get("ports") or []):
-            if isinstance(port, dict) and "hostPort" in port:
+        ports = _require_mapping_list(
+            container.get("ports", []), f"{container_path}.ports"
+        )
+        for port_index, port in enumerate(ports):
+            if "hostPort" in port:
                 fail(f"{container_path}.ports[{port_index}].hostPort is forbidden")
         for probe_field in ("livenessProbe", "readinessProbe", "startupProbe", "lifecycle"):
             action = container.get(probe_field)
@@ -1027,19 +1033,22 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                 f"{expected_namespace}-gateway-internal-ws",
             )
         container = containers[0]
-        raw_mounts = container.get("volumeMounts", [])
-        raw_volumes = pod.get("volumes", [])
+        raw_mounts = _require_mapping_list(
+            container.get("volumeMounts", []),
+            f"Deployment/{service}.spec.template.spec.containers[0].volumeMounts",
+        )
+        raw_volumes = _require_mapping_list(
+            pod.get("volumes", []), f"Deployment/{service}.spec.template.spec.volumes"
+        )
         if len(raw_mounts) != len(expected_mounts) or len(raw_volumes) != len(expected_mounts):
             fail(f"Deployment/{service} has duplicate or unexpected identity consumers")
         mounts = {
             mount.get("name"): mount
             for mount in raw_mounts
-            if isinstance(mount, dict)
         }
         volumes = {
             volume.get("name"): volume
             for volume in raw_volumes
-            if isinstance(volume, dict)
         }
         if set(mounts) != set(expected_mounts) or set(volumes) != set(expected_mounts):
             fail(f"Deployment/{service} has an unexpected identity consumer set")

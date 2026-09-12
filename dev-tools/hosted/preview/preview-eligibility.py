@@ -95,11 +95,11 @@ def evaluate_priority_candidates(rows_input: str, expected_repository: str) -> t
         try:
             labels_json = base64.b64decode(labels_base64, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
-            return [], f"priority PR #{pr_number} has malformed label transport"
+            return [], f"candidate PR #{pr_number} has malformed label transport"
 
         eligible, reason, is_priority = evaluate("deploy", state, base_ref, author, labels_json)
         if reason == "malformed-label-metadata":
-            return [], f"priority PR #{pr_number} has malformed label metadata"
+            return [], f"candidate PR #{pr_number} has malformed label metadata"
         if eligible and is_priority:
             priority_candidates.append((pr_number, head_sha))
 

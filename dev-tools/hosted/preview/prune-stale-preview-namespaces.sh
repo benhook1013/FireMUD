@@ -195,6 +195,7 @@ retire_hosted_identity() {
       --ignore-not-found --wait=true --timeout=180s; then
     return 1
   fi
+  return 0
 }
 
 recover_stranded_hosted_identities() {

@@ -603,9 +603,18 @@ jobs:
           PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
         run: |
           set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
-          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]]
-          [[ "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid preview PR number::Expected a canonical positive decimal integer." >&2
+            exit 1
+          fi
+          if [[ "$RUNTIME_NAMESPACE" != "pr-${PR_NUMBER}" ]]; then
+            echo "::error title=Invalid preview runtime namespace::Expected namespace pr-${PR_NUMBER}." >&2
+            exit 1
+          fi
+          if [[ ! "$HEAD_SHA" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo "::error title=Invalid preview head SHA::Expected exactly 40 hexadecimal characters." >&2
+            exit 1
+          fi
           head_sha="${HEAD_SHA,,}"
           kubectl annotate namespace "$RUNTIME_NAMESPACE" \
             "firemud.dev/last-preview-head-sha=${head_sha}" \

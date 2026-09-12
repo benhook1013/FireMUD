@@ -124,8 +124,9 @@ namespace_guard_binding_manifest="$(mktemp)"
 # digest against this repository, signer workflow, hosted runner, and one of the
 # two trusted publication refs before invoking kubectl for any operation.
 controller_attestation_verified=false
+controller_attestation_diagnostic=""
 for trusted_source_ref in refs/heads/develop refs/heads/main; do
-  if gh attestation verify "oci://$IMAGE_REF" \
+  if controller_attestation_diagnostic="$(gh attestation verify "oci://$IMAGE_REF" \
     --repo benhook1013/FireMUD \
     --bundle-from-oci \
     --signer-workflow github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml \
@@ -133,13 +134,16 @@ for trusted_source_ref in refs/heads/develop refs/heads/main; do
     --cert-identity "https://github.com/benhook1013/FireMUD/.github/workflows/runtime-images.yml@$trusted_source_ref" \
     --predicate-type https://slsa.dev/provenance/v1 \
     --deny-self-hosted-runners \
-    >/dev/null 2>&1; then
+    2>&1)"; then
     controller_attestation_verified=true
     break
   fi
 done
-[[ "$controller_attestation_verified" == true ]] || \
+if [[ "$controller_attestation_verified" != true ]]; then
+  [[ -z "$controller_attestation_diagnostic" ]] || \
+    printf '%s\n' "$controller_attestation_diagnostic" >&2
   fail "controller image lacks trusted develop/main runtime-images.yml provenance"
+fi
 
 operator_groups="$(kubectl auth whoami \
   -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}')" || \

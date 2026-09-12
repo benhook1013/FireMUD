@@ -224,7 +224,9 @@ jobs:
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
       - name: Remember preview runtime kubeconfig
-        run: echo "PREVIEW_RUNTIME_KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+        env:
+          PREVIEW_RUNTIME_KUBECONFIG_PATH: ${{ runner.temp }}/preview-runtime.kubeconfig
+        run: echo "PREVIEW_RUNTIME_KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Download source render artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

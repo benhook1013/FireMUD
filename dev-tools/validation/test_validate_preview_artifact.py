@@ -36,8 +36,14 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     validator = VALIDATOR
 
     def test_expected_chart_label_comes_from_trusted_metadata(self):
+        trusted_metadata = yaml.safe_load(
+            self.validator.TRUSTED_CHART_METADATA.read_text(encoding="utf-8")
+        )
+        expected_label = (
+            f"{trusted_metadata['name']}-{trusted_metadata['version']}".replace("+", "_")
+        )
         self.assertEqual(
-            "firemud-0.1.0",
+            expected_label,
             self.validator._expected_top_level_labels()["helm.sh/chart"],
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -318,6 +324,70 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             ),
         ):
             self._validate_manifest(document)
+
+    def test_manifest_rejects_non_mapping_container_mounts_and_ports(self):
+        for field, malformed in (
+            ("volumeMounts", {}),
+            ("volumeMounts", ["not-a-mapping"]),
+            ("ports", {}),
+            ("ports", ["not-a-mapping"]),
+        ):
+            with self.subTest(field=field, malformed=malformed):
+                document = self._manifest_fixture({"emptyDir": {}})
+                document["spec"]["template"]["spec"]["containers"][0][field] = malformed
+                with self.assertRaisesRegex(
+                    ValueError,
+                    re.escape(
+                        "Deployment/account-service.spec.template.spec.containers[0]."
+                        f"{field} is not a list of objects"
+                    ),
+                ):
+                    self._validate_manifest(document)
+
+    def test_consumer_validation_rejects_non_mapping_mounts_and_volumes(self):
+        pod = {
+            "serviceAccountName": "firemud-app",
+            "containers": [
+                {
+                    "name": "account-service",
+                    "volumeMounts": [
+                        {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+                        {
+                            "name": "jwt-signing-keys",
+                            "mountPath": "/var/run/secrets/firemud/jwt",
+                            "readOnly": True,
+                        },
+                    ],
+                }
+            ],
+            "volumes": [
+                {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+                {
+                    "name": "jwt-signing-keys",
+                    "secret": {"secretName": "jwt-signing-keys"},
+                },
+            ],
+        }
+        document = {
+            "kind": "Deployment",
+            "metadata": {"name": "account-service"},
+            "spec": {"template": {"spec": pod}},
+        }
+        for field, malformed in (
+            ("volumeMounts", ["not-a-mapping"]),
+            ("volumes", ["not-a-mapping"]),
+        ):
+            with self.subTest(field=field):
+                invalid = copy.deepcopy(document)
+                if field == "volumeMounts":
+                    invalid["spec"]["template"]["spec"]["containers"][0][field] = malformed
+                else:
+                    invalid["spec"]["template"]["spec"][field] = malformed
+                with (
+                    patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}),
+                    self.assertRaisesRegex(ValueError, f"{field} is not a list of objects"),
+                ):
+                    self.validator.validate_service_consumers([invalid], "pr-42")
 
 
 class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):

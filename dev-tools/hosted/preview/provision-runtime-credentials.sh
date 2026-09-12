@@ -10,6 +10,8 @@ if [[ ! "$RUNTIME_NAMESPACE" =~ ^pr-[1-9][0-9]*$ ]]; then
   echo "runtime namespace must match pr-[1-9][0-9]*" >&2
   exit 2
 fi
+# Canonical Base64 round-trip validation uses GNU coreutils --decode and --wrap=0;
+# this trusted workflow step is supported on its Linux preview runner only.
 for required_command in jq base64 openssl sha256sum; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     echo "$required_command is required" >&2

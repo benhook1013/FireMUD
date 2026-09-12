@@ -1684,9 +1684,15 @@ set -Eeuo pipefail
 if [[ "${1:-}" == "attestation" && "${2:-}" == "verify" ]]; then
   printf '%s\n' "$*" >>"${FAKE_ATTESTATION_LOG:?}"
   if [[ "$*" == *"--source-ref refs/heads/develop"* && "${FAKE_ATTESTATION_DEVELOP_FAIL:-0}" == 1 ]]; then
+    printf 'develop attestation diagnostic on stdout\n'
+    printf 'develop attestation diagnostic on stderr\n' >&2
     exit 1
   fi
-  [[ "${FAKE_ATTESTATION_FAIL:-0}" != 1 ]] || exit 1
+  if [[ "${FAKE_ATTESTATION_FAIL:-0}" == 1 ]]; then
+    printf 'final attestation diagnostic on stdout\n'
+    printf 'final attestation diagnostic on stderr\n' >&2
+    exit 1
+  fi
   printf '%s\n' "${FAKE_ATTESTATION_OUTPUT:-verified}"
   exit 0
 fi
@@ -1781,6 +1787,8 @@ if FAKE_ATTESTATION_FAIL=1 FAKE_EVENT_LOG="$both_failure_events" \
   fail "bootstrap accepted when both trusted attestations failed"
 fi
 [[ ! -e "$both_failure_events" ]] || fail "attestation failure reached kubectl"
+require_literal "$bootstrap_error" "final attestation diagnostic on stdout"
+require_literal "$bootstrap_error" "final attestation diagnostic on stderr"
 no_gh_dir="$bootstrap_test_dir/no-gh"
 mkdir -p "$no_gh_dir"
 ln -s "$bootstrap_test_dir/kubectl" "$no_gh_dir/kubectl"
