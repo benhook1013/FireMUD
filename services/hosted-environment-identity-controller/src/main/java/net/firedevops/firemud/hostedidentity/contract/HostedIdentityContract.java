@@ -40,8 +40,6 @@ public final class HostedIdentityContract {
   public static final String CONVERGENCE_STATE_ANNOTATION = "firemud.dev/convergence-state";
   public static final String TELNET_REVISION_ANNOTATION = "firemud.dev/telnet-revision";
   public static final String GRPC_REVISION_ANNOTATION = "firemud.dev/grpc-revision";
-  public static final String RUNTIME_PROFILE_CHANGED_STATE = "runtime-profile-changed";
-
   public static final String INGRESS_ROLE = "ingress";
   public static final String TELNET_ROLE = "telnet";
   public static final String GATEWAY_INTERNAL_WS_ROLE = "gateway-internal-ws";

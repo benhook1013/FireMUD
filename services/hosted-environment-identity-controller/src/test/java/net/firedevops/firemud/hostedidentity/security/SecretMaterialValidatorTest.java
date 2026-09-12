@@ -67,19 +67,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 public class SecretMaterialValidatorTest {
   private static final AtomicLong CA_SERIAL = new AtomicLong(1);
   private static final List<KeyPair> RSA_KEY_FIXTURES =
-      List.of(
-          generateRsaKeyPair(),
-          generateRsaKeyPair(),
-          generateRsaKeyPair(),
-          generateRsaKeyPair(),
-          generateRsaKeyPair(),
-          generateRsaKeyPair());
+      List.of(generateRsaKeyPair(), generateRsaKeyPair(), generateRsaKeyPair());
   private static final KeyPair FIXTURE_CA_KEY_PAIR = RSA_KEY_FIXTURES.get(0);
   private static final KeyPair DISTINCT_CA_KEY_PAIR_ONE = RSA_KEY_FIXTURES.get(1);
   private static final KeyPair DISTINCT_CA_KEY_PAIR_TWO = RSA_KEY_FIXTURES.get(2);
-  private static final KeyPair CHAIN_ROOT_KEY_PAIR = RSA_KEY_FIXTURES.get(3);
-  private static final KeyPair CHAIN_INTERMEDIATE_KEY_PAIR = RSA_KEY_FIXTURES.get(4);
-  private static final KeyPair CHAIN_LEAF_KEY_PAIR = RSA_KEY_FIXTURES.get(5);
 
   @Test
   void generatedGrpcBundleHasTransportUsagesAndNoPerWorkloadIdentityClaim() throws Exception {
@@ -1126,24 +1117,35 @@ public class SecretMaterialValidatorTest {
 
   private static Secret generatedPresentedChain(int rootPathLength) throws Exception {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
-    KeyPair rootKeyPair = CHAIN_ROOT_KEY_PAIR;
-    KeyPair intermediateKeyPair = CHAIN_INTERMEDIATE_KEY_PAIR;
-    KeyPair leafKeyPair = CHAIN_LEAF_KEY_PAIR;
     X500Name rootName = new X500Name("CN=FireMUD path root, O=FireMUD");
     X500Name intermediateName = new X500Name("CN=FireMUD path intermediate, O=FireMUD");
     X500Name leafName = new X500Name("CN=path-limited.pr-42.svc.cluster.local, O=FireMUD");
     X509Certificate root =
         signedCertificate(
-            rootName, rootName, rootKeyPair, rootKeyPair, true, rootPathLength, null, now);
+            rootName,
+            rootName,
+            PresentedChainKeys.ROOT,
+            PresentedChainKeys.ROOT,
+            true,
+            rootPathLength,
+            null,
+            now);
     X509Certificate intermediate =
         signedCertificate(
-            rootName, intermediateName, intermediateKeyPair, rootKeyPair, true, 0, null, now);
+            rootName,
+            intermediateName,
+            PresentedChainKeys.INTERMEDIATE,
+            PresentedChainKeys.ROOT,
+            true,
+            0,
+            null,
+            now);
     X509Certificate leaf =
         signedCertificate(
             intermediateName,
             leafName,
-            leafKeyPair,
-            intermediateKeyPair,
+            PresentedChainKeys.LEAF,
+            PresentedChainKeys.INTERMEDIATE,
             false,
             -1,
             "path-limited.pr-42.svc.cluster.local",
@@ -1153,13 +1155,21 @@ public class SecretMaterialValidatorTest {
         .withData(
             Map.of(
                 "ca.crt", pem("CERTIFICATE", root.getEncoded()),
-                "ca.key", pem("PRIVATE KEY", rootKeyPair.getPrivate().getEncoded()),
+                "ca.key", pem("PRIVATE KEY", PresentedChainKeys.ROOT.getPrivate().getEncoded()),
                 "tls.crt",
                     encode(
                         pemText(pem("CERTIFICATE", leaf.getEncoded()))
                             + pemText(pem("CERTIFICATE", intermediate.getEncoded()))),
-                "tls.key", pem("PRIVATE KEY", leafKeyPair.getPrivate().getEncoded())))
+                "tls.key", pem("PRIVATE KEY", PresentedChainKeys.LEAF.getPrivate().getEncoded())))
         .build();
+  }
+
+  private static final class PresentedChainKeys {
+    private static final KeyPair ROOT = generateRsaKeyPair();
+    private static final KeyPair INTERMEDIATE = generateRsaKeyPair();
+    private static final KeyPair LEAF = generateRsaKeyPair();
+
+    private PresentedChainKeys() {}
   }
 
   private static X509Certificate signedCertificate(

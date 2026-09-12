@@ -32,7 +32,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -43,7 +42,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class SecretProjectionServiceTest {
-  private static final Supplier<Boolean> ALWAYS_CURRENT = () -> true;
+  private static final Runnable ALWAYS_CURRENT = () -> {};
 
   @Test
   void revisionIsStableAndIndependentOfMapOrder() {
@@ -98,7 +97,7 @@ class SecretProjectionServiceTest {
                           1L,
                           "a".repeat(64),
                           provenance,
-                          () -> true));
+                          () -> {}));
       assertEquals("projection provenance is required", exception.getMessage());
     }
   }
@@ -197,19 +196,22 @@ class SecretProjectionServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    SecretProjectionService.ProjectionResult result =
-        service.project(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            source,
-            1,
-            1,
-            "1".repeat(64),
-            "cert-manager",
-            () -> guardCalls.getAndIncrement() == 0);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.project(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    source,
+                    1,
+                    1,
+                    "1".repeat(64),
+                    "cert-manager",
+                    runtimeProfileFence(guardCalls, 1)));
 
-    assertEquals("runtime-profile-changed", result.state());
+    assertEquals("runtime profile changed", failure.getMessage());
     verify(secretClient.runtimeSecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
     verify(existingResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -232,19 +234,22 @@ class SecretProjectionServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    SecretProjectionService.ProjectionResult result =
-        service.project(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            source,
-            1,
-            1,
-            "1".repeat(64),
-            "cert-manager",
-            () -> guardCalls.getAndIncrement() == 0);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.project(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    source,
+                    1,
+                    1,
+                    "1".repeat(64),
+                    "cert-manager",
+                    runtimeProfileFence(guardCalls, 1)));
 
-    assertEquals("runtime-profile-changed", result.state());
+    assertEquals("runtime profile changed", failure.getMessage());
     verify(targetResource).get();
     verify(secretClient.runtimeSecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -282,19 +287,22 @@ class SecretProjectionServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    SecretProjectionService.ProjectionResult result =
-        service.project(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            source,
-            2,
-            2,
-            "2".repeat(64),
-            "cert-manager",
-            () -> guardCalls.getAndIncrement() < 2);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.project(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    source,
+                    2,
+                    2,
+                    "2".repeat(64),
+                    "cert-manager",
+                    runtimeProfileFence(guardCalls, 2)));
 
-    assertEquals("runtime-profile-changed", result.state());
+    assertEquals("runtime profile changed", failure.getMessage());
     verify(predecessorResource, never()).get();
     verify(secretClient.identitySecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -343,19 +351,22 @@ class SecretProjectionServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    SecretProjectionService.ProjectionResult result =
-        service.project(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            source,
-            2,
-            2,
-            "2".repeat(64),
-            "cert-manager",
-            () -> guardCalls.getAndIncrement() < 3);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.project(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    source,
+                    2,
+                    2,
+                    "2".repeat(64),
+                    "cert-manager",
+                    runtimeProfileFence(guardCalls, 3)));
 
-    assertEquals("runtime-profile-changed", result.state());
+    assertEquals("runtime profile changed", failure.getMessage());
     verify(predecessorResource).get();
     verify(secretClient.identitySecrets(), never())
         .resource(org.mockito.ArgumentMatchers.any(Secret.class));
@@ -392,18 +403,21 @@ class SecretProjectionServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    SecretProjectionService.ProjectionResult result =
-        service.acknowledge(
-            secretClient.client(),
-            plan,
-            HostedIdentityContract.INGRESS_ROLE,
-            revision,
-            1,
-            1,
-            "1".repeat(64),
-            () -> guardCalls.getAndIncrement() < 2);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.acknowledge(
+                    secretClient.client(),
+                    plan,
+                    HostedIdentityContract.INGRESS_ROLE,
+                    revision,
+                    1,
+                    1,
+                    "1".repeat(64),
+                    runtimeProfileFence(guardCalls, 2)));
 
-    assertEquals("runtime-profile-changed", result.state());
+    assertEquals("runtime profile changed", failure.getMessage());
     verify(currentResource, never()).replace(org.mockito.ArgumentMatchers.any(Secret.class));
   }
 
@@ -1875,6 +1889,15 @@ class SecretProjectionServiceTest {
       SecretMaterialValidator validator,
       GrpcTransportBundleGenerator grpcGenerator,
       CertificateMaterialService.MaterializationBatch batch) {}
+
+  private static Runnable runtimeProfileFence(
+      java.util.concurrent.atomic.AtomicInteger calls, int successfulCalls) {
+    return () -> {
+      if (calls.getAndIncrement() >= successfulCalls) {
+        throw new IllegalStateException("runtime profile changed");
+      }
+    };
+  }
 
   private static EnvironmentIdentityPlan plan() {
     return new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");

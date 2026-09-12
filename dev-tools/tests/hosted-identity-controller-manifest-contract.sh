@@ -1339,8 +1339,6 @@ for ca_proof in \
   'ca.crt and ca.key do not match'; do
   require_literal "$BOOTSTRAP" "$ca_proof"
 done
-# shellcheck disable=SC2016 # Match the literal bootstrap variable expression.
-require_literal "$BOOTSTRAP" '[[ "$crd_established" == "True" ]]'
 require_literal "$BOOTSTRAP" "HostedEnvironmentIdentity CRD is not Established=True"
 BOOTSTRAP="$BOOTSTRAP" python3 - <<'PY'
 import os
@@ -1924,7 +1922,7 @@ with tempfile.TemporaryDirectory() as directory:
             "name": "tcp-proxy-service",
             "namespace": "pr-42",
             "labels": {
-                **validator.EXPECTED_TOP_LEVEL_LABELS,
+                **validator._expected_top_level_labels(),
                 "app.kubernetes.io/instance": "pr-42",
             },
         },

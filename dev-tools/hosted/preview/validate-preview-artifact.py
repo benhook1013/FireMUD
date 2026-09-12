@@ -114,8 +114,14 @@ EXPECTED_SECRET_REFS = {
 EXPECTED_TOP_LEVEL_LABELS = {
     "app.kubernetes.io/name": "firemud",
     "app.kubernetes.io/managed-by": "Helm",
-    "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
 }
+
+
+def _expected_top_level_labels() -> dict[str, str]:
+    return {
+        **EXPECTED_TOP_LEVEL_LABELS,
+        "helm.sh/chart": _expected_chart_label(TRUSTED_CHART_METADATA),
+    }
 
 
 def _application_service_spec(
@@ -489,7 +495,7 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
             f"{sorted(unexpected_fields)}"
         )
     expected_labels = {
-        **EXPECTED_TOP_LEVEL_LABELS,
+        **_expected_top_level_labels(),
         "app.kubernetes.io/instance": expected_namespace,
     }
     actual_labels = metadata.get("labels")

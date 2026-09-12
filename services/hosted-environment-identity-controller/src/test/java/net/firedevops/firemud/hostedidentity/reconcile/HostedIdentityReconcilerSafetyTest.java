@@ -54,7 +54,6 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Supplier;
 import net.firedevops.firemud.hostedidentity.admission.AdmissionValidator;
 import net.firedevops.firemud.hostedidentity.config.HostedIdentityProperties;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
@@ -411,8 +410,8 @@ class HostedIdentityReconcilerSafetyTest {
             any()))
         .thenAnswer(
             invocation -> {
-              Supplier<Boolean> guard = invocation.getArgument(8);
-              guard.get();
+              Runnable guard = invocation.getArgument(8);
+              guard.run();
               throw new AssertionError("runtime-profile guard unexpectedly passed");
             });
 
@@ -549,8 +548,8 @@ class HostedIdentityReconcilerSafetyTest {
             any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
         .thenAnswer(
             invocation -> {
-              Supplier<Boolean> guard = invocation.getArgument(7);
-              guard.get();
+              Runnable guard = invocation.getArgument(7);
+              guard.run();
               throw new AssertionError("runtime-profile guard unexpectedly passed");
             });
 
@@ -565,90 +564,6 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         "runtime profile became malformed before projection acknowledgement; projection acknowledgement is withheld: invalid runtime profile",
         condition.getMessage());
-  }
-
-  @Test
-  void runtimeProfileChangedProjectionResultStopsLaterProjectionMutations() {
-    var profile =
-        new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
-    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
-    SecretProjectionService.ProjectionResult runtimeChanged =
-        SecretProjectionService.ProjectionResult.awaiting("runtime-profile-changed", "revision");
-    when(fixture.projections.project(
-            any(),
-            any(),
-            anyString(),
-            any(Secret.class),
-            anyLong(),
-            anyLong(),
-            anyString(),
-            anyString(),
-            any()))
-        .thenReturn(runtimeChanged);
-
-    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
-
-    assertEquals(
-        HostedEnvironmentIdentityStatus.Phase.Verifying,
-        result.getResource().orElseThrow().getStatus().getPhase());
-    assertEquals(
-        "RuntimeIdentityChanged",
-        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
-    verify(fixture.projections, org.mockito.Mockito.times(1))
-        .project(
-            any(),
-            any(),
-            anyString(),
-            any(Secret.class),
-            anyLong(),
-            anyLong(),
-            anyString(),
-            anyString(),
-            any());
-    verifyNoInteractions(fixture.rollout, fixture.probes);
-    verify(fixture.projections, never())
-        .acknowledge(
-            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
-  }
-
-  @Test
-  void runtimeProfileChangedAcknowledgementStopsLaterAcknowledgementsAndReady() {
-    var profile =
-        new RuntimeProfileService.RuntimeProfile(
-            "uid", "a".repeat(40), "a".repeat(40), 32016, true);
-    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(profile);
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), any()))
-        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
-    when(fixture.probes.probe(
-            any(),
-            anyInt(),
-            anyString(),
-            anyString(),
-            any(Secret.class),
-            anyString(),
-            any(Secret.class),
-            anyString()))
-        .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
-    SecretProjectionService.ProjectionResult runtimeChanged =
-        SecretProjectionService.ProjectionResult.awaiting("runtime-profile-changed", "revision");
-    when(fixture.projections.acknowledge(
-            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any()))
-        .thenReturn(runtimeChanged);
-
-    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
-
-    assertEquals(
-        HostedEnvironmentIdentityStatus.Phase.Verifying,
-        result.getResource().orElseThrow().getStatus().getPhase());
-    assertEquals(
-        "RuntimeIdentityChanged",
-        result.getResource().orElseThrow().getStatus().getConditions().get(0).getReason());
-    verify(fixture.projections, org.mockito.Mockito.times(1))
-        .acknowledge(
-            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
-    assertEquals(
-        "False", result.getResource().orElseThrow().getStatus().getConditions().get(0).getStatus());
   }
 
   @Test

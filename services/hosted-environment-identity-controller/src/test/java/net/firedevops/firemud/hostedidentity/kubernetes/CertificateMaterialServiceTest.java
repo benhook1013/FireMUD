@@ -763,7 +763,7 @@ class CertificateMaterialServiceTest {
             2,
             "4".repeat(64),
             "cert-manager",
-            () -> true);
+            () -> {});
 
     ArgumentCaptor<Secret> candidate = ArgumentCaptor.forClass(Secret.class);
     verify(fixture.secretClient().runtimeSecrets()).resource(candidate.capture());

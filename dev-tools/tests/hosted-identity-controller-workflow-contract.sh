@@ -1068,6 +1068,8 @@ for fragment in (
     'asset_store_access_key="$(openssl rand -hex 16)"',
     'asset_store_secret_key="$(openssl rand -hex 32)"',
     'umask 077',
+    'for required_command in jq base64 openssl sha256sum; do',
+    'command -v "$required_command"',
     'credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP:?}/firemud-runtime-credentials.XXXXXX")"',
     'trap cleanup_credential_files EXIT',
     'chmod 700 "$credential_files_dir"',
@@ -1086,6 +1088,12 @@ for fragment in (
     'sha256:$fingerprint',
 ):
     assert fragment in credential_source_text, fragment
+assert credential_source_text.index(
+    'for required_command in jq base64 openssl sha256sum; do'
+) < credential_source_text.index('credential_files_dir=""')
+assert credential_source_text.index('credential_files_dir=""') < credential_source_text.index(
+    "validate_secret_shape()"
+)
 for explicit_result_flow in (
     'firemud_secret_json="$(read_secret_if_present firemud-secret)"',
     'minio_secret_json="$(read_secret_if_present minio-credentials)"',
@@ -1778,6 +1786,28 @@ for invalid_runtime_namespace in "" dev pr-0 pr-01 pr-abc pr-42/escape; do
   fi
 done
 
+for missing_dependency in jq openssl base64 sha256sum; do
+  missing_dependency_dir="$credential_state_root/missing-${missing_dependency}-bin"
+  missing_dependency_error="$TEMP_DIR/missing-${missing_dependency}.error"
+  mkdir -p "$missing_dependency_dir"
+  for available_dependency in jq openssl base64 sha256sum; do
+    if [[ "$available_dependency" != "$missing_dependency" ]]; then
+      ln -s "$(command -v "$available_dependency")" \
+        "$missing_dependency_dir/$available_dependency"
+    fi
+  done
+  if env \
+    PATH="$missing_dependency_dir" \
+    RUNTIME_NAMESPACE=pr-42 \
+    "$BASH" "$credential_script" \
+    >"$TEMP_DIR/missing-${missing_dependency}.output" \
+    2>"$missing_dependency_error"; then
+    echo "credential step succeeded without $missing_dependency" >&2
+    exit 1
+  fi
+  grep -Fxq "$missing_dependency is required" "$missing_dependency_error"
+done
+
 create_once_state="$credential_state_root/create-once"
 mkdir -p "$create_once_state"
 run_credential_step "$create_once_state" \
@@ -2180,7 +2210,7 @@ documents = [
 for document in documents:
     metadata = validator["_validate_object_metadata"](document, "pr-42")
     assert metadata["labels"] == {
-        **validator["EXPECTED_TOP_LEVEL_LABELS"],
+        **validator["_expected_top_level_labels"](),
         "app.kubernetes.io/instance": "pr-42",
     }
     if document["kind"] == "Deployment":
@@ -2370,7 +2400,7 @@ documents = [
         "metadata": {
             "name": "tcp-proxy-service",
             "labels": {
-                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                **validator["_expected_top_level_labels"](),
                 "app.kubernetes.io/instance": "pr-42",
             },
         },
@@ -2383,7 +2413,7 @@ documents = [
             "name": "firemud-config",
             "namespace": "pr-42",
             "labels": {
-                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                **validator["_expected_top_level_labels"](),
                 "app.kubernetes.io/instance": "pr-42",
             },
         },
@@ -2395,7 +2425,7 @@ documents = [
         "metadata": {
             "name": "account-service",
             "labels": {
-                **validator["EXPECTED_TOP_LEVEL_LABELS"],
+                **validator["_expected_top_level_labels"](),
                 "app.kubernetes.io/instance": "pr-42",
             },
         },

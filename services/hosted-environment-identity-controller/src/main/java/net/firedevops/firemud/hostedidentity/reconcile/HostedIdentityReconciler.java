@@ -244,19 +244,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         SecretProjectionService.ProjectionResult projection =
             project(plan, expectedProfile, binding.material(), binding.role());
         projections.put(binding.role(), projection);
-        UpdateControl<HostedEnvironmentIdentity> projectionFence =
-            runtimeProfileChangedStatus(
-                resource,
-                runtimeProfile,
-                ingress,
-                telnet,
-                gatewayInternalWs,
-                tcpProxyBridge,
-                grpc,
-                projection);
-        if (projectionFence != null) {
-          return projectionFence;
-        }
       }
       ReadinessStatus deploymentHead = deploymentHeadStatus(runtimeProfile);
       if (!deploymentHead.ready()) {
@@ -349,19 +336,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                       assertRuntimeProfileCurrent(
                           plan, acknowledgementProfile, "projection acknowledgement"));
           projections.put(binding.role(), acknowledged);
-          UpdateControl<HostedEnvironmentIdentity> acknowledgementFence =
-              runtimeProfileChangedStatus(
-                  resource,
-                  runtimeProfile,
-                  ingress,
-                  telnet,
-                  gatewayInternalWs,
-                  tcpProxyBridge,
-                  grpc,
-                  acknowledged);
-          if (acknowledgementFence != null) {
-            return acknowledgementFence;
-          }
         }
       }
       ReadinessStatus readiness =
@@ -539,33 +513,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       String reason,
       String message,
       boolean valid) {}
-
-  private UpdateControl<HostedEnvironmentIdentity> runtimeProfileChangedStatus(
-      HostedEnvironmentIdentity resource,
-      RuntimeProfileService.RuntimeProfile runtimeProfile,
-      CertificateMaterialService.RoleMaterial ingress,
-      CertificateMaterialService.RoleMaterial telnet,
-      CertificateMaterialService.RoleMaterial gatewayInternalWs,
-      CertificateMaterialService.RoleMaterial tcpProxyBridge,
-      CertificateMaterialService.RoleMaterial grpc,
-      SecretProjectionService.ProjectionResult projection) {
-    if (projection == null
-        || !HostedIdentityContract.RUNTIME_PROFILE_CHANGED_STATE.equals(projection.state())) {
-      return null;
-    }
-    return status(
-        resource,
-        HostedEnvironmentIdentityStatus.Phase.Verifying,
-        "RuntimeIdentityChanged",
-        "runtime profile changed during guarded identity convergence; fresh convergence is required",
-        false,
-        runtimeProfile,
-        ingress,
-        telnet,
-        gatewayInternalWs,
-        tcpProxyBridge,
-        grpc);
-  }
 
   SecretProjectionService.ProjectionResult project(
       EnvironmentIdentityPlan plan,
@@ -786,11 +733,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
   /**
    * Confirms that the runtime profile still matches the expected mutation boundary.
    *
-   * @return {@code true} when the runtime profile is current; this method never returns {@code
-   *     false}
    * @throws RuntimeProfileFenceException when the profile is malformed, absent, or changed
    */
-  private boolean assertRuntimeProfileCurrent(
+  private void assertRuntimeProfileCurrent(
       EnvironmentIdentityPlan plan,
       RuntimeProfileService.RuntimeProfile expectedProfile,
       String guardedAction) {
@@ -831,7 +776,6 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               + guardedAction
               + " is withheld");
     }
-    return true;
   }
 
   private static boolean canonicalHead(String head) {

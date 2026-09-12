@@ -38,7 +38,7 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
     def test_expected_chart_label_comes_from_trusted_metadata(self):
         self.assertEqual(
             "firemud-0.1.0",
-            self.validator.EXPECTED_TOP_LEVEL_LABELS["helm.sh/chart"],
+            self.validator._expected_top_level_labels()["helm.sh/chart"],
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             chart_metadata = Path(temporary_directory) / "Chart.yaml"
@@ -138,7 +138,7 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                 "name": "account-service",
                 "namespace": "pr-42",
                 "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    **self.validator._expected_top_level_labels(),
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
@@ -309,7 +309,7 @@ class PreviewArtifactPersistentVolumeClaimTest(unittest.TestCase):
                 "name": name,
                 "namespace": "pr-42",
                 "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    **self.validator._expected_top_level_labels(),
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
@@ -510,7 +510,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
         metadata = {
             "name": "tcp-proxy-service",
             "labels": {
-                **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                **self.validator._expected_top_level_labels(),
                 "app.kubernetes.io/instance": "pr-42",
             },
         }
@@ -560,7 +560,7 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
     def test_expected_top_level_label_mismatches_report_expected_and_actual(self):
         expected_labels = {
-            **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+            **self.validator._expected_top_level_labels(),
             "app.kubernetes.io/instance": "pr-42",
         }
         for label, expected_value in expected_labels.items():
@@ -644,6 +644,60 @@ class PreviewArtifactTelnetInjectionTest(unittest.TestCase):
 
 class PreviewArtifactCommandLineTest(unittest.TestCase):
     validator = VALIDATOR
+
+    def test_chart_metadata_failures_are_reported_by_main(self):
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            prepared_manifest = temp_dir / "prepared.yaml"
+            prepared_manifest.write_text(
+                yaml.safe_dump(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Service",
+                        "metadata": {
+                            "name": "tcp-proxy-service",
+                            "namespace": "pr-42",
+                            "labels": {},
+                        },
+                        "spec": {"ports": [{"port": 2323, "nodePort": 32000}]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            missing_chart = temp_dir / "missing-Chart.yaml"
+            unreadable_chart = temp_dir / "unreadable-Chart.yaml"
+            malformed_chart = temp_dir / "malformed-Chart.yaml"
+            unreadable_chart.mkdir()
+            malformed_chart.write_text("name: [\n", encoding="utf-8")
+
+            for chart_metadata in (
+                missing_chart,
+                unreadable_chart,
+                malformed_chart,
+            ):
+                with self.subTest(chart_metadata=chart_metadata):
+                    stderr = io.StringIO()
+                    argv = [
+                        str(SCRIPT),
+                        "runtime-target",
+                        str(prepared_manifest),
+                        "pr-42",
+                        "32000",
+                    ]
+                    with (
+                        patch.object(
+                            self.validator, "TRUSTED_CHART_METADATA", chart_metadata
+                        ),
+                        patch.object(self.validator.sys, "argv", argv),
+                        patch.object(self.validator.sys, "stderr", stderr),
+                    ):
+                        self.assertEqual(self.validator.main(), 1)
+
+                    self.assertEqual(
+                        stderr.getvalue(),
+                        "preview runtime target rejected: "
+                        f"could not load trusted chart metadata: {chart_metadata}\n",
+                    )
 
     def test_subcommand_wrong_arity_reports_subcommand_usage(self):
         cases = (
@@ -754,7 +808,7 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
             "metadata": {
                 "name": "firemud-config",
                 "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    **self.validator._expected_top_level_labels(),
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },
@@ -788,7 +842,7 @@ class PreviewArtifactConfigMapSanitizerTest(unittest.TestCase):
             "metadata": {
                 "name": "firemud-config",
                 "labels": {
-                    **self.validator.EXPECTED_TOP_LEVEL_LABELS,
+                    **self.validator._expected_top_level_labels(),
                     "app.kubernetes.io/instance": "pr-42",
                 },
             },

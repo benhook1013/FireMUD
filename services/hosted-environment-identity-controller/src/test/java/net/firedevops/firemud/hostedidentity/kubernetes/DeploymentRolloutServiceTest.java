@@ -63,11 +63,11 @@ class DeploymentRolloutServiceTest {
     IllegalArgumentException telnetFailure =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.sync(client, plan, null, "grpc-revision", () -> true));
+            () -> service.sync(client, plan, null, "grpc-revision", () -> {}));
     IllegalArgumentException grpcFailure =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.sync(client, plan, "telnet-revision", null, () -> true));
+            () -> service.sync(client, plan, "telnet-revision", null, () -> {}));
 
     assertEquals("telnet revision is required", telnetFailure.getMessage());
     assertEquals("gRPC revision is required", grpcFailure.getMessage());
@@ -141,7 +141,7 @@ class DeploymentRolloutServiceTest {
     DeploymentRolloutService service = new DeploymentRolloutService();
 
     DeploymentRolloutService.RolloutResult first =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> true);
+        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
 
     assertEquals(false, first.ready());
     assertEquals(false, first.telnetReady());
@@ -162,7 +162,7 @@ class DeploymentRolloutServiceTest {
     converged.getStatus().setObservedGeneration(3L);
     when(proxy.get()).thenReturn(converged);
     DeploymentRolloutService.RolloutResult staleObservedGeneration =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> true);
+        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
 
     assertEquals(false, staleObservedGeneration.ready());
     assertEquals(false, staleObservedGeneration.telnetReady());
@@ -170,7 +170,7 @@ class DeploymentRolloutServiceTest {
 
     converged.getStatus().setObservedGeneration(4L);
     DeploymentRolloutService.RolloutResult second =
-        service.sync(client, plan, "telnet-new", "grpc-new", () -> true);
+        service.sync(client, plan, "telnet-new", "grpc-new", () -> {});
 
     assertEquals(true, second.ready());
     assertEquals(true, second.telnetReady());
@@ -211,7 +211,7 @@ class DeploymentRolloutServiceTest {
         .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
 
     DeploymentRolloutService.RolloutResult result =
-        new DeploymentRolloutService().sync(client, plan, "telnet-new", "grpc-new", () -> true);
+        new DeploymentRolloutService().sync(client, plan, "telnet-new", "grpc-new", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
@@ -251,7 +251,7 @@ class DeploymentRolloutServiceTest {
             IllegalStateException.class,
             () ->
                 new DeploymentRolloutService()
-                    .sync(client, plan, "telnet-new", "grpc-new", () -> true));
+                    .sync(client, plan, "telnet-new", "grpc-new", () -> {}));
 
     assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
     verify(proxy, never()).lockResourceVersion(anyString());
@@ -288,7 +288,7 @@ class DeploymentRolloutServiceTest {
 
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
-            .sync(client, plan, "telnet-current", "grpc-current", () -> true);
+            .sync(client, plan, "telnet-current", "grpc-current", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(true, result.telnetReady());
@@ -324,46 +324,12 @@ class DeploymentRolloutServiceTest {
 
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
-            .sync(client, plan, "telnet-current", "grpc-current", () -> true);
+            .sync(client, plan, "telnet-current", "grpc-current", () -> {});
 
     assertEquals(false, result.ready());
     assertEquals(false, result.telnetReady());
     assertEquals(false, result.grpcReady());
     verify(proxy, never()).lockResourceVersion(anyString());
-    verify(account, never()).lockResourceVersion(anyString());
-  }
-
-  @Test
-  @SuppressWarnings({"unchecked", "rawtypes"})
-  void runtimeProfileFenceStopsSyncBeforeEditAndLaterDeploymentReads() {
-    EnvironmentIdentityPlan plan = planWithConsumers("tcp-proxy-service", "account-service");
-    KubernetesClient client = mock(KubernetesClient.class);
-    AppsAPIGroupDSL apps = mock(AppsAPIGroupDSL.class);
-    MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> deployments =
-        mock(MixedOperation.class);
-    NonNamespaceOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>>
-        runtimeDeployments = mock(NonNamespaceOperation.class);
-    RollableScalableResource<Deployment> proxy = mock(RollableScalableResource.class);
-    RollableScalableResource<Deployment> account = mock(RollableScalableResource.class);
-    when(client.apps()).thenReturn(apps);
-    when(apps.deployments()).thenReturn(deployments);
-    when(deployments.inNamespace(plan.runtimeNamespace())).thenReturn(runtimeDeployments);
-    when(runtimeDeployments.withName("tcp-proxy-service")).thenReturn(proxy);
-    when(runtimeDeployments.withName("account-service")).thenReturn(account);
-    when(proxy.get()).thenReturn(readyDeployment("tcp-proxy-service", Map.of("other", "keep"), 3L));
-    java.util.concurrent.atomic.AtomicInteger guardCalls =
-        new java.util.concurrent.atomic.AtomicInteger();
-
-    DeploymentRolloutService.RolloutResult result =
-        new DeploymentRolloutService()
-            .sync(client, plan, "telnet-new", "grpc-new", () -> guardCalls.getAndIncrement() == 0);
-
-    assertEquals(false, result.ready());
-    assertEquals(false, result.telnetReady());
-    assertEquals(false, result.grpcReady());
-    verify(proxy).get();
-    verify(proxy, never()).lockResourceVersion(anyString());
-    verify(account, never()).get();
     verify(account, never()).lockResourceVersion(anyString());
   }
 
@@ -399,10 +365,9 @@ class DeploymentRolloutServiceTest {
                         "telnet-new",
                         "grpc-new",
                         () -> {
-                          if (guardCalls.getAndIncrement() == 0) {
-                            return true;
+                          if (guardCalls.getAndIncrement() > 0) {
+                            throw new IllegalStateException("runtime profile fence");
                           }
-                          throw new IllegalStateException("runtime profile fence");
                         }));
 
     assertEquals("runtime profile fence", failure.getMessage());
@@ -418,12 +383,19 @@ class DeploymentRolloutServiceTest {
     EnvironmentIdentityPlan plan = planWithConsumers("account-service");
     KubernetesClient client = mock(KubernetesClient.class);
 
-    DeploymentRolloutService.RetirementResult result =
-        new DeploymentRolloutService().stopBridges(client, plan, () -> false);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .stopBridges(
+                        client,
+                        plan,
+                        () -> {
+                          throw new IllegalStateException("runtime profile fence");
+                        }));
 
-    assertEquals(false, result.stopped());
-    assertEquals(false, result.gatewayStopped());
-    assertEquals(false, result.proxyStopped());
+    assertEquals("runtime profile fence", failure.getMessage());
     org.mockito.Mockito.verifyNoInteractions(client);
   }
 
@@ -448,13 +420,21 @@ class DeploymentRolloutServiceTest {
     java.util.concurrent.atomic.AtomicInteger guardCalls =
         new java.util.concurrent.atomic.AtomicInteger();
 
-    DeploymentRolloutService.RetirementResult result =
-        new DeploymentRolloutService()
-            .stopBridges(client, plan, () -> guardCalls.getAndIncrement() == 0);
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                new DeploymentRolloutService()
+                    .stopBridges(
+                        client,
+                        plan,
+                        () -> {
+                          if (guardCalls.getAndIncrement() > 0) {
+                            throw new IllegalStateException("runtime profile fence");
+                          }
+                        }));
 
-    assertEquals(false, result.stopped());
-    assertEquals(false, result.gatewayStopped());
-    assertEquals(false, result.proxyStopped());
+    assertEquals("runtime profile fence", failure.getMessage());
     verify(gateway).get();
     verify(gateway, never()).lockResourceVersion(anyString());
     verify(proxy, never()).get();
@@ -485,7 +465,7 @@ class DeploymentRolloutServiceTest {
     IllegalStateException failure =
         assertThrows(
             IllegalStateException.class,
-            () -> new DeploymentRolloutService().stopBridges(client, plan, () -> true));
+            () -> new DeploymentRolloutService().stopBridges(client, plan, () -> {}));
 
     assertEquals("Deployment has no resourceVersion for CAS", failure.getMessage());
     verify(gateway).get();
@@ -521,7 +501,7 @@ class DeploymentRolloutServiceTest {
     when(proxy.lockResourceVersion("rv-3")).thenReturn(lockedProxy);
 
     DeploymentRolloutService service = new DeploymentRolloutService();
-    DeploymentRolloutService.RetirementResult first = service.stopBridges(client, plan, () -> true);
+    DeploymentRolloutService.RetirementResult first = service.stopBridges(client, plan, () -> {});
 
     assertEquals(false, first.stopped());
     assertEquals(false, first.gatewayStopped());
@@ -549,7 +529,7 @@ class DeploymentRolloutServiceTest {
     when(proxy.get()).thenReturn(stoppedProxy);
 
     DeploymentRolloutService.RetirementResult second =
-        service.stopBridges(client, plan, () -> true);
+        service.stopBridges(client, plan, () -> {});
 
     assertEquals(true, second.stopped());
     assertEquals(true, second.gatewayStopped());
@@ -586,7 +566,7 @@ class DeploymentRolloutServiceTest {
         .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
 
     DeploymentRolloutService.RetirementResult result =
-        new DeploymentRolloutService().stopBridges(client, plan, () -> true);
+        new DeploymentRolloutService().stopBridges(client, plan, () -> {});
 
     assertEquals(false, result.stopped());
     assertEquals(false, result.gatewayStopped());
@@ -690,6 +670,7 @@ class DeploymentRolloutServiceTest {
         new DeploymentBuilder()
             .withNewMetadata()
             .withName("spring-cloud-gateway")
+            .withGeneration(2L)
             .addToLabels("owner", "runtime")
             .endMetadata()
             .withNewSpec()
@@ -710,6 +691,7 @@ class DeploymentRolloutServiceTest {
             .endTemplate()
             .endSpec()
             .withNewStatus()
+            .withObservedGeneration(1L)
             .withReplicas(2)
             .withReadyReplicas(2)
             .withAvailableReplicas(2)
@@ -728,6 +710,8 @@ class DeploymentRolloutServiceTest {
     deployment.getStatus().setAvailableReplicas(0);
     assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
     deployment.getStatus().setReplicas(0);
+    assertEquals(false, DeploymentRolloutService.retirementScaleDownObserved(deployment));
+    deployment.getStatus().setObservedGeneration(2L);
     assertEquals(true, DeploymentRolloutService.retirementScaleDownObserved(deployment));
   }
 

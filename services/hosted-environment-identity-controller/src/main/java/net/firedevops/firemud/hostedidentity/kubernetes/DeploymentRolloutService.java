@@ -9,7 +9,6 @@ import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import net.firedevops.firemud.hostedidentity.model.EnvironmentIdentityPlan;
@@ -27,8 +26,8 @@ public class DeploymentRolloutService {
       EnvironmentIdentityPlan plan,
       String telnetRevision,
       String grpcRevision,
-      Supplier<Boolean> runtimeProfileCurrent) {
-    if (runtimeProfileCurrent == null) {
+      Runnable runtimeProfileFence) {
+    if (runtimeProfileFence == null) {
       throw new IllegalArgumentException("runtime profile guard is required");
     }
     if (telnetRevision == null) {
@@ -48,17 +47,14 @@ public class DeploymentRolloutService {
     }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
     for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
-      SyncOneResult result =
+      boolean ready =
           syncOne(
               client,
               plan.runtimeNamespace(),
               entry.getKey(),
               entry.getValue(),
-              runtimeProfileCurrent);
-      readinessByDeployment.put(entry.getKey(), result.ready());
-      if (!result.guardPassed()) {
-        break;
-      }
+              runtimeProfileFence);
+      readinessByDeployment.put(entry.getKey(), ready);
     }
     boolean telnetReady = readinessByDeployment.getOrDefault(TCP_PROXY_DEPLOYMENT, false);
     boolean grpcReady =
@@ -69,70 +65,58 @@ public class DeploymentRolloutService {
 
   /**
    * Terminates both bridge endpoints for the monotonic Retired identity-removal intent while
-   * fencing every read/replace boundary with the current runtime identity. A false guard means the
-   * namespace identity is no longer safe to mutate; callers may throw from the guard to preserve
-   * the precise failure reason.
+   * fencing every read/replace boundary with the current runtime identity.
    */
   public RetirementResult stopBridges(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
-      Supplier<Boolean> runtimeProfileCurrent) {
-    if (runtimeProfileCurrent == null) {
+      Runnable runtimeProfileFence) {
+    if (runtimeProfileFence == null) {
       throw new IllegalArgumentException("runtime profile guard is required");
     }
-    StopOneResult gateway =
-        stopOne(client, plan.runtimeNamespace(), GATEWAY_DEPLOYMENT, runtimeProfileCurrent);
-    StopOneResult proxy =
-        gateway.guardPassed()
-            ? stopOne(client, plan.runtimeNamespace(), TCP_PROXY_DEPLOYMENT, runtimeProfileCurrent)
-            : new StopOneResult(false, false);
-    boolean gatewayStopped = gateway.stopped();
-    boolean proxyStopped = proxy.stopped();
+    boolean gatewayStopped =
+        stopOne(client, plan.runtimeNamespace(), GATEWAY_DEPLOYMENT, runtimeProfileFence);
+    boolean proxyStopped =
+        stopOne(client, plan.runtimeNamespace(), TCP_PROXY_DEPLOYMENT, runtimeProfileFence);
     return new RetirementResult(gatewayStopped && proxyStopped, gatewayStopped, proxyStopped);
   }
 
-  private StopOneResult stopOne(
+  private boolean stopOne(
       KubernetesClient client,
       String namespace,
       String deploymentName,
-      Supplier<Boolean> runtimeProfileCurrent) {
-    if (!guardPassed(runtimeProfileCurrent)) {
-      return new StopOneResult(false, false);
-    }
+      Runnable runtimeProfileFence) {
+    runtimeProfileFence.run();
     var operation = client.apps().deployments().inNamespace(namespace).withName(deploymentName);
     Deployment deployment = operation.get();
     if (deployment == null) {
-      return new StopOneResult(true, true);
+      return true;
     }
     if (deployment.getSpec() == null) {
       throw new IllegalStateException("Deployment has no spec: " + deploymentName);
     }
     Integer replicas = deployment.getSpec().getReplicas();
     if (replicas == null || replicas != 0) {
-      if (!guardPassed(runtimeProfileCurrent)) {
-        return new StopOneResult(false, false);
-      }
+      runtimeProfileFence.run();
       replaceWithCas(operation, deployment, DeploymentRolloutService::applyRetirementScaleDown);
-      return new StopOneResult(false, true);
+      return false;
     }
-    return new StopOneResult(retirementScaleDownObserved(deployment), true);
+    return retirementScaleDownObserved(deployment);
   }
 
-  private SyncOneResult syncOne(
+  private boolean syncOne(
       KubernetesClient client,
       String namespace,
       String deploymentName,
       Map<String, String> desiredRevisions,
-      Supplier<Boolean> runtimeProfileCurrent) {
-    if (!guardPassed(runtimeProfileCurrent)) {
-      return new SyncOneResult(false, false);
-    }
+      Runnable runtimeProfileFence) {
+    runtimeProfileFence.run();
     var operation = client.apps().deployments().inNamespace(namespace).withName(deploymentName);
     Deployment deployment = operation.get();
     if (deployment == null
         || deployment.getSpec() == null
         || deployment.getSpec().getTemplate() == null) {
-      return new SyncOneResult(false, true);
+      return false;
     }
     ObjectMeta templateMetadata = deployment.getSpec().getTemplate().getMetadata();
     Map<String, String> annotations =
@@ -143,13 +127,11 @@ public class DeploymentRolloutService {
         desiredRevisions.entrySet().stream()
             .anyMatch(entry -> !entry.getValue().equals(annotations.get(entry.getKey())));
     if (revisionChanged) {
-      if (!guardPassed(runtimeProfileCurrent)) {
-        return new SyncOneResult(false, false);
-      }
+      runtimeProfileFence.run();
       replaceWithCas(operation, deployment, current -> applyRevisions(current, desiredRevisions));
-      return new SyncOneResult(false, true);
+      return false;
     }
-    return new SyncOneResult(activeRolloutObserved(deployment), true);
+    return activeRolloutObserved(deployment);
   }
 
   static boolean activeRolloutObserved(Deployment deployment) {
@@ -205,9 +187,14 @@ public class DeploymentRolloutService {
 
   static boolean retirementScaleDownObserved(Deployment deployment) {
     return deployment != null
+        && deployment.getMetadata() != null
         && deployment.getSpec() != null
         && Integer.valueOf(0).equals(deployment.getSpec().getReplicas())
         && deployment.getStatus() != null
+        && deployment.getMetadata().getGeneration() != null
+        && deployment.getStatus().getObservedGeneration() != null
+        && deployment.getStatus().getObservedGeneration()
+            >= deployment.getMetadata().getGeneration()
         && value(deployment.getStatus().getAvailableReplicas()) == 0
         && value(deployment.getStatus().getReadyReplicas()) == 0
         && value(deployment.getStatus().getReplicas()) == 0;
@@ -246,14 +233,6 @@ public class DeploymentRolloutService {
       throw new IllegalStateException("Deployment has no resourceVersion for CAS");
     }
   }
-
-  private static boolean guardPassed(Supplier<Boolean> runtimeProfileCurrent) {
-    return Boolean.TRUE.equals(runtimeProfileCurrent.get());
-  }
-
-  private record SyncOneResult(boolean ready, boolean guardPassed) {}
-
-  private record StopOneResult(boolean stopped, boolean guardPassed) {}
 
   public record RolloutResult(boolean ready, boolean telnetReady, boolean grpcReady) {}
 

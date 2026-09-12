@@ -160,6 +160,20 @@ if printf '906\tnot-a-commit-sha\texample/FireMUD\thuman\tdevelop\topen\t%s\n' "
 fi
 grep -Fxq 'candidate row 1 has malformed PR identity' "$TEMP_DIR/batch-malformed-head.err"
 
+python3 - "$priority_labels_base64" >"$TEMP_DIR/batch-limit-input" <<'PY'
+import sys
+
+for number in range(1, 1001):
+    print(
+        f"{number}\t{number:040x}\texample/FireMUD\thuman\tdevelop\topen\t{sys.argv[1]}"
+    )
+PY
+python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
+  <"$TEMP_DIR/batch-limit-input" \
+  >"$TEMP_DIR/batch-limit.out" 2>"$TEMP_DIR/batch-limit.err"
+test "$(wc -l <"$TEMP_DIR/batch-limit.out")" -eq 1000
+test ! -s "$TEMP_DIR/batch-limit.err"
+
 python3 - "$priority_labels_base64" >"$TEMP_DIR/batch-overflow-input" <<'PY'
 import sys
 
