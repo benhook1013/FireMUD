@@ -440,10 +440,14 @@ require_contains "$preview_reconciler_path" '--json databaseId,status,headSha'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell and jq source.
 require_contains "$preview_reconciler_path" '--arg head_sha "${head_sha}"'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal jq source.
-require_contains "$preview_reconciler_path" '.headSha == $head_sha'
-for active_status in requested queued in_progress waiting pending; do
-  require_contains "$preview_reconciler_path" ".status == \"${active_status}\""
-done
+require_contains "$preview_reconciler_path" '                          .headSha == $head_sha
+                          and (
+                            .status == "requested"
+                            or .status == "queued"
+                            or .status == "in_progress"
+                            or .status == "waiting"
+                            or .status == "pending"
+                          )'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 if grep -Fq 'available_slots=$((available_slots - 1))' "$preview_reconciler_path"; then
   echo "Preview reconciler must not decrement capacity after dispatching its single repair" >&2

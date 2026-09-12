@@ -260,6 +260,7 @@ jobs:
               gh run list \
                 --workflow "${preview_workflow_name}" \
                 --branch "${head_ref}" \
+                --commit "${head_sha}" \
                 --limit 20 \
                 --json databaseId,status,headSha \
                 | jq -r --arg head_sha "${head_sha}" '
