@@ -1966,7 +1966,8 @@ fi
 grep -Fq -- "--source-ref refs/heads/main" "$attestation_log" || \
   fail "bootstrap did not try the trusted main source ref after develop failure"
 both_failure_events="$bootstrap_test_dir/both-failure-events"
-if FAKE_ATTESTATION_FAIL=1 FAKE_EVENT_LOG="$both_failure_events" \
+if FAKE_ATTESTATION_DEVELOP_FAIL=1 FAKE_ATTESTATION_FAIL=1 \
+  FAKE_EVENT_LOG="$both_failure_events" \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
   bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
@@ -1974,6 +1975,10 @@ if FAKE_ATTESTATION_FAIL=1 FAKE_EVENT_LOG="$both_failure_events" \
   fail "bootstrap accepted when both trusted attestations failed"
 fi
 [[ ! -e "$both_failure_events" ]] || fail "attestation failure reached kubectl"
+require_literal "$bootstrap_error" "attestation verification failed for refs/heads/develop:"
+require_literal "$bootstrap_error" "develop attestation diagnostic on stdout"
+require_literal "$bootstrap_error" "develop attestation diagnostic on stderr"
+require_literal "$bootstrap_error" "attestation verification failed for refs/heads/main:"
 require_literal "$bootstrap_error" "final attestation diagnostic on stdout"
 require_literal "$bootstrap_error" "final attestation diagnostic on stderr"
 no_gh_dir="$bootstrap_test_dir/no-gh"

@@ -206,8 +206,16 @@ class CertificateResourceFactoryTest {
   private static void assertInvalidRenewalWindow(
       org.junit.jupiter.api.function.Executable factoryCall) {
     IllegalStateException failure = assertThrows(IllegalStateException.class, factoryCall);
-    assertEquals(
-        "gRPC renewal window must be at least 5 minutes and leave at least 5 minutes before the 30-day certificate expiry",
-        failure.getMessage());
+    assertEquals(expectedRenewalWindowMessage(), failure.getMessage());
+  }
+
+  private static String expectedRenewalWindowMessage() {
+    return "gRPC renewal window must be at least "
+        + HostedIdentityProperties.MINIMUM_GRPC_RENEW_BEFORE.toMinutes()
+        + " minutes and leave at least "
+        + HostedIdentityProperties.INTERNAL_CERTIFICATE_RENEWAL_SLACK.toMinutes()
+        + " minutes before the "
+        + HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION.toDays()
+        + "-day certificate expiry";
   }
 }
