@@ -820,6 +820,16 @@ assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
 normalized_role_expression = " ".join(role_expression.split())
+namespace_controller_scope_delete = (
+    f"(request.userInfo.username == '{namespace_controller}' && "
+    "request.operation == 'DELETE' && "
+    "((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') && "
+    "request.name == 'firemud-hosted-identity-scope') || "
+    "(request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') && "
+    "request.name == 'firemud-hosted-runtime-scope')))"
+)
+assert namespace_controller_scope_delete in normalized_role_expression
+assert normalized_role_expression.count(namespace_controller) == 1
 for guard in (
     "(!has(r.apiGroups) || r.apiGroups.all(group, group != '*'))",
     "(!has(r.resources) || r.resources.all(resource, resource != '*'))",
@@ -862,6 +872,9 @@ assert "object.metadata.labels.size() ==" not in binding_expression
 assert "object.metadata.labels.all(k," in binding_expression
 assert "!k.startsWith('firemud.dev/')" in binding_expression
 assert "object.subjects.size() == 1" in binding_expression
+normalized_binding_expression = " ".join(binding_expression.split())
+assert namespace_controller_scope_delete in normalized_binding_expression
+assert normalized_binding_expression.count(namespace_controller) == 1
 
 
 def controller_scope_labels_are_valid(labels, required):

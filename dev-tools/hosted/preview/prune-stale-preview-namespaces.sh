@@ -255,10 +255,10 @@ recover_stranded_hosted_identities() {
       echo "Keeping HostedEnvironmentIdentity/${identity_name}: identity is not a canonical PR preview"
       continue
     fi
+    pr_number="${BASH_REMATCH[1]}"
     if [[ -n "${runtime_names_seen[$identity_name]:-}" ]]; then
       continue
     fi
-    pr_number="${BASH_REMATCH[1]}"
     phase="$(jq -r '.status.phase' <<<"$identity_json")"
     if ! evaluate_retention_eligibility "HostedEnvironmentIdentity/${identity_name}" "$pr_number"; then
       continue

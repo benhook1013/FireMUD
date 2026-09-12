@@ -420,6 +420,12 @@ spec:
   validations:
     - expression: >-
         request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.operation == 'DELETE' &&
+         ((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+           request.name == 'firemud-hosted-identity-scope') ||
+          (request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
+           request.name == 'firemud-hosted-runtime-scope'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
           request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$') &&
@@ -555,6 +561,12 @@ spec:
   validations:
     - expression: >-
         request.userInfo.groups.exists(group, group == 'system:masters') ||
+        (request.userInfo.username == 'system:serviceaccount:kube-system:namespace-controller' &&
+         request.operation == 'DELETE' &&
+         ((request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$') &&
+           request.name == 'firemud-hosted-identity-scope') ||
+          (request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') &&
+           request.name == 'firemud-hosted-runtime-scope'))) ||
         (request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&
          ((request.operation == 'DELETE' &&
           request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$') &&

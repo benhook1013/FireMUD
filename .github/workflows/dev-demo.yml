@@ -941,12 +941,38 @@ jobs:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
 
-      - name: Apply fixed dev-demo Retired request
+      - name: Check HostedEnvironmentIdentity existence before retirement
+        id: identity-existence
         if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        env:
+          IDENTITY_NAME: dev-demo
+        run: |
+          set -euo pipefail
+          identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$IDENTITY_NAME" \
+            --ignore-not-found -o json)"
+          if [[ -z "$identity_json" ]]; then
+            echo "HostedEnvironmentIdentity/${IDENTITY_NAME} is absent; no retirement is required."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          jq -e \
+            --arg identity_name "$IDENTITY_NAME" \
+            '(.apiVersion == "platform.firemud.dev/v1alpha1") and
+             (.kind == "HostedEnvironmentIdentity") and
+             (.metadata.namespace == "firemud-system") and
+             (.metadata.name == $identity_name)' \
+            <<<"$identity_json" >/dev/null || {
+              echo "HostedEnvironmentIdentity/${IDENTITY_NAME} lookup returned an unexpected object; refusing retirement." >&2
+              exit 1
+            }
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+
+      - name: Apply fixed dev-demo Retired request
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.identity-existence.outputs.exists == 'true' }}
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh dev-demo Retired
 
       - name: Observe terminal dev-demo retirement and delete request
-        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}
+        if: ${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && steps.identity-existence.outputs.exists == 'true' }}
         run: |
           bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
             --retired dev-demo 600

@@ -313,6 +313,7 @@ destroy_order = (
     "Delete dev-demo namespace and release",
     "Confirm exact dev-demo runtime NotFound",
     "Write hosted identity requester kubeconfig",
+    "Check HostedEnvironmentIdentity existence before retirement",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
     "Remove hosted identity requester kubeconfig",
@@ -323,10 +324,51 @@ if destroy_positions != sorted(destroy_positions):
     raise SystemExit(f"dev-demo retirement order is invalid: {destroy_order}")
 if "--ignore-not-found" not in destroy_by_name["Confirm exact dev-demo runtime NotFound"]["run"]:
     raise SystemExit("dev-demo retirement lacks an exact runtime NotFound observation")
-if "request-hosted-identity.sh dev-demo Retired" not in destroy_by_name[
-    "Apply fixed dev-demo Retired request"
-]["run"]:
+identity_existence = destroy_by_name[
+    "Check HostedEnvironmentIdentity existence before retirement"
+]
+expected_hosted_controller_condition = (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
+)
+if identity_existence.get("if") != expected_hosted_controller_condition:
+    raise SystemExit("dev-demo identity existence check must remain hosted-controller-only")
+if identity_existence.get("id") != "identity-existence":
+    raise SystemExit("dev-demo identity existence check must publish a stable step output")
+for required in (
+    'IDENTITY_NAME: dev-demo',
+    'kubectl -n firemud-system get hostedenvironmentidentity "$IDENTITY_NAME"',
+    "--ignore-not-found -o json",
+    'if [[ -z "$identity_json" ]]',
+    'echo "exists=false" >> "$GITHUB_OUTPUT"',
+    '(.apiVersion == "platform.firemud.dev/v1alpha1")',
+    '(.kind == "HostedEnvironmentIdentity")',
+    '(.metadata.namespace == "firemud-system")',
+    '(.metadata.name == $identity_name)',
+    'echo "exists=true" >> "$GITHUB_OUTPUT"',
+):
+    if required == "IDENTITY_NAME: dev-demo":
+        if identity_existence.get("env", {}).get("IDENTITY_NAME") != "dev-demo":
+            raise SystemExit("dev-demo identity existence check targets the wrong identity")
+    elif required not in identity_existence["run"]:
+        raise SystemExit(f"dev-demo identity existence check lacks {required}")
+expected_existing_identity_condition = (
+    "${{ steps.certificate-identity.outputs.mode == 'hosted-controller' && "
+    "steps.identity-existence.outputs.exists == 'true' }}"
+)
+retired_request = destroy_by_name["Apply fixed dev-demo Retired request"]
+retirement_observer = destroy_by_name[
+    "Observe terminal dev-demo retirement and delete request"
+]
+if "request-hosted-identity.sh dev-demo Retired" not in retired_request["run"]:
     raise SystemExit("dev-demo retirement is not the fixed-shape shared request")
+for step_name, step in (
+    ("Retired request", retired_request),
+    ("retirement observation and deletion", retirement_observer),
+):
+    if step.get("if") != expected_existing_identity_condition:
+        raise SystemExit(
+            f"dev-demo {step_name} must require hosted-controller mode and an existing identity"
+        )
 destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
 if "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" not in destroy_runtime_kubeconfig["run"]:
     raise SystemExit("dev-demo destroy does not retain its runtime kubeconfig path")

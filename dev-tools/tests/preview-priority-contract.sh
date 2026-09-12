@@ -1189,6 +1189,14 @@ grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore
 # The terminal janitor also rediscovers stranded identity requests after their
 # runtime namespace is already gone. Every recoverable phase is revalidated
 # against current PR eligibility and then uses the same exact-absence retirement path.
+identity_recovery_source="$(sed -n '/^recover_stranded_hosted_identities()/,/^}/p' "$PRUNER")"
+# shellcheck disable=SC2016 # Match the literal source expression.
+identity_pr_capture_line="$(grep -nF 'pr_number="${BASH_REMATCH[1]}"' <<<"$identity_recovery_source" | cut -d: -f1)"
+# shellcheck disable=SC2016 # Match the literal source expression.
+identity_runtime_seen_line="$(grep -nF 'if [[ -n "${runtime_names_seen[$identity_name]:-}" ]]; then' <<<"$identity_recovery_source" | cut -d: -f1)"
+test -n "$identity_pr_capture_line"
+test -n "$identity_runtime_seen_line"
+test "$identity_pr_capture_line" -lt "$identity_runtime_seen_line"
 for stranded_phase in RuntimeAbsent Retiring Retired; do
   reset_case
   export FAKE_NAMESPACE_ROWS=''
@@ -1246,6 +1254,9 @@ grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) fail
 grep -Fqx "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" \
   "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG"
 
+# One failed retirement must not stop stale cleanup. The next runtime is still
+# deleted and its identity is fully retired, while the overall command reports
+# the aggregate failure after preserving operation ordering across both runtimes.
 reset_case
 export FAKE_NAMESPACE_ROWS=$'pr-101\t101\npr-102\t102\n'
 export FAKE_PRUNE_METADATA=$'open\tfeature/stack\thuman\t'"${adversarial_labels_base64}"$'\n'
@@ -1263,12 +1274,12 @@ fi
 grep -Fqx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
+grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+grep -Fqx -- '--retired pr-102 600' "$FAKE_IDENTITY_WAIT_LOG"
+grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-102 --ignore-not-found --wait=true --timeout=180s' \
+  "$FAKE_IDENTITY_LOG"
 grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/multiple-retire.out"
-# A successful retirement returns explicitly; recovery accounts for each failed
-# retirement itself and returns success after continuing through all candidates.
-retire_function_tail="$(sed -n '/^retire_hosted_identity()/,/^}/p' "$PRUNER" | tail -n 2)"
-test "$retire_function_tail" = $'  return 0\n}'
 
 for identity_failure in request wait delete; do
   reset_case
