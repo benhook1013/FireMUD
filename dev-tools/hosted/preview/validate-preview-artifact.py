@@ -1488,10 +1488,10 @@ def main() -> int:
             return 2
         try:
             inject_telnet_port(
-                Path(sys.argv[2]),
-                Path(sys.argv[3]),
-                int(sys.argv[5]),
-                sys.argv[4],
+                source=Path(sys.argv[2]),
+                destination=Path(sys.argv[3]),
+                port=int(sys.argv[5]),
+                expected_namespace=sys.argv[4],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)

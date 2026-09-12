@@ -6681,7 +6681,10 @@ def main() -> int:
         expected_hosted_telnet_node_port = None
         if len(sys.argv) == 7:
             if sys.argv[5] != "--expected-hosted-telnet-node-port":
-                usage()
+                fail(
+                    "hosted-bridge optional flag must be "
+                    "--expected-hosted-telnet-node-port"
+                )
             if (
                 not re.fullmatch(r"[1-9][0-9]*", sys.argv[6])
                 or len(sys.argv[6]) > 5

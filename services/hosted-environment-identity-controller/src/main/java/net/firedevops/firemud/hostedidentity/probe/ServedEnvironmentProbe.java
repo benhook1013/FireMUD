@@ -61,8 +61,10 @@ public class ServedEnvironmentProbe {
   private static final int CONNECT_TIMEOUT_MILLIS = 5000;
   private static final int IO_TIMEOUT_MILLIS = 8000;
   private static final int ENDPOINT_PROBE_COUNT = 4;
-  private static final Duration TOTAL_PROBE_TIMEOUT =
-      Duration.ofMillis((long) ENDPOINT_PROBE_COUNT * (CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS));
+  private static final Duration TOTAL_PROBE_TIMEOUT_SLACK = Duration.ofSeconds(1);
+  static final Duration TOTAL_PROBE_TIMEOUT =
+      Duration.ofMillis((long) ENDPOINT_PROBE_COUNT * (CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS))
+          .plus(TOTAL_PROBE_TIMEOUT_SLACK);
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";

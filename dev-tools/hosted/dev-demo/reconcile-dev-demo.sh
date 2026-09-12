@@ -6,6 +6,10 @@ command -v jq >/dev/null 2>&1 || {
   echo "::error title=jq unavailable::jq is required for dev-demo reconciliation." >&2
   exit 1
 }
+command -v gh >/dev/null 2>&1 || {
+  echo "::error title=gh unavailable::gh is required for dev-demo reconciliation." >&2
+  exit 1
+}
 [[ -n "${GITHUB_REPOSITORY:-}" ]] || {
   echo "::error title=Missing GitHub repository::GITHUB_REPOSITORY must be non-empty for dev-demo reconciliation." >&2
   exit 1

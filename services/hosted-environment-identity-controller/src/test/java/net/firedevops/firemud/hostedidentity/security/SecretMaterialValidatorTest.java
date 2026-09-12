@@ -1125,6 +1125,20 @@ public class SecretMaterialValidatorTest {
     assertEquals("certificate chain exceeds CA path length constraint", failure.getMessage());
   }
 
+  @Test
+  void materialSummaryCurrentnessIncludesBothValidityBoundaries() {
+    Instant notBefore = Instant.parse("2026-01-01T00:00:00Z");
+    Instant notAfter = Instant.parse("2026-02-01T00:00:00Z");
+    SecretMaterialValidator.MaterialSummary summary =
+        new SecretMaterialValidator.MaterialSummary(
+            "certificate", "spki", notBefore, notAfter, "root");
+
+    assertFalse(summary.isCurrent(notBefore.minusNanos(1)));
+    assertTrue(summary.isCurrent(notBefore));
+    assertTrue(summary.isCurrent(notAfter));
+    assertFalse(summary.isCurrent(notAfter.plusNanos(1)));
+  }
+
   @SuppressWarnings("unchecked")
   private static IdentityClient identityClient(
       EnvironmentIdentityPlan plan, Secret existing, Secret ca) {

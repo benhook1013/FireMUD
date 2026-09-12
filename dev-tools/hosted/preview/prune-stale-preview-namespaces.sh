@@ -80,6 +80,7 @@ evaluate_retention_eligibility() {
   local pr_number="$2"
   local pr_metadata metadata_without_tabs metadata_tab_count
   local pr_state pr_base_ref pr_author pr_labels_base64 pr_labels_json eligibility_output
+  local eligibility_first_line eligibility_second_line
 
   if ! pr_metadata="$(
     gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \

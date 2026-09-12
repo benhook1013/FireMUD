@@ -16,6 +16,10 @@ for required_command in jq base64 openssl sha256sum; do
     exit 2
   fi
 done
+if [[ -z "${RUNNER_TEMP:-}" || ! -d "$RUNNER_TEMP" ]]; then
+  echo "RUNNER_TEMP must name an existing directory" >&2
+  exit 2
+fi
 credential_files_dir=""
 cleanup_credential_files() {
   if [[ -n "$credential_files_dir" && -d "$credential_files_dir" ]]; then
@@ -23,7 +27,7 @@ cleanup_credential_files() {
   fi
 }
 trap cleanup_credential_files EXIT
-credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP:?}/firemud-runtime-credentials.XXXXXX")"
+credential_files_dir="$(mktemp -d -- "${RUNNER_TEMP}/firemud-runtime-credentials.XXXXXX")"
 chmod 700 "$credential_files_dir"
 write_credential_file() {
   local file_name="$1"

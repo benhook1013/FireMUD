@@ -38,6 +38,11 @@ import org.junit.jupiter.api.Test;
 
 class ServedEnvironmentProbeTest {
   @Test
+  void totalDeadlineLeavesSmallHeadroomBeyondAllEndpointBudgets() {
+    assertEquals(Duration.ofSeconds(53), ServedEnvironmentProbe.TOTAL_PROBE_TIMEOUT);
+  }
+
+  @Test
   void acceptsExactHttp10AndHttp11StatusLines() throws Exception {
     assertEquals(200, readStatus("HTTP/1.0 200 OK\r\n"));
     assertEquals(204, readStatus("HTTP/1.1 204\r\n"));

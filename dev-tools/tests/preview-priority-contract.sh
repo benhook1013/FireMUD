@@ -2189,6 +2189,8 @@ grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-overflow.output"
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -q -- "--labels-json \"\$pr_labels_json\"" "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
+grep -Fq 'local eligibility_first_line eligibility_second_line' \
+  "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 PRUNER_PATH="$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh" python3 - <<'PY'
 import os
 from pathlib import Path

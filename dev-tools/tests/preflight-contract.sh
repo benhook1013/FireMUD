@@ -8683,6 +8683,19 @@ if malformed_invocation.returncode == 0 or malformed_invocation.stderr.strip() !
         f"{malformed_invocation.stderr!r}"
     )
 
+invalid_flag = run_hosted(
+    render_path,
+    "--unexpected-hosted-option",
+    str(node_port),
+)
+if invalid_flag.returncode == 0 or invalid_flag.stderr.strip() != (
+    "hosted-bridge optional flag must be --expected-hosted-telnet-node-port"
+):
+    raise SystemExit(
+        "hosted-bridge invalid flag did not receive its specific error: "
+        f"{invalid_flag.stderr!r}"
+    )
+
 invalid_context = subprocess.run(
     [
         sys.executable,

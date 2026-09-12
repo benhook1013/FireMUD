@@ -1381,6 +1381,11 @@ done
 require_literal "$BOOTSTRAP" "validatingadmissionpolicybinding"
 require_literal "$BOOTSTRAP" ".spec.failurePolicy"
 require_literal "$BOOTSTRAP" ".spec.validationActions[*]"
+require_literal "$BOOTSTRAP" "python3 -c 'import yaml'"
+require_literal "$BOOTSTRAP" "yaml.safe_load_all"
+require_literal "$BOOTSTRAP" "if len(matches) != 1:"
+require_literal "$BOOTSTRAP" "yaml.safe_dump(matches[0], sort_keys=False)"
+forbid_literal "$BOOTSTRAP" 'awk -v expected_kind='
 # shellcheck disable=SC2016 # Match the literal bootstrap comparison.
 require_literal "$BOOTSTRAP" '[[ "$binding_actions" == "Deny" ]]'
 for forbidden_command in 'kubectl delete' 'kubectl apply --all' 'sed -i'; do
@@ -1406,7 +1411,7 @@ require_literal "$BOOTSTRAP" '--request-timeout="${crd_remaining}s"'
 require_literal "$BOOTSTRAP" 'while :; do'
 # shellcheck disable=SC2016 # Match the literal bootstrap expression.
 require_literal "$BOOTSTRAP" '[[ "$crd_established" == "True" ]]'
-require_literal "$BOOTSTRAP" 'if ((SECONDS >= crd_deadline)); then'
+forbid_literal "$BOOTSTRAP" 'if ((SECONDS >= crd_deadline)); then'
 require_literal "$BOOTSTRAP" 'sleep 1'
 for ca_proof in \
   'get secret firemud-grpc-ca' \
@@ -1517,6 +1522,17 @@ spec:
   validationActions:
     - Deny
 YAML
+  if [[ "${FAKE_DUPLICATE_NAMESPACE_GUARD_POLICY:-0}" == 1 ]]; then
+    cat <<'YAML'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-hosted-system-namespace-guard
+spec:
+  failurePolicy: Fail
+YAML
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "auth" && "${2:-}" == "whoami" ]]; then
@@ -1808,6 +1824,20 @@ fi
 require_literal "$bootstrap_error" "unable to verify the current Kubernetes operator identity"
 if grep -Eq '^(guard-policy|guard-binding|apply:)' "$operator_lookup_error_events"; then
   fail "bootstrap installed resources after operator identity lookup failed"
+fi
+duplicate_guard_events="$bootstrap_test_dir/duplicate-guard-events"
+if FAKE_DUPLICATE_NAMESPACE_GUARD_POLICY=1 \
+  FAKE_EVENT_LOG="$duplicate_guard_events" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted duplicate rendered namespace guard policies"
+fi
+require_literal "$bootstrap_error" \
+  "expected exactly one ValidatingAdmissionPolicy/firemud-hosted-system-namespace-guard"
+if grep -Eq '^(guard-policy|guard-binding|apply:)' "$duplicate_guard_events"; then
+  fail "bootstrap installed resources after duplicate rendered namespace guard policies"
 fi
 if FAKE_MISSING_POLICY=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \

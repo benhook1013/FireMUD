@@ -96,6 +96,8 @@ if ! [[ "$WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
 fi
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 command -v gh >/dev/null 2>&1 || fail "gh is required to verify controller image provenance"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required to parse rendered manifests"
+python3 -c 'import yaml' >/dev/null 2>&1 || fail "PyYAML is required to parse rendered manifests"
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
 umask 077
 
@@ -157,48 +159,31 @@ extract_named_yaml_document() {
   local expected_kind="$2"
   local expected_name="$3"
   local destination_path="$4"
-  awk -v expected_kind="$expected_kind" -v expected_name="$expected_name" '
-    function reset_document() {
-      document = ""
-      document_kind = ""
-      document_name = ""
-      in_metadata = 0
-    }
-    function emit_matching_document() {
-      if (document_kind == expected_kind && document_name == expected_name) {
-        matches++
-        printf "%s", document
-      }
-    }
-    BEGIN { reset_document() }
-    /^---[[:space:]]*$/ {
-      emit_matching_document()
-      reset_document()
-      next
-    }
-    {
-      document = document $0 ORS
-      if ($0 ~ /^kind:[[:space:]]*/) {
-        document_kind = $0
-        sub(/^kind:[[:space:]]*/, "", document_kind)
-      }
-      if ($0 ~ /^metadata:[[:space:]]*$/) {
-        in_metadata = 1
-      } else if ($0 ~ /^[^[:space:]]/) {
-        in_metadata = 0
-      } else if (in_metadata && document_name == "" && $0 ~ /^  name:[[:space:]]*/) {
-        document_name = $0
-        sub(/^  name:[[:space:]]*/, "", document_name)
-      }
-    }
-    END {
-      emit_matching_document()
-      if (matches != 1) {
-        exit 1
-      }
-    }
-  ' "$source_path" > "$destination_path" || \
+  python3 - "$source_path" "$expected_kind" "$expected_name" <<'PY' >"$destination_path" || \
     fail "expected exactly one $expected_kind/$expected_name in the rendered manifest"
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path = Path(sys.argv[1])
+expected_kind = sys.argv[2]
+expected_name = sys.argv[3]
+matches = [
+    document
+    for document in yaml.safe_load_all(source_path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+    and document.get("kind") == expected_kind
+    and isinstance(document.get("metadata"), dict)
+    and document["metadata"].get("name") == expected_name
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected exactly one {expected_kind}/{expected_name} in {source_path}, "
+        f"found {len(matches)}"
+    )
+print(yaml.safe_dump(matches[0], sort_keys=False), end="")
+PY
 }
 
 # Render privately so the checked-in base cannot silently acquire a mutable
@@ -269,9 +254,6 @@ while :; do
     -o jsonpath='{.status.conditions[?(@.type=="Established")].status}')" &&
     [[ "$crd_established" == "True" ]]; then
     break
-  fi
-  if ((SECONDS >= crd_deadline)); then
-    fail "HostedEnvironmentIdentity CRD is not Established=True"
   fi
   sleep 1
 done

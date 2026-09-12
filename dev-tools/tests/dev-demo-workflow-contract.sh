@@ -393,6 +393,12 @@ if "jq is required for dev-demo reconciliation." not in reconcile_run:
     raise SystemExit("dev-demo reconciler jq prerequisite lacks a clear diagnostic")
 if reconcile_run.index("command -v jq") >= reconcile_run.index("jq -"):
     raise SystemExit("dev-demo reconciler uses jq before checking the prerequisite")
+if "command -v gh >/dev/null 2>&1" not in reconcile_run:
+    raise SystemExit("dev-demo reconciler must explicitly require gh")
+if "gh is required for dev-demo reconciliation." not in reconcile_run:
+    raise SystemExit("dev-demo reconciler gh prerequisite lacks a clear diagnostic")
+if reconcile_run.index("command -v gh") >= reconcile_run.index("gh api"):
+    raise SystemExit("dev-demo reconciler uses gh before checking the prerequisite")
 if '[[ -n "${GITHUB_REPOSITORY:-}" ]]' not in reconcile_run:
     raise SystemExit("dev-demo reconciler must require GITHUB_REPOSITORY")
 if "GITHUB_REPOSITORY must be non-empty for dev-demo reconciliation." not in reconcile_run:

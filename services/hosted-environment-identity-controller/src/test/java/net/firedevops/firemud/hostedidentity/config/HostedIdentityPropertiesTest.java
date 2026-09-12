@@ -311,6 +311,7 @@ class HostedIdentityPropertiesTest {
 
       IllegalStateException failure =
           assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+      // Whitespace is raw-nonempty, so optional-pin shape validation rejects it first.
       assertEquals(
           trustAnchor != null && !trustAnchor.isEmpty()
               ? "gRPC trust-anchor SHA-256 pin must be empty or 64 lowercase hexadecimal characters"
@@ -321,13 +322,17 @@ class HostedIdentityPropertiesTest {
 
   @Test
   void activationModeIsCommittedOnlyAfterSuccessfulInitialization() {
+    HostedIdentityProperties failingProperties = new HostedIdentityProperties();
+    failingProperties.setActivationMode("active");
+
+    assertEquals(
+        HostedIdentityProperties.ActivationMode.PAUSED, failingProperties.activationMode());
+    assertThrows(IllegalStateException.class, failingProperties::afterPropertiesSet);
+    assertEquals(
+        HostedIdentityProperties.ActivationMode.PAUSED, failingProperties.activationMode());
+
     HostedIdentityProperties properties = new HostedIdentityProperties();
     properties.setActivationMode("active");
-
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-    assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
-    assertEquals(HostedIdentityProperties.ActivationMode.PAUSED, properties.activationMode());
-
     properties.setGrpcTrustAnchorSha256("a".repeat(64));
     properties.afterPropertiesSet();
     assertEquals(HostedIdentityProperties.ActivationMode.ACTIVE, properties.activationMode());

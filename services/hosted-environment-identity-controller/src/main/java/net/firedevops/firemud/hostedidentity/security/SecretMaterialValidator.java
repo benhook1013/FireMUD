@@ -438,7 +438,7 @@ public class SecretMaterialValidator {
       Instant notAfter,
       String chainRootFingerprint) {
     public boolean isCurrent(Instant now) {
-      return notBefore().isBefore(now) && notAfter().isAfter(now);
+      return !notBefore().isAfter(now) && !notAfter().isBefore(now);
     }
   }
 
