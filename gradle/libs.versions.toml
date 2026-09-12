@@ -105,5 +105,5 @@ temporal-sdk = { module = "io.temporal:temporal-sdk", version.ref = "temporal" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "13.6.0" }
+flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
 protobuf = { id = "com.google.protobuf", version = "0.10.0" }

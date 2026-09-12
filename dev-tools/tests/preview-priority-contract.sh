@@ -1807,23 +1807,24 @@ test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.out"
-if (
+(
   cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\tfeature-901\thead-901\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
+  FAKE_OPEN_PRIORITY_ROWS="0\t901\tfeature-901\thead-901\thuman\tdevelop\topen\ttrue\t${priority_labels_base64}\n1\t101\tfeature-101\tnew-head-101\thuman\tdevelop\topen\tfalse\t${adversarial_labels_base64}\n" \
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD='' \
     FAKE_ANNOTATE_ERROR=true \
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
-) > "$reconciler_annotation_existing_output" 2>&1; then
-  echo "reconciler continued after annotation failure while namespace still existed" >&2
-  exit 1
-fi
+) > "$reconciler_annotation_existing_output" 2>&1
 grep -qx \
-  'Unable to annotate namespace pr-901; namespace still exists, refusing preview reconcile.' \
+  'Skipping PR #901: unable to annotate namespace pr-901; namespace still exists.' \
   "$reconciler_annotation_existing_output"
+grep -qx 'Dispatching preview deploy for PR #101 (new-head-101) on ref feature-101' \
+  "$reconciler_annotation_existing_output"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-101' \
+  "$FAKE_DISPATCH_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
-test ! -e "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_annotation_confirmation_error_output="$TEMP_DIR/reconciler-annotation-confirmation-error.out"

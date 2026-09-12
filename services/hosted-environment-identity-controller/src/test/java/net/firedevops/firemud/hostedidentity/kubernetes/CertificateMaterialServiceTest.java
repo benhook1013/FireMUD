@@ -1060,10 +1060,10 @@ class CertificateMaterialServiceTest {
 
   @Test
   void serializedRotationContinuesPendingRoleBeforeStartingAnotherChange() {
-    var ingress =
-        new CertificateMaterialService.RotationState("ingress", false, true, false, false);
-    var telnet = new CertificateMaterialService.RotationState("telnet", false, true, false, false);
-    var grpc = new CertificateMaterialService.RotationState("grpc", true, true, false, true);
+    var ingress = rotationState("ingress", RotationCondition.CHANGED);
+    var telnet = rotationState("telnet", RotationCondition.CHANGED);
+    var grpc =
+        rotationState("grpc", RotationCondition.PENDING, RotationCondition.CHANGED);
 
     assertEquals(
         "grpc",
@@ -1072,10 +1072,9 @@ class CertificateMaterialServiceTest {
 
   @Test
   void serializedRotationStartsOnlyTheFirstChangedRole() {
-    var ingress =
-        new CertificateMaterialService.RotationState("ingress", false, false, false, false);
-    var telnet = new CertificateMaterialService.RotationState("telnet", false, true, false, false);
-    var grpc = new CertificateMaterialService.RotationState("grpc", false, true, false, false);
+    var ingress = rotationState("ingress");
+    var telnet = rotationState("telnet", RotationCondition.CHANGED);
+    var grpc = rotationState("grpc", RotationCondition.CHANGED);
 
     assertEquals(
         "telnet",
@@ -1085,15 +1084,16 @@ class CertificateMaterialServiceTest {
         CertificateMaterialService.selectSerializedRole(
             java.util.List.of(
                 ingress,
-                new CertificateMaterialService.RotationState("telnet", false, false, false, false),
-                new CertificateMaterialService.RotationState("grpc", false, false, false, false))));
+                rotationState("telnet"),
+                rotationState("grpc"))));
   }
 
   @Test
   void serializedRotationSelectsExistingChangeWhileAnotherRoleInitializes() {
-    var ingress = new CertificateMaterialService.RotationState("ingress", true, true, false, false);
-    var telnet = new CertificateMaterialService.RotationState("telnet", false, false, true, false);
-    var grpc = new CertificateMaterialService.RotationState("grpc", true, true, false, false);
+    var ingress =
+        rotationState("ingress", RotationCondition.PENDING, RotationCondition.CHANGED);
+    var telnet = rotationState("telnet", RotationCondition.UNINITIALIZED);
+    var grpc = rotationState("grpc", RotationCondition.PENDING, RotationCondition.CHANGED);
 
     assertEquals(
         "ingress",
@@ -1659,12 +1659,11 @@ class CertificateMaterialServiceTest {
 
   @Test
   void serializedRotationPrioritizesTheFirstDriftedRole() {
-    var pending =
-        new CertificateMaterialService.RotationState("ingress", true, false, false, false);
+    var pending = rotationState("ingress", RotationCondition.PENDING);
     var firstDrift =
-        new CertificateMaterialService.RotationState("telnet", true, false, false, true);
+        rotationState("telnet", RotationCondition.PENDING, RotationCondition.DRIFTED);
     var secondDrift =
-        new CertificateMaterialService.RotationState("grpc", true, false, false, true);
+        rotationState("grpc", RotationCondition.PENDING, RotationCondition.DRIFTED);
 
     assertEquals(
         "telnet",
@@ -2313,6 +2312,25 @@ class CertificateMaterialServiceTest {
       CertificateMaterialService.RoleMaterial material,
       SecretMaterialValidator validator,
       NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets) {}
+
+  private static CertificateMaterialService.RotationState rotationState(
+      String role, RotationCondition... conditions) {
+    var conditionSet = java.util.EnumSet.noneOf(RotationCondition.class);
+    conditionSet.addAll(List.of(conditions));
+    return new CertificateMaterialService.RotationState(
+        role,
+        conditionSet.contains(RotationCondition.PENDING),
+        conditionSet.contains(RotationCondition.CHANGED),
+        conditionSet.contains(RotationCondition.UNINITIALIZED),
+        conditionSet.contains(RotationCondition.DRIFTED));
+  }
+
+  private enum RotationCondition {
+    PENDING,
+    CHANGED,
+    UNINITIALIZED,
+    DRIFTED
+  }
 
   private enum CertManagerSourceMutation {
     MANAGED_BY,

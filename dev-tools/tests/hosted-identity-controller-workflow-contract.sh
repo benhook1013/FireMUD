@@ -416,6 +416,7 @@ matrix_entries = trusted_build["strategy"]["matrix"]["service"]
 assert "hosted-environment-identity-controller" not in matrix_entries
 controller_job = runtime_jobs["build-hosted-identity-controller"]
 assert "build-base-image" in controller_job["needs"]
+assert controller_job["timeout-minutes"] == 25
 assert all(token in controller_job["if"] for token in (
     "github.event_name != 'pull_request'", "github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/develop'"
 ))
@@ -507,6 +508,10 @@ target_step = next(step for step in validate_job["steps"] if step.get("id") == "
 target_script = target_step["run"]
 workflow_run_start = target_script.rindex('if [[ "$EVENT_NAME" == workflow_run ]]; then')
 destroy_branch_start = target_script.index("else\n", workflow_run_start)
+workflow_branch_end = target_script.index("\nfi\n", destroy_branch_start)
+shared_head_guard = '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action'
+assert target_script.count(shared_head_guard) == 1
+assert target_script.index(shared_head_guard) > workflow_branch_end
 for label_fragment in (
     'labels_json="$(jq -c',
     'label_metadata="$(python3',

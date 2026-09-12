@@ -117,11 +117,7 @@ class HostedIdentityReconcilerSafetyTest {
             HostedIdentityContract.TELNET_ROLE,
             accepted,
             new SecretMaterialValidator.MaterialSummary(
-                certificateFingerprint,
-                "2".repeat(64),
-                Instant.EPOCH,
-                Instant.MAX,
-                "3".repeat(64)),
+                certificateFingerprint, "2".repeat(64), Instant.EPOCH, Instant.MAX, "3".repeat(64)),
             1,
             1,
             "cert-manager",

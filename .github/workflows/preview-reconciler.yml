@@ -182,8 +182,8 @@ jobs:
                         exit 1
                       fi
                       if [[ -n "${annotation_failure_namespace_json}" ]]; then
-                        echo "Unable to annotate namespace ${namespace}; namespace still exists, refusing preview reconcile." >&2
-                        exit 1
+                        echo "Skipping PR #${pr_number}: unable to annotate namespace ${namespace}; namespace still exists." >&2
+                        continue
                       fi
                       echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
                       continue

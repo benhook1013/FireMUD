@@ -182,6 +182,25 @@ for namespace_label in \
 done
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-controller"
 require_literal "$MANIFEST_DIR/serviceaccounts.yaml" "name: firemud-hosted-identity-requester"
+SERVICE_ACCOUNTS="$MANIFEST_DIR/serviceaccounts.yaml" python3 - <<'PY'
+import os
+from pathlib import Path
+
+import yaml
+
+service_accounts = {
+    document["metadata"]["name"]: document
+    for document in yaml.safe_load_all(
+        Path(os.environ["SERVICE_ACCOUNTS"]).read_text(encoding="utf-8")
+    )
+}
+assert service_accounts["firemud-hosted-identity-controller"][
+    "automountServiceAccountToken"
+] is True
+assert service_accounts["firemud-hosted-identity-requester"][
+    "automountServiceAccountToken"
+] is False
+PY
 for tracker_marker in \
   "Contract owners are [ADR 0182]" \
   "[Deployment Environments](../../architecture/infrastructure/deployment-environments.md)" \

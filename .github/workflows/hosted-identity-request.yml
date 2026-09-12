@@ -128,8 +128,6 @@ jobs:
               "Ignoring source render because the current PR head repository is not trusted."
             [[ "$base_ref" == main || "$base_ref" == develop ]] || emit_no_action \
               "Ignoring source render because the current PR base branch is unsupported."
-            [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]] || emit_no_action \
-              "Ignoring stale source render for an earlier PR head."
             labels_json="$(jq -c '.labels // null' <<<"$pull_request_json")"
             label_metadata="$(python3 ./dev-tools/hosted/preview/preview-eligibility.py \
               --inspect-labels --labels-json "$labels_json")"

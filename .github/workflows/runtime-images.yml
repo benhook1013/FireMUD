@@ -298,6 +298,7 @@ jobs:
     needs: [image-meta, build-base-image]
     if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main') && needs.build-base-image.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
       packages: write
