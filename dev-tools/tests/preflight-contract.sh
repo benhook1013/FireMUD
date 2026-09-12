@@ -2275,6 +2275,35 @@ try:
     if missing_retryable is not True or "missing keys" not in missing_issue:
         raise SystemExit(f"missing Secret data key was not retryable: {missing_issue}, {missing_retryable}")
 
+    def timeout_secret_lookup(args, **kwargs):
+        raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    with patch.object(module.subprocess, "run", timeout_secret_lookup):
+        timeout_issue, timeout_retryable = module.secret_keys_lookup_failure(
+            "timed-out", "pr-42", {"tls.crt"}
+        )
+    if timeout_retryable is not True or "timed out" not in timeout_issue:
+        raise SystemExit(
+            f"timed-out Secret-key lookup was not retryable: {timeout_issue}, {timeout_retryable}"
+        )
+
+    for lookup_error in (
+        OSError("kubectl unavailable"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ):
+        def failed_secret_lookup(*args, **kwargs):
+            raise lookup_error
+
+        with patch.object(module.subprocess, "run", failed_secret_lookup):
+            failed_issue, failed_retryable = module.secret_keys_lookup_failure(
+                "failed", "pr-42", {"tls.crt"}
+            )
+        if failed_retryable or "could not be verified" not in failed_issue:
+            raise SystemExit(
+                "non-timeout Secret-key lookup failure became retryable: "
+                f"{failed_issue}, {failed_retryable}"
+            )
+
     for invalid_value in ("", 123):
         with patch.object(
             module.subprocess,
@@ -2309,6 +2338,53 @@ try:
         )
     if retry_issues:
         raise SystemExit(f"empty Secret value did not retry to readiness: {retry_issues}")
+
+    timeout_then_ready_calls = [0]
+
+    def timeout_then_ready_lookup(args, **kwargs):
+        timeout_then_ready_calls[0] += 1
+        if timeout_then_ready_calls[0] == 1:
+            raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return module.subprocess.CompletedProcess(
+            args, 0, json.dumps({"data": {"tls.crt": "encoded"}}), ""
+        )
+
+    with (
+        patch.object(module.subprocess, "run", timeout_then_ready_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        timeout_then_ready_issues = module.wait_for_secret_key_requirements(
+            [("timeout-then-ready", {"tls.crt"})], "pr-42"
+        )
+    if timeout_then_ready_calls[0] != 2 or timeout_then_ready_issues:
+        raise SystemExit(
+            "timed-out Secret-key lookup did not retry to readiness: "
+            f"{timeout_then_ready_issues}"
+        )
+
+    timeout_exhaustion_calls = [0]
+
+    def exhausting_timeout_lookup(args, **kwargs):
+        timeout_exhaustion_calls[0] += 1
+        raise module.subprocess.TimeoutExpired(args, timeout_exhaustion_calls[0])
+
+    with (
+        patch.object(module.subprocess, "run", exhausting_timeout_lookup),
+        patch.object(module.time, "sleep", lambda _: None),
+    ):
+        timeout_exhaustion_issues = module.wait_for_secret_key_requirements(
+            [("timeout-exhausted", {"tls.crt"})], "pr-42"
+        )
+    if (
+        timeout_exhaustion_calls[0] != 2
+        or len(timeout_exhaustion_issues) != 1
+        or "timed out after 2 seconds" not in timeout_exhaustion_issues[0]
+        or "still not ready after 2 attempts" not in timeout_exhaustion_issues[0]
+    ):
+        raise SystemExit(
+            "timed-out Secret-key lookup did not preserve its latest exhausted issue: "
+            f"{timeout_exhaustion_issues}"
+        )
 
     for invalid_attempts in (0, -1):
         try:
@@ -2587,6 +2663,36 @@ try:
         or "elapsed 6.0s of 5s readiness budget" not in deadline_issues[0]
     ):
         raise SystemExit(f"slow Secret lookup did not honor its readiness deadline: {deadline_issues}")
+
+    timeout_deadline_now = [0.0]
+    timeout_deadline_calls = [0]
+
+    def timeout_past_deadline(args, **kwargs):
+        timeout_deadline_calls[0] += 1
+        timeout_deadline_now[0] = 6.0
+        raise module.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    with (
+        patch.object(module.subprocess, "run", timeout_past_deadline),
+        patch.object(module.time, "monotonic", lambda: timeout_deadline_now[0]),
+    ):
+        timeout_deadline_issues = module.wait_for_secret_key_requirements(
+            [("timeout-past-deadline", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if (
+        timeout_deadline_calls[0] != 1
+        or len(timeout_deadline_issues) != 1
+        or "Secret readiness deadline left less than the" not in timeout_deadline_issues[0]
+        or "still not ready after 1 attempts" not in timeout_deadline_issues[0]
+        or "elapsed 6.0s of 5s readiness budget" not in timeout_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "timed-out Secret-key lookup did not stop at its readiness deadline: "
+            f"{timeout_deadline_issues}"
+        )
 
     monotonic_now = [0.0]
     expiry_lookup_calls = [0]

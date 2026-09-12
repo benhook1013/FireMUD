@@ -6398,7 +6398,12 @@ def secret_keys_lookup_failure(
             text=True,
             timeout=timeout_seconds,
         )
-    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        return (
+            f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
+            True,
+        )
+    except (OSError, UnicodeError) as exc:
         return (
             f"Secret lookup could not be verified for {namespace}/{secret_name}: {exc}",
             False,
