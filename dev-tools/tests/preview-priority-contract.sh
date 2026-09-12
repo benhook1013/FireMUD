@@ -1102,7 +1102,7 @@ for missing_identity_field in 1 2 3 4 5 6 7; do
   FAKE_OPEN_PRIORITY_ROWS="$(
     awk -F '\t' -v OFS='\t' -v missing="$missing_identity_field" \
       '{$missing = ""; print}' <<<"$valid_open_pr_row"
-  )" \
+  )"$'\n' \
     bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
     >"$TEMP_DIR/missing-open-pr-field-${missing_identity_field}.output" 2>&1 && {
       echo "ordinary allocation accepted open PR metadata with missing identity field ${missing_identity_field}" >&2
@@ -1203,13 +1203,14 @@ export FAKE_PRUNE_METADATA="open\tfeature/stack\thuman\t${adversarial_labels_bas
 export HOSTED_IDENTITY_MODE=hosted-controller
 export FAKE_RUNTIME_NAMESPACE_PRESENT=false
 export FAKE_RECORD_RUNTIME_CHECK=true
+export PREVIEW_DELETE_TIMEOUT=37
 bash "$PRUNER" --apply --retire-terminal-identities
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -qx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
-grep -qx -- '--retired pr-101 600' "$FAKE_IDENTITY_WAIT_LOG"
+grep -qx -- '--retired pr-101 37' "$FAKE_IDENTITY_WAIT_LOG"
 grep -Fqx -- '-n firemud-system get hostedenvironmentidentity pr-101 --ignore-not-found -o json' \
   "$FAKE_IDENTITY_LOG"
-grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore-not-found --wait=true --timeout=180s' \
+grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore-not-found --wait=true --timeout=37s' \
   "$FAKE_IDENTITY_LOG"
 
 # The terminal janitor also rediscovers stranded identity requests after their
@@ -1230,6 +1231,7 @@ for stranded_phase in RuntimeAbsent Retiring Retired; do
   export HOSTED_IDENTITY_MODE=hosted-controller
   export FAKE_RUNTIME_NAMESPACE_PRESENT=false
   export FAKE_RECORD_RUNTIME_CHECK=true
+  export PREVIEW_DELETE_TIMEOUT=41
   FAKE_IDENTITY_LIST_JSON="$(
     jq -nc --arg phase "$stranded_phase" '{
       apiVersion: "platform.firemud.dev/v1alpha1",
@@ -1249,6 +1251,9 @@ for stranded_phase in RuntimeAbsent Retiring Retired; do
   test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
   test ! -e "$FAKE_DELETE_LOG"
   grep -Fqx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+  grep -Fqx -- '--retired pr-101 41' "$FAKE_IDENTITY_WAIT_LOG"
+  grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore-not-found --wait=true --timeout=41s' \
+    "$FAKE_IDENTITY_LOG"
   grep -Fqx "$HOSTED_IDENTITY_REQUESTER_KUBECONFIG" \
     "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG"
   grep -Fq "Recovering HostedEnvironmentIdentity/pr-101 from phase ${stranded_phase}" \
@@ -1291,6 +1296,7 @@ export FAKE_PRUNE_MULTI_TEST=true
 export HOSTED_IDENTITY_MODE=hosted-controller
 export FAKE_RUNTIME_NAMESPACE_PRESENT=false
 export FAKE_RECORD_RUNTIME_CHECK=true
+export PREVIEW_DELETE_TIMEOUT=43
 export FAKE_IDENTITY_LOOKUP_FAIL_NAMESPACE=pr-101
 export FAKE_IDENTITY_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-102"}}'
 if bash "$PRUNER" --apply --retire-terminal-identities >"$TEMP_DIR/multiple-retire.out" 2>&1; then
@@ -1301,8 +1307,8 @@ grep -Fqx 'pr-101 pr-101' "$FAKE_DELETE_LOG"
 grep -Fqx 'pr-102 pr-102' "$FAKE_DELETE_LOG"
 test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-delete\nruntime-check\nruntime-delete\nruntime-check\nidentity-request\nidentity-wait\nidentity-delete'
 grep -Fqx 'pr-102 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
-grep -Fqx -- '--retired pr-102 600' "$FAKE_IDENTITY_WAIT_LOG"
-grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-102 --ignore-not-found --wait=true --timeout=180s' \
+grep -Fqx -- '--retired pr-102 43' "$FAKE_IDENTITY_WAIT_LOG"
+grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-102 --ignore-not-found --wait=true --timeout=43s' \
   "$FAKE_IDENTITY_LOG"
 grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
   "$TEMP_DIR/multiple-retire.out"
@@ -2453,6 +2459,8 @@ assert source.index(timeout_error) < source.index(
 assert source.count(
     'PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout"'
 ) == 2
+assert 'bash "$identity_wait_script" --retired "$identity_name" "$preview_delete_timeout"' in source
+assert '--ignore-not-found --wait=true --timeout="${preview_delete_timeout}s"' in source
 PY
 grep -Fq "printf 'identity=%s\\nphase=Retired\\n' \"\$identity_name\"" \
   "$ROOT_DIR/dev-tools/hosted/preview/wait-for-hosted-identity.sh"

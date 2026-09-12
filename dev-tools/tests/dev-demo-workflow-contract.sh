@@ -329,7 +329,6 @@ destroy_order = (
     "Check HostedEnvironmentIdentity existence before retirement",
     "Apply fixed dev-demo Retired request",
     "Observe terminal dev-demo retirement and delete request",
-    "Restore dev-demo runtime kubeconfig after retirement",
     "Remove hosted identity requester kubeconfig",
     "Summarize dev-demo destroy",
 )
@@ -348,6 +347,14 @@ if identity_existence.get("if") != expected_hosted_controller_condition:
     raise SystemExit("dev-demo identity existence check must remain hosted-controller-only")
 if identity_existence.get("id") != "identity-existence":
     raise SystemExit("dev-demo identity existence check must publish a stable step output")
+requester_kubeconfig_env = {
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
+}
+if identity_existence.get("env") != {
+    "IDENTITY_NAME": "dev-demo",
+    **requester_kubeconfig_env,
+}:
+    raise SystemExit("dev-demo identity existence check does not scope requester KUBECONFIG")
 for required in (
     'IDENTITY_NAME: dev-demo',
     'kubectl -n firemud-system get hostedenvironmentidentity "$IDENTITY_NAME"',
@@ -383,37 +390,23 @@ for step_name, step in (
         raise SystemExit(
             f"dev-demo {step_name} must require hosted-controller mode and an existing identity"
         )
+    if step.get("env") != requester_kubeconfig_env:
+        raise SystemExit(f"dev-demo {step_name} does not scope requester KUBECONFIG")
 destroy_runtime_kubeconfig = destroy_by_name["Write dev-demo runtime kubeconfig"]
-if "DEV_DEMO_RUNTIME_KUBECONFIG=$KUBECONFIG_PATH" not in destroy_runtime_kubeconfig["run"]:
-    raise SystemExit("dev-demo destroy does not retain its runtime kubeconfig path")
-destroy_restore = destroy_by_name["Restore dev-demo runtime kubeconfig after retirement"]
-expected_restore_condition = (
-    "${{ always() && steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-)
-if destroy_restore.get("if") != expected_restore_condition:
-    raise SystemExit("dev-demo destroy runtime credential restore must always run in hosted-controller mode")
-destroy_restore_run = destroy_restore["run"]
-for required in (
-    '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]',
-    'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"',
-):
-    if required not in destroy_restore_run:
-        raise SystemExit(f"dev-demo destroy runtime credential restore lacks {required}")
-if destroy_restore_run.index('[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]') >= (
-    destroy_restore_run.index(
-        'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
-    )
-):
-    raise SystemExit("dev-demo destroy publishes its runtime path before validating it")
+if "DEV_DEMO_RUNTIME_KUBECONFIG" in destroy_runtime_kubeconfig["run"]:
+    raise SystemExit("dev-demo destroy retained an unnecessary runtime kubeconfig restore variable")
+destroy_requester_writer = destroy_by_name["Write hosted identity requester kubeconfig"]
+if destroy_requester_writer.get("with") != {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
+}:
+    raise SystemExit("dev-demo Retired requester action does not opt out of global KUBECONFIG export")
+if "Restore dev-demo runtime kubeconfig after retirement" in destroy_by_name:
+    raise SystemExit("dev-demo Retired requester must not require runtime credential restore")
 retirement_index = destroy_names.index(
     "Observe terminal dev-demo retirement and delete request"
 )
-restore_index = destroy_names.index("Restore dev-demo runtime kubeconfig after retirement")
-if restore_index != retirement_index + 1:
-    raise SystemExit("dev-demo destroy does not restore runtime credentials immediately after retirement")
-for step in destroy_steps[retirement_index + 1 : restore_index]:
-    if "DEV_DEMO_RUNTIME_KUBECONFIG" in str(step):
-        raise SystemExit("a pre-restore teardown step consumes the dev-demo runtime kubeconfig")
 requester_cleanup = destroy_by_name["Remove hosted identity requester kubeconfig"]
 if requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo requester credential cleanup must run after failures")
@@ -422,8 +415,8 @@ if requester_cleanup.get("run") != (
 ):
     raise SystemExit("dev-demo requester credential cleanup targets the wrong file")
 cleanup_index = destroy_names.index("Remove hosted identity requester kubeconfig")
-if cleanup_index != restore_index + 1:
-    raise SystemExit("dev-demo destroy must restore runtime credentials before requester cleanup")
+if cleanup_index != retirement_index + 1:
+    raise SystemExit("dev-demo destroy must remove requester credentials immediately after retirement")
 
 for required in (
     '[[ "$desired_state" != Active && "$desired_state" != Retired ]]',

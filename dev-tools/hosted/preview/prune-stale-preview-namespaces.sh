@@ -192,12 +192,12 @@ retire_hosted_identity() {
     return 1
   fi
   if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
-    bash "$identity_wait_script" --retired "$identity_name" 600; then
+    bash "$identity_wait_script" --retired "$identity_name" "$preview_delete_timeout"; then
     return 1
   fi
   if ! KUBECONFIG="$hosted_identity_requester_kubeconfig" \
     kubectl -n firemud-system delete hostedenvironmentidentity "$identity_name" \
-      --ignore-not-found --wait=true --timeout=180s; then
+      --ignore-not-found --wait=true --timeout="${preview_delete_timeout}s"; then
     return 1
   fi
   return 0

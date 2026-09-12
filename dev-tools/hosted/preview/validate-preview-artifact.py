@@ -97,6 +97,18 @@ EXPECTED_PVC_SPECS = {
         "resources": {"requests": {"storage": "5Gi"}},
     },
 }
+
+
+def walk(value: object, path: str = "object"):
+    yield path, value
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from walk(child, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from walk(child, f"{path}[{index}]")
+
+
 EXPECTED_OBJECTS = {
     (kind, name)
     for kind, names in EXPECTED_NAMES.items()
@@ -984,16 +996,6 @@ def validate_runtime_target(path: Path, expected_namespace: str, expected_port: 
             "prepared preview render must contain only the exact allocated TCP Proxy "
             f"NodePort {expected_port}; observed {node_ports!r}"
         )
-
-
-def walk(value: object, path: str = "object"):
-    yield path, value
-    if isinstance(value, dict):
-        for key, child in value.items():
-            yield from walk(child, f"{path}.{key}")
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            yield from walk(child, f"{path}[{index}]")
 
 
 def validate_service_consumers(documents: list[dict], expected_namespace: str) -> None:

@@ -64,13 +64,15 @@ if grep -Fq -- '*.jar' "$controller_dockerfile"; then
   echo "$controller_dockerfile must copy only the canonical controller artifact" >&2
   exit 1
 fi
-python3 - "$runtime" <<'PY'
+python3 - "$runtime" "$publisher" <<'PY'
+import re
 import sys
 from pathlib import Path
 
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+publisher_workflow = yaml.safe_load(Path(sys.argv[2]).read_text(encoding="utf-8"))
 image_meta = workflow["jobs"]["image-meta"]
 assert image_meta["outputs"]["controller_smoke_required"] == (
     "${{ steps.controller_scope.outputs.controller_smoke_required }}"
@@ -148,6 +150,37 @@ assert '[[ "$health" == *' not in smoke_run
 export_run = export_step["run"]
 assert "hosted-environment-identity-controller" not in export_run
 assert "account-service" in export_run
+
+runtime_services_match = re.search(
+    r"for service in \\\n(?P<services>(?:\s+[a-z0-9-]+ \\\n)*\s+[a-z0-9-]+); do",
+    export_run,
+)
+assert runtime_services_match, "runtime artifact service allowlist is not parseable"
+runtime_services = [
+    line.removesuffix(" \\").strip()
+    for line in runtime_services_match.group("services").splitlines()
+]
+publisher_steps = publisher_workflow["jobs"]["publish"]["steps"]
+publisher_run = next(
+    step["run"]
+    for step in publisher_steps
+    if step.get("name") == "Publish fixed PR image tags"
+)
+publisher_services_match = re.search(
+    r"^\s*services=\(\n(?P<services>(?:\s+[a-z0-9-]+\n)+)\s*\)$",
+    publisher_run,
+    re.MULTILINE,
+)
+assert publisher_services_match, "trusted publisher service allowlist is not parseable"
+publisher_services = [
+    line.strip()
+    for line in publisher_services_match.group("services").splitlines()
+]
+assert publisher_services == runtime_services, (
+    "trusted publisher service allowlist must exactly match the PR runtime artifact list",
+    publisher_services,
+    runtime_services,
+)
 PY
 
 nested_status_health='{"components":{"controller":{"status":"UP"}}}'
