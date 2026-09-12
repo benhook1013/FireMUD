@@ -1585,15 +1585,12 @@ import os
 from pathlib import Path
 
 source = Path(os.environ["BOOTSTRAP"]).read_text(encoding="utf-8")
-last_authorization_probe = source.index(
-    'expect_can_i no --as="$requester_sa" --namespace=dev '
-    'get hostedenvironmentidentities.platform.firemud.dev'
+ca_verification = source.index("\nverify_grpc_ca_prerequisite\n")
+first_cluster_write = source.index(
+    'kubectl apply \\\n  --server-side \\\n  --field-manager="$FIELD_MANAGER"'
 )
-active_transition = source.index(
-    'if [[ "$ACTIVATION_MODE" == "active" ]]; then\n'
-    '  verify_grpc_ca_prerequisite'
-)
-assert last_authorization_probe < active_transition
+assert ca_verification < first_cluster_write
+assert source.count("\nverify_grpc_ca_prerequisite\n") == 1
 assert (
     'expect_can_i yes --as="$controller_sa" --namespace="$CONTROL_NAMESPACE" \\\n'
     '  patch hostedenvironmentidentities.platform.firemud.dev'
@@ -1960,6 +1957,8 @@ bootstrap_fingerprint="$(
 )"
 [[ "$bootstrap_fingerprint" =~ ^[0-9a-f]{64}$ ]] || \
   fail "could not compute the fixture gRPC CA fingerprint"
+export FAKE_CA_CERT="$bootstrap_ca_cert"
+export FAKE_CA_KEY="$bootstrap_ca_key"
 legacy_bootstrap_events="$bootstrap_test_dir/legacy-events"
 legacy_bootstrap_image='ghcr.io/benhook1013/hosted-environment-identity-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 if ! FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
@@ -2183,33 +2182,35 @@ mapfile -t active_events <"$active_event_log"
   fail "active bootstrap did not verify the operator identity first"
 [[ "${active_events[1]:-}" == "pull-secret-read" ]] || \
   fail "active bootstrap did not verify the controller pull Secret before apply"
-[[ "${active_events[2]:-}" == "apply:paused" ]] || \
-  fail "active bootstrap did not apply paused mode first"
+first_apply_index=-1
 [[ "${active_events[-2]:-}" == "apply:active" ]] || \
   fail "active bootstrap did not replace paused mode with active"
 [[ "${active_events[-1]:-}" == "rollout" ]] || \
   fail "active bootstrap did not wait for the active rollout"
 auth_checks=0
-last_auth_index=-1
 first_ca_index=-1
 active_apply_index=-1
 for index in "${!active_events[@]}"; do
   case "${active_events[$index]}" in
     auth-check)
       auth_checks=$((auth_checks + 1))
-      last_auth_index="$index"
       ;;
     ca-read)
       if (( first_ca_index < 0 )); then
         first_ca_index="$index"
       fi
       ;;
-    apply:active) active_apply_index="$index" ;;
+    apply:*)
+      if (( first_apply_index < 0 )); then
+        first_apply_index="$index"
+      fi
+      [[ "${active_events[$index]}" == "apply:active" ]] && active_apply_index="$index"
+      ;;
   esac
 done
 [[ "$auth_checks" -eq 14 ]] || fail "active bootstrap did not run all authorization probes"
-(( first_ca_index > last_auth_index )) || \
-  fail "active bootstrap read the CA before all authorization probes completed"
+(( first_ca_index >= 0 && first_ca_index < first_apply_index )) || \
+  fail "active bootstrap did not verify the gRPC CA before its first cluster write"
 (( active_apply_index > first_ca_index )) || \
   fail "active bootstrap applied active mode before verifying the gRPC CA"
 unsupported_openssl_dir="$bootstrap_test_dir/unsupported-openssl"
@@ -2241,19 +2242,21 @@ if grep -Fxq -- "apply:active" "$unsupported_openssl_event_log"; then
   fail "bootstrap applied active mode after rejecting unsupported openssl verify"
 fi
 mismatch_event_log="$bootstrap_test_dir/mismatch-events"
-if FAKE_EVENT_LOG="$mismatch_event_log" \
-  FAKE_CA_CERT="$bootstrap_ca_cert" FAKE_CA_KEY="$bootstrap_ca_key" \
-  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
-  PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
-  --grpc-trust-anchor-sha256 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
-  --activation-mode active --wait-seconds 1 \
-  >"$bootstrap_output" 2>"$bootstrap_error"; then
-  fail "bootstrap accepted a mismatched gRPC CA fingerprint"
-fi
-require_literal "$bootstrap_error" "does not match the configured fingerprint"
-if grep -Fxq -- "apply:active" "$mismatch_event_log"; then
-  fail "bootstrap applied active mode after a mismatched gRPC CA fingerprint"
-fi
+for activation_mode in paused observe active; do
+  mismatch_event_log="$bootstrap_test_dir/mismatch-${activation_mode}-events"
+  if FAKE_EVENT_LOG="$mismatch_event_log" \
+    FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+    PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
+    --grpc-trust-anchor-sha256 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' \
+    --activation-mode "$activation_mode" --wait-seconds 1 \
+    >"$bootstrap_output" 2>"$bootstrap_error"; then
+    fail "bootstrap accepted a mismatched gRPC CA fingerprint in ${activation_mode} mode"
+  fi
+  require_literal "$bootstrap_error" "does not match the configured fingerprint"
+  if grep -Eq '^(guard-policy|guard-binding|apply:.*|rollout)$' "$mismatch_event_log"; then
+    fail "bootstrap wrote cluster state after a mismatched gRPC CA fingerprint in ${activation_mode} mode"
+  fi
+done
 expired_fingerprint="$(
   openssl x509 -in "$bootstrap_expired_ca_cert" -outform DER |
     sha256sum |

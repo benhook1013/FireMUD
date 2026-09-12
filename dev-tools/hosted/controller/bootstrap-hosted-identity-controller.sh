@@ -120,6 +120,108 @@ temporary_manifest="$(mktemp)"
 namespace_guard_policy_manifest="$(mktemp)"
 namespace_guard_binding_manifest="$(mktemp)"
 
+verify_grpc_ca_prerequisite() {
+  command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
+  command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
+  command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
+  if ! LC_ALL=C openssl verify -help 2>&1 |
+    grep -Eq -- '(^|[[:space:]])-no-CAstore([[:space:]]|$)'; then
+    fail "openssl verify must support -no-CAstore to validate the gRPC CA"
+  fi
+  local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
+  local ca_basic_constraints ca_key_usage
+  local certificate_public_key_sha256 private_key_public_key_sha256
+  secret_type="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
+  [[ "$secret_type" == "Opaque" ]] || fail "firemud-grpc-ca must be an Opaque Secret"
+  # shellcheck disable=SC2016 # The dollar-prefixed names are literal kubectl Go-template variables.
+  if ! ca_keys="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
+    -o go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}' | LC_ALL=C sort)"; then
+    fail "firemud-grpc-ca data-key listing failed"
+  fi
+  [[ "$ca_keys" == $'ca.crt\nca.key' ]] || \
+    fail "firemud-grpc-ca must contain exactly the ca.crt and ca.key data keys"
+  encoded_certificate="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.data.ca\.crt}')"
+  [[ -n "$encoded_certificate" ]] || fail "firemud-grpc-ca ca.crt is empty"
+  encoded_key="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
+    -o jsonpath='{.data.ca\.key}')"
+  [[ -n "$encoded_key" ]] || fail "firemud-grpc-ca ca.key is empty"
+  actual_fingerprint="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      openssl x509 -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.crt is not a valid certificate"
+  [[ "$actual_fingerprint" == "${GRPC_TRUST_ANCHOR_SHA256,,}" ]] || \
+    fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
+  if ! openssl verify \
+    -no-CAfile \
+    -no-CApath \
+    -no-CAstore \
+    -partial_chain \
+    -trusted <(printf '%s' "$encoded_certificate" | base64 --decode) \
+    <(printf '%s' "$encoded_certificate" | base64 --decode) \
+    >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.crt is not currently valid"
+  fi
+  ca_basic_constraints="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      LC_ALL=C openssl x509 -noout -ext basicConstraints 2>/dev/null
+  )" || fail "firemud-grpc-ca ca.crt Basic Constraints could not be parsed"
+  if ! grep -Eq '(^|[[:space:]])CA:TRUE([,[:space:]]|$)' <<<"$ca_basic_constraints"; then
+    fail "firemud-grpc-ca ca.crt Basic Constraints must identify it as a CA"
+  fi
+  ca_key_usage="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      LC_ALL=C openssl x509 -noout -ext keyUsage 2>/dev/null
+  )" || fail "firemud-grpc-ca ca.crt key usage could not be parsed"
+  if ! grep -Eq '(^|[[:space:],])Certificate Sign([,[:space:]]|$)' <<<"$ca_key_usage"; then
+    fail "firemud-grpc-ca ca.crt key usage must include keyCertSign"
+  fi
+  if ! printf '%s' "$encoded_certificate" |
+    base64 --decode |
+    openssl x509 -pubkey -noout 2>/dev/null |
+    openssl rsa -pubin -noout >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.crt public key must be RSA"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
+    python3 -c 'import re, sys; data = sys.stdin.buffer.read(); raise SystemExit(0 if re.fullmatch(rb"-----BEGIN PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/]+={0,2}\r?\n)+-----END PRIVATE KEY-----\r?\n?", data) else 1)'; then
+    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
+    openssl pkcs8 -nocrypt -out /dev/null >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
+  fi
+  if ! printf '%s' "$encoded_key" |
+    base64 --decode |
+    openssl rsa -check -noout >/dev/null 2>&1; then
+    fail "firemud-grpc-ca ca.key must be RSA"
+  fi
+  certificate_public_key_sha256="$(
+    printf '%s' "$encoded_certificate" |
+      base64 --decode |
+      openssl x509 -pubkey -noout 2>/dev/null |
+      openssl pkey -pubin -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.crt public key could not be parsed"
+  private_key_public_key_sha256="$(
+    printf '%s' "$encoded_key" |
+      base64 --decode |
+      openssl pkey -pubout -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )" || fail "firemud-grpc-ca ca.key is not a valid private key"
+  [[ "$certificate_public_key_sha256" == "$private_key_public_key_sha256" ]] || \
+    fail "firemud-grpc-ca ca.crt and ca.key do not match"
+}
+
 # The default verifier predicate is SLSA build provenance. Verify the exact OCI
 # digest against this repository, signer workflow, hosted runner, and one of the
 # two trusted publication refs before invoking kubectl for any operation.
@@ -321,6 +423,10 @@ if grep -Fq -- "__IMAGE_DIGEST_REQUIRED__" "$temporary_manifest" || \
   fail "rendered manifests still contain a required-input marker"
 fi
 
+# Every activation mode installs a controller that consumes this fixed trust
+# anchor. Validate it before the namespace guard or any other cluster write.
+verify_grpc_ca_prerequisite
+
 # Install and observe the exact namespace lifecycle admission boundary before
 # the full apply can grant
 # ClusterRoleBinding/firemud-hosted-identity-controller-namespace-lifecycle.
@@ -401,109 +507,6 @@ for admission_name in "${required_admission_policies[@]}"; do
   [[ "$binding_actions" == "Deny" ]] || \
     fail "$admission_name admission policy binding must contain exactly validationActions Deny"
 done
-
-verify_grpc_ca_prerequisite() {
-  command -v base64 >/dev/null 2>&1 || fail "base64 is required to validate the gRPC CA"
-  command -v openssl >/dev/null 2>&1 || fail "openssl is required to validate the gRPC CA"
-  command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required to validate the gRPC CA"
-  if ! LC_ALL=C openssl verify -help 2>&1 |
-    grep -Eq -- '(^|[[:space:]])-no-CAstore([[:space:]]|$)'; then
-    fail "openssl verify must support -no-CAstore to validate the gRPC CA"
-  fi
-  local secret_type ca_keys encoded_certificate encoded_key actual_fingerprint
-  local ca_basic_constraints ca_key_usage
-  local certificate_public_key_sha256 private_key_public_key_sha256
-  secret_type="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
-    -o jsonpath='{.type}' 2>/dev/null)" || fail "missing trusted firemud-system/firemud-grpc-ca prerequisite"
-  [[ "$secret_type" == "Opaque" ]] || fail "firemud-grpc-ca must be an Opaque Secret"
-  # shellcheck disable=SC2016 # The dollar-prefixed names are literal kubectl Go-template variables.
-  if ! ca_keys="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
-    -o go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}' | LC_ALL=C sort)"; then
-    fail "firemud-grpc-ca data-key listing failed"
-  fi
-  [[ "$ca_keys" == $'ca.crt\nca.key' ]] || \
-    fail "firemud-grpc-ca must contain exactly the ca.crt and ca.key data keys"
-  encoded_certificate="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
-    -o jsonpath='{.data.ca\.crt}')"
-  [[ -n "$encoded_certificate" ]] || fail "firemud-grpc-ca ca.crt is empty"
-  encoded_key="$(kubectl -n "$CONTROL_NAMESPACE" get secret firemud-grpc-ca \
-    -o jsonpath='{.data.ca\.key}')"
-  [[ -n "$encoded_key" ]] || fail "firemud-grpc-ca ca.key is empty"
-  actual_fingerprint="$(
-    printf '%s' "$encoded_certificate" |
-      base64 --decode |
-      openssl x509 -outform DER 2>/dev/null |
-      sha256sum |
-      awk '{print $1}'
-  )" || fail "firemud-grpc-ca ca.crt is not a valid certificate"
-  [[ "$actual_fingerprint" == "${GRPC_TRUST_ANCHOR_SHA256,,}" ]] || \
-    fail "firemud-grpc-ca ca.crt does not match the configured fingerprint"
-  if ! openssl verify \
-    -no-CAfile \
-    -no-CApath \
-    -no-CAstore \
-    -partial_chain \
-    -trusted <(printf '%s' "$encoded_certificate" | base64 --decode) \
-    <(printf '%s' "$encoded_certificate" | base64 --decode) \
-    >/dev/null 2>&1; then
-    fail "firemud-grpc-ca ca.crt is not currently valid"
-  fi
-  ca_basic_constraints="$(
-    printf '%s' "$encoded_certificate" |
-      base64 --decode |
-      LC_ALL=C openssl x509 -noout -ext basicConstraints 2>/dev/null
-  )" || fail "firemud-grpc-ca ca.crt Basic Constraints could not be parsed"
-  if ! grep -Eq '(^|[[:space:]])CA:TRUE([,[:space:]]|$)' <<<"$ca_basic_constraints"; then
-    fail "firemud-grpc-ca ca.crt Basic Constraints must identify it as a CA"
-  fi
-  ca_key_usage="$(
-    printf '%s' "$encoded_certificate" |
-      base64 --decode |
-      LC_ALL=C openssl x509 -noout -ext keyUsage 2>/dev/null
-  )" || fail "firemud-grpc-ca ca.crt key usage could not be parsed"
-  if ! grep -Eq '(^|[[:space:],])Certificate Sign([,[:space:]]|$)' <<<"$ca_key_usage"; then
-    fail "firemud-grpc-ca ca.crt key usage must include keyCertSign"
-  fi
-  if ! printf '%s' "$encoded_certificate" |
-    base64 --decode |
-    openssl x509 -pubkey -noout 2>/dev/null |
-    openssl rsa -pubin -noout >/dev/null 2>&1; then
-    fail "firemud-grpc-ca ca.crt public key must be RSA"
-  fi
-  if ! printf '%s' "$encoded_key" |
-    base64 --decode |
-    python3 -c 'import re, sys; data = sys.stdin.buffer.read(); raise SystemExit(0 if re.fullmatch(rb"-----BEGIN PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/]+={0,2}\r?\n)+-----END PRIVATE KEY-----\r?\n?", data) else 1)'; then
-    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
-  fi
-  if ! printf '%s' "$encoded_key" |
-    base64 --decode |
-    openssl pkcs8 -nocrypt -out /dev/null >/dev/null 2>&1; then
-    fail "firemud-grpc-ca ca.key must be an unencrypted PKCS8 private key"
-  fi
-  if ! printf '%s' "$encoded_key" |
-    base64 --decode |
-    openssl rsa -check -noout >/dev/null 2>&1; then
-    fail "firemud-grpc-ca ca.key must be RSA"
-  fi
-  certificate_public_key_sha256="$(
-    printf '%s' "$encoded_certificate" |
-      base64 --decode |
-      openssl x509 -pubkey -noout 2>/dev/null |
-      openssl pkey -pubin -outform DER 2>/dev/null |
-      sha256sum |
-      awk '{print $1}'
-  )" || fail "firemud-grpc-ca ca.crt public key could not be parsed"
-  private_key_public_key_sha256="$(
-    printf '%s' "$encoded_key" |
-      base64 --decode |
-      openssl pkey -pubout -outform DER 2>/dev/null |
-      sha256sum |
-      awk '{print $1}'
-  )" || fail "firemud-grpc-ca ca.key is not a valid private key"
-  [[ "$certificate_public_key_sha256" == "$private_key_public_key_sha256" ]] || \
-    fail "firemud-grpc-ca ca.crt and ca.key do not match"
-}
-
 controller_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-controller"
 requester_sa="system:serviceaccount:$CONTROL_NAMESPACE:firemud-hosted-identity-requester"
 
@@ -549,7 +552,6 @@ expect_can_i no --as="$requester_sa" --all-namespaces list secrets
 expect_can_i no --as="$requester_sa" --namespace=dev get hostedenvironmentidentities.platform.firemud.dev
 
 if [[ "$ACTIVATION_MODE" == "active" ]]; then
-  verify_grpc_ca_prerequisite
   # Re-rendering is unnecessary: the only changed value is the enum-validated
   # activation field. Re-applying the complete private manifest keeps the
   # transition under the same server-side field manager as bootstrap.

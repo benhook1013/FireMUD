@@ -200,6 +200,24 @@ batch_candidates="$({
 } | python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD)"
 test "$batch_candidates" = $'903\t3333333333333333333333333333333333333333\n904\t4444444444444444444444444444444444444444'
 
+for unrelated_batch_argument in \
+  '--operation deploy' '--state open' '--base-ref develop' '--author human' \
+  '--labels-json []' \
+  '--expected-head-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
+  read -r -a unrelated_batch_fields <<<"$unrelated_batch_argument"
+  if python3 "$SCRIPT" --batch-deploy-candidates \
+    --expected-repository example/FireMUD \
+    "${unrelated_batch_fields[@]}" \
+    </dev/null \
+    >"$TEMP_DIR/batch-unrelated.out" 2>"$TEMP_DIR/batch-unrelated.err"; then
+    echo "Batch eligibility accepted unrelated argument: $unrelated_batch_argument" >&2
+    exit 1
+  fi
+  grep -Fq -- \
+    "--batch-deploy-candidates cannot be combined with: ${unrelated_batch_fields[0]}" \
+    "$TEMP_DIR/batch-unrelated.err"
+done
+
 if printf '905\t5555555555555555555555555555555555555555\texample/FireMUD\thuman\tdevelop\topen\tnot-base64!\n' |
   python3 "$SCRIPT" --batch-deploy-candidates --expected-repository example/FireMUD \
     >"$TEMP_DIR/batch-malformed.out" 2>"$TEMP_DIR/batch-malformed.err"; then

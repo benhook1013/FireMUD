@@ -264,6 +264,23 @@ def main() -> int:
         return 0
 
     if args.batch_deploy_candidates:
+        unrelated = [
+            name
+            for name, value in (
+                ("--operation", args.operation),
+                ("--state", args.state),
+                ("--base-ref", args.base_ref),
+                ("--author", args.author),
+                ("--labels-json", args.labels_json),
+                ("--expected-head-sha", args.expected_head_sha),
+            )
+            if value is not None
+        ]
+        if unrelated:
+            parser.error(
+                "--batch-deploy-candidates cannot be combined with: "
+                f"{', '.join(unrelated)}"
+            )
         if args.expected_repository is None:
             parser.error("the following arguments are required: --expected-repository")
         candidates, refusal_reason = evaluate_priority_candidates(sys.stdin.read(), args.expected_repository)

@@ -974,7 +974,7 @@ public class CertificateMaterialService {
 
   private static boolean allowedCertificateDefault(String path, Object key, Object value) {
     if (path.isEmpty() && "duration".equals(key)) {
-      return "2160h".equals(value);
+      return (CertificateResourceFactory.PUBLIC_CERTIFICATE_DURATION.toHours() + "h").equals(value);
     }
     return false;
   }

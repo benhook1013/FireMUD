@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -318,19 +319,26 @@ public class SecretMaterialValidator {
     int subordinateCaDepth = 0;
     List<X509Certificate> candidates = new ArrayList<>(presentedChain);
     candidates.addAll(anchors);
+    Map<X509Certificate, String> candidateFingerprints = new IdentityHashMap<>();
+    for (X509Certificate candidate : candidates) {
+      candidateFingerprints.put(candidate, sha256(candidate.getEncoded()));
+    }
+    Set<String> anchorFingerprints =
+        anchors.stream()
+            .map(candidateFingerprints::get)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
     for (int depth = 0; depth <= candidates.size(); depth++) {
-      X509Certificate next = verifiedIssuer(current, candidates, used);
+      X509Certificate next = verifiedIssuer(current, candidates, candidateFingerprints, used);
       if (next == null) {
         break;
       }
-      String fingerprint = sha256(next.getEncoded());
+      String fingerprint = candidateFingerprints.get(next);
       used.add(fingerprint);
-      boolean isConfiguredAnchor =
-          anchors.stream()
-              .anyMatch(certificate -> fingerprint.equals(sha256Unchecked(certificate)));
+      boolean isConfiguredAnchor = anchorFingerprints.contains(fingerprint);
       if (isConfiguredAnchor
           && ((!expectedAnchor.isBlank() && expectedAnchor.equals(fingerprint))
-              || (expectedAnchor.isBlank() && verifiedIssuer(next, candidates, used) == null))) {
+              || (expectedAnchor.isBlank()
+                  && verifiedIssuer(next, candidates, candidateFingerprints, used) == null))) {
         anchor = next;
         break;
       }
@@ -388,10 +396,13 @@ public class SecretMaterialValidator {
   }
 
   private static X509Certificate verifiedIssuer(
-      X509Certificate certificate, List<X509Certificate> candidates, Set<String> used)
+      X509Certificate certificate,
+      List<X509Certificate> candidates,
+      Map<X509Certificate, String> candidateFingerprints,
+      Set<String> used)
       throws Exception {
     for (X509Certificate candidate : candidates) {
-      String fingerprint = sha256(candidate.getEncoded());
+      String fingerprint = candidateFingerprints.get(candidate);
       if (used.contains(fingerprint)
           || !certificate.getIssuerX500Principal().equals(candidate.getSubjectX500Principal())) {
         continue;
@@ -404,14 +415,6 @@ public class SecretMaterialValidator {
       }
     }
     return null;
-  }
-
-  private static String sha256Unchecked(X509Certificate certificate) {
-    try {
-      return sha256(certificate.getEncoded());
-    } catch (Exception exception) {
-      throw new MaterialValidationException("unable to fingerprint certificate", exception);
-    }
   }
 
   private static void checkValidity(X509Certificate certificate) {
