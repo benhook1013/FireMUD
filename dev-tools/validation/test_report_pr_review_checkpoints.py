@@ -461,7 +461,7 @@ class CheckpointReporterTest(unittest.TestCase):
             "safe \x1b[31mred\x1b[0m "
             "\x1b]0;forged title\x07"
             "\x1b]8;;https://example.invalid\x1b\\link\x1b]8;;\x1b\\"
-            "\x00\x08\x0b next\nrow\tcell"
+            "\x00\x08\x0b next\rreplacement\nrow\tcell"
         )
         report = {
             "matched_checkpoints": 0,
@@ -488,7 +488,8 @@ class CheckpointReporterTest(unittest.TestCase):
         self.assertNotIn("\x00", rendered)
         self.assertNotIn("\x08", rendered)
         self.assertNotIn("\x0b", rendered)
-        self.assertIn("safe red link next\nrow\tcell", rendered)
+        self.assertNotIn("\r", rendered)
+        self.assertIn("safe red link nextreplacement\nrow\tcell", rendered)
         self.assertEqual(report["timeline"][0]["description"], description)
         self.assertEqual(self.reporter.display_prose("\x1b[31m\x1b[0m"), "-")
 
