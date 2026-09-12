@@ -624,6 +624,15 @@ class HostedIdentityReconcilerSafetyTest {
         published.getResource().orElseThrow().getStatus().getPhase());
     verify(operations, never()).removeFinalizer(HostedIdentityContract.FINALIZER);
 
+    UpdateControl<HostedEnvironmentIdentity> waitingForDeletion =
+        reconciler.reconcile(resource, context);
+
+    assertEquals(true, waitingForDeletion.isNoUpdate());
+    assertEquals(
+        java.util.Optional.of(properties.getReconcileInterval().toMillis()),
+        waitingForDeletion.getScheduleDelay());
+    verify(operations, never()).removeFinalizer(HostedIdentityContract.FINALIZER);
+
     resource.getMetadata().setDeletionTimestamp(Instant.now().toString());
     UpdateControl<HostedEnvironmentIdentity> deleted = reconciler.reconcile(resource, context);
 

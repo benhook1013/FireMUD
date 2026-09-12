@@ -782,6 +782,7 @@ jobs:
       - self-hosted
       - preview
     needs: preview-plan
+    # Closed PRs with a non-standalone identity mode are cleaned by hosted-identity-request.yml via pull_request_target.
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' && (github.event_name != 'pull_request' || github.event.action != 'closed' || needs.preview-plan.outputs.close_certificate_identity_mode == 'standalone') }}
     environment: pr-preview
     concurrency:

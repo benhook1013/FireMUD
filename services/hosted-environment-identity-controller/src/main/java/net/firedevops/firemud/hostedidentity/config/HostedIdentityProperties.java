@@ -15,6 +15,7 @@ public class HostedIdentityProperties implements InitializingBean {
   public static final Duration INTERNAL_CERTIFICATE_DURATION = Duration.ofDays(30);
   public static final Duration INTERNAL_CERTIFICATE_RENEWAL_SLACK = Duration.ofMinutes(5);
   public static final Duration MINIMUM_GRPC_RENEW_BEFORE = Duration.ofMinutes(5);
+  public static final int CERTIFICATE_RSA_KEY_SIZE_BITS = 2048;
   private static final int CANONICAL_PREVIEW_TELNET_PORT_BASE = 32000;
   private static final int CANONICAL_DEV_DEMO_TELNET_PORT = 32016;
 

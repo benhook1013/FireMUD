@@ -98,6 +98,9 @@ public class SecretMaterialValidatorTest {
 
     X509Certificate leaf = certificate(source.getData().get("tls.crt"));
     X509Certificate root = certificate(source.getData().get("ca.crt"));
+    assertEquals(
+        HostedIdentityProperties.CERTIFICATE_RSA_KEY_SIZE_BITS,
+        ((java.security.interfaces.RSAKey) leaf.getPublicKey()).getModulus().bitLength());
     JcaX509ExtensionUtils extensionUtils = new JcaX509ExtensionUtils();
     byte[] rootSubjectKeyIdentifier =
         extensionUtils.createSubjectKeyIdentifier(root.getPublicKey()).getKeyIdentifier();

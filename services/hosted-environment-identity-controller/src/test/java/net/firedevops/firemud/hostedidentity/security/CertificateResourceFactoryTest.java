@@ -106,10 +106,18 @@ class CertificateResourceFactoryTest {
 
   @Test
   void certificateFactoryHasNoGrpcCertificateFactoryMethod() {
+    var declaredMethods = CertificateResourceFactory.class.getDeclaredMethods();
+
     assertTrue(
-        java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
+        java.util.Arrays.stream(declaredMethods)
             .noneMatch(
                 method -> method.getName().toLowerCase(java.util.Locale.ROOT).contains("grpc")));
+    assertEquals(
+        java.util.Set.of("ingress", "telnet", "gatewayInternalWs", "tcpProxyBridge"),
+        java.util.Arrays.stream(declaredMethods)
+            .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
+            .map(java.lang.reflect.Method::getName)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet()));
   }
 
   @Test
@@ -169,7 +177,7 @@ class CertificateResourceFactoryTest {
     assertEquals("ClusterIssuer", issuerRef.get("kind"));
     assertEquals("cert-manager.io", issuerRef.get("group"));
     assertEquals("RSA", privateKey.get("algorithm"));
-    assertEquals(2048, privateKey.get("size"));
+    assertEquals(HostedIdentityProperties.CERTIFICATE_RSA_KEY_SIZE_BITS, privateKey.get("size"));
     assertEquals("PKCS8", privateKey.get("encoding"));
     assertEquals("Always", privateKey.get("rotationPolicy"));
     assertEquals(false, certificateSpec.get("isCA"));

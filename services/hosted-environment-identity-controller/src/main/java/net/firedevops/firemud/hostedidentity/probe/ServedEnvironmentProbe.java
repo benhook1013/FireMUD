@@ -69,6 +69,7 @@ public class ServedEnvironmentProbe {
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
   private static final String GRPC_PROBE_SERVICE = "account-service";
   private static final Logger LOGGER = LoggerFactory.getLogger(ServedEnvironmentProbe.class);
+  private static final ThreadLocal<ProbeAttempt> CURRENT_ATTEMPT = new ThreadLocal<>();
   private final HostedIdentityProperties properties;
 
   @SuppressFBWarnings(
@@ -116,15 +117,24 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
       Duration timeout) {
+    ProbeAttempt attempt = new ProbeAttempt();
     FutureTask<ProbeResult> task =
         new FutureTask<>(
-            () ->
-                probeSequentially(
-                    plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe));
+            () -> {
+              CURRENT_ATTEMPT.set(attempt);
+              try {
+                return probeSequentially(
+                    plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe);
+              } finally {
+                attempt.closeOpenSocket();
+                CURRENT_ATTEMPT.remove();
+              }
+            });
     Thread.ofVirtual().name("served-environment-probe").start(task);
     try {
       return task.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
     } catch (TimeoutException exception) {
+      attempt.closeOpenSocket();
       task.cancel(true);
       LOGGER.debug(
           "Served-environment probes exceeded the {} total deadline for runtime Namespace {}",
@@ -132,6 +142,7 @@ public class ServedEnvironmentProbe {
           plan.runtimeNamespace());
       return new ProbeResult(false, "probe-deadline-exceeded");
     } catch (InterruptedException exception) {
+      attempt.closeOpenSocket();
       task.cancel(true);
       Thread.currentThread().interrupt();
       return new ProbeResult(false, "probe-interrupted");
@@ -234,6 +245,8 @@ public class ServedEnvironmentProbe {
     } catch (Exception exception) {
       LOGGER.debug("{} connection failed", context, exception);
       return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
     }
   }
 
@@ -294,7 +307,7 @@ public class ServedEnvironmentProbe {
       String expectedTrustAnchor,
       String requiredApplicationProtocol)
       throws Exception {
-    Socket transport = new Socket();
+    Socket transport = trackSocket(new Socket());
     SSLSocket socket = null;
     boolean transferred = false;
     try {
@@ -462,6 +475,8 @@ public class ServedEnvironmentProbe {
     } catch (Exception exception) {
       LOGGER.debug("HTTPS probe connection failed for {}:{}", hostname, port, exception);
       return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
     }
   }
 
@@ -524,6 +539,8 @@ public class ServedEnvironmentProbe {
     } catch (Exception exception) {
       LOGGER.debug("Telnet probe connection failed for {}:{}", hostname, port, exception);
       return new ProbeResult(false, "connection-failed");
+    } finally {
+      releaseTrackedSocket();
     }
   }
 
@@ -532,8 +549,62 @@ public class ServedEnvironmentProbe {
     if (expectedFingerprint == null || expectedFingerprint.isBlank()) {
       throw new IllegalStateException("expected served leaf fingerprint is required");
     }
-    SSLSocket socket = (SSLSocket) SSLSocketFactory.getDefault().createSocket();
+    SSLSocket socket =
+        trackSocket((SSLSocket) SSLSocketFactory.getDefault().createSocket());
     return openTlsSocket(hostname, port, expectedFingerprint, socket);
+  }
+
+  static <S extends Socket> S trackSocket(S socket) {
+    ProbeAttempt attempt = CURRENT_ATTEMPT.get();
+    if (attempt != null) {
+      attempt.track(socket);
+    }
+    return socket;
+  }
+
+  private static void releaseTrackedSocket() {
+    ProbeAttempt attempt = CURRENT_ATTEMPT.get();
+    if (attempt != null) {
+      attempt.releaseOpenSocket();
+    }
+  }
+
+  private static final class ProbeAttempt {
+    private Socket openSocket;
+    private boolean closed;
+
+    synchronized void track(Socket socket) {
+      if (closed) {
+        closeQuietly(socket);
+        throw new IllegalStateException("probe attempt already closed");
+      }
+      if (openSocket != null) {
+        closeQuietly(socket);
+        throw new IllegalStateException("probe attempt already has an open socket");
+      }
+      openSocket = socket;
+    }
+
+    synchronized void releaseOpenSocket() {
+      openSocket = null;
+    }
+
+    synchronized void closeOpenSocket() {
+      closed = true;
+      closeQuietly(openSocket);
+      openSocket = null;
+    }
+
+    private static void closeQuietly(Socket socket) {
+      if (socket == null) {
+        return;
+      }
+      try {
+        socket.close();
+      } catch (IOException exception) {
+        LOGGER.debug("Unable to close served-environment probe socket", exception);
+      }
+    }
   }
 
   static SSLSocket openTlsSocket(

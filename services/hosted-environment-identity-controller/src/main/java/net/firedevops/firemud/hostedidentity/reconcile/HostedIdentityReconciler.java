@@ -674,7 +674,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           RoleMaterials.of());
     }
     if (resource.getMetadata().getDeletionTimestamp() == null) {
-      return UpdateControl.noUpdate();
+      return UpdateControl.<HostedEnvironmentIdentity>noUpdate()
+          .rescheduleAfter(properties.getReconcileInterval());
     }
     return finishRetirement(context);
   }

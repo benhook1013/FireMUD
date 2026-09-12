@@ -135,10 +135,12 @@ class ServedEnvironmentProbeTest {
     for (int blockedProbe = 0; blockedProbe < 4; blockedProbe++) {
       AtomicInteger calls = new AtomicInteger();
       CountDownLatch interrupted = new CountDownLatch(1);
+      SSLSocket openSocket = mock(SSLSocket.class);
       int blocked = blockedProbe;
       ServedEnvironmentProbe.EndpointProbe endpoint =
           (hostname, port) -> {
             if (calls.getAndIncrement() == blocked) {
+              ServedEnvironmentProbe.trackSocket(openSocket);
               try {
                 new CountDownLatch(1).await();
               } catch (InterruptedException exception) {
@@ -155,6 +157,7 @@ class ServedEnvironmentProbeTest {
 
       assertEquals("probe-deadline-exceeded", result.reason());
       assertEquals(blocked + 1, calls.get());
+      verify(openSocket).close();
       assertTrue(interrupted.await(1, TimeUnit.SECONDS));
     }
   }

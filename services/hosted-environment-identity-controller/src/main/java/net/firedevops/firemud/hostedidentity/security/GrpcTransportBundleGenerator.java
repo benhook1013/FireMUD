@@ -173,7 +173,7 @@ public class GrpcTransportBundleGenerator {
           new KeyPair(
               caCertificate.getPublicKey(), parsePrivateKey(requiredData(caSource, "ca.key")));
       KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-      keyPairGenerator.initialize(2048);
+      keyPairGenerator.initialize(HostedIdentityProperties.CERTIFICATE_RSA_KEY_SIZE_BITS);
       KeyPair leaf = keyPairGenerator.generateKeyPair();
       X509Certificate leafCertificate =
           certificate(
