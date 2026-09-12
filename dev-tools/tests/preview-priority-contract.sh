@@ -372,7 +372,8 @@ case "$resource" in
     if [[ "${FAKE_PRIORITY_QUERY_FAIL:-false}" == "true" ]]; then
       exit 1
     fi
-    if [[ "$*" == *"per_page=1&page=1001"* ]]; then
+    printf '%s\n' "$resource" >> "$FAKE_PRIORITY_QUERY_LOG"
+    if [[ "$*" == *"per_page=100&page=11"* ]]; then
       if [[ "${FAKE_PRIORITY_OVERFLOW:-false}" == "true" ]]; then
         printf '%b' "${FAKE_OPEN_PRIORITY_ROWS:-}"
       fi
@@ -600,6 +601,7 @@ export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
 export FAKE_TARGET_CALLS="$TEMP_DIR/target-calls"
 export FAKE_PR_101_CALLS="$TEMP_DIR/pr-101-calls"
+export FAKE_PRIORITY_QUERY_LOG="$TEMP_DIR/priority-query.log"
 export FAKE_NAMESPACE_JSON_CALLS="$TEMP_DIR/namespace-json-calls"
 export FAKE_NAMESPACE_SNAPSHOT_LOG="$TEMP_DIR/namespace-snapshot.log"
 export FAKE_NAMESPACE_SNAPSHOT_CALLS="$TEMP_DIR/namespace-snapshot-calls"
@@ -626,7 +628,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -2306,12 +2308,44 @@ grep -Fq -- '--expected-head-sha "$expected_head_sha"' "$revalidation_helper"
 grep -q -- '--batch-deploy-candidates' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
 # shellcheck disable=SC2016 # This assertion intentionally matches literal shell source.
 grep -q -- '--expected-repository "$GITHUB_REPOSITORY"' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
-grep -q 'max_open_pr_candidates=1000' "$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh"
-ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" python3 - <<'PY'
+ALLOCATOR_PATH="$ROOT_DIR/dev-tools/hosted/preview/allocate-preview-capacity.sh" \
+  ELIGIBILITY_PATH="$eligibility_script" python3 - <<'PY'
+import ast
 import os
+import re
 from pathlib import Path
 
 source = Path(os.environ["ALLOCATOR_PATH"]).read_text(encoding="utf-8")
+eligibility_source = Path(os.environ["ELIGIBILITY_PATH"]).read_text(encoding="utf-8")
+candidate_limit_match = re.search(
+    r"^  local max_open_pr_candidates=([0-9]+)$", source, re.MULTILINE
+)
+assert candidate_limit_match is not None
+allocator_candidate_limit = int(candidate_limit_match.group(1))
+page_size_match = re.search(
+    r"^  local open_pr_page_size=([0-9]+)$", source, re.MULTILINE
+)
+assert page_size_match is not None
+open_pr_page_size = int(page_size_match.group(1))
+eligibility_tree = ast.parse(eligibility_source)
+eligibility_candidate_limits = [
+    node.value.value
+    for node in eligibility_tree.body
+    if isinstance(node, ast.Assign)
+    and any(
+        isinstance(target, ast.Name) and target.id == "MAX_PRIORITY_CANDIDATES"
+        for target in node.targets
+    )
+    and isinstance(node.value, ast.Constant)
+    and isinstance(node.value.value, int)
+]
+assert eligibility_candidate_limits == [1000]
+assert allocator_candidate_limit == eligibility_candidate_limits[0]
+assert open_pr_page_size == 100
+assert allocator_candidate_limit > 0 and open_pr_page_size > 0
+assert allocator_candidate_limit % open_pr_page_size == 0
+assert allocator_candidate_limit // open_pr_page_size == 10
+assert allocator_candidate_limit // open_pr_page_size + 1 == 11
 start = source.index("find_unsatisfied_priority_pr()")
 end = source.index("\n# Fail closed", start)
 body = source[start:end]
@@ -2320,9 +2354,16 @@ assert "--batch-deploy-candidates" in body
 assert body.count('python3 "$eligibility_script"') == 1
 assert "--operation deploy" not in body
 assert "open_pr_page_size=100" in body
+assert "max_open_pr_candidates <= 0 || open_pr_page_size <= 0" in body
+assert "max_open_pr_candidates % open_pr_page_size != 0" in body
 assert "max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))" in body
-assert 'page=${page}' in body
-assert 'per_page=1&page=$((max_open_pr_candidates + 1))' in body
+assert "overflow_page=$((max_open_pr_pages + 1))" in body
+assert (
+    'per_page=${open_pr_page_size}&page=${page}' in body
+)
+assert (
+    'per_page=${open_pr_page_size}&page=${overflow_page}' in body
+)
 assert 'candidate limit exceeded' in body
 assert "--paginate" not in body
 PY
@@ -2354,6 +2395,10 @@ if grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-limit.output"; then
   exit 1
 fi
 grep -Fq 'Yielding ordinary PR #900' "$TEMP_DIR/priority-limit.output"
+test "$(wc -l < "$FAKE_PRIORITY_QUERY_LOG")" -eq 11
+grep -Fxq \
+  'repos/example/FireMUD/pulls?state=open&per_page=100&page=11' \
+  "$FAKE_PRIORITY_QUERY_LOG"
 
 reset_case
 export FAKE_TARGET_PRIORITY=false
@@ -2365,6 +2410,10 @@ if bash "$ALLOCATOR" pr-900 2 900 "$FAKE_TARGET_HEAD" \
   exit 1
 fi
 grep -Fq 'candidate limit exceeded' "$TEMP_DIR/priority-overflow.output"
+test "$(wc -l < "$FAKE_PRIORITY_QUERY_LOG")" -eq 11
+grep -Fxq \
+  'repos/example/FireMUD/pulls?state=open&per_page=100&page=11' \
+  "$FAKE_PRIORITY_QUERY_LOG"
 
 grep -q -- '--operation retain' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
 grep -Fq '(.labels | tojson | @base64)' "$ROOT_DIR/dev-tools/hosted/preview/prune-stale-preview-namespaces.sh"
