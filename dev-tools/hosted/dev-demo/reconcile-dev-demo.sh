@@ -46,6 +46,7 @@ if [[ "${current_head_sha}" == "${desired_head_sha}" ]]; then
 fi
 
 max_failed_attempts=3
+max_unaligned_completed_attempts=3
 max_history_pages=10
 expected_deploy_title="Develop Dev Demo Environment deploy head-${desired_head_sha}"
 workflow_runs_api="repos/${GITHUB_REPOSITORY}/actions/workflows/dev-demo.yml/runs"
@@ -245,7 +246,7 @@ while (( page <= max_history_pages )); do
       <<<"${exact_page_runs}"
   )"
   unaligned_completed_attempts=$((unaligned_completed_attempts + page_completed_attempts))
-  if (( unaligned_completed_attempts >= max_failed_attempts )); then
+  if (( unaligned_completed_attempts >= max_unaligned_completed_attempts )); then
     break
   fi
   if (( failed_attempts >= max_failed_attempts )); then
@@ -284,7 +285,7 @@ fi
 if [[ "${current_head_sha}" != "${desired_head_sha}" \
   && "${candidate_status}" == completed \
   && "${candidate_conclusion}" == success ]]; then
-  if (( unaligned_completed_attempts >= max_failed_attempts )); then
+  if (( unaligned_completed_attempts >= max_unaligned_completed_attempts )); then
     echo "::error title=Dev-demo alignment retry budget exhausted::Develop head ${desired_head_sha} has ${unaligned_completed_attempts} completed attempts without namespace alignment; automatic redispatch is stopped until develop advances or an operator intervenes."
     exit 1
   fi

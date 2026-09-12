@@ -54,6 +54,8 @@ expect_mode standalone $'previewStack:\n  certificateIdentity:\n    mode: standa
 expect_mode hosted-controller $'previewStack:\n  certificateIdentity:\n    mode: hosted-controller\n'
 expect_mode standalone $'defaults: &defaults\n  certificateIdentity:\n    mode: hosted-controller\npreviewStack:\n  <<: *defaults\n  certificateIdentity:\n'
 expect_mode hosted-controller $'defaults: &defaults\n  certificateIdentity:\n    mode: hosted-controller\npreviewStack:\n  <<: *defaults\n'
+expect_invalid_mode $'identity: &identity\n  mode: standalone\npreviewStack:\n  certificateIdentity:\n    <<: *identity\n    mode: hosted-controller\n'
+expect_invalid_mode $'identity: &identity\n  mode: hosted-controller\npreviewStack:\n  certificateIdentity:\n    <<: *identity\n    mode: standalone\n'
 expect_invalid_mode $'previewStack: [\n'
 expect_invalid_mode $'previewStack: []\n'
 expect_invalid_mode $'previewStack: true\n'
@@ -432,6 +434,7 @@ for required in (
     '"${candidate_conclusion}" != success',
     "Redispatching failed dev-demo candidate",
     "max_failed_attempts=3",
+    "max_unaligned_completed_attempts=3",
     "max_history_pages=10",
     'failed_attempts >= max_failed_attempts',
     "Dev-demo retry budget exhausted",
@@ -502,8 +505,10 @@ completed_count_end = reconcile_run.index(
 completed_count_block = reconcile_run[completed_count_start:completed_count_end]
 if 'current_head_sha}' in completed_count_block:
     raise SystemExit("dev-demo completed-attempt counting retained a redundant alignment guard")
-if "unaligned_completed_attempts >= max_failed_attempts" not in completed_count_block:
+if "unaligned_completed_attempts >= max_unaligned_completed_attempts" not in completed_count_block:
     raise SystemExit("dev-demo alignment counting lost its bounded retry budget")
+if "unaligned_completed_attempts >= max_failed_attempts" in reconcile_run:
+    raise SystemExit("dev-demo alignment counting still reuses the failed-attempt budget")
 if reconcile_run.index("export LC_ALL=C") > reconcile_run.index("created_at >= $not_before"):
     raise SystemExit("dev-demo reconciler must set the bytewise locale before timestamp comparisons")
 if "gh run list" in reconcile_run or "--limit" in reconcile_run:
@@ -1148,7 +1153,7 @@ PATH="$waiter_stub_dir:$PATH" \
   FAKE_PROFILE_UID="runtime-uid" \
   FAKE_PROFILE_TELNET_PORT=32016 \
   FAKE_MISSING_ROLE="" \
-  bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$waiter_success_output"
+  bash "$waiter" dev-demo "$expected_waiter_head" dev 30 >"$waiter_success_output"
 for expected_line in \
   'identity=dev-demo' \
   'phase=Ready' \
@@ -1211,7 +1216,7 @@ PATH="$waiter_stub_dir:$PATH" \
   FAKE_PROFILE_UID="runtime-uid" \
   FAKE_PROFILE_TELNET_PORT=32000 \
   FAKE_MISSING_ROLE="" \
-  bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$preview_waiter_success_output"
+  bash "$waiter" pr-42 "$expected_waiter_head" pr-42 30 >"$preview_waiter_success_output"
 grep -Fxq -- "identity=pr-42" "$preview_waiter_success_output"
 grep -Fxq -- "telnetPort=32000" "$preview_waiter_success_output"
 

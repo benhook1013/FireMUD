@@ -99,11 +99,11 @@ spec:
                     identityNamespace:
                       type: string
                       maxLength: 63
-                      pattern: "^(dev-identity|pr-[1-9][0-9]*-identity)$"
+                      pattern: "^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$"
                     runtimeNamespace:
                       type: string
                       maxLength: 63
-                      pattern: "^(dev|pr-[1-9][0-9]*)$"
+                      pattern: "^(dev|pr-[1-9][0-9]{0,50})$"
                     runtimeNamespaceUid:
                       type: string
                       maxLength: 128
@@ -196,5 +196,5 @@ spec:
                 tcpProxyBridge: *consumer_status_schema
                 grpc: *consumer_status_schema
           x-kubernetes-validations:
-            - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
+            - rule: "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"
               message: name must be dev-demo or pr-N with a positive decimal PR number

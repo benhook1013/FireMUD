@@ -236,6 +236,22 @@ def main() -> int:
     parser.add_argument("--expected-head-sha")
     args = parser.parse_args()
 
+    if args.inspect_labels:
+        unrelated = [
+            name
+            for name, value in (
+                ("--operation", args.operation),
+                ("--state", args.state),
+                ("--base-ref", args.base_ref),
+                ("--author", args.author),
+            )
+            if value is not None
+        ]
+        if unrelated:
+            parser.error(
+                f"--inspect-labels cannot be combined with: {', '.join(unrelated)}"
+            )
+
     if args.batch_deploy_candidates:
         if args.expected_repository is None:
             parser.error("the following arguments are required: --expected-repository")

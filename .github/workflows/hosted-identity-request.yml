@@ -202,14 +202,100 @@ jobs:
             echo "artifact_name=preview-render-pr-${PR_NUMBER}-${HEAD_SHA}"
           } >> "$GITHUB_OUTPUT"
 
-  deploy-runtime:
-    name: Prepare Validated Preview Runtime
-    timeout-minutes: 90
+  prepare-runtime:
+    name: Prepare Validated Preview Inputs
+    timeout-minutes: 45
     runs-on:
       - self-hosted
       - preview
     needs: validate-target
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}
+    environment: pr-preview
+    permissions:
+      actions: read # Download the validated source workflow artifact.
+      contents: read # Check out the trusted default-branch preparation implementation.
+      pull-requests: read # Revalidate the current pull-request target before preparation.
+      issues: write # Publish the required preparation failure state.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Download source render artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.validate-target.outputs.artifact_name }}
+          path: ${{ runner.temp }}/preview-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.validate-target.outputs.render_run_id }}
+
+      - name: Verify artifact provenance, checksum, and closed object set
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/preview-artifact
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+        run: |
+          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
+            "$ARTIFACT_DIR/preview-metadata.json" \
+            "$ARTIFACT_DIR/preview-rendered-sanitized.yaml" \
+            "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" "$PR_NUMBER" "$BASE_SHA" \
+            "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" "$PREVIEW_HOSTNAME"
+
+      - name: Revalidate open PR before waiting for runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+
+      - name: Wait for fixed-head runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.validate-target.outputs.image_tag }}"
+
+      - name: Publish trusted preview preparation failure
+        if: ${{ !cancelled() && failure() }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
+        with:
+          script: |
+            const { publishPreviewComment } = require(
+              `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
+            );
+            await publishPreviewComment({
+              github,
+              context,
+              core,
+              mode: "failure",
+              markerPolicy: "replace",
+              statePolicy: "expected-open",
+              telnetPort: "unavailable",
+              failureStage: "prepare-runtime",
+              staleDescription: "trusted preview preparation failure",
+            });
+
+  deploy-runtime:
+    name: Prepare Validated Preview Runtime
+    # Keep the shared lifecycle lock only around allocation and deployment.
+    # The remaining bounded wait is the 15-minute identity-projection wait.
+    timeout-minutes: 45
+    runs-on:
+      - self-hosted
+      - preview
+    needs: [validate-target, prepare-runtime]
+    if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.prepare-runtime.result == 'success' }}
     environment: pr-preview
     concurrency:
       group: preview-allocation-lifecycle
@@ -301,7 +387,7 @@ jobs:
             "${{ needs.validate-target.outputs.namespace }}" \
             "${{ needs.validate-target.outputs.pr_number }}")"
           [[ "$port" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015." >&2
+            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015; actual value was ${port:-empty}." >&2
             exit 1
           }
           echo "port=$port" >> "$GITHUB_OUTPUT"
@@ -321,7 +407,7 @@ jobs:
             exit 1
           }
           [[ "$TELNET_PORT" =~ ^32(00[0-9]|01[0-5])$ ]] || {
-            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015." >&2
+            echo "::error title=Invalid allocated Telnet port::Expected a port from 32000 through 32015; actual value was ${TELNET_PORT:-empty}." >&2
             exit 1
           }
           [[ "$ALLOCATION_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[^[:space:]]+Z$ ]] || {
@@ -387,11 +473,6 @@ jobs:
             "$RUNNER_TEMP/preview-rendered-with-port.yaml" \
             "$RUNTIME_NAMESPACE" "$TELNET_PORT"
 
-      - name: Wait for fixed-head runtime images
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash ./dev-tools/hosted/shared/wait-for-runtime-images.sh "${{ needs.validate-target.outputs.image_tag }}"
-
       - name: Ensure trusted runtime pull secret
         env:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
@@ -443,36 +524,6 @@ jobs:
             "firemud.dev/last-preview-head-sha=${HEAD_SHA}" \
             --overwrite >/dev/null
 
-      - name: Wait for exact controller identity readiness
-        run: |
-          bash ./dev-tools/hosted/preview/wait-for-hosted-identity.sh \
-            "pr-${{ needs.validate-target.outputs.pr_number }}" \
-            "${{ needs.validate-target.outputs.head_sha }}" \
-            "${{ needs.validate-target.outputs.namespace }}" 900
-
-      - name: Wait for runtime rollouts before operator validation
-        env:
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-        run: |
-          set -euo pipefail
-          bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh \
-            "$RUNTIME_NAMESPACE" 120
-
-      - name: Revalidate prepared preview runtime target
-        env:
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          ARTIFACT_PATH: ${{ runner.temp }}/preview-rendered-with-port.yaml
-          TELNET_PORT: ${{ steps.allocate-telnet-port.outputs.port }}
-        run: |
-          set -euo pipefail
-          [[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {
-            echo "::error title=Invalid preview runtime namespace::Expected pr-${PR_NUMBER}." >&2
-            exit 1
-          }
-          python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
-            runtime-target "$ARTIFACT_PATH" "$RUNTIME_NAMESPACE" "$TELNET_PORT"
-
       - name: Publish trusted preview deployment failure
         if: ${{ !cancelled() && failure() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -507,10 +558,6 @@ jobs:
     needs: [validate-target, deploy-runtime]
     if: ${{ needs.validate-target.outputs.action == 'deploy' && needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' && needs.deploy-runtime.result == 'success' }}
     environment: pr-preview
-    concurrency:
-      group: preview-allocation-lifecycle
-      cancel-in-progress: false
-      queue: max
     permissions:
       contents: read # Check out the trusted default-branch verification implementation.
       pull-requests: read # Revalidate the pull-request state and exact head before publication.
@@ -531,6 +578,15 @@ jobs:
         with:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
+
+      - name: Revalidate open PR before runtime verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Wait for exact controller identity projection
         run: |
@@ -554,8 +610,20 @@ jobs:
         run: |
           set -euo pipefail
           port="$(kubectl -n "$RUNTIME_NAMESPACE" get service tcp-proxy-service -o jsonpath='{.spec.ports[?(@.port==2323)].nodePort}')"
-          [[ "$port" =~ ^32(00[0-9]|01[0-5])$ ]]
+          [[ "$port" =~ ^32(00[0-9]|01[0-5])$ ]] || {
+            echo "::error title=Invalid runtime Telnet port::Expected a port from 32000 through 32015; actual value was ${port:-empty}." >&2
+            exit 1
+          }
           echo "port=$port" >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate open PR after runtime waits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+        run: |
+          bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
       - name: Publish trusted preview deployment state
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9

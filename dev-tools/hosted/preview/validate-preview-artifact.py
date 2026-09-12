@@ -435,7 +435,7 @@ SANITIZER_FORBIDDEN_KINDS = {
     "Secret",
 }
 SANITIZER_SECRET_REFERENCE = re.compile(
-    r"^pr-[1-9][0-9]*-(?:tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$"
+    r"^pr-[1-9][0-9]{0,50}-(?:tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$"
 )
 SANITIZER_SENSITIVE_KEY = re.compile(
     r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY|CREDENTIAL)", re.IGNORECASE
@@ -499,6 +499,8 @@ def _validate_object_metadata(document: dict, expected_namespace: str) -> dict:
     }
     actual_labels = metadata.get("labels")
     if isinstance(actual_labels, dict):
+        # Identify the first missing or mismatched required label; exact equality below
+        # separately rejects additional labels.
         for label, expected_value in expected_labels.items():
             actual_value = actual_labels.get(label)
             if actual_value != expected_value:
@@ -878,7 +880,7 @@ def inject_telnet_port(
 
     if expected_namespace is None:
         fail("preview runtime namespace is required")
-    if not re.fullmatch(r"pr-[1-9][0-9]*", expected_namespace):
+    if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
     if not MIN_PREVIEW_TELNET_PORT <= port <= MAX_PREVIEW_TELNET_PORT:
         fail(
@@ -921,7 +923,7 @@ def inject_telnet_port(
 def validate_runtime_target(path: Path, expected_namespace: str, expected_port: int) -> None:
     """Verify the only trusted mutations made after closed artifact validation."""
 
-    if not re.fullmatch(r"pr-[1-9][0-9]*", expected_namespace):
+    if not re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace):
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
     if not MIN_PREVIEW_TELNET_PORT <= expected_port <= MAX_PREVIEW_TELNET_PORT:
         fail(
@@ -1073,11 +1075,17 @@ def validate_service_consumers(documents: list[dict], expected_namespace: str) -
                 fail(f"Deployment/{service} has an unsafe {volume_name} mount")
             volume = volumes[volume_name]
             if volume_name == "jwt-jwks":
-                source = volume.get("configMap") or {}
+                source = _require_mapping(
+                    volume.get("configMap") or {},
+                    f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].configMap",
+                )
                 if source.get("name") != source_name:
                     fail(f"Deployment/{service} has an unexpected jwt-jwks source")
             else:
-                source = volume.get("secret") or {}
+                source = _require_mapping(
+                    volume.get("secret") or {},
+                    f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].secret",
+                )
                 if source.get("secretName") != source_name:
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
                 if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"}:
@@ -1480,23 +1488,24 @@ def validate_metadata(
     validate_manifest(manifest, f"pr-{normalized_pr_number}", image_tag, hostname)
 
 
-def main() -> int:
-    command = sys.argv[1] if len(sys.argv) > 1 else None
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv if argv is None else argv
+    command = args[1] if len(args) > 1 else None
     if command == "sanitize":
-        if len(sys.argv) != 4:
+        if len(args) != 4:
             print(
                 "usage: validate-preview-artifact.py sanitize <render> <output>",
                 file=sys.stderr,
             )
             return 2
         try:
-            sanitize(Path(sys.argv[2]), Path(sys.argv[3]))
+            sanitize(Path(args[2]), Path(args[3]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview artifact rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if command == "inject":
-        if len(sys.argv) != 6:
+        if len(args) != 6:
             print(
                 "usage: validate-preview-artifact.py inject "
                 "<render> <output> <namespace> <port>",
@@ -1505,17 +1514,17 @@ def main() -> int:
             return 2
         try:
             inject_telnet_port(
-                source=Path(sys.argv[2]),
-                destination=Path(sys.argv[3]),
-                port=int(sys.argv[5]),
-                expected_namespace=sys.argv[4],
+                source=Path(args[2]),
+                destination=Path(args[3]),
+                port=int(args[5]),
+                expected_namespace=args[4],
             )
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview Telnet port injection rejected: {exc}", file=sys.stderr)
             return 1
         return 0
     if command == "runtime-target":
-        if len(sys.argv) != 5:
+        if len(args) != 5:
             print(
                 "usage: validate-preview-artifact.py runtime-target "
                 "<render> <namespace> <port>",
@@ -1523,12 +1532,12 @@ def main() -> int:
             )
             return 2
         try:
-            validate_runtime_target(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+            validate_runtime_target(Path(args[2]), args[3], int(args[4]))
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
             print(f"preview runtime target rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(sys.argv) != 11:
+    if len(args) != 11:
         print(
             "usage: validate-preview-artifact.py <metadata> <manifest> <repository> "
             "<source-run-id> <pr-number> <base-sha> <head-sha> <merge-sha> "
@@ -1541,9 +1550,9 @@ def main() -> int:
         return 2
     try:
         validate_metadata(
-            Path(sys.argv[1]),
-            Path(sys.argv[2]),
-            *sys.argv[3:],
+            Path(args[1]),
+            Path(args[2]),
+            *args[3:],
         )
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         print(f"preview artifact rejected: {exc}", file=sys.stderr)

@@ -188,22 +188,11 @@ public class HostedIdentityScopeService {
                 // Kubernetes ignores resourceNames for CREATE, so Secret creation cannot be
                 // restricted to the named runtime Secrets.
                 rule(List.of(""), List.of("secrets"), List.of(), List.of("create")),
-                rule(List.of("apps"), List.of("deployments"), List.of(), List.of("list", "watch")),
                 rule(
                     List.of("apps"),
                     List.of("deployments"),
                     requiredDeploymentNames(plan),
-                    List.of("get", "update", "patch")),
-                rule(
-                    List.of(""),
-                    List.of("services", "pods"),
-                    List.of(),
-                    List.of("get", "list", "watch")),
-                rule(
-                    List.of("networking.k8s.io"),
-                    List.of("ingresses"),
-                    List.of(),
-                    List.of("get", "list", "watch"))));
+                    List.of("get", "update", "patch"))));
     ensureRole(client, plan.runtimeNamespace(), desired);
     ensureBinding(
         client, plan.runtimeNamespace(), RUNTIME_ROLE_NAME, labels(plan), RUNTIME_ROLE_NAME, plan);

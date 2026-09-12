@@ -15,7 +15,7 @@ if [[ "$namespace" == "dev" ]]; then
     echo "hosted release ${release_name} does not match runtime namespace ${namespace}" >&2
     exit 2
   fi
-elif [[ "$namespace" =~ ^pr-[1-9][0-9]*$ ]]; then
+elif [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
   if [[ "$release_name" != "$namespace" ]]; then
     echo "hosted release ${release_name} does not match runtime namespace ${namespace}" >&2
     exit 2

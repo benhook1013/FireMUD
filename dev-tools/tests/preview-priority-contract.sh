@@ -1069,6 +1069,24 @@ do
   test ! -e "$FAKE_DELETE_LOG"
 done
 
+valid_open_pr_row="901"$'\t'"${priority_candidate_head}"$'\t'"example/FireMUD"$'\t'"human"$'\t'"develop"$'\t'"open"$'\t'"${priority_labels_base64}"
+for missing_identity_field in 1 2 3 4 5 6; do
+  reset_case
+  export FAKE_TARGET_PRIORITY=false
+  FAKE_OPEN_PRIORITY_ROWS="$(
+    awk -F '\t' -v OFS='\t' -v missing="$missing_identity_field" \
+      '{$missing = ""; print}' <<<"$valid_open_pr_row"
+  )" \
+    bash "$ALLOCATOR" pr-900 3 900 "$FAKE_TARGET_HEAD" \
+    >"$TEMP_DIR/missing-open-pr-field-${missing_identity_field}.output" 2>&1 && {
+      echo "ordinary allocation accepted open PR metadata with missing identity field ${missing_identity_field}" >&2
+      exit 1
+    }
+  grep -Fxq 'Open pull request metadata is missing required identity fields' \
+    "$TEMP_DIR/missing-open-pr-field-${missing_identity_field}.output"
+  test ! -e "$FAKE_DELETE_LOG"
+done
+
 reset_case
 export FAKE_TARGET_PRIORITY=false
 export FAKE_OPEN_PRIORITY_ROWS="901\t${priority_candidate_head}\texample/FireMUD\thuman\tdevelop\topen\t${adversarial_labels_base64}\n"
@@ -1903,13 +1921,15 @@ reconciler_annotation_deleted_output="$TEMP_DIR/reconciler-annotation-deleted.ou
     PREVIEW_MAX_ACTIVE=3 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_annotation_deleted_output"
-grep -qx 'Namespace pr-901 was deleted during requested-head repair; continuing.' \
+grep -qx 'Namespace pr-901 was deleted during requested-head repair; dispatching replacement.' \
   "$reconciler_annotation_deleted_output"
 grep -Fqx \
   'annotate namespace pr-901 firemud.dev/requested-preview-head-sha=head-901 --overwrite --resource-version rv-901' \
   "$FAKE_ANNOTATE_LOG"
 test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
-test ! -e "$FAKE_DISPATCH_LOG"
+grep -Fq \
+  'actions/workflows/preview.yml/dispatches -f ref=feature-901' \
+  "$FAKE_DISPATCH_LOG"
 
 reset_case
 reconciler_annotation_existing_output="$TEMP_DIR/reconciler-annotation-existing.out"
@@ -2129,7 +2149,8 @@ grep -qx 'action=none' "$TEMP_DIR/trusted-target-stale.out"
 grep -Fxq 'Ignoring stale lifecycle event for an earlier PR head.' \
   "$TEMP_DIR/trusted-target-stale.stdout"
 
-TRUSTED_WORKFLOW="$trusted_workflow" python3 - <<'PY'
+janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
+TRUSTED_WORKFLOW="$trusted_workflow" JANITOR_WORKFLOW="$janitor_workflow" python3 - <<'PY'
 import os
 from pathlib import Path
 
@@ -2148,6 +2169,7 @@ assert triggers["pull_request_target"] == {"types": ["closed"]}
 
 jobs = workflow["jobs"]
 expected_gates = {
+    "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "destroy-runtime": "needs.validate-target.outputs.action == 'destroy'",
@@ -2157,28 +2179,70 @@ assert set(jobs) == {"validate-target", *expected_gates}, jobs.keys()
 for job_name, required_gate in expected_gates.items():
     condition = jobs[job_name].get("if", "")
     assert required_gate in condition, (job_name, condition)
+
+janitor = yaml.safe_load(
+    Path(os.environ["JANITOR_WORKFLOW"]).read_text(encoding="utf-8")
+)
+assert janitor["jobs"]["prune-stale-preview-namespaces"]["timeout-minutes"] == 60
+
+
+def logical_commands(run):
+    commands = []
+    continuation = ""
+    for raw_line in run.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.endswith("\\"):
+            continuation += line[:-1].rstrip() + " "
+            continue
+        commands.append((continuation + line).strip())
+        continuation = ""
+    assert not continuation, continuation
+    return commands
+
+
+revalidation_helper = (
+    "bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh"
+)
+deploy_revalidation = (
+    f'{revalidation_helper} "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+)
+cleanup_revalidation = (
+    f'{revalidation_helper} --cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
+)
+actual_revalidations = {}
+for job_name, job in jobs.items():
+    for step in job.get("steps", []):
+        run = step.get("run")
+        if not isinstance(run, str):
+            continue
+        calls = [
+            command
+            for command in logical_commands(run)
+            if command.startswith(revalidation_helper)
+        ]
+        if calls:
+            key = (job_name, step.get("name"))
+            assert key not in actual_revalidations, key
+            actual_revalidations[key] = calls
+assert {job_name for job_name, _ in actual_revalidations} == set(expected_gates)
+for (job_name, step_name), calls in actual_revalidations.items():
+    expected_call = (
+        cleanup_revalidation
+        if job_name in {"destroy-runtime", "retire-identity"}
+        else deploy_revalidation
+    )
+    assert all(call == expected_call for call in calls), (
+        job_name,
+        step_name,
+        calls,
+    )
 PY
 
-janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
-grep -q 'timeout-minutes: 60' "$janitor_workflow"
-# Dormant successor deployment and cleanup code remains source-bound and
-# fail-closed until successor triggers and producer artifacts are activated.
-test "$(grep -Ec '^[[:space:]]*ACTION=deploy[[:space:]]*$' "$trusted_workflow")" -eq 1
-grep -q 'emit_no_action' "$trusted_workflow"
-# shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
-grep -Fq 'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"' "$trusted_workflow"
-grep -q 'Revalidate preview cleanup target before runtime deletion' "$trusted_workflow"
-grep -q 'Revalidate preview cleanup target before identity retirement' "$trusted_workflow"
-# shellcheck disable=SC2016 # Assert centralized label inspection in trusted workflow source.
-grep -q -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow"
-grep -q 'malformed-label-metadata' "$eligibility_script"
-# shellcheck disable=SC2016 # Assert centralized exact-label inspection in trusted workflow source.
-test "$(grep -Fc -- '--inspect-labels --labels-json "$labels_json"' "$trusted_workflow")" -eq 1
-test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$trusted_workflow")" -eq 6
-# shellcheck disable=SC2016 # Assert literal cleanup helper arguments.
-test "$(grep -Fc -- '--cleanup "$PR_NUMBER" "$EXPECTED_HEAD_SHA"' "$trusted_workflow")" -eq 2
-test "$(grep -Fc -- '--revalidate-deploy' "$trusted_workflow")" -eq 0
-test "$(grep -Fc -- '--operation deploy' "$trusted_workflow")" -eq 0
+# The fixtures above execute the trusted target's deploy, no-action, stale-head,
+# artifact, and malformed-label paths. Parsed workflow structure now owns the
+# trigger, gate, timeout, and revalidation-placement contract.
 revalidation_helper="$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-deploy.sh"
 test "$(grep -Fc -- 'revalidate-preview-deploy.sh' "$ALLOCATOR")" -eq 1
 # shellcheck disable=SC2016 # Assert literal helper mode selection.
@@ -2298,9 +2362,9 @@ if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   exit 1
 fi
 grep -q 'group: preview-allocation-lifecycle' "$trusted_workflow"
-test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 4
-test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
-test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
+test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 3
+test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 3
+test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 3
 grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'uses: ./.github/actions/resolve-certificate-identity-mode' "$janitor_workflow"
 grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"

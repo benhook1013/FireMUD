@@ -11,6 +11,7 @@ import json
 import re
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -503,11 +504,8 @@ class PreviewArtifactMetadataTest(unittest.TestCase):
                     "pr-42.preview.example.test",
                 ]
 
-                with (
-                    patch.object(self.validator.sys, "argv", argv),
-                    patch.object(self.validator.sys, "stderr", stderr),
-                ):
-                    self.assertEqual(self.validator.main(), 1)
+                with redirect_stderr(stderr):
+                    self.assertEqual(self.validator.main(argv), 1)
 
                 self.assertEqual(
                     stderr.getvalue(),
@@ -780,10 +778,9 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
                         patch.object(
                             self.validator, "TRUSTED_CHART_METADATA", chart_metadata
                         ),
-                        patch.object(self.validator.sys, "argv", argv),
-                        patch.object(self.validator.sys, "stderr", stderr),
+                        redirect_stderr(stderr),
                     ):
-                        self.assertEqual(self.validator.main(), 1)
+                        self.assertEqual(self.validator.main(argv), 1)
 
                     self.assertEqual(
                         stderr.getvalue(),
@@ -816,10 +813,9 @@ class PreviewArtifactCommandLineTest(unittest.TestCase):
             stderr = io.StringIO()
             with (
                 self.subTest(command=command),
-                patch.object(self.validator.sys, "argv", [str(SCRIPT), command]),
-                patch.object(self.validator.sys, "stderr", stderr),
+                redirect_stderr(stderr),
             ):
-                self.assertEqual(self.validator.main(), 2)
+                self.assertEqual(self.validator.main([str(SCRIPT), command]), 2)
             self.assertEqual(stderr.getvalue(), expected_usage)
 
 

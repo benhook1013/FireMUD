@@ -2325,6 +2325,37 @@ try:
     ):
         raise SystemExit(f"non-string Secret value did not exhaust as retryable: {exhausted_issues}")
 
+    immediate_deadline_times = iter((0.0, 5.0, 5.0))
+
+    def immediate_deadline_lookup(*args, **kwargs):
+        raise SystemExit("Secret readiness performed a lookup at an expired deadline")
+
+    with (
+        patch.object(module, "secret_keys_lookup_failure", immediate_deadline_lookup),
+        patch.object(
+            module.time,
+            "monotonic",
+            lambda: next(immediate_deadline_times),
+        ),
+    ):
+        immediate_deadline_issues = module.wait_for_secret_key_requirements(
+            [("expired-before-first-attempt", {"tls.crt"})],
+            "pr-42",
+            ready_attempts=3,
+            ready_timeout_seconds=5,
+        )
+    if (
+        len(immediate_deadline_issues) != 1
+        or "Secret readiness deadline expired before lookup"
+        not in immediate_deadline_issues[0]
+        or "still not ready after 0 attempts" not in immediate_deadline_issues[0]
+        or "elapsed 5.0s of 5s readiness budget" not in immediate_deadline_issues[0]
+    ):
+        raise SystemExit(
+            "Secret readiness did not stop before its first expired-deadline lookup: "
+            f"{immediate_deadline_issues}"
+        )
+
     monotonic_now = [0.0]
     slow_lookup_calls = [0]
 

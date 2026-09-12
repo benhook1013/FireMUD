@@ -16,6 +16,58 @@ class UniqueKeyLoader(yaml.SafeLoader):
     """Safe YAML loader that rejects duplicate mapping keys."""
 
 
+def _merged_mapping_nodes(node: yaml.Node) -> list[yaml.MappingNode]:
+    if isinstance(node, yaml.MappingNode):
+        return [node]
+    if isinstance(node, yaml.SequenceNode):
+        return [entry for entry in node.value if isinstance(entry, yaml.MappingNode)]
+    return []
+
+
+def _mapping_key_occurrences(
+    node: yaml.MappingNode, expected_key: str, visited: set[int] | None = None
+) -> int:
+    if visited is None:
+        visited = set()
+    if id(node) in visited:
+        return 0
+    visited.add(id(node))
+    occurrences = 0
+    for key_node, value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            occurrences += sum(
+                _mapping_key_occurrences(merged, expected_key, visited)
+                for merged in _merged_mapping_nodes(value_node)
+            )
+        elif isinstance(key_node, yaml.ScalarNode) and key_node.value == expected_key:
+            occurrences += 1
+    return occurrences
+
+
+def _certificate_identity_mode_occurrences(
+    node: yaml.MappingNode, visited: set[int] | None = None
+) -> int:
+    if visited is None:
+        visited = set()
+    if id(node) in visited:
+        return 0
+    visited.add(id(node))
+    occurrences = 0
+    for key_node, value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            occurrences += sum(
+                _certificate_identity_mode_occurrences(merged, visited)
+                for merged in _merged_mapping_nodes(value_node)
+            )
+        elif (
+            isinstance(key_node, yaml.ScalarNode)
+            and key_node.value == "certificateIdentity"
+            and isinstance(value_node, yaml.MappingNode)
+        ):
+            occurrences += _mapping_key_occurrences(value_node, "mode")
+    return occurrences
+
+
 def _construct_unique_mapping(
     loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
 ) -> dict[Any, Any]:
@@ -41,6 +93,13 @@ def _construct_unique_mapping(
                 key_node.start_mark,
             )
         explicit_keys.add(key)
+    if _certificate_identity_mode_occurrences(node) > 1:
+        raise yaml.constructor.ConstructorError(
+            "while constructing a mapping",
+            node.start_mark,
+            "found duplicate previewStack.certificateIdentity.mode through YAML merge",
+            node.start_mark,
+        )
     loader.flatten_mapping(node)
     return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
 

@@ -225,7 +225,7 @@ forbid_literal "$CRD" "!has(oldSelf.desiredState)"
 require_literal "$CRD" "self.desiredState == oldSelf.desiredState || (oldSelf.desiredState == 'Active' && self.desiredState == 'Retired')"
 forbid_literal "$CRD" "self.metadata.namespace == 'firemud-system'"
 forbid_literal "$CRD" "x-kubernetes-preserve-unknown-fields"
-require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"
+require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"
 for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc; do
   require_literal "$CRD" "$field"
 done
@@ -238,6 +238,7 @@ require_regex "$CRD" 'pattern: "\^\[0-9a-fA-F\]\{40\}\$"'
 require_literal "$CRD" "pattern: '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$'"
 CRD="$CRD" python3 - <<'PY'
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -264,13 +265,32 @@ def assert_structural(value, path="openAPIV3Schema"):
 
 assert_structural(schema)
 rules = [validation["rule"] for validation in schema["x-kubernetes-validations"]]
-assert rules == ["self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]*)$')"]
+assert rules == ["self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"]
+maximum_preview_name = "pr-" + "7" * 51
+overlong_preview_name = "pr-" + "7" * 52
+identity_name_pattern = r"^(dev-demo|pr-[1-9][0-9]{0,50})$"
+assert re.fullmatch(identity_name_pattern, maximum_preview_name)
+assert re.fullmatch(identity_name_pattern, overlong_preview_name) is None
 hostname = schema["properties"]["status"]["properties"]["profile"]["properties"]["hostname"]
 assert hostname["maxLength"] == 253
 assert hostname["pattern"] == (
     r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
 )
 status_properties = schema["properties"]["status"]["properties"]["profile"]["properties"]
+assert re.fullmatch(
+    status_properties["identityNamespace"]["pattern"],
+    maximum_preview_name + "-identity",
+)
+assert re.fullmatch(
+    status_properties["identityNamespace"]["pattern"],
+    overlong_preview_name + "-identity",
+) is None
+assert re.fullmatch(
+    status_properties["runtimeNamespace"]["pattern"], maximum_preview_name
+)
+assert re.fullmatch(
+    status_properties["runtimeNamespace"]["pattern"], overlong_preview_name
+) is None
 assert status_properties["requestedHeadSha"]["maxLength"] == 40
 assert status_properties["deployedHeadSha"]["maxLength"] == 40
 consumer_properties = schema["properties"]["status"]["properties"]
@@ -303,7 +323,7 @@ for text_value in \
   firemud-hosted-identity-scope-rolebindings \
   certificaterequests \
   'object.rules.size() == 7' \
-  'object.rules.size() == 6' \
+  'object.rules.size() == 3' \
   'object.rules.all' \
   'object.subjects.size() == 1' \
   "object.roleRef.apiGroup == 'rbac.authorization.k8s.io'" \
@@ -329,7 +349,8 @@ for text_value in \
   require_literal "$ADMISSION" "$text_value"
 done
 require_regex "$ADMISSION" 'dev-demo'
-require_regex "$ADMISSION" 'pr-\[1-9\]\[0-9\]\*'
+require_literal "$ADMISSION" 'pr-[1-9][0-9]{0,50}'
+forbid_literal "$ADMISSION" 'pr-[1-9][0-9]*'
 require_literal "$ADMISSION" "oldObject.metadata.labels['firemud.dev/retention'] == 'retained'"
 ADMISSION="$ADMISSION" python3 - <<'PY'
 import os
@@ -606,7 +627,7 @@ def main_policy_controller_update_accepted(
         return False
     if new_object["metadata"]["namespace"] != "firemud-system":
         return False
-    if re.fullmatch(r"(?:dev-demo|pr-[1-9][0-9]*)", new_object["metadata"]["name"]) is None:
+    if re.fullmatch(r"(?:dev-demo|pr-[1-9][0-9]{0,50})", new_object["metadata"]["name"]) is None:
         return False
     system_masters = "system:masters" in groups
     if not system_masters and username not in (
@@ -709,6 +730,17 @@ assert main_policy_controller_update_accepted(
     groups=("system:masters",),
 )
 
+maximum_name_old = identity_object([external])
+maximum_name_new = identity_object([external, controller_finalizer_name])
+maximum_name_old["metadata"]["name"] = "pr-" + "7" * 51
+maximum_name_new["metadata"]["name"] = maximum_name_old["metadata"]["name"]
+assert main_policy_controller_update_accepted(maximum_name_old, maximum_name_new)
+overlong_name_old = identity_object([external])
+overlong_name_new = identity_object([external, controller_finalizer_name])
+overlong_name_old["metadata"]["name"] = "pr-" + "7" * 52
+overlong_name_new["metadata"]["name"] = overlong_name_old["metadata"]["name"]
+assert not main_policy_controller_update_accepted(overlong_name_old, overlong_name_new)
+
 
 def requester_finalizers_accepted(operation, new_metadata, old_metadata=None):
     if operation == "UPDATE":
@@ -783,7 +815,7 @@ assert "object.metadata.labels.size() ==" not in role_expression
 assert "object.metadata.labels.all(k," in role_expression
 assert "!k.startsWith('firemud.dev/')" in role_expression
 assert "object.rules.size() == 7" in role_expression
-assert "object.rules.size() == 6" in role_expression
+assert "object.rules.size() == 3" in role_expression
 assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
@@ -818,11 +850,12 @@ for unsafe_rule in (
     {"nonResourceURLs": ["/healthz"]},
 ):
     assert not policy_rule_has_no_wildcards_or_non_resource_urls(unsafe_rule)
-assert (
-    "r.apiGroups == [''] && r.resources == ['services', 'pods'] && "
-    "r.verbs == ['get', 'list', 'watch'] && "
-    "(!has(r.resourceNames) || r.resourceNames.size() == 0)"
-) in normalized_role_expression
+for unused_runtime_read in (
+    "r.resources == ['services', 'pods']",
+    "r.resources == ['ingresses']",
+    "r.resources == ['deployments'] && r.verbs == ['list', 'watch']",
+):
+    assert unused_runtime_read not in normalized_role_expression
 binding_expression = policies["firemud-hosted-identity-scope-rolebindings"]["spec"]["validations"][0]["expression"]
 assert "(request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in binding_expression
 assert "object.metadata.labels.size() ==" not in binding_expression
@@ -879,7 +912,7 @@ assert namespace_rule["operations"] == ["CREATE", "UPDATE", "DELETE"]
 assert namespace_rule["resources"] == ["namespaces", "namespaces/status", "namespaces/finalize"]
 assert namespace_expression.startswith(f"({break_glass} &&")
 assert "(request.operation == 'DELETE' ? request.name : object.metadata.name)" in namespace_expression
-assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]*-identity)$'" in namespace_expression
+assert "'^(firemud-system|dev-identity|pr-[1-9][0-9]{0,50}-identity)$'" in namespace_expression
 assert "request.subResource == ''" in namespace_expression
 assert "request.subResource in ['status', 'finalize']" in namespace_expression
 assert "request.operation == 'UPDATE'" in namespace_expression
@@ -952,12 +985,12 @@ normalized_secret_match = " ".join(secret_match.split())
 cert_manager_match = (
     "(request.userInfo.username == "
     "'system:serviceaccount:cert-manager:cert-manager' && "
-    "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$'))"
+    "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$'))"
 )
 assert normalized_secret_match.count(cert_manager_match) == 1
 assert "system:serviceaccount:firemud-system:firemud-hosted-identity-controller" in secret_match
 assert "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' &&" in secret_match
-assert "request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]*|pr-[1-9][0-9]*-identity)$')" in normalized_secret_match
+assert "request.namespace.matches('^(dev|dev-identity|pr-[1-9][0-9]{0,50}|pr-[1-9][0-9]{0,50}-identity)$')" in normalized_secret_match
 assert "request.operation == 'DELETE'" in secret_match
 assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match
@@ -1032,7 +1065,7 @@ assert certificate_namespace_match.startswith(
     "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 )
 assert "request.namespace == 'dev-identity'" in certificate_namespace_match
-assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in certificate_namespace_match
+assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in certificate_namespace_match
 certificate_match = " ".join(
     certificate_policy["spec"]["validations"][0]["expression"].split()
 )
@@ -1044,7 +1077,7 @@ controller_certificate_expression = certificate_match.split(
     1,
 )[0]
 assert "request.namespace == 'dev-identity'" in controller_certificate_expression
-assert "request.namespace.matches('^pr-[1-9][0-9]*-identity$')" in controller_certificate_expression
+assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')" in controller_certificate_expression
 assert "(request.operation == 'DELETE' &&" in certificate_match
 controller_delete_expression = controller_certificate_expression.split(
     "(request.operation == 'DELETE' &&", 1
@@ -1525,6 +1558,8 @@ if [[ "${1:-}" == "kustomize" ]]; then
   cat <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
+metadata:
+  name: firemud-hosted-identity-controller
 spec:
   template:
     spec:
@@ -2114,6 +2149,102 @@ assert_rejected(
         f"Deployment/{name}" for name in missing_application_deployments
     ),
 )
+
+
+def service_consumer_documents():
+    documents = []
+    for service in sorted(validator.SERVICE_IMAGES):
+        sources = {
+            "grpc-tls": ("/tls", "secret", "firemud-grpc-tls"),
+            "jwt-signing-keys": (
+                "/var/run/secrets/firemud/jwt",
+                "secret",
+                "jwt-signing-keys",
+            ),
+        }
+        if service == "account-service":
+            sources["jwt-jwks"] = (
+                "/var/run/secrets/firemud/jwks",
+                "configMap",
+                "jwt-jwks",
+            )
+        if service == "tcp-proxy-service":
+            sources.update(
+                {
+                    "telnet-tls": ("/telnet-tls", "secret", "pr-42-telnet-tls"),
+                    "gateway-ws-client-tls": (
+                        "/gateway-ws-client-tls",
+                        "secret",
+                        "pr-42-tcp-proxy-bridge",
+                    ),
+                }
+            )
+        if service == "spring-cloud-gateway":
+            sources["gateway-ws-server-tls"] = (
+                "/gateway-ws-server-tls",
+                "secret",
+                "pr-42-gateway-internal-ws",
+            )
+        mounts = [
+            {"name": name, "mountPath": path, "readOnly": True}
+            for name, (path, _kind, _source) in sources.items()
+        ]
+        volumes = []
+        for name, (_path, kind, source) in sources.items():
+            source_key = "name" if kind == "configMap" else "secretName"
+            projection = {source_key: source}
+            if name in {"gateway-ws-client-tls", "gateway-ws-server-tls"}:
+                projection["items"] = [
+                    {"key": "tls.crt", "path": "tls.crt"},
+                    {"key": "tls.key", "path": "tls.key"},
+                    {"key": "ca.crt", "path": "ca.crt"},
+                ]
+            volumes.append({"name": name, kind: projection})
+        documents.append(
+            {
+                "kind": "Deployment",
+                "metadata": {"name": service},
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "serviceAccountName": "firemud-app",
+                            "containers": [
+                                {
+                                    "name": service,
+                                    "volumeMounts": mounts,
+                                }
+                            ],
+                            "volumes": volumes,
+                        }
+                    }
+                },
+            }
+        )
+    return documents
+
+
+for source_kind, volume_name, service in (
+    ("configMap", "jwt-jwks", "account-service"),
+    ("secret", "grpc-tls", "game-session-service"),
+):
+    malformed_documents = service_consumer_documents()
+    malformed_deployment = next(
+        document
+        for document in malformed_documents
+        if document["metadata"]["name"] == service
+    )
+    malformed_volume = next(
+        volume
+        for volume in malformed_deployment["spec"]["template"]["spec"]["volumes"]
+        if volume["name"] == volume_name
+    )
+    malformed_volume[source_kind] = ["not-a-mapping"]
+    assert_rejected(
+        lambda documents=malformed_documents: validator.validate_service_consumers(
+            documents, "pr-42"
+        ),
+        f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].{source_kind} is not an object",
+    )
 
 
 image_location = "Deployment/account-service.spec.template.spec.containers[0].image"

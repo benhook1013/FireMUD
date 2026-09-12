@@ -155,8 +155,8 @@ jobs:
                 echo "Skipping PR #${pr_number}: unable to annotate namespace ${namespace}; namespace still exists." >&2
                 return "$repair_skip"
               fi
-              echo "Namespace ${namespace} was deleted during requested-head repair; continuing."
-              return "$repair_skip"
+              echo "Namespace ${namespace} was deleted during requested-head repair; dispatching replacement."
+              return "$repair_dispatch"
             fi
             if [[ -z "${requested_head_sha}" ]]; then
               echo "Repaired missing requested head for aligned preview ${namespace}"

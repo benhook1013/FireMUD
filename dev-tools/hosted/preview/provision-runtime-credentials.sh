@@ -6,8 +6,8 @@ if [[ -z "${RUNTIME_NAMESPACE:-}" ]]; then
   echo "runtime namespace is required" >&2
   exit 2
 fi
-if [[ ! "$RUNTIME_NAMESPACE" =~ ^pr-[1-9][0-9]*$ ]]; then
-  echo "runtime namespace must match pr-[1-9][0-9]*" >&2
+if [[ ! "$RUNTIME_NAMESPACE" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
+  echo "runtime namespace must match pr-[1-9][0-9]{0,50}" >&2
   exit 2
 fi
 # Canonical Base64 round-trip validation uses GNU coreutils --decode and --wrap=0;
@@ -43,6 +43,11 @@ reject_existing_secret() {
   echo "::error::Existing Secret ${RUNTIME_NAMESPACE}/${secret_name} is invalid (${reason}). Recycle the disposable preview namespace before retrying; credentials were not changed." >&2
   exit 1
 }
+reject_secret_create_failure() {
+  local secret_name="$1"
+  echo "::error::Unable to create Secret ${RUNTIME_NAMESPACE}/${secret_name}, and no concurrent winner could be read; refusing to continue." >&2
+  exit 1
+}
 read_secret_if_present() {
   local secret_name="$1"
   local secret_json
@@ -56,6 +61,11 @@ reject_existing_configmap() {
   local configmap_name="$1"
   local reason="$2"
   echo "::error::Existing ConfigMap ${RUNTIME_NAMESPACE}/${configmap_name} is invalid (${reason}). Recycle the disposable preview namespace before retrying; credentials were not changed." >&2
+  exit 1
+}
+reject_configmap_create_failure() {
+  local configmap_name="$1"
+  echo "::error::Unable to create ConfigMap ${RUNTIME_NAMESPACE}/${configmap_name}, and no concurrent winner could be read; refusing to continue." >&2
   exit 1
 }
 read_configmap_if_present() {
@@ -140,55 +150,73 @@ validate_diagnostic_jwks() {
     reject_existing_configmap jwt-jwks "diagnostic content does not match the signing Secret"
   fi
 }
-
-firemud_secret_exists=false
-firemud_secret_json="$(read_secret_if_present firemud-secret)"
-if [[ -n "$firemud_secret_json" ]]; then
-  firemud_secret_exists=true
+load_firemud_secret() {
+  local secret_json="$1"
   validate_secret_shape firemud-secret \
     '["FIREMUD_POSTGRES_USER","FIREMUD_POSTGRES_PASSWORD","ASSET_STORE_ACCESS_KEY","ASSET_STORE_SECRET_KEY"]' \
-    "$firemud_secret_json"
-  postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$firemud_secret_json")"
+    "$secret_json"
+  postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$secret_json")"
   if [[ "$postgres_user" != firemud ]]; then
     reject_existing_secret firemud-secret "PostgreSQL user is not canonical"
   fi
-  postgres_password="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD "$firemud_secret_json")"
-  asset_store_access_key="$(decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY "$firemud_secret_json")"
-  asset_store_secret_key="$(decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY "$firemud_secret_json")"
+  postgres_password="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_PASSWORD "$secret_json")"
+  asset_store_access_key="$(decode_secret_key firemud-secret ASSET_STORE_ACCESS_KEY "$secret_json")"
+  asset_store_secret_key="$(decode_secret_key firemud-secret ASSET_STORE_SECRET_KEY "$secret_json")"
   if [[ "$postgres_password" == firemud ||
     "$asset_store_access_key" == minio ||
     "$asset_store_secret_key" == minio123 ]]; then
     reject_existing_secret firemud-secret "legacy weak credential value"
   fi
+}
+load_minio_secret() {
+  local secret_json="$1"
+  validate_secret_shape minio-credentials '["accessKey","secretKey"]' "$secret_json"
+  minio_access_key="$(decode_secret_key minio-credentials accessKey "$secret_json")"
+  minio_secret_key="$(decode_secret_key minio-credentials secretKey "$secret_json")"
+  if [[ "$minio_access_key" == minio || "$minio_secret_key" == minio123 ]]; then
+    reject_existing_secret minio-credentials "legacy weak credential value"
+  fi
+}
+load_jwt_signing_secret() {
+  local secret_json="$1"
+  validate_secret_shape jwt-signing-keys '["current.key"]' "$secret_json"
+  signing_key="$(decode_secret_key jwt-signing-keys current.key "$secret_json")"
+  if [[ ! "$signing_key" =~ ^[0-9a-f]{64}$ ]]; then
+    reject_existing_secret jwt-signing-keys "current.key is not canonical"
+  fi
+}
+validate_matching_minio_credentials() {
+  if [[ "$asset_store_access_key" != "$minio_access_key" ||
+    "$asset_store_secret_key" != "$minio_secret_key" ]]; then
+    reject_existing_secret minio-credentials "MinIO credentials do not match the application Secret"
+  fi
+}
+
+firemud_secret_exists=false
+firemud_secret_json="$(read_secret_if_present firemud-secret)"
+if [[ -n "$firemud_secret_json" ]]; then
+  firemud_secret_exists=true
+  load_firemud_secret "$firemud_secret_json"
 fi
 
 minio_secret_exists=false
 minio_secret_json="$(read_secret_if_present minio-credentials)"
 if [[ -n "$minio_secret_json" ]]; then
   minio_secret_exists=true
-  validate_secret_shape minio-credentials '["accessKey","secretKey"]' "$minio_secret_json"
-  minio_access_key="$(decode_secret_key minio-credentials accessKey "$minio_secret_json")"
-  minio_secret_key="$(decode_secret_key minio-credentials secretKey "$minio_secret_json")"
-  if [[ "$minio_access_key" == minio || "$minio_secret_key" == minio123 ]]; then
-    reject_existing_secret minio-credentials "legacy weak credential value"
-  fi
+  load_minio_secret "$minio_secret_json"
 fi
 
 if [[ "$firemud_secret_exists" == true && "$minio_secret_exists" == true ]] &&
   [[ "$asset_store_access_key" != "$minio_access_key" ||
     "$asset_store_secret_key" != "$minio_secret_key" ]]; then
-  reject_existing_secret minio-credentials "MinIO credentials do not match the application Secret"
+  validate_matching_minio_credentials
 fi
 
 jwt_signing_secret_exists=false
 jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)"
 if [[ -n "$jwt_signing_secret_json" ]]; then
   jwt_signing_secret_exists=true
-  validate_secret_shape jwt-signing-keys '["current.key"]' "$jwt_signing_secret_json"
-  signing_key="$(decode_secret_key jwt-signing-keys current.key "$jwt_signing_secret_json")"
-  if [[ ! "$signing_key" =~ ^[0-9a-f]{64}$ ]]; then
-    reject_existing_secret jwt-signing-keys "current.key is not canonical"
-  fi
+  load_jwt_signing_secret "$jwt_signing_secret_json"
 fi
 
 jwt_jwks_exists=false
@@ -242,24 +270,58 @@ if [[ "$jwt_jwks_exists" != true ]]; then
 fi
 
 if [[ "$firemud_secret_exists" != true ]]; then
-  kubectl -n "$RUNTIME_NAMESPACE" create secret generic firemud-secret \
+  if ! kubectl -n "$RUNTIME_NAMESPACE" create secret generic firemud-secret \
     --from-file="FIREMUD_POSTGRES_USER=${credential_files_dir}/FIREMUD_POSTGRES_USER" \
     --from-file="FIREMUD_POSTGRES_PASSWORD=${credential_files_dir}/FIREMUD_POSTGRES_PASSWORD" \
     --from-file="ASSET_STORE_ACCESS_KEY=${credential_files_dir}/ASSET_STORE_ACCESS_KEY" \
-    --from-file="ASSET_STORE_SECRET_KEY=${credential_files_dir}/ASSET_STORE_SECRET_KEY"
+    --from-file="ASSET_STORE_SECRET_KEY=${credential_files_dir}/ASSET_STORE_SECRET_KEY"; then
+    firemud_secret_json="$(read_secret_if_present firemud-secret)" || exit 1
+    [[ -n "$firemud_secret_json" ]] || reject_secret_create_failure firemud-secret
+    load_firemud_secret "$firemud_secret_json"
+    if [[ "$minio_secret_exists" != true ]]; then
+      minio_access_key="$asset_store_access_key"
+      minio_secret_key="$asset_store_secret_key"
+      write_credential_file accessKey "$minio_access_key"
+      write_credential_file secretKey "$minio_secret_key"
+    fi
+  fi
+  firemud_secret_exists=true
 fi
 if [[ "$minio_secret_exists" != true ]]; then
-  kubectl -n "$RUNTIME_NAMESPACE" create secret generic minio-credentials \
+  if ! kubectl -n "$RUNTIME_NAMESPACE" create secret generic minio-credentials \
     --from-file="accessKey=${credential_files_dir}/accessKey" \
-    --from-file="secretKey=${credential_files_dir}/secretKey"
+    --from-file="secretKey=${credential_files_dir}/secretKey"; then
+    minio_secret_json="$(read_secret_if_present minio-credentials)" || exit 1
+    [[ -n "$minio_secret_json" ]] || reject_secret_create_failure minio-credentials
+    load_minio_secret "$minio_secret_json"
+  fi
+  minio_secret_exists=true
 fi
+validate_matching_minio_credentials
 if [[ "$jwt_signing_secret_exists" != true ]]; then
-  kubectl -n "$RUNTIME_NAMESPACE" create secret generic jwt-signing-keys \
-    --from-file="current.key=${credential_files_dir}/current.key"
+  if ! kubectl -n "$RUNTIME_NAMESPACE" create secret generic jwt-signing-keys \
+    --from-file="current.key=${credential_files_dir}/current.key"; then
+    jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)" || exit 1
+    [[ -n "$jwt_signing_secret_json" ]] || reject_secret_create_failure jwt-signing-keys
+    load_jwt_signing_secret "$jwt_signing_secret_json"
+    signing_key_sha256="$(printf '%s' "$signing_key" | sha256sum | awk '{print $1}')"
+    diagnostic_jwks="$(jq -nc --arg fingerprint "$signing_key_sha256" \
+      '{keys:[],firemudDiagnostic:{purpose:"shared-hmac-secret-path-fingerprint",sha256:$fingerprint}}')"
+    if [[ "$jwt_jwks_exists" != true ]]; then
+      write_credential_file jwks.json "$diagnostic_jwks"
+    fi
+  fi
+  jwt_signing_secret_exists=true
 fi
 if [[ "$jwt_jwks_exists" != true ]]; then
-  kubectl -n "$RUNTIME_NAMESPACE" create configmap jwt-jwks \
-    --from-file="jwks.json=${credential_files_dir}/jwks.json"
+  if ! kubectl -n "$RUNTIME_NAMESPACE" create configmap jwt-jwks \
+    --from-file="jwks.json=${credential_files_dir}/jwks.json"; then
+    jwt_jwks_json="$(read_configmap_if_present jwt-jwks)" || exit 1
+    [[ -n "$jwt_jwks_json" ]] || reject_configmap_create_failure jwt-jwks
+    validate_configmap_shape jwt-jwks '["jwks.json"]' "$jwt_jwks_json"
+    validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"
+  fi
+  jwt_jwks_exists=true
 fi
 
 kubectl -n "$RUNTIME_NAMESPACE" create serviceaccount firemud-app --dry-run=client -o yaml |

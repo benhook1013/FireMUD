@@ -214,6 +214,29 @@ for required in \
   '@sha256:[0-9a-f]{64}'; do
   contains "$bootstrap" "$required"
 done
+python3 - "$bootstrap" <<'PY'
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = source.index('if ! rendered_activation_mode="$(python3')
+end = source.index(
+    '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]', start
+)
+probe = source[start:end]
+assert "sed " not in probe
+for required in (
+    "yaml.safe_load_all",
+    'document.get("kind") == "Deployment"',
+    'document["metadata"].get("name") == deployment_name',
+    'container.get("name") == "controller"',
+    'entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"',
+    "len(deployments) != 1",
+    "len(controller_containers) != 1",
+    "len(activation_values) != 1",
+):
+    assert required in probe, required
+PY
 
 # Shared lifecycle helpers retain the complete controller projection boundary.
 contains "$waiter" '.status.observedGeneration'
@@ -267,7 +290,7 @@ contains "$trusted" 'contents: read # Check out the trusted default-branch workf
 }
 # shellcheck disable=SC2016 # These assertions intentionally match literal helper source.
 contains "$runtime_rollout_waiter" 'usage: $0 <namespace> <per_deployment_timeout_seconds>'
-contains "$runtime_rollout_waiter" 'runtime namespace must match dev or pr-[1-9][0-9]*'
+contains "$runtime_rollout_waiter" 'runtime namespace must match dev or pr-[1-9][0-9]{0,50}'
 contains "$runtime_rollout_waiter" 'per_deployment_timeout_seconds must be an integer between 1 and 3600'
 contains "$runtime_rollout_waiter" 'This bound applies independently to each deployment rollout.'
 
@@ -349,6 +372,7 @@ assert workflow["permissions"] == {
 
 jobs = workflow["jobs"]
 expected_gates = {
+    "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "destroy-runtime": "needs.validate-target.outputs.action == 'destroy'",
@@ -369,7 +393,7 @@ mode_step = next(
 assert_mode_step(mode_step, "hosted identity request")
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 assert "Unsupported lifecycle event" in target_step["run"]
-for job_name in ("deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
+for job_name in ("prepare-runtime", "deploy-runtime", "verify-runtime", "destroy-runtime", "retire-identity"):
     assert "certificate_identity_mode == 'hosted-controller'" in jobs[job_name]["if"], job_name
 assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
@@ -387,6 +411,12 @@ assert validate_job["permissions"] == {
     "pull-requests": "read",
 }
 assert validate_job["timeout-minutes"] == 10
+assert jobs["prepare-runtime"]["permissions"] == {
+    "actions": "read",
+    "contents": "read",
+    "issues": "write",
+    "pull-requests": "read",
+}
 assert jobs["deploy-runtime"]["permissions"] == {
     "actions": "read",
     "contents": "read",
@@ -409,7 +439,8 @@ assert jobs["retire-identity"]["permissions"] == {
 }
 for job_name in ("verify-runtime", "destroy-runtime", "retire-identity"):
     assert jobs[job_name]["timeout-minutes"] == 60, job_name
-assert jobs["deploy-runtime"]["timeout-minutes"] == 90
+assert jobs["prepare-runtime"]["timeout-minutes"] == 45
+assert jobs["deploy-runtime"]["timeout-minutes"] == 45
 for job_name, step_name in (
     ("destroy-runtime", "Revalidate preview cleanup target before runtime deletion"),
     ("retire-identity", "Revalidate preview cleanup target before identity retirement"),
@@ -725,9 +756,6 @@ privileged_validation_guards = {
         ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
         ('[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {', "Invalid preview head SHA"),
     ),
-    "Revalidate prepared preview runtime target": (
-        ('[[ "$RUNTIME_NAMESPACE" == "pr-${PR_NUMBER}" ]] || {', "Invalid preview runtime namespace"),
-    ),
 }
 for step_name, guards in privileged_validation_guards.items():
     step_run = deploy_by_name[step_name]["run"]
@@ -736,6 +764,8 @@ for step_name, guards in privileged_validation_guards.items():
         assert f"::error title={error_title}::" in step_run
 inject_step = deploy_by_name["Inject trusted allocated Telnet port"]["run"]
 assert '"$RUNTIME_NAMESPACE" "$TELNET_PORT"' in inject_step
+for step_name in ("Allocate stable preview Telnet port", "Create and annotate exact preview runtime namespace"):
+    assert "actual value was ${" in deploy_by_name[step_name]["run"]
 assert "Validate trusted preview runtime target" not in deploy_by_name
 assert "Final revalidate open PR before server dry-run and apply" not in deploy_by_name
 apply_run = apply_step["run"]
@@ -798,7 +828,6 @@ runtime_rollout_call = (
     'bash ./dev-tools/hosted/shared/wait-for-hosted-runtime-rollouts.sh'
 )
 for rollout_steps, step_name in (
-    (deploy_steps, "Wait for runtime rollouts before operator validation"),
     (jobs["verify-runtime"]["steps"], "Wait for runtime rollouts"),
 ):
     rollout_step = next(step for step in rollout_steps if step.get("name") == step_name)
@@ -807,7 +836,31 @@ for rollout_steps, step_name in (
     assert "for deployment in" not in rollout_step["run"], step_name
     assert "rollout status" not in rollout_step["run"], step_name
 
+assert "concurrency" not in jobs["prepare-runtime"]
+assert "concurrency" not in jobs["verify-runtime"]
+for job_name in ("deploy-runtime", "destroy-runtime", "retire-identity"):
+    assert jobs[job_name]["concurrency"] == {
+        "group": "preview-allocation-lifecycle",
+        "cancel-in-progress": False,
+        "queue": "max",
+    }
+prepare_by_name = {
+    step.get("name"): step
+    for step in jobs["prepare-runtime"]["steps"]
+    if isinstance(step, dict)
+}
+assert "Wait for fixed-head runtime images" in prepare_by_name
+assert "Wait for fixed-head runtime images" not in deploy_by_name
+assert "Wait for exact controller identity readiness" not in deploy_by_name
+assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
+
 verify_steps = jobs["verify-runtime"]["steps"]
+verify_by_name = {
+    step.get("name"): step for step in verify_steps if isinstance(step, dict)
+}
+runtime_port_run = verify_by_name["Read allocated TCP port"]["run"]
+assert "::error title=Invalid runtime Telnet port::" in runtime_port_run
+assert "actual value was ${port:-empty}." in runtime_port_run
 verify_success_index = next(
     index
     for index, step in enumerate(verify_steps)
@@ -1239,7 +1292,7 @@ for explicit_result_flow in (
     'minio_secret_json="$(read_secret_if_present minio-credentials)"',
     'jwt_signing_secret_json="$(read_secret_if_present jwt-signing-keys)"',
     'jwt_jwks_json="$(read_configmap_if_present jwt-jwks)"',
-    'postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$firemud_secret_json")"',
+    'postgres_user="$(decode_secret_key firemud-secret FIREMUD_POSTGRES_USER "$secret_json")"',
     'validate_diagnostic_jwks "$signing_key_sha256" "$jwt_jwks_json"',
 ):
     assert explicit_result_flow in credential_source_text, explicit_result_flow
@@ -1693,7 +1746,7 @@ for invalid_runtime_rollout_namespace in "" dev-identity pr-0 pr-01 pr-abc pr-42
     echo "runtime rollout waiter accepted invalid namespace: $invalid_runtime_rollout_namespace" >&2
     exit 1
   fi
-  expected_runtime_rollout_namespace_error='runtime namespace must match dev or pr-[1-9][0-9]*'
+  expected_runtime_rollout_namespace_error='runtime namespace must match dev or pr-[1-9][0-9]{0,50}'
   if [[ -z "$invalid_runtime_rollout_namespace" ]]; then
     expected_runtime_rollout_namespace_error='runtime namespace is required'
   fi
@@ -1794,6 +1847,12 @@ if [[ "$1" == create && "$2" == configmap ]]; then
   state_path="${CREDENTIAL_STATE_DIR:?}/${configmap_name}.json"
   [[ ! -e "$state_path" ]]
   validate_from_files "$@"
+  if [[ "${CREDENTIAL_RACE_CREATE:-}" == "$configmap_name" ]]; then
+    cp -- "${CREDENTIAL_RACE_SOURCE:?}" "$state_path"
+    printf 'race %s\n' "$configmap_name" >>"${CREDENTIAL_KUBECTL_LOG:?}"
+    echo "Error from server (AlreadyExists): configmaps \"${configmap_name}\" already exists" >&2
+    exit 1
+  fi
   python3 - "$state_path" "$namespace" "$configmap_name" "$@" <<'PY'
 import json
 import sys
@@ -1835,6 +1894,12 @@ if [[ "$1" == create && "$2" == secret && "$3" == generic ]]; then
   state_path="${CREDENTIAL_STATE_DIR:?}/${secret_name}.json"
   [[ ! -e "$state_path" ]]
   validate_from_files "$@"
+  if [[ "${CREDENTIAL_RACE_CREATE:-}" == "$secret_name" ]]; then
+    cp -- "${CREDENTIAL_RACE_SOURCE:?}" "$state_path"
+    printf 'race %s\n' "$secret_name" >>"${CREDENTIAL_KUBECTL_LOG:?}"
+    echo "Error from server (AlreadyExists): secrets \"${secret_name}\" already exists" >&2
+    exit 1
+  fi
   if [[ "${CREDENTIAL_FAIL_CREATE:-}" == "$secret_name" ]]; then
     exit 42
   fi
@@ -1882,6 +1947,8 @@ run_credential_step() {
   local error="$3"
   local fail_create="${4:-}"
   local runtime_namespace="${5-pr-42}"
+  local race_create="${6:-}"
+  local race_source="${7:-}"
   env \
     PATH="$credential_stub_dir:$PATH" \
     RUNTIME_NAMESPACE="$runtime_namespace" \
@@ -1891,6 +1958,8 @@ run_credential_step() {
     CREDENTIAL_KUBECTL_LOG="$state_dir/kubectl.log" \
     CREDENTIAL_FILE_LOG="$state_dir/credential-files.log" \
     CREDENTIAL_FAIL_CREATE="$fail_create" \
+    CREDENTIAL_RACE_CREATE="$race_create" \
+    CREDENTIAL_RACE_SOURCE="$race_source" \
     RUNNER_TEMP="$state_dir" \
     bash "$credential_script" >"$output" 2>"$error"
 }
@@ -1922,7 +1991,7 @@ for invalid_runtime_namespace in "" dev pr-0 pr-01 pr-abc pr-42/escape; do
   if [[ -z "$invalid_runtime_namespace" ]]; then
     grep -Fxq 'runtime namespace is required' "$invalid_error"
   else
-    grep -Fxq 'runtime namespace must match pr-[1-9][0-9]*' "$invalid_error"
+    grep -Fxq 'runtime namespace must match pr-[1-9][0-9]{0,50}' "$invalid_error"
   fi
 done
 
@@ -2014,6 +2083,46 @@ test "$(grep -c '^create firemud-secret$' "$create_once_state/kubectl.log")" -eq
 test "$(grep -c '^create minio-credentials$' "$create_once_state/kubectl.log")" -eq 1
 test "$(grep -c '^create jwt-signing-keys$' "$create_once_state/kubectl.log")" -eq 1
 test "$(grep -c '^create jwt-jwks$' "$create_once_state/kubectl.log")" -eq 1
+
+create_race_state="$credential_state_root/create-race"
+create_race_source="$credential_state_root/create-race-jwt-signing-keys.json"
+mkdir -p "$create_race_state"
+python3 - "$create_once_state/jwt-signing-keys.json" "$create_race_source" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+source = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+source["data"]["current.key"] = base64.b64encode(b"e" * 64).decode("ascii")
+Path(sys.argv[2]).write_text(json.dumps(source, sort_keys=True), encoding="utf-8")
+PY
+run_credential_step "$create_race_state" \
+  "$TEMP_DIR/create-race.output" "$TEMP_DIR/create-race.error" \
+  "" pr-42 jwt-signing-keys "$create_race_source"
+assert_credential_files_removed "$create_race_state"
+test "$(sha256sum "$create_race_state/jwt-signing-keys.json" | awk '{print $1}')" = \
+  "$(sha256sum "$create_race_source" | awk '{print $1}')"
+grep -Fxq 'race jwt-signing-keys' "$create_race_state/kubectl.log"
+grep -Fq 'AlreadyExists' "$TEMP_DIR/create-race.error"
+python3 - "$create_race_state" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+state = Path(sys.argv[1])
+signing = json.loads((state / "jwt-signing-keys.json").read_text(encoding="utf-8"))
+jwks_resource = json.loads((state / "jwt-jwks.json").read_text(encoding="utf-8"))
+signing_key = base64.b64decode(
+    signing["data"]["current.key"], validate=True
+).decode("ascii")
+jwks = json.loads(jwks_resource["data"]["jwks.json"])
+assert jwks["firemudDiagnostic"]["sha256"] == hashlib.sha256(
+    signing_key.encode("ascii")
+).hexdigest()
+PY
 
 cleanup_failure_state="$credential_state_root/cleanup-failure"
 mkdir -p "$cleanup_failure_state"

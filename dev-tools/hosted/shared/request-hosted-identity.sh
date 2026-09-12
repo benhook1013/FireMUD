@@ -8,7 +8,7 @@ fi
 
 identity_name="$1"
 desired_state="$2"
-if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]*)$ ]]; then
+if [[ ! "$identity_name" =~ ^(dev-demo|pr-[1-9][0-9]{0,50})$ ]]; then
   echo "identity name is not canonical: ${identity_name}" >&2
   exit 2
 fi

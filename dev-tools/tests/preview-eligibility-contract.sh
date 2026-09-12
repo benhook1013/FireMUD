@@ -134,6 +134,19 @@ inspect_priority="$(python3 "$SCRIPT" --inspect-labels --labels-json '[{"name":"
 grep -q '^labels_valid=true$' <<<"$inspect_priority"
 grep -q '^priority=true$' <<<"$inspect_priority"
 
+for unrelated_inspection_argument in \
+  '--operation deploy' '--state open' '--base-ref develop' '--author human'; do
+  read -r -a unrelated_inspection_fields <<<"$unrelated_inspection_argument"
+  if python3 "$SCRIPT" --inspect-labels --labels-json '[]' \
+    "${unrelated_inspection_fields[@]}" \
+    >"$TEMP_DIR/inspect-unrelated.out" 2>"$TEMP_DIR/inspect-unrelated.err"; then
+    echo "Label inspection accepted unrelated argument: $unrelated_inspection_argument" >&2
+    exit 1
+  fi
+  grep -Fq -- "--inspect-labels cannot be combined with: ${unrelated_inspection_fields[0]}" \
+    "$TEMP_DIR/inspect-unrelated.err"
+done
+
 priority_labels_base64="$(printf '%s' '[{"name":"preview:priority"}]' | base64 | tr -d '\n')"
 ordinary_labels_base64="$(printf '%s' '[{"name":"ordinary"}]' | base64 | tr -d '\n')"
 batch_candidates="$({

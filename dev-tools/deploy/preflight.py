@@ -6515,7 +6515,13 @@ def wait_for_secret_key_requirements(
     latest_issues: dict[str, str] = {}
     attempts_completed = 0
     for attempt in range(ready_attempts):
-        if attempt > 0 and time.monotonic() >= deadline:
+        if time.monotonic() >= deadline:
+            for skipped_name, _ in pending:
+                latest_issues.setdefault(
+                    skipped_name,
+                    f"Secret readiness deadline expired before lookup for "
+                    f"{namespace}/{skipped_name}",
+                )
             break
         attempts_completed = attempt + 1
         retry_pending: list[tuple[str, set[str]]] = []
@@ -6549,7 +6555,7 @@ def wait_for_secret_key_requirements(
             if remaining_seconds <= 0:
                 break
             time.sleep(min(HOSTED_BRIDGE_SECRET_RETRY_DELAY_SECONDS, remaining_seconds))
-    reported_attempts = attempts_completed or ready_attempts
+    reported_attempts = attempts_completed
     return [
         (
             f"{latest_issues[secret_name]} (still not ready after "
@@ -6570,13 +6576,13 @@ def hosted_bridge_expected_bindings(
     elif (
         release_name == namespace
         and len(namespace) <= 63
-        and re.fullmatch(r"pr-[1-9][0-9]*", namespace)
+        and re.fullmatch(r"pr-[1-9][0-9]{0,50}", namespace)
     ):
         environment = "pr-preview"
     else:
         raise ValueError(
             "hosted bridge identity must be exactly dev/dev or a matching "
-            "numeric pr-[1-9][0-9]* namespace/release"
+            "numeric pr-[1-9][0-9]{0,50} namespace/release"
         )
     return {
         "environment": environment,

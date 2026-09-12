@@ -110,13 +110,13 @@ find_unsatisfied_priority_pr() {
   local max_open_pr_pages=$((max_open_pr_candidates / open_pr_page_size))
   local overflow_row
   local open_pr_jq='.[] | [
-          .number,
-          .head.sha,
-          .head.repo.full_name,
-          .user.login,
-          .base.ref,
-          .state,
-          (.labels | tojson | @base64)
+          (.number // ""),
+          (.head.sha // ""),
+          (.head.repo.full_name // ""),
+          (.user.login // ""),
+          (.base.ref // ""),
+          (.state // ""),
+          ((.labels // null) | tojson | @base64)
         ] | @tsv'
 
   open_pr_rows=""
@@ -129,6 +129,14 @@ find_unsatisfied_priority_pr() {
     fi
     if [[ -z "$page_rows" ]]; then
       break
+    fi
+    if ! awk -F '\t' '
+      NF != 7 || $1 == "" || $2 == "" || $3 == "" ||
+        $4 == "" || $5 == "" || $6 == "" || $7 == "" { invalid = 1 }
+      END { exit invalid }
+    ' <<<"$page_rows"; then
+      echo "Open pull request metadata is missing required identity fields" >&2
+      return 1
     fi
     open_pr_rows+="$page_rows"$'\n'
     if (( $(grep -c . <<<"$page_rows") < open_pr_page_size )); then

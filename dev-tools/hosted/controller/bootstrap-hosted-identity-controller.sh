@@ -200,7 +200,59 @@ replace_manifest \
   -e "s#value: __ACTIVATION_MODE_REQUIRED__#value: $initial_activation_mode#g"
 grep -Fq -- "$IMAGE_REF" "$temporary_manifest" || fail "immutable image replacement did not occur"
 grep -Fq -- "value: $GRPC_TRUST_ANCHOR_SHA256" "$temporary_manifest" || fail "gRPC trust-anchor replacement did not occur"
-rendered_activation_mode="$(sed -n '/FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE/{n;s/^[[:space:]]*value: //p;}' "$temporary_manifest")"
+if ! rendered_activation_mode="$(python3 - "$temporary_manifest" "$DEPLOYMENT_NAME" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+source_path = Path(sys.argv[1])
+deployment_name = sys.argv[2]
+deployments = [
+    document
+    for document in yaml.safe_load_all(source_path.read_text(encoding="utf-8"))
+    if isinstance(document, dict)
+    and document.get("kind") == "Deployment"
+    and isinstance(document.get("metadata"), dict)
+    and document["metadata"].get("name") == deployment_name
+]
+if len(deployments) != 1:
+    raise SystemExit(1)
+deployment_spec = deployments[0].get("spec")
+if not isinstance(deployment_spec, dict):
+    raise SystemExit(1)
+pod_template = deployment_spec.get("template")
+if not isinstance(pod_template, dict):
+    raise SystemExit(1)
+pod_spec = pod_template.get("spec")
+if not isinstance(pod_spec, dict):
+    raise SystemExit(1)
+containers = pod_spec.get("containers")
+if not isinstance(containers, list):
+    raise SystemExit(1)
+controller_containers = [
+    container
+    for container in containers
+    if isinstance(container, dict) and container.get("name") == "controller"
+]
+if len(controller_containers) != 1:
+    raise SystemExit(1)
+environment = controller_containers[0].get("env")
+if not isinstance(environment, list):
+    raise SystemExit(1)
+activation_values = [
+    entry.get("value")
+    for entry in environment
+    if isinstance(entry, dict)
+    and entry.get("name") == "FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE"
+]
+if len(activation_values) != 1 or not isinstance(activation_values[0], str):
+    raise SystemExit(1)
+print(activation_values[0])
+PY
+)"; then
+  fail "activation mode replacement did not produce exactly one expected value"
+fi
 [[ "$rendered_activation_mode" == "$initial_activation_mode" ]] || \
   fail "activation mode replacement did not produce exactly one expected value"
 if grep -Fq -- "__IMAGE_DIGEST_REQUIRED__" "$temporary_manifest" || \

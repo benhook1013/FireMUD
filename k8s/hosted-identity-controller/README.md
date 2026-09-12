@@ -12,7 +12,7 @@ spec:
   desiredState: Active # Active -> Retired only
 ```
 
-There is no user-supplied hostname, Secret, Certificate, issuer, port, key, rollout, or consumer field. The trusted lifecycle workflow supplies and prepares the runtime namespace (`pr-N` or `dev`); the controller derives the retained identity namespace (`pr-N-identity` or `dev-identity`) and the public host (`pr-N.preview.firedevops.net` or `dev.preview.firedevops.net`). The controller materializes only the retained identity namespace and controller-owned identity material; runtime preparation remains workflow-owned.
+There is no user-supplied hostname, Secret, Certificate, issuer, port, key, rollout, or consumer field. The trusted lifecycle workflow supplies and prepares the runtime namespace (`pr-N` or `dev`), where `N` is one to 51 decimal digits with a nonzero first digit; the controller derives the retained identity namespace (`pr-N-identity` or `dev-identity`) and the public host (`pr-N.preview.firedevops.net` or `dev.preview.firedevops.net`). The controller materializes only the retained identity namespace and controller-owned identity material; runtime preparation remains workflow-owned.
 
 ## Resource and status contract
 

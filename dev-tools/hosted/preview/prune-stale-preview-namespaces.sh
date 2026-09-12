@@ -18,8 +18,8 @@ if [[ "${1:-}" == "--delete-runtime" ]]; then
     exit 1
   fi
   runtime_namespace="$2"
-  if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]*$ ]]; then
-    echo "runtime namespace must match canonical pr-[1-9][0-9]* identity" >&2
+  if [[ ! "$runtime_namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
+    echo "runtime namespace must match canonical pr-[1-9][0-9]{0,50} identity" >&2
     exit 2
   fi
   PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS="$preview_delete_timeout" \
