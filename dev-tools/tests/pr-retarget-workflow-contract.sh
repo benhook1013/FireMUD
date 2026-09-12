@@ -64,6 +64,26 @@ require_contains() {
   fi
 }
 
+require_contains_block() {
+  local path="$1"
+  local expected="$2"
+
+  if ! python3 - "$path" "$expected" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected = sys.argv[2]
+if expected not in path.read_text(encoding="utf-8"):
+    raise SystemExit(1)
+PY
+  then
+    echo "$path must contain the complete block:" >&2
+    printf '%s\n' "$expected" >&2
+    exit 1
+  fi
+}
+
 require_exact_line() {
   local path="$1"
   local expected="$2"
@@ -440,7 +460,7 @@ require_contains "$preview_reconciler_path" '--json databaseId,status,headSha'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell and jq source.
 require_contains "$preview_reconciler_path" '--arg head_sha "${head_sha}"'
 # shellcheck disable=SC2016 # This assertion intentionally matches literal jq source.
-require_contains "$preview_reconciler_path" '                          .headSha == $head_sha
+require_contains_block "$preview_reconciler_path" '                          .headSha == $head_sha
                           and (
                             .status == "requested"
                             or .status == "queued"
