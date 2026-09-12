@@ -50,10 +50,20 @@ The checked-in Deployment contains fail-closed image and activation markers. `bo
 Use this recovery only when the `firemud-hosted-identity-secret-boundary` binding itself is incorrectly denying Secret writes needed to repair the hosted identity installation. From the repository root at a trusted commit, first select a trusted Kubernetes context and verify that the authenticated user belongs to `system:masters`. Only then reapply the currently deployed, attested controller image and configured gRPC trust anchor in `paused` mode. Bootstrap waits for that paused Deployment rollout; the final readback must also return exactly `paused` before admission state changes:
 
 ```bash
+set -euo pipefail
+
 kubectl auth whoami -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}' \
-  | grep -Fx system:masters
+  | grep -Fx system:masters >/dev/null
 controller_image="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].image}')"
+if [[ -z "$controller_image" ]]; then
+  echo "failed to read the deployed controller image" >&2
+  exit 1
+fi
 grpc_trust_anchor_sha256="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_GRPC_TRUST_ANCHOR_SHA256")].value}')"
+if [[ -z "$grpc_trust_anchor_sha256" ]]; then
+  echo "failed to read the deployed gRPC trust anchor" >&2
+  exit 1
+fi
 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 dev-tools/hosted/controller/bootstrap-hosted-identity-controller.sh \
   --image "$controller_image" \
   --grpc-trust-anchor-sha256 "$grpc_trust_anchor_sha256" \
