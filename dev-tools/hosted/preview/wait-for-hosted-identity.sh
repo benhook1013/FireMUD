@@ -221,9 +221,11 @@ while (( SECONDS < deadline )); do
   if [[ "$identity_name" == dev-demo ]]; then
     namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
     namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_telnet_port="$(jq -r '.metadata.annotations["firemud.dev/last-dev-demo-telnet-port"] // empty' <<<"$namespace_json")"
   else
     namespace_requested_head="$(jq -r '.metadata.annotations["firemud.dev/requested-preview-head-sha"] // empty' <<<"$namespace_json")"
     namespace_deployed_head="$(jq -r '.metadata.annotations["firemud.dev/last-preview-head-sha"] // empty' <<<"$namespace_json")"
+    namespace_telnet_port="$(jq -r '.metadata.annotations["firemud.dev/last-preview-telnet-port"] // empty' <<<"$namespace_json")"
   fi
   if [[ -z "$namespace_uid" ]]; then
     echo "Runtime namespace ${runtime_namespace} has no UID yet; retrying."
@@ -250,6 +252,14 @@ while (( SECONDS < deadline )); do
     sleep 5
     continue
   fi
+  if [[ ! "$namespace_telnet_port" =~ ^[1-9][0-9]*$ ]] ||
+    { [[ "$identity_name" == dev-demo ]] && [[ "$namespace_telnet_port" != 32016 ]]; } ||
+    { [[ "$identity_name" != dev-demo ]] &&
+      ((10#$namespace_telnet_port < 32000 || 10#$namespace_telnet_port > 32015)); }; then
+    echo "Runtime namespace ${runtime_namespace} has no canonical Telnet port; observed ${namespace_telnet_port:-missing}."
+    sleep 5
+    continue
+  fi
 
   if identity_json="$(kubectl -n firemud-system get hostedenvironmentidentity "$identity_name" --ignore-not-found -o json)"; then
     if [[ -z "$identity_json" ]]; then
@@ -272,6 +282,14 @@ while (( SECONDS < deadline )); do
   profile_uid="$(jq -r '.status.profile.runtimeNamespaceUid // empty' <<<"$identity_json")"
   profile_requested_head="$(jq -r '.status.profile.requestedHeadSha // empty' <<<"$identity_json")"
   profile_deployed_head="$(jq -r '.status.profile.deployedHeadSha // empty' <<<"$identity_json")"
+  profile_telnet_port="$(jq -r '
+    .status.profile.telnetPort as $port |
+    if ($port | type) == "number" then
+      if ($port | floor) == $port then ($port | tostring) else empty end
+    else
+      empty
+    end
+  ' <<<"$identity_json")"
   ingress_revision="$(jq -r '.status.ingress.revision // empty' <<<"$identity_json")"
   telnet_revision="$(jq -r '.status.telnet.revision // empty' <<<"$identity_json")"
   grpc_revision="$(jq -r '.status.grpc.revision // empty' <<<"$identity_json")"
@@ -298,7 +316,7 @@ while (( SECONDS < deadline )); do
     continue
   fi
   if [[ "$profile_uid" != "$namespace_uid" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}); retrying."
+    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}); retrying."
     sleep 5
     continue
   fi
@@ -306,7 +324,12 @@ while (( SECONDS < deadline )); do
     ! normalized_profile_deployed_head="$(normalize_head_sha "$profile_deployed_head")" ||
     [[ "$normalized_profile_requested_head" != "$expected_head_sha" ]] ||
     [[ "$normalized_profile_deployed_head" != "$expected_head_sha" ]]; then
-    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}); retrying."
+    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}); retrying."
+    sleep 5
+    continue
+  fi
+  if [[ "$profile_telnet_port" != "$namespace_telnet_port" ]]; then
+    echo "Ready identity profile is stale (namespace UID ${profile_uid:-missing}, requested head ${profile_requested_head:-missing}, deployed head ${profile_deployed_head:-missing}, Telnet port ${profile_telnet_port:-missing}; expected ${namespace_telnet_port}); retrying."
     sleep 5
     continue
   fi
@@ -316,8 +339,8 @@ while (( SECONDS < deadline )); do
     continue
   fi
 
-  printf 'identity=%s\nphase=%s\nobservedGeneration=%s\ningressRevision=%s\ntelnetRevision=%s\ngatewayInternalWsRevision=%s\ntcpProxyBridgeRevision=%s\ngrpcRevision=%s\n' \
-    "$identity_name" "$phase" "$observed_generation" "$ingress_revision" "$telnet_revision" "$gateway_internal_ws_revision" "$tcp_proxy_bridge_revision" "$grpc_revision"
+  printf 'identity=%s\nphase=%s\nobservedGeneration=%s\ntelnetPort=%s\ningressRevision=%s\ntelnetRevision=%s\ngatewayInternalWsRevision=%s\ntcpProxyBridgeRevision=%s\ngrpcRevision=%s\n' \
+    "$identity_name" "$phase" "$observed_generation" "$profile_telnet_port" "$ingress_revision" "$telnet_revision" "$gateway_internal_ws_revision" "$tcp_proxy_bridge_revision" "$grpc_revision"
   exit 0
 done
 

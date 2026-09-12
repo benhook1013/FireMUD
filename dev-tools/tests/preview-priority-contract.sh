@@ -164,13 +164,6 @@ if [[ "$1" == get && "$2" == namespace &&
 fi
 if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"* ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
-  if [[ -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" ]]; then
-    rm -f "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER"
-    if [[ "${FAKE_REQUESTED_HEAD_RECHECK_ERROR:-false}" == true ]]; then
-      exit 1
-    fi
-    exit 0
-  fi
   if [[ -f "$FAKE_RUNTIME_WAIT_MARKER" ]]; then
     if [[ "${FAKE_RUNTIME_RECHECK_ERROR:-false}" == true ]]; then
       exit 1
@@ -192,19 +185,6 @@ if [[ "$1" == get && "$2" == namespace && "$*" == *"--ignore-not-found -o name"*
   printf 'namespace/%s\n' "${FAKE_RUNTIME_LOOKUP_IDENTITY:-$3}"
   exit 0
 fi
-if [[ "$1" == get && "$2" == namespace && "$*" == *"requested-preview-head-sha"* ]]; then
-  printf '%s\n' "$*" >> "$FAKE_REQUESTED_HEAD_LOG"
-  if [[ "${FAKE_REQUESTED_HEAD_READ_ERROR:-false}" == true ]]; then
-    if [[ "${FAKE_REQUESTED_HEAD_NOT_FOUND:-false}" == true &&
-      "$*" == *"--ignore-not-found"* ]]; then
-      : > "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER"
-      exit 0
-    fi
-    exit 1
-  fi
-  printf '%s' "${FAKE_PR_901_REQUESTED_HEAD:-}"
-  exit 0
-fi
 if [[ "$1" == delete && "$2" == --raw && "$4" == -f && "$5" == - ]]; then
   printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
   delete_options="$(cat)"
@@ -216,21 +196,11 @@ if [[ "$1" == delete && "$2" == --raw && "$4" == -f && "$5" == - ]]; then
     : > "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER"
     exit 1
   fi
-  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]] ||
-    [[ "$3" == */"${FAKE_RUNTIME_DELETE_ERROR_NAMESPACE:-__none__}" ]]; then
+  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]]; then
     exit 1
   fi
   expected_delete_uid="${FAKE_RUNTIME_DELETE_CURRENT_UID:-${FAKE_RUNTIME_NAMESPACE_UID:-uid-${3##*/}}}"
   if [[ "$delete_uid" != "$expected_delete_uid" ]]; then
-    exit 1
-  fi
-  exit 0
-fi
-if [[ "$1" == delete && "$2" == namespace ]]; then
-  printf '%s\n' "$*" >> "$FAKE_RUNTIME_KUBECTL_LOG"
-  if [[ "${FAKE_RUNTIME_DELETE_ERROR:-false}" == true ]] ||
-    [[ -n "${FAKE_RUNTIME_DELETE_ERROR_NAMESPACE:-}" &&
-      "$3" == "$FAKE_RUNTIME_DELETE_ERROR_NAMESPACE" ]]; then
     exit 1
   fi
   exit 0
@@ -249,6 +219,14 @@ if [[ "$1" == annotate && "$2" == namespace ]]; then
     : > "${FAKE_ANNOTATE_FAILURE_MARKER:?}"
     exit 1
   fi
+  exit 0
+fi
+if [[ "$*" == "-n firemud-system get hostedenvironmentidentities.platform.firemud.dev -o json" ]]; then
+  printf '%s\n' "$*" >> "$FAKE_IDENTITY_LOG"
+  if [[ "${FAKE_IDENTITY_LIST_FAIL:-false}" == true ]]; then
+    exit 1
+  fi
+  printf '%s' "${FAKE_IDENTITY_LIST_JSON:?}"
   exit 0
 fi
 if [[ "$*" == *"get hostedenvironmentidentity"* ]]; then
@@ -600,8 +578,6 @@ export FAKE_PUBLISH_CALLS="$TEMP_DIR/publish-calls"
 export FAKE_COMMENT_METHOD_LOG="$TEMP_DIR/comment-method.log"
 export FAKE_ANNOTATE_LOG="$TEMP_DIR/annotate.log"
 export FAKE_ANNOTATE_FAILURE_MARKER="$TEMP_DIR/annotate-failure.marker"
-export FAKE_REQUESTED_HEAD_LOG="$TEMP_DIR/requested-head.log"
-export FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER="$TEMP_DIR/requested-head-not-found"
 export FAKE_DISPATCH_LOG="$TEMP_DIR/dispatch.log"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
@@ -632,7 +608,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
-  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_REQUESTED_HEAD_LOG" "$FAKE_REQUESTED_HEAD_NOT_FOUND_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
+  rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_TARGET_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
   export FAKE_TARGET_LABELS_VALID=valid
@@ -668,9 +644,6 @@ reset_case() {
   export FAKE_ANNOTATE_ERROR=false
   export FAKE_ANNOTATE_CONFIRMATION_ERROR=false
   export FAKE_ANNOTATE_NAMESPACE_ABSENT_AFTER_FAILURE=false
-  export FAKE_REQUESTED_HEAD_READ_ERROR=false
-  export FAKE_REQUESTED_HEAD_NOT_FOUND=false
-  export FAKE_REQUESTED_HEAD_RECHECK_ERROR=false
   export FAKE_DELETE_FAIL=false
   export FAKE_DELETE_FAIL_NAMESPACE=''
   export FAKE_COMMENT_DELETE_FAIL=false
@@ -686,6 +659,8 @@ reset_case() {
   export FAKE_IDENTITY_REQUEST_FAIL=false
   export FAKE_IDENTITY_WAIT_FAIL=false
   export FAKE_IDENTITY_DELETE_FAIL=false
+  export FAKE_IDENTITY_LIST_FAIL=false
+  export FAKE_IDENTITY_LIST_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentityList","items":[]}'
   export FAKE_NAMESPACE_LIST_ERROR=false
   export FAKE_RUNTIME_LOOKUP_ERROR=false
   export FAKE_RUNTIME_LOOKUP_IDENTITY=''
@@ -700,7 +675,6 @@ reset_case() {
   export FAKE_RUNTIME_NAMESPACE_ABSENT_ON_DELETE=false
   export FAKE_RUNTIME_DELETE_CURRENT_UID=''
   export FAKE_RUNTIME_DELETE_ERROR=false
-  export FAKE_RUNTIME_DELETE_ERROR_NAMESPACE=''
   export FAKE_RUNTIME_WAIT_ERROR=false
   export FAKE_RUNTIME_RECHECK_ERROR=false
   export FAKE_RUNTIME_NAMESPACE_PRESENT_AFTER_WAIT=true
@@ -1171,6 +1145,62 @@ grep -Fqx -- '-n firemud-system get hostedenvironmentidentity pr-101 --ignore-no
   "$FAKE_IDENTITY_LOG"
 grep -Fqx -- '-n firemud-system delete hostedenvironmentidentity pr-101 --ignore-not-found --wait=true --timeout=180s' \
   "$FAKE_IDENTITY_LOG"
+
+# The terminal janitor also rediscovers stranded identity requests after their
+# runtime namespace is already gone. Every recoverable phase is revalidated
+# against current PR eligibility and then uses the same exact-absence retirement path.
+for stranded_phase in RuntimeAbsent Retiring Retired; do
+  reset_case
+  export FAKE_NAMESPACE_ROWS=''
+  export FAKE_PRUNE_METADATA="closed\tdevelop\thuman\t${adversarial_labels_base64}\n"
+  export HOSTED_IDENTITY_MODE=hosted-controller
+  export FAKE_RUNTIME_NAMESPACE_PRESENT=false
+  export FAKE_RECORD_RUNTIME_CHECK=true
+  FAKE_IDENTITY_LIST_JSON="$(
+    jq -nc --arg phase "$stranded_phase" '{
+      apiVersion: "platform.firemud.dev/v1alpha1",
+      kind: "HostedEnvironmentIdentityList",
+      items: [{
+        apiVersion: "platform.firemud.dev/v1alpha1",
+        kind: "HostedEnvironmentIdentity",
+        metadata: {namespace: "firemud-system", name: "pr-101"},
+        spec: {desiredState: (if $phase == "RuntimeAbsent" then "Active" else "Retired" end)},
+        status: {phase: $phase}
+      }]
+    }'
+  )"
+  export FAKE_IDENTITY_LIST_JSON
+  bash "$PRUNER" --apply --retire-terminal-identities \
+    >"$TEMP_DIR/recover-${stranded_phase}.out"
+  test "$(<"$FAKE_OPERATION_SEQUENCE")" = $'runtime-check\nidentity-request\nidentity-wait\nidentity-delete'
+  test ! -e "$FAKE_DELETE_LOG"
+  grep -Fqx 'pr-101 Retired' "$FAKE_IDENTITY_REQUEST_LOG"
+  grep -Fq "Recovering HostedEnvironmentIdentity/pr-101 from phase ${stranded_phase}" \
+    "$TEMP_DIR/recover-${stranded_phase}.out"
+done
+
+reset_case
+export FAKE_NAMESPACE_ROWS=''
+export FAKE_PRUNE_METADATA="open\tdevelop\thuman\t${adversarial_labels_base64}\n"
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_IDENTITY_LIST_JSON='{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentityList","items":[{"apiVersion":"platform.firemud.dev/v1alpha1","kind":"HostedEnvironmentIdentity","metadata":{"namespace":"firemud-system","name":"pr-101"},"spec":{"desiredState":"Active"},"status":{"phase":"RuntimeAbsent"}}]}'
+bash "$PRUNER" --apply --retire-terminal-identities \
+  >"$TEMP_DIR/recover-eligible.out"
+grep -Fq 'PR #101 remains preview-eligible' "$TEMP_DIR/recover-eligible.out"
+test ! -e "$FAKE_IDENTITY_REQUEST_LOG"
+test ! -e "$FAKE_IDENTITY_WAIT_LOG"
+
+reset_case
+export FAKE_NAMESPACE_ROWS=''
+export HOSTED_IDENTITY_MODE=hosted-controller
+export FAKE_IDENTITY_LIST_FAIL=true
+if bash "$PRUNER" --apply --retire-terminal-identities \
+  >"$TEMP_DIR/recover-list-failure.out" 2>&1; then
+  echo "pruner suppressed a stranded identity discovery failure" >&2
+  exit 1
+fi
+grep -Fqx '0 hosted runtime deletion(s) and 1 hosted identity retirement(s) failed; stale cleanup is incomplete.' \
+  "$TEMP_DIR/recover-list-failure.out"
 
 reset_case
 export FAKE_NAMESPACE_ROWS=$'pr-101\t101\npr-102\t102\n'
@@ -2016,9 +2046,12 @@ grep -qx 'action=none' "$TEMP_DIR/trusted-target-malformed.out"
 
 reset_case
 run_trusted_target_fixture \
-  '[{"artifacts":[{"name":"preview-render-pr-900-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expired":false}]}]' \
-  valid bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$TEMP_DIR/trusted-target-stale.out"
+  '[{"artifacts":[{"name":"preview-render-pr-900-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expired":false}]}]' \
+  valid bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$TEMP_DIR/trusted-target-stale.out" \
+  >"$TEMP_DIR/trusted-target-stale.stdout"
 grep -qx 'action=none' "$TEMP_DIR/trusted-target-stale.out"
+grep -Fxq 'Ignoring stale lifecycle event for an earlier PR head.' \
+  "$TEMP_DIR/trusted-target-stale.stdout"
 
 TRUSTED_WORKFLOW="$trusted_workflow" python3 - <<'PY'
 import os

@@ -346,7 +346,12 @@ public class SecretMaterialValidator {
       if (!caKeyUsageAllowsSigning(current)) {
         throw new MaterialValidationException("certificate CA key usage must include keyCertSign");
       }
-      return sha256(current.getEncoded());
+      String fingerprint = sha256(current.getEncoded());
+      if (!expectedAnchor.isBlank() && !expectedAnchor.equals(normalize(fingerprint))) {
+        throw new MaterialValidationException(
+            "certificate chain trust anchor fingerprint mismatch");
+      }
+      return fingerprint;
     }
     if (anchor.getBasicConstraints() < 0) {
       throw new MaterialValidationException("certificate chain anchor is not a CA");

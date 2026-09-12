@@ -304,7 +304,7 @@ class HostedIdentityPropertiesTest {
 
   @Test
   void activeModeRequiresANonemptyCanonicalGrpcTrustAnchorAtStartup() {
-    for (String trustAnchor : new String[] {null, ""}) {
+    for (String trustAnchor : new String[] {null, "", " \t "}) {
       HostedIdentityProperties properties = new HostedIdentityProperties();
       properties.setActivationMode("active");
       properties.setGrpcTrustAnchorSha256(trustAnchor);
@@ -312,7 +312,9 @@ class HostedIdentityPropertiesTest {
       IllegalStateException failure =
           assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
       assertEquals(
-          "gRPC trust-anchor SHA-256 pin must be a nonempty 64 lowercase hexadecimal value when activation is active",
+          trustAnchor != null && !trustAnchor.isEmpty()
+              ? "gRPC trust-anchor SHA-256 pin must be empty or 64 lowercase hexadecimal characters"
+              : "gRPC trust-anchor SHA-256 pin must be a nonempty 64 lowercase hexadecimal value when activation is active",
           failure.getMessage());
     }
   }

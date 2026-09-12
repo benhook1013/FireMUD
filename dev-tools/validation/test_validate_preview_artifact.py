@@ -118,6 +118,28 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                 {"spec": {"template": {"spec": {"volumes": [volume]}}}}
             )
 
+    def test_sanitized_walk_rejects_non_preview_namespace_identity_suffixes(self):
+        cases = (
+            {"secretName": "kube-system-tls"},
+            {"secretRef": {"name": "other-gateway-internal-ws"}},
+            {"secretKeyRef": {"name": "pr-0-tcp-proxy-bridge"}},
+            {
+                "projected": {
+                    "sources": [{"secret": {"name": "kube-system-telnet-tls"}}]
+                }
+            },
+            {
+                "csi": {
+                    "nodePublishSecretRef": {"name": "kube-system-tls"}
+                }
+            },
+        )
+        for value in cases:
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "contains an unapproved Secret reference"
+            ):
+                self.validator._validate_sanitized_secret_refs(value)
+
     def test_sanitized_walk_ignores_unrelated_secret_like_dictionaries(self):
         self.validator._validate_sanitized_secret_refs(
             {

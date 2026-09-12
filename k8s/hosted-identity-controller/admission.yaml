@@ -327,8 +327,12 @@ spec:
            object.spec.secretName == object.metadata.name &&
            has(object.spec.isCA) &&
            object.spec.isCA == false &&
+           (!has(object.spec.commonName) || object.spec.commonName == '') &&
+           (!has(object.spec.ipAddresses) || object.spec.ipAddresses.size() == 0) &&
+           (!has(object.spec.emailAddresses) || object.spec.emailAddresses.size() == 0) &&
            ((object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] &&
              object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net'] &&
+             (!has(object.spec.uris) || object.spec.uris.size() == 0) &&
              object.spec.issuerRef.name == 'letsencrypt-prod') ||
             (object.metadata.labels['firemud.dev/role'] in ['gateway-internal-ws', 'tcp-proxy-bridge'] &&
              object.spec.issuerRef.name == 'firemud-ca-issuer')) &&

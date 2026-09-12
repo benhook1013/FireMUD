@@ -157,7 +157,7 @@ class EnvironmentIdentityPlannerTest {
         1, runtimeScopeExpressions.size(), "exactly one runtime-scope admission branch must exist");
     String scopeRoleExpression = runtimeScopeExpressions.get(0);
     Matcher runtimeScope = RUNTIME_SCOPE_MARKER.matcher(scopeRoleExpression);
-    runtimeScope.find();
+    assertTrue(runtimeScope.find(), "runtime-scope admission branch marker must exist");
     String runtimeScopePolicy = scopeRoleExpression.substring(runtimeScope.start());
 
     Matcher resourceNames = RUNTIME_DEPLOYMENT_RESOURCE_NAMES.matcher(runtimeScopePolicy);

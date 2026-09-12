@@ -432,11 +432,8 @@ SANITIZER_FORBIDDEN_KINDS = {
     "ServiceAccount",
     "Secret",
 }
-SANITIZER_SECRET_REFERENCE_SUFFIXES = (
-    "-tls",
-    "-telnet-tls",
-    "-gateway-internal-ws",
-    "-tcp-proxy-bridge",
+SANITIZER_SECRET_REFERENCE = re.compile(
+    r"^pr-[1-9][0-9]*-(?:tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge)$"
 )
 SANITIZER_SENSITIVE_KEY = re.compile(
     r"(?:PASSWORD|TOKEN|PRIVATE|ACCESS_KEY|SECRET_KEY|CREDENTIAL)", re.IGNORECASE
@@ -548,7 +545,7 @@ def _is_expected_secret_reference(value: object) -> bool:
 def _is_sanitized_secret_reference(value: object) -> bool:
     return isinstance(value, str) and (
         _is_expected_secret_reference(value)
-        or value.endswith(SANITIZER_SECRET_REFERENCE_SUFFIXES)
+        or SANITIZER_SECRET_REFERENCE.fullmatch(value) is not None
     )
 
 

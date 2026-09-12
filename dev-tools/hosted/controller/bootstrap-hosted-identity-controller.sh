@@ -99,17 +99,24 @@ command -v gh >/dev/null 2>&1 || fail "gh is required to verify controller image
 [[ -d "$MANIFEST_DIR" ]] || fail "missing manifest directory: $MANIFEST_DIR"
 umask 077
 
-temporary_manifest="$(mktemp)"
+temporary_manifest=""
 temporary_rendered_manifest=""
-namespace_guard_policy_manifest="$(mktemp)"
-namespace_guard_binding_manifest="$(mktemp)"
+namespace_guard_policy_manifest=""
+namespace_guard_binding_manifest=""
 cleanup() {
-  rm -f "$temporary_manifest" "$namespace_guard_policy_manifest" "$namespace_guard_binding_manifest"
-  if [[ -n "$temporary_rendered_manifest" ]]; then
-    rm -f "$temporary_rendered_manifest"
-  fi
+  local temporary_path
+  for temporary_path in \
+    "$temporary_manifest" \
+    "$temporary_rendered_manifest" \
+    "$namespace_guard_policy_manifest" \
+    "$namespace_guard_binding_manifest"; do
+    [[ -z "$temporary_path" ]] || rm -f -- "$temporary_path"
+  done
 }
 trap cleanup EXIT
+temporary_manifest="$(mktemp)"
+namespace_guard_policy_manifest="$(mktemp)"
+namespace_guard_binding_manifest="$(mktemp)"
 
 # The default verifier predicate is SLSA build provenance. Verify the exact OCI
 # digest against this repository, signer workflow, hosted runner, and one of the
@@ -131,6 +138,12 @@ for trusted_source_ref in refs/heads/develop refs/heads/main; do
 done
 [[ "$controller_attestation_verified" == true ]] || \
   fail "controller image lacks trusted develop/main runtime-images.yml provenance"
+
+operator_groups="$(kubectl auth whoami \
+  -o jsonpath='{range .status.userInfo.groups[*]}{.}{"\n"}{end}')" || \
+  fail "unable to verify the current Kubernetes operator identity"
+grep -Fxq 'system:masters' <<<"$operator_groups" || \
+  fail "current Kubernetes operator identity must belong to system:masters before installing the namespace guard"
 
 replace_manifest() {
   temporary_rendered_manifest="$(mktemp)"

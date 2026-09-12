@@ -528,8 +528,7 @@ class DeploymentRolloutServiceTest {
     when(gateway.get()).thenReturn(stoppedGateway);
     when(proxy.get()).thenReturn(stoppedProxy);
 
-    DeploymentRolloutService.RetirementResult second =
-        service.stopBridges(client, plan, () -> {});
+    DeploymentRolloutService.RetirementResult second = service.stopBridges(client, plan, () -> {});
 
     assertEquals(true, second.stopped());
     assertEquals(true, second.gatewayStopped());

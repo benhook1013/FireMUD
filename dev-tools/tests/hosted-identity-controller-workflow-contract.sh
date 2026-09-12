@@ -883,7 +883,7 @@ for output in (
 for output in ('echo "hostname=${PREVIEW_HOSTNAME}"', 'echo "image_tag=${IMAGE_TAG}"'):
     assert preview_derive_run.index(image_tag_validation) < preview_derive_run.index(output)
     assert preview_derive_run.index("Invalid preview domain") < preview_derive_run.index(output)
-assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 60
+assert preview_workflow["jobs"]["preview-deploy"]["timeout-minutes"] == 120
 preview_steps = preview_workflow["jobs"]["preview-deploy"]["steps"]
 preview_mode_step = next(
     step
@@ -2914,14 +2914,24 @@ namespace_json() {
       uid: "uid-pr-42",
       annotations: {
         "firemud.dev/requested-preview-head-sha": $expected_head,
-        "firemud.dev/last-preview-head-sha": $expected_head
+        "firemud.dev/last-preview-head-sha": $expected_head,
+        "firemud.dev/last-preview-telnet-port": "32000"
       }
     }
   }'
 }
 
 identity_json() {
-  jq -nc --arg expected_head "${WAITER_EXPECTED_HEAD:?}" '{
+  profile_telnet_port=32000
+  if [[ "${WAITER_SCENARIO:?}" == telnet-port-mismatch ]]; then
+    profile_telnet_count="$(next_count profile-telnet-port)"
+    if (( profile_telnet_count == 1 )); then
+      profile_telnet_port=32001
+    fi
+  fi
+  jq -nc \
+    --arg expected_head "${WAITER_EXPECTED_HEAD:?}" \
+    --argjson profile_telnet_port "$profile_telnet_port" '{
     metadata: {generation: 1},
     status: {
       observedGeneration: 1,
@@ -2930,7 +2940,8 @@ identity_json() {
       profile: {
         runtimeNamespaceUid: "uid-pr-42",
         requestedHeadSha: $expected_head,
-        deployedHeadSha: $expected_head
+        deployedHeadSha: $expected_head,
+        telnetPort: $profile_telnet_port
       },
       ingress: {revision: "ingress-1"},
       telnet: {revision: "telnet-1"},
@@ -3103,6 +3114,7 @@ run_active_waiter_fixture() {
   [[ "$(wc -l <"$sleep_log")" -eq "$expected_sleep_calls" ]]
   if [[ "$expected_status" -eq 0 ]]; then
     grep -Fq 'identity=pr-42' "$output"
+    grep -Fq 'telnetPort=32000' "$output"
   else
     grep -Fq 'kubectl get failed' "$error"
     grep -Fq 'Error from server (Forbidden)' "$error"
@@ -3111,6 +3123,7 @@ run_active_waiter_fixture() {
 
 run_active_waiter_fixture namespace-absence 0 3 1
 run_active_waiter_fixture identity-absence 0 4 1
+run_active_waiter_fixture telnet-port-mismatch 0 4 1
 run_active_waiter_fixture namespace-command-failure 43 1 0
 run_active_waiter_fixture identity-command-failure 44 2 0
 

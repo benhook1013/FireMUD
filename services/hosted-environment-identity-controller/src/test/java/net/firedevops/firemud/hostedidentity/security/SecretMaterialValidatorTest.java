@@ -271,7 +271,9 @@ public class SecretMaterialValidatorTest {
     EnvironmentIdentityPlan plan =
         new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
     Secret source = generatedGrpcBundle(plan);
-    source.getData().remove("tls.crt");
+    Map<String, String> missingLeafData = new LinkedHashMap<>(source.getData());
+    missingLeafData.remove("tls.crt");
+    source.setData(missingLeafData);
 
     IllegalStateException failure =
         assertThrows(
@@ -1004,17 +1006,53 @@ public class SecretMaterialValidatorTest {
     data.remove("ca.crt");
     Secret publicChain =
         new SecretBuilder(source).withType("kubernetes.io/tls").withData(data).build();
-    validator.validate(
-        publicChain,
-        GrpcTransportBundleGenerator.grpcDnsNames(plan),
-        "kubernetes.io/tls",
-        false,
-        "");
+    String trustAnchor = SecretMaterialValidator.trustAnchorFingerprint(source);
+    assertEquals(
+        trustAnchor,
+        validator
+            .validate(
+                publicChain,
+                GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                "kubernetes.io/tls",
+                false,
+                trustAnchor)
+            .chainRootFingerprint());
     assertThrows(
         SecretMaterialValidator.MaterialValidationException.class,
         () ->
             validator.validate(
                 source, GrpcTransportBundleGenerator.grpcDnsNames(plan), "Opaque", true, ""));
+  }
+
+  @Test
+  void materialValidationRejectsUnexpectedPresentedChainAnchorWhenCaCrtIsMissing()
+      throws Exception {
+    EnvironmentIdentityPlan plan =
+        new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+    Secret source = generatedGrpcBundle(plan);
+    Map<String, String> data = new LinkedHashMap<>(source.getData());
+    data.put(
+        "tls.crt",
+        encode(pemText(source.getData().get("tls.crt")) + pemText(data.remove("ca.crt"))));
+    Secret publicChain =
+        new SecretBuilder(source).withType("kubernetes.io/tls").withData(data).build();
+    Secret unexpectedAnchor =
+        generatedCaWithDistinctKeyPair(
+            Instant.now(), Duration.ofDays(60), DISTINCT_CA_KEY_PAIR_ONE);
+
+    SecretMaterialValidator.MaterialValidationException failure =
+        assertThrows(
+            SecretMaterialValidator.MaterialValidationException.class,
+            () ->
+                new SecretMaterialValidator()
+                    .validate(
+                        publicChain,
+                        GrpcTransportBundleGenerator.grpcDnsNames(plan),
+                        "kubernetes.io/tls",
+                        false,
+                        SecretMaterialValidator.trustAnchorFingerprint(unexpectedAnchor)));
+
+    assertEquals("certificate chain trust anchor fingerprint mismatch", failure.getMessage());
   }
 
   @Test

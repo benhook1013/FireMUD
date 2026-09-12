@@ -68,9 +68,7 @@ public class DeploymentRolloutService {
    * fencing every read/replace boundary with the current runtime identity.
    */
   public RetirementResult stopBridges(
-      KubernetesClient client,
-      EnvironmentIdentityPlan plan,
-      Runnable runtimeProfileFence) {
+      KubernetesClient client, EnvironmentIdentityPlan plan, Runnable runtimeProfileFence) {
     if (runtimeProfileFence == null) {
       throw new IllegalArgumentException("runtime profile guard is required");
     }

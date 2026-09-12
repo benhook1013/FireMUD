@@ -962,6 +962,9 @@ assert "firemud-grpc-tls" not in controller_non_delete_expression
 assert "'grpc'" not in controller_non_delete_expression
 assert "has(object.spec.isCA)" in controller_non_delete_expression
 assert "object.spec.isCA == false" in controller_non_delete_expression
+assert "(!has(object.spec.commonName) || object.spec.commonName == '')" in controller_non_delete_expression
+assert "(!has(object.spec.ipAddresses) || object.spec.ipAddresses.size() == 0)" in controller_non_delete_expression
+assert "(!has(object.spec.emailAddresses) || object.spec.emailAddresses.size() == 0)" in controller_non_delete_expression
 cert_manager_status_expression = certificate_expressions[0].split(
     "(request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager'",
     1,
@@ -986,6 +989,13 @@ assert "/sa/tcp-proxy-service" in profile_expression
 assert "has(object.spec.encodeUsagesInRequest)" in profile_expression
 assert "object.spec.encodeUsagesInRequest == true" in profile_expression
 assert "object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : request.namespace.substring(0, request.namespace.size() - 9)) + '.preview.firedevops.net']" in profile_expression
+assert (
+    "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet'] && "
+    "object.spec.dnsNames == [((request.namespace == 'dev-identity') ? 'dev' : "
+    "request.namespace.substring(0, request.namespace.size() - 9)) + "
+    "'.preview.firedevops.net'] && "
+    "(!has(object.spec.uris) || object.spec.uris.size() == 0) &&"
+) in normalized_profile_expression
 assert "object.spec.issuerRef.name == 'letsencrypt-prod'" in profile_expression
 assert "object.spec.issuerRef.name == 'firemud-ca-issuer'" in profile_expression
 assert "object.spec.issuerRef.kind == 'ClusterIssuer'" in profile_expression
@@ -1377,6 +1387,9 @@ assert 'rendered_activation_mode="$(sed -n ' in source
 assert '[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]' in source
 assert '[[ "$rendered_activation_mode" == "$ACTIVATION_MODE" ]]' in source
 assert source.count('[[ "$rendered_activation_mode" == "$initial_activation_mode" ]]') == 1
+cleanup_trap = source.index("trap cleanup EXIT")
+first_temporary_file = source.index('temporary_manifest="$(mktemp)"')
+assert cleanup_trap < first_temporary_file
 PY
 require_literal "$PROJECTION" "ACCEPTED_SOURCE_OBJECT_GENERATION_ANNOTATION"
 forbid_literal "$GRPC_GENERATOR" 'requiredData(caSource, "tls.crt")'
@@ -1429,6 +1442,16 @@ spec:
   validationActions:
     - Deny
 YAML
+  exit 0
+fi
+if [[ "${1:-}" == "auth" && "${2:-}" == "whoami" ]]; then
+  record_event operator-whoami
+  if [[ "${FAKE_OPERATOR_WHOAMI_ERROR:-0}" == 1 ]]; then
+    printf 'simulated operator identity lookup failure\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "${FAKE_OPERATOR_GROUPS:-system:authenticated
+system:masters}"
   exit 0
 fi
 if [[ "${1:-}" == "apply" ]]; then
@@ -1642,6 +1665,69 @@ if FAKE_EVENT_LOG="$missing_gh_events" FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=
   fail "bootstrap accepted a missing gh attestation verifier"
 fi
 [[ ! -e "$missing_gh_events" ]] || fail "missing gh reached kubectl"
+mktemp_failure_dir="$bootstrap_test_dir/mktemp-failure-bin"
+mkdir -p "$mktemp_failure_dir"
+ln -s "$bootstrap_test_dir/kubectl" "$mktemp_failure_dir/kubectl"
+ln -s "$bootstrap_test_dir/gh" "$mktemp_failure_dir/gh"
+cat >"$mktemp_failure_dir/mktemp" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+call_count=0
+if [[ -f "${FAKE_MKTEMP_CALLS:?}" ]]; then
+  call_count="$(<"$FAKE_MKTEMP_CALLS")"
+fi
+call_count=$((call_count + 1))
+printf '%s' "$call_count" >"$FAKE_MKTEMP_CALLS"
+if ((call_count == 2)); then
+  exit 1
+fi
+temporary_path="$(/usr/bin/mktemp)"
+printf '%s' "$temporary_path" >"${FAKE_MKTEMP_CREATED:?}"
+printf '%s\n' "$temporary_path"
+SH
+chmod +x "$mktemp_failure_dir/mktemp"
+mktemp_calls="$bootstrap_test_dir/mktemp-calls"
+mktemp_created="$bootstrap_test_dir/mktemp-created"
+if FAKE_MKTEMP_CALLS="$mktemp_calls" FAKE_MKTEMP_CREATED="$mktemp_created" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
+  PATH="$mktemp_failure_dir:/usr/bin:/bin" bash "$BOOTSTRAP" \
+  --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted a partial temporary-file initialization"
+fi
+[[ "$(<"$mktemp_calls")" -eq 2 ]] || \
+  fail "bootstrap did not reach the simulated second mktemp failure"
+first_partial_temporary_file="$(<"$mktemp_created")"
+[[ ! -e "$first_partial_temporary_file" ]] || \
+  fail "bootstrap leaked its first temporary file after a later mktemp failed"
+non_master_events="$bootstrap_test_dir/non-master-events"
+if FAKE_OPERATOR_GROUPS='system:authenticated' FAKE_EVENT_LOG="$non_master_events" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an operator outside system:masters"
+fi
+require_literal "$bootstrap_error" \
+  "current Kubernetes operator identity must belong to system:masters before installing the namespace guard"
+grep -Fxq operator-whoami "$non_master_events" || \
+  fail "bootstrap did not inspect the current operator groups"
+if grep -Eq '^(guard-policy|guard-binding|apply:)' "$non_master_events"; then
+  fail "bootstrap installed resources for an operator outside system:masters"
+fi
+operator_lookup_error_events="$bootstrap_test_dir/operator-lookup-error-events"
+if FAKE_OPERATOR_WHOAMI_ERROR=1 FAKE_EVENT_LOG="$operator_lookup_error_events" \
+  FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 PATH="$bootstrap_test_dir:$PATH" \
+  bash "$BOOTSTRAP" --image "$bootstrap_image" \
+  --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
+  >"$bootstrap_output" 2>"$bootstrap_error"; then
+  fail "bootstrap accepted an unavailable operator identity lookup"
+fi
+require_literal "$bootstrap_error" "unable to verify the current Kubernetes operator identity"
+if grep -Eq '^(guard-policy|guard-binding|apply:)' "$operator_lookup_error_events"; then
+  fail "bootstrap installed resources after operator identity lookup failed"
+fi
 if FAKE_MISSING_POLICY=1 FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR=1 \
   PATH="$bootstrap_test_dir:$PATH" bash "$BOOTSTRAP" --image "$bootstrap_image" \
   --grpc-trust-anchor-sha256 "$bootstrap_fingerprint" --wait-seconds 1 \
@@ -1697,7 +1783,9 @@ if ! FAKE_EVENT_LOG="$active_event_log" \
 fi
 require_literal "$bootstrap_output" "activation=active"
 mapfile -t active_events <"$active_event_log"
-[[ "${active_events[0]:-}" == "apply:paused" ]] || \
+[[ "${active_events[0]:-}" == "operator-whoami" ]] || \
+  fail "active bootstrap did not verify the operator identity first"
+[[ "${active_events[1]:-}" == "apply:paused" ]] || \
   fail "active bootstrap did not apply paused mode first"
 [[ "${active_events[-2]:-}" == "apply:active" ]] || \
   fail "active bootstrap did not replace paused mode with active"
