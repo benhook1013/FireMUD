@@ -8533,6 +8533,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from unittest.mock import patch
 
 import yaml
 
@@ -8828,6 +8829,41 @@ if (
 ):
     raise SystemExit(f"hosted-bridge mismatch result was not explicit: {mismatch_result}")
 
+quoted_node_port_documents = list(
+    yaml.safe_load_all(render_path.read_text(encoding="utf-8"))
+)
+next(
+    document
+    for document in quoted_node_port_documents
+    if document.get("kind") == "Service"
+    and document.get("metadata", {}).get("name") == "tcp-proxy-service"
+)["spec"]["ports"][0]["nodePort"] = str(node_port)
+quoted_node_port_path = tmp / "hosted-bridge-contract-quoted-node-port.yaml"
+quoted_node_port_path.write_text(
+    yaml.safe_dump_all(quoted_node_port_documents, sort_keys=False), encoding="utf-8"
+)
+quoted_node_port = run_hosted(
+    quoted_node_port_path,
+    "--expected-hosted-telnet-node-port",
+    str(node_port),
+)
+if quoted_node_port.returncode == 0:
+    raise SystemExit("hosted-bridge accepted a quoted-string Telnet nodePort")
+quoted_node_port_result = json.loads(quoted_node_port.stdout)
+if (
+    quoted_node_port_result.get("status") != "fail"
+    or "hosted-controller TCP Proxy Service nodePort must be an integer"
+    not in quoted_node_port_result.get("message", "")
+    or "nodePort must match its allocated Telnet port"
+    in quoted_node_port_result.get("message", "")
+    or "trusted hosted-controller TCP Proxy Telnet nodePort must equal"
+    in quoted_node_port_result.get("message", "")
+):
+    raise SystemExit(
+        "hosted-bridge quoted-string nodePort result was not explicit: "
+        f"{quoted_node_port_result}"
+    )
+
 out_of_range_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 out_of_range_service = next(
     document
@@ -8882,12 +8918,13 @@ if (
         f"{instance_mismatch_result}"
     )
 
-original_projection_wait = module.wait_for_secret_key_requirements
-try:
-    def unexpected_projection_wait(*args, **kwargs):
-        raise SystemExit("operator preflight waited for projections after render failure")
-
-    module.wait_for_secret_key_requirements = unexpected_projection_wait
+with patch.object(
+    module,
+    "wait_for_secret_key_requirements",
+    side_effect=SystemExit(
+        "operator preflight waited for projections after render failure"
+    ),
+):
     operator_mismatch_output = io.StringIO()
     with contextlib.redirect_stdout(operator_mismatch_output):
         operator_mismatch_status = module.hosted_bridge_preflight(
@@ -8908,8 +8945,6 @@ try:
             "operator preflight did not return the existing render failure immediately: "
             f"{operator_mismatch_result}"
         )
-finally:
-    module.wait_for_secret_key_requirements = original_projection_wait
 
 standalone_documents = list(yaml.safe_load_all(render_path.read_text(encoding="utf-8")))
 for document in standalone_documents:

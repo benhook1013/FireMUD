@@ -788,6 +788,36 @@ assert "'firemud-grpc-ca'" not in role_expression
 assert "r.resources == ['certificaterequests']" in role_expression
 assert "r.verbs == ['list']" in role_expression
 normalized_role_expression = " ".join(role_expression.split())
+for guard in (
+    "(!has(r.apiGroups) || r.apiGroups.all(group, group != '*'))",
+    "(!has(r.resources) || r.resources.all(resource, resource != '*'))",
+    "(!has(r.verbs) || r.verbs.all(verb, verb != '*'))",
+):
+    assert guard in normalized_role_expression
+assert "(!has(r.nonResourceURLs) || r.nonResourceURLs.size() == 0)" in (
+    normalized_role_expression
+)
+
+
+def policy_rule_has_no_wildcards_or_non_resource_urls(rule):
+    return all(
+        value != "*"
+        for field in ("apiGroups", "resources", "verbs")
+        for value in rule.get(field, [])
+    ) and not rule.get("nonResourceURLs", [])
+
+
+assert policy_rule_has_no_wildcards_or_non_resource_urls({})
+assert policy_rule_has_no_wildcards_or_non_resource_urls(
+    {"apiGroups": [], "resources": [], "verbs": [], "nonResourceURLs": []}
+)
+for unsafe_rule in (
+    {"apiGroups": ["*"]},
+    {"resources": ["*"]},
+    {"verbs": ["*"]},
+    {"nonResourceURLs": ["/healthz"]},
+):
+    assert not policy_rule_has_no_wildcards_or_non_resource_urls(unsafe_rule)
 assert (
     "r.apiGroups == [''] && r.resources == ['services', 'pods'] && "
     "r.verbs == ['get', 'list', 'watch'] && "

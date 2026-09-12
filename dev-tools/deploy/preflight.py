@@ -4258,22 +4258,33 @@ def validate_hosted_telnet_tls_values(
             issues.append(
                 "hosted-controller TCP Proxy Service requires exactly one explicit allocated nodePort"
             )
-        elif (
-            allocated_port_value is not None
-            and telnet_ports[0]["nodePort"] != allocated_port_value
-        ):
-            issues.append(
-                "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
-            )
+        else:
+            telnet_node_port = telnet_ports[0]["nodePort"]
+            if not isinstance(telnet_node_port, int) or isinstance(
+                telnet_node_port, bool
+            ):
+                issues.append(
+                    "hosted-controller TCP Proxy Service nodePort must be an integer"
+                )
+            elif (
+                allocated_port_value is not None
+                and telnet_node_port != allocated_port_value
+            ):
+                issues.append(
+                    "hosted-controller TCP Proxy Service nodePort must match its allocated Telnet port"
+                )
         if expected_hosted_telnet_node_port is not None:
             explicit_node_port_entries = [
                 port
                 for port in service_ports
                 if isinstance(port, dict) and "nodePort" in port
             ]
-            if len(telnet_ports) != 1 or telnet_ports[0].get(
-                "nodePort"
-            ) != expected_hosted_telnet_node_port:
+            if (
+                len(telnet_ports) == 1
+                and isinstance(telnet_ports[0].get("nodePort"), int)
+                and not isinstance(telnet_ports[0].get("nodePort"), bool)
+                and telnet_ports[0]["nodePort"] != expected_hosted_telnet_node_port
+            ):
                 issues.append(
                     "trusted hosted-controller TCP Proxy Telnet nodePort must equal "
                     f"{expected_hosted_telnet_node_port}"

@@ -453,9 +453,9 @@ spec:
             object.metadata.labels['firemud.dev/identity-name'] == object.metadata.namespace &&
             object.metadata.labels['firemud.dev/environment-class'] == 'pr-preview')) &&
           object.rules.all(r,
-            r.apiGroups.all(group, group != '*') &&
-            r.resources.all(resource, resource != '*') &&
-            r.verbs.all(verb, verb != '*') &&
+            (!has(r.apiGroups) || r.apiGroups.all(group, group != '*')) &&
+            (!has(r.resources) || r.resources.all(resource, resource != '*')) &&
+            (!has(r.verbs) || r.verbs.all(verb, verb != '*')) &&
             (!has(r.nonResourceURLs) || r.nonResourceURLs.size() == 0)) &&
           ((object.metadata.name == 'firemud-hosted-identity-scope' &&
             object.metadata.namespace.matches('^(dev-identity|pr-[1-9][0-9]*-identity)$') &&

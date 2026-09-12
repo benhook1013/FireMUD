@@ -327,7 +327,13 @@ jobs:
 
       - name: Restore preview runtime kubeconfig
         if: ${{ always() }}
-        run: echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          if [[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
+            echo "::error title=Missing preview runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
+            exit 1
+          fi
+          echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}

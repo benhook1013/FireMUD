@@ -2095,8 +2095,7 @@ janitor_workflow="$ROOT_DIR/.github/workflows/preview-janitor.yml"
 grep -q 'timeout-minutes: 60' "$janitor_workflow"
 # Dormant successor deployment and cleanup code remains source-bound and
 # fail-closed until successor triggers and producer artifacts are activated.
-grep -q 'ACTION=deploy' "$trusted_workflow"
-test "$(grep -Fc -- '            ACTION=deploy' "$trusted_workflow")" -eq 1
+test "$(grep -Ec '^[[:space:]]*ACTION=deploy[[:space:]]*$' "$trusted_workflow")" -eq 1
 grep -q 'emit_no_action' "$trusted_workflow"
 # shellcheck disable=SC2016 # Assert the exact workflow-run artifact name.
 grep -Fq 'expected_artifact_name="preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"' "$trusted_workflow"

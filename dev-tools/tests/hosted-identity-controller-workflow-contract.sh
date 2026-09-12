@@ -627,7 +627,12 @@ assert deploy_runtime_remember["run"] == (
 )
 deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
 assert deploy_runtime_restore["if"] == "${{ always() }}"
-assert deploy_runtime_restore["run"] == (
+deploy_runtime_restore_run = deploy_runtime_restore["run"]
+assert '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
+assert "The runtime kubeconfig path was not initialized." in deploy_runtime_restore_run
+assert deploy_runtime_restore_run.index(
+    '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
+) < deploy_runtime_restore_run.index(
     'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
 )
 assert "uses" not in deploy_runtime_restore
