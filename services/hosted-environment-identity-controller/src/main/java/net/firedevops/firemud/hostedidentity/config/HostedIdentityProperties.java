@@ -1,6 +1,8 @@
 package net.firedevops.firemud.hostedidentity.config;
 
 import java.time.Duration;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 import org.springframework.beans.factory.InitializingBean;
@@ -76,6 +78,13 @@ public class HostedIdentityProperties implements InitializingBean {
         devDemoRequestedHeadAnnotation,
         devDemoHeadAnnotation,
         devDemoTelnetPortAnnotation);
+    requireGloballyDistinctLifecycleAnnotations(
+        previewRequestedHeadAnnotation,
+        previewDeployedHeadAnnotation,
+        previewTelnetPortAnnotation,
+        devDemoRequestedHeadAnnotation,
+        devDemoHeadAnnotation,
+        devDemoTelnetPortAnnotation);
     requireCanonicalTelnetPort(
         "preview Telnet port base", previewTelnetPortBase, CANONICAL_PREVIEW_TELNET_PORT_BASE);
     requireCanonicalTelnetPort(
@@ -132,6 +141,16 @@ public class HostedIdentityProperties implements InitializingBean {
         || telnetPortAnnotation.equals(deployedAnnotation)) {
       throw new IllegalStateException(
           lifecycle + " requested head, deployed head, and Telnet port annotations must differ");
+    }
+  }
+
+  private static void requireGloballyDistinctLifecycleAnnotations(String... annotations) {
+    Set<String> distinctAnnotations = new HashSet<>();
+    for (String annotation : annotations) {
+      if (!distinctAnnotations.add(annotation)) {
+        throw new IllegalStateException(
+            "preview and dev-demo lifecycle annotations must be globally distinct");
+      }
     }
   }
 

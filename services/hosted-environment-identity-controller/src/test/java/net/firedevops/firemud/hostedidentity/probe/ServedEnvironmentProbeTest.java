@@ -21,9 +21,11 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -39,7 +41,7 @@ import org.junit.jupiter.api.Test;
 class ServedEnvironmentProbeTest {
   @Test
   void totalDeadlineLeavesSmallHeadroomBeyondAllEndpointBudgets() {
-    assertEquals(Duration.ofSeconds(53), ServedEnvironmentProbe.TOTAL_PROBE_TIMEOUT);
+    assertEquals(Duration.ofSeconds(14), ServedEnvironmentProbe.TOTAL_PROBE_TIMEOUT);
   }
 
   @Test
@@ -107,7 +109,7 @@ class ServedEnvironmentProbeTest {
   void readinessProbeSuppliesEachDerivedEndpointToItsProbeSeam() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
-    List<String> endpoints = new ArrayList<>();
+    List<String> endpoints = Collections.synchronizedList(new ArrayList<>());
     ServedEnvironmentProbe.EndpointProbe recordingProbe =
         (hostname, port) -> {
           endpoints.add(hostname + ":" + port);
@@ -118,47 +120,65 @@ class ServedEnvironmentProbeTest {
         .probe(plan, 32001, recordingProbe, recordingProbe, recordingProbe, recordingProbe);
 
     assertEquals(
-        List.of(
+        Set.of(
             "pr-42.preview.firedevops.net:443",
             "pr-42.preview.firedevops.net:32001",
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
             "account-service.pr-42.svc.cluster.local:6565"),
-        endpoints);
+        Set.copyOf(endpoints));
+    assertEquals(4, endpoints.size());
   }
 
   @Test
-  void readinessProbeEnforcesOneDeadlineAcrossEveryEndpoint() throws Exception {
+  void readinessProbeRunsEveryEndpointConcurrentlyWithinOneDeadline() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
+    CountDownLatch started = new CountDownLatch(4);
+    EndpointProbeState state = new EndpointProbeState(started);
+    ServedEnvironmentProbe.EndpointProbe endpoint = state::check;
 
-    for (int blockedProbe = 0; blockedProbe < 4; blockedProbe++) {
-      AtomicInteger calls = new AtomicInteger();
-      CountDownLatch interrupted = new CountDownLatch(1);
-      SSLSocket openSocket = mock(SSLSocket.class);
-      int blocked = blockedProbe;
-      ServedEnvironmentProbe.EndpointProbe endpoint =
-          (hostname, port) -> {
-            if (calls.getAndIncrement() == blocked) {
-              ServedEnvironmentProbe.trackSocket(openSocket);
-              try {
-                new CountDownLatch(1).await();
-              } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                interrupted.countDown();
-                return new ServedEnvironmentProbe.ProbeResult(false, "interrupted");
-              }
-            }
-            return new ServedEnvironmentProbe.ProbeResult(true, "ready");
-          };
+    ServedEnvironmentProbe.ProbeResult result =
+        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(1));
 
-      ServedEnvironmentProbe.ProbeResult result =
-          probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofMillis(100));
+    assertEquals("served-bridge-and-grpc-accepted", result.reason());
+    assertEquals(4, state.calls.get());
+    assertEquals(0, started.getCount());
+  }
 
-      assertEquals("probe-deadline-exceeded", result.reason());
-      assertEquals(blocked + 1, calls.get());
+  @Test
+  void readinessProbeCancelsAndClosesEveryOutstandingEndpointAttemptAtDeadline() throws Exception {
+    HostedIdentityProperties properties = new HostedIdentityProperties();
+    EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
+    ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
+    CountDownLatch started = new CountDownLatch(4);
+    CountDownLatch interrupted = new CountDownLatch(4);
+    List<SSLSocket> openSockets = Collections.synchronizedList(new ArrayList<>());
+    ServedEnvironmentProbe.EndpointProbe endpoint =
+        (hostname, port) -> {
+          SSLSocket openSocket = mock(SSLSocket.class);
+          openSockets.add(openSocket);
+          ServedEnvironmentProbe.trackSocket(openSocket);
+          started.countDown();
+          try {
+            new CountDownLatch(1).await();
+          } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            interrupted.countDown();
+            return new ServedEnvironmentProbe.ProbeResult(false, "interrupted");
+          }
+          return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+        };
+
+    ServedEnvironmentProbe.ProbeResult result =
+        probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(1));
+
+    assertEquals("probe-deadline-exceeded", result.reason());
+    assertTrue(started.await(1, TimeUnit.SECONDS));
+    assertTrue(interrupted.await(1, TimeUnit.SECONDS));
+    assertEquals(4, openSockets.size());
+    for (SSLSocket openSocket : openSockets) {
       verify(openSocket).close();
-      assertTrue(interrupted.await(1, TimeUnit.SECONDS));
     }
   }
 
@@ -482,5 +502,28 @@ class ServedEnvironmentProbeTest {
     String body = Base64.getEncoder().encodeToString(der);
     String pem = "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----\n";
     return Base64.getEncoder().encodeToString(pem.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private static final class EndpointProbeState {
+    private final CountDownLatch started;
+    private final AtomicInteger calls = new AtomicInteger();
+
+    private EndpointProbeState(CountDownLatch started) {
+      this.started = started;
+    }
+
+    private ServedEnvironmentProbe.ProbeResult check(String hostname, int port) {
+      calls.incrementAndGet();
+      started.countDown();
+      try {
+        if (!started.await(5, TimeUnit.SECONDS)) {
+          return new ServedEnvironmentProbe.ProbeResult(false, "not-concurrent");
+        }
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        return new ServedEnvironmentProbe.ProbeResult(false, "interrupted");
+      }
+      return new ServedEnvironmentProbe.ProbeResult(true, "ready");
+    }
   }
 }

@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -60,10 +61,9 @@ public class ServedEnvironmentProbe {
           Pattern.DOTALL);
   private static final int CONNECT_TIMEOUT_MILLIS = 5000;
   private static final int IO_TIMEOUT_MILLIS = 8000;
-  private static final int ENDPOINT_PROBE_COUNT = 4;
   private static final Duration TOTAL_PROBE_TIMEOUT_SLACK = Duration.ofSeconds(1);
   static final Duration TOTAL_PROBE_TIMEOUT =
-      Duration.ofMillis((long) ENDPOINT_PROBE_COUNT * (CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS))
+      Duration.ofMillis(CONNECT_TIMEOUT_MILLIS + IO_TIMEOUT_MILLIS)
           .plus(TOTAL_PROBE_TIMEOUT_SLACK);
   private static final int GRPC_PORT = 6565;
   private static final int MAX_HTTP_STATUS_LINE_BYTES = 256;
@@ -117,36 +117,57 @@ public class ServedEnvironmentProbe {
       EndpointProbe bridgeProbe,
       EndpointProbe grpcProbe,
       Duration timeout) {
-    ProbeAttempt attempt = new ProbeAttempt();
-    FutureTask<ProbeResult> task =
-        new FutureTask<>(
-            () -> {
-              CURRENT_ATTEMPT.set(attempt);
-              try {
-                return probeSequentially(
-                    plan, telnetPort, httpsProbe, telnetProbe, bridgeProbe, grpcProbe);
-              } finally {
-                attempt.closeOpenSocket();
-                CURRENT_ATTEMPT.remove();
-              }
-            });
-    Thread.ofVirtual().name("served-environment-probe").start(task);
+    List<RunningProbe> probes =
+        List.of(
+            startProbe(
+                "https", () -> httpsProbe.check(plan.hostname(), 443)),
+            startProbe(
+                "telnet", () -> telnetProbe.check(plan.hostname(), telnetPort)),
+            startProbe(
+                "bridge", () -> bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443)),
+            startProbe(
+                "grpc",
+                () -> {
+                  try {
+                    return grpcProbe.check(grpcHostname(plan), GRPC_PORT);
+                  } catch (IllegalArgumentException exception) {
+                    LOGGER.debug(
+                        "gRPC probe rejected material or configuration for runtime Namespace {}",
+                        plan.runtimeNamespace(),
+                        exception);
+                    return new ProbeResult(false, "grpc-material-or-configuration-invalid");
+                  }
+                }));
+    long deadline = System.nanoTime() + timeout.toNanos();
     try {
-      return task.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+      ProbeResult[] results = new ProbeResult[probes.size()];
+      for (int index = 0; index < probes.size(); index++) {
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) {
+          throw new TimeoutException();
+        }
+        results[index] = probes.get(index).task().get(remaining, TimeUnit.NANOSECONDS);
+      }
+      for (int index = 0; index < results.length; index++) {
+        if (!results[index].ready()) {
+          cancelOutstanding(probes);
+          return prefixedResult(index, results[index]);
+        }
+      }
+      return new ProbeResult(true, "served-bridge-and-grpc-accepted");
     } catch (TimeoutException exception) {
-      attempt.closeOpenSocket();
-      task.cancel(true);
+      cancelOutstanding(probes);
       LOGGER.debug(
           "Served-environment probes exceeded the {} total deadline for runtime Namespace {}",
           timeout,
           plan.runtimeNamespace());
       return new ProbeResult(false, "probe-deadline-exceeded");
     } catch (InterruptedException exception) {
-      attempt.closeOpenSocket();
-      task.cancel(true);
+      cancelOutstanding(probes);
       Thread.currentThread().interrupt();
       return new ProbeResult(false, "probe-interrupted");
     } catch (ExecutionException exception) {
+      cancelOutstanding(probes);
       if (exception.getCause() instanceof RuntimeException runtimeException) {
         throw runtimeException;
       }
@@ -157,38 +178,44 @@ public class ServedEnvironmentProbe {
     }
   }
 
-  private static ProbeResult probeSequentially(
-      EnvironmentIdentityPlan plan,
-      int telnetPort,
-      EndpointProbe httpsProbe,
-      EndpointProbe telnetProbe,
-      EndpointProbe bridgeProbe,
-      EndpointProbe grpcProbe) {
-    ProbeResult https = httpsProbe.check(plan.hostname(), 443);
-    if (!https.ready()) {
-      return new ProbeResult(false, "https-" + https.reason());
+  private static RunningProbe startProbe(String name, Callable<ProbeResult> operation) {
+    ProbeAttempt attempt = new ProbeAttempt();
+    FutureTask<ProbeResult> task =
+        new FutureTask<>(
+            () -> {
+              CURRENT_ATTEMPT.set(attempt);
+              try {
+                return operation.call();
+              } finally {
+                attempt.closeOpenSocket();
+                CURRENT_ATTEMPT.remove();
+              }
+            });
+    Thread.ofVirtual().name("served-environment-probe-" + name).start(task);
+    return new RunningProbe(task, attempt);
+  }
+
+  private static void cancelOutstanding(List<RunningProbe> probes) {
+    for (RunningProbe probe : probes) {
+      probe.attempt().closeOpenSocket();
     }
-    ProbeResult telnet = telnetProbe.check(plan.hostname(), telnetPort);
-    if (!telnet.ready()) {
-      return new ProbeResult(false, "telnet-" + telnet.reason());
+    for (RunningProbe probe : probes) {
+      probe.task().cancel(true);
     }
-    ProbeResult bridge = bridgeProbe.check(plan.gatewayInternalWsDnsName(), 443);
-    if (!bridge.ready()) {
-      return new ProbeResult(false, "bridge-" + bridge.reason());
+  }
+
+  private static ProbeResult prefixedResult(int index, ProbeResult result) {
+    if (index == 3 && "grpc-material-or-configuration-invalid".equals(result.reason())) {
+      return result;
     }
-    ProbeResult grpc;
-    try {
-      grpc = grpcProbe.check(grpcHostname(plan), GRPC_PORT);
-    } catch (IllegalArgumentException exception) {
-      LOGGER.debug(
-          "gRPC probe rejected material or configuration for runtime Namespace {}",
-          plan.runtimeNamespace(),
-          exception);
-      return new ProbeResult(false, "grpc-material-or-configuration-invalid");
-    }
-    return grpc.ready()
-        ? new ProbeResult(true, "served-bridge-and-grpc-accepted")
-        : new ProbeResult(false, "grpc-" + grpc.reason());
+    String prefix = switch (index) {
+      case 0 -> "https-";
+      case 1 -> "telnet-";
+      case 2 -> "bridge-";
+      case 3 -> "grpc-";
+      default -> throw new IllegalArgumentException("unknown endpoint probe index: " + index);
+    };
+    return new ProbeResult(false, prefix + result.reason());
   }
 
   private ProbeResult bridge(
@@ -568,6 +595,8 @@ public class ServedEnvironmentProbe {
       attempt.releaseOpenSocket();
     }
   }
+
+  private record RunningProbe(FutureTask<ProbeResult> task, ProbeAttempt attempt) {}
 
   private static final class ProbeAttempt {
     private Socket openSocket;

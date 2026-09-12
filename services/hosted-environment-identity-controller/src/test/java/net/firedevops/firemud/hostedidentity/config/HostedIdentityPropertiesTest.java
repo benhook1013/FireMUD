@@ -122,6 +122,32 @@ class HostedIdentityPropertiesTest {
   }
 
   @Test
+  void rejectsCrossLifecycleAnnotationCollisions() {
+    List<String> previewAnnotations =
+        List.of(
+            new HostedIdentityProperties().getPreviewRequestedHeadAnnotation(),
+            new HostedIdentityProperties().getPreviewDeployedHeadAnnotation(),
+            new HostedIdentityProperties().getPreviewTelnetPortAnnotation());
+    List<BiConsumer<HostedIdentityProperties, String>> devDemoSetters =
+        List.of(
+            HostedIdentityProperties::setDevDemoRequestedHeadAnnotation,
+            HostedIdentityProperties::setDevDemoHeadAnnotation,
+            HostedIdentityProperties::setDevDemoTelnetPortAnnotation);
+
+    for (String previewAnnotation : previewAnnotations) {
+      for (BiConsumer<HostedIdentityProperties, String> devDemoSetter : devDemoSetters) {
+        HostedIdentityProperties properties = new HostedIdentityProperties();
+        devDemoSetter.accept(properties, previewAnnotation);
+        IllegalStateException failure =
+            assertThrows(IllegalStateException.class, properties::afterPropertiesSet);
+        assertEquals(
+            "preview and dev-demo lifecycle annotations must be globally distinct",
+            failure.getMessage());
+      }
+    }
+  }
+
+  @Test
   void validatesCanonicalControlNamespaceBeforeTelnetPortAllocations() {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     assertDoesNotThrow(properties::afterPropertiesSet);
