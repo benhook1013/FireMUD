@@ -161,11 +161,15 @@ jq -e '.status == "UP"' <<<'{"status":"UP","components":{"controller":{"status":
 # The shared kubeconfig action is the only workflow credential-file writer.
 # shellcheck disable=SC2016 # These assertions intentionally match literal action source.
 for required in \
-  'description: Write a validated kubeconfig to a private runner file and write KUBECONFIG to GITHUB_ENV as the default for subsequent job steps unless a later step overrides it' \
+  'description: Write a validated kubeconfig to a private runner file and write KUBECONFIG to GITHUB_ENV by default' \
+  'export-to-github-env:' \
+  "default: 'true'" \
   'using: composite' \
+  'EXPORT_TO_GITHUB_ENV: ${{ inputs.export-to-github-env }}' \
   'umask 077' \
   '[[ -n "$KUBECONFIG_CONTENT" ]]' \
   'command -v kubectl >/dev/null 2>&1 || {' \
+  '[[ "$EXPORT_TO_GITHUB_ENV" == true || "$EXPORT_TO_GITHUB_ENV" == false ]] || {' \
   'mkdir -p -- "$destination_directory"' \
   'temporary_path="$(mktemp -- "$destination_directory/.${destination_name}.XXXXXX")"' \
   'trap cleanup EXIT' \
@@ -826,70 +830,31 @@ assert active_request["run"] == (
 )
 deploy_runtime_write = deploy_by_name["Write runtime kubeconfig"]
 deploy_requester_write = deploy_by_name["Write requester kubeconfig"]
-deploy_runtime_remember = deploy_by_name["Remember preview runtime kubeconfig"]
 assert deploy_runtime_write["with"]["path"] == (
     "${{ runner.temp }}/preview-runtime.kubeconfig"
 )
-assert deploy_runtime_remember["env"]["PREVIEW_RUNTIME_KUBECONFIG_PATH"] == (
-    "${{ runner.temp }}/preview-runtime.kubeconfig"
-)
-assert deploy_runtime_remember["run"] == (
-    'echo "PREVIEW_RUNTIME_KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG_PATH" >> "$GITHUB_ENV"'
-)
-deploy_runtime_restore = deploy_by_name["Restore preview runtime kubeconfig"]
-assert deploy_runtime_restore["if"] == "${{ always() }}"
-deploy_runtime_restore_run = deploy_runtime_restore["run"]
-assert '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]' in deploy_runtime_restore_run
-assert (
-    "::error title=Missing preview runtime kubeconfig::"
-    "The runtime kubeconfig path was not initialized."
-) in deploy_runtime_restore_run
-assert deploy_runtime_restore_run.index(
-    '[[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]'
-) < deploy_runtime_restore_run.index(
-    'echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
-)
-with tempfile.TemporaryDirectory() as restore_fixture_dir:
-    github_env = Path(restore_fixture_dir) / "github-env"
-    fixture_env = os.environ.copy()
-    fixture_env["GITHUB_ENV"] = str(github_env)
-    fixture_env.pop("PREVIEW_RUNTIME_KUBECONFIG", None)
-    missing_restore = subprocess.run(
-        ["bash", "-c", deploy_runtime_restore_run],
-        check=False,
-        env=fixture_env,
-        capture_output=True,
-        text=True,
-    )
-    assert missing_restore.returncode != 0
-    assert missing_restore.stderr.strip() == (
-        "::error title=Missing preview runtime kubeconfig::"
-        "The runtime kubeconfig path was not initialized."
-    )
-    assert not github_env.exists()
-    fixture_env["PREVIEW_RUNTIME_KUBECONFIG"] = "/tmp/preview-runtime.kubeconfig"
-    subprocess.run(
-        ["bash", "-c", deploy_runtime_restore_run], check=True, env=fixture_env
-    )
-    assert github_env.read_text(encoding="utf-8") == (
-        "KUBECONFIG=/tmp/preview-runtime.kubeconfig\n"
-    )
-assert "uses" not in deploy_runtime_restore
+assert deploy_requester_write["with"] == {
+    "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
+    "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
+}
+assert deploy_by_name["Apply canonical Active request"]["env"] == {
+    "IDENTITY_NAME": "pr-${{ needs.validate-target.outputs.pr_number }}",
+    "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+}
 assert (
     deploy_steps.index(deploy_runtime_write)
-    < deploy_steps.index(deploy_runtime_remember)
     < deploy_steps.index(deploy_requester_write)
     < deploy_steps.index(active_request)
-    < deploy_steps.index(deploy_runtime_restore)
 )
 deploy_requester_cleanup = deploy_by_name["Remove requester kubeconfig"]
 assert deploy_requester_cleanup["if"] == "${{ always() }}"
 assert deploy_requester_cleanup["run"] == (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 )
-assert deploy_steps.index(deploy_runtime_restore) < (
-    deploy_steps.index(deploy_requester_cleanup)
-)
+assert deploy_steps.index(active_request) < deploy_steps.index(deploy_requester_cleanup)
+assert "Remember preview runtime kubeconfig" not in deploy_by_name
+assert "Restore preview runtime kubeconfig" not in deploy_by_name
 runtime_kubeconfig_path = "${{ runner.temp }}/preview-runtime.kubeconfig"
 runtime_kubeconfig_cleanup = 'rm -f -- "$RUNNER_TEMP/preview-runtime.kubeconfig"'
 runtime_kubeconfig_jobs = set()
@@ -1180,26 +1145,12 @@ assert dev_demo_requester_write["uses"] == "./.github/actions/write-kubeconfig"
 assert dev_demo_requester_write["with"] == {
     "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
 }
 assert dev_demo_by_name["Apply fixed dev-demo Active request"]["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }
-dev_demo_active_restore = dev_demo_by_name[
-    "Restore dev-demo runtime kubeconfig after Active request"
-]
-assert dev_demo_active_restore["if"] == (
-    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
-    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-)
-assert '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]' in (
-    dev_demo_active_restore["run"]
-)
-assert 'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"' in (
-    dev_demo_active_restore["run"]
-)
-assert dev_demo_steps.index(dev_demo_active_restore) == (
-    dev_demo_steps.index(dev_demo_by_name["Apply fixed dev-demo Active request"]) + 1
-)
+assert "Restore dev-demo runtime kubeconfig after Active request" not in dev_demo_by_name
 assert dev_demo_render_step["env"]["CERTIFICATE_IDENTITY_MODE"] == (
     "${{ steps.certificate-identity.outputs.mode }}"
 )
@@ -3945,6 +3896,7 @@ test ! -e "$valid_kubeconfig_parent"
 PATH="$TEMP_DIR/bin:$PATH" \
   KUBECONFIG_CONTENT="$valid_kubeconfig" \
   KUBECONFIG_PATH="$valid_kubeconfig_path" \
+  EXPORT_TO_GITHUB_ENV=true \
   GITHUB_ENV="$valid_github_env" \
   bash "$TEMP_DIR/write-kubeconfig.sh"
 test -f "$valid_kubeconfig_path"
@@ -3952,6 +3904,34 @@ test ! -L "$valid_kubeconfig_path"
 test "$(stat -c '%a' "$valid_kubeconfig_path")" = 600
 test "$(cat "$valid_kubeconfig_path")" = "$valid_kubeconfig"
 grep -Fxq "KUBECONFIG=$valid_kubeconfig_path" "$valid_github_env"
+
+opt_out_kubeconfig_path="$TEMP_DIR/opt-out.kubeconfig"
+opt_out_github_env="$TEMP_DIR/opt-out-github-env"
+: >"$opt_out_github_env"
+PATH="$TEMP_DIR/bin:$PATH" \
+  KUBECONFIG_CONTENT="$valid_kubeconfig" \
+  KUBECONFIG_PATH="$opt_out_kubeconfig_path" \
+  EXPORT_TO_GITHUB_ENV=false \
+  GITHUB_ENV="$opt_out_github_env" \
+  bash "$TEMP_DIR/write-kubeconfig.sh"
+test -f "$opt_out_kubeconfig_path"
+test "$(cat "$opt_out_kubeconfig_path")" = "$valid_kubeconfig"
+test ! -s "$opt_out_github_env"
+
+invalid_export_path="$TEMP_DIR/invalid-export.kubeconfig"
+invalid_export_github_env="$TEMP_DIR/invalid-export-github-env"
+: >"$invalid_export_github_env"
+if PATH="$TEMP_DIR/bin:$PATH" \
+  KUBECONFIG_CONTENT="$valid_kubeconfig" \
+  KUBECONFIG_PATH="$invalid_export_path" \
+  EXPORT_TO_GITHUB_ENV=maybe \
+  GITHUB_ENV="$invalid_export_github_env" \
+  bash "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
+  echo "shared kubeconfig action accepted an invalid export-to-github-env value" >&2
+  exit 1
+fi
+test ! -e "$invalid_export_path"
+test ! -s "$invalid_export_github_env"
 
 symlink_target="$TEMP_DIR/symlink-target.kubeconfig"
 symlink_path="$TEMP_DIR/symlink.kubeconfig"
@@ -3962,6 +3942,7 @@ ln -s "$symlink_target" "$symlink_path"
 PATH="$TEMP_DIR/bin:$PATH" \
   KUBECONFIG_CONTENT="$valid_kubeconfig" \
   KUBECONFIG_PATH="$symlink_path" \
+  EXPORT_TO_GITHUB_ENV=true \
   GITHUB_ENV="$symlink_github_env" \
   bash "$TEMP_DIR/write-kubeconfig.sh"
 test ! -L "$symlink_path"
@@ -3979,6 +3960,7 @@ chmod 644 "$malformed_kubeconfig_path"
 if PATH="$TEMP_DIR/bin:$PATH" \
   KUBECONFIG_CONTENT=$'apiVersion: v1\nkind: Config\ncontexts: [' \
   KUBECONFIG_PATH="$malformed_kubeconfig_path" \
+  EXPORT_TO_GITHUB_ENV=true \
   GITHUB_ENV="$malformed_github_env" \
   bash "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
   echo "shared kubeconfig action accepted malformed content" >&2
@@ -3998,6 +3980,7 @@ printf 'prior destination without kubectl\n' >"$missing_kubectl_path"
 if PATH="$missing_kubectl_bin" \
   KUBECONFIG_CONTENT="$valid_kubeconfig" \
   KUBECONFIG_PATH="$missing_kubectl_path" \
+  EXPORT_TO_GITHUB_ENV=true \
   GITHUB_ENV="$missing_kubectl_github_env" \
   "$BASH" "$TEMP_DIR/write-kubeconfig.sh" >/dev/null 2>&1; then
   echo "shared kubeconfig action succeeded without kubectl" >&2

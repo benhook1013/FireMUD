@@ -323,11 +323,6 @@ jobs:
           content: ${{ secrets.PREVIEW_RUNTIME_KUBECONFIG }}
           path: ${{ runner.temp }}/preview-runtime.kubeconfig
 
-      - name: Remember preview runtime kubeconfig
-        env:
-          PREVIEW_RUNTIME_KUBECONFIG_PATH: ${{ runner.temp }}/preview-runtime.kubeconfig
-        run: echo "PREVIEW_RUNTIME_KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG_PATH" >> "$GITHUB_ENV"
-
       - name: Download source render artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -424,6 +419,7 @@ jobs:
         with:
           content: ${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}
           path: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
+          export-to-github-env: 'false'
 
       - name: Revalidate open PR before Active request
         env:
@@ -437,17 +433,8 @@ jobs:
       - name: Apply canonical Active request
         env:
           IDENTITY_NAME: pr-${{ needs.validate-target.outputs.pr_number }}
+          KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
         run: bash ./dev-tools/hosted/shared/request-hosted-identity.sh "$IDENTITY_NAME" Active
-
-      - name: Restore preview runtime kubeconfig
-        if: ${{ always() }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${PREVIEW_RUNTIME_KUBECONFIG:-}" ]]; then
-            echo "::error title=Missing preview runtime kubeconfig::The runtime kubeconfig path was not initialized." >&2
-            exit 1
-          fi
-          echo "KUBECONFIG=$PREVIEW_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"
 
       - name: Remove requester kubeconfig
         if: ${{ always() }}

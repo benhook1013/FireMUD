@@ -1542,7 +1542,7 @@ public class SecretMaterialValidatorTest {
   private static KeyPair generateRsaKeyPair() {
     try {
       KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-      keyPairGenerator.initialize(2048);
+      keyPairGenerator.initialize(HostedIdentityProperties.CERTIFICATE_RSA_KEY_SIZE_BITS);
       return keyPairGenerator.generateKeyPair();
     } catch (Exception exception) {
       throw new AssertionError("unable to create RSA test fixture key pair", exception);

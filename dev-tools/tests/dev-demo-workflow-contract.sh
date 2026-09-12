@@ -194,7 +194,6 @@ ordered = (
     "Record exact dev-demo runtime target",
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Active request",
-    "Restore dev-demo runtime kubeconfig after Active request",
     "Remove hosted identity requester kubeconfig",
     "Wait for all controller identity projections",
     "Deploy dev-demo release",
@@ -212,7 +211,6 @@ if positions != sorted(positions):
 controller_steps = (
     "Write hosted identity requester kubeconfig",
     "Apply fixed dev-demo Active request",
-    "Restore dev-demo runtime kubeconfig after Active request",
     "Wait for all controller identity projections",
     "Wait for dev-demo runtime rollouts",
     "Wait for exact dev-demo controller readiness",
@@ -241,6 +239,7 @@ if requester_writer.get("uses") != "./.github/actions/write-kubeconfig":
 if requester_writer.get("with") != {
     "content": "${{ secrets.HOSTED_IDENTITY_REQUESTER_KUBECONFIG }}",
     "path": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+    "export-to-github-env": "false",
 }:
     raise SystemExit("dev-demo Active requester action does not scope the protected content and path")
 active_request = deploy_by_name["Apply fixed dev-demo Active request"]
@@ -248,26 +247,8 @@ if active_request.get("env") != {
     "KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig"
 }:
     raise SystemExit("dev-demo Active request does not scope KUBECONFIG to its requester file")
-active_restore = deploy_by_name["Restore dev-demo runtime kubeconfig after Active request"]
-expected_active_restore_condition = (
-    "${{ always() && steps.cluster-access.outputs.available == 'true' && "
-    "steps.certificate-identity.outputs.mode == 'hosted-controller' }}"
-)
-if active_restore.get("if") != expected_active_restore_condition:
-    raise SystemExit("dev-demo Active requester must always restore runtime credentials")
-active_restore_run = active_restore["run"]
-for required in (
-    '[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]',
-    'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"',
-):
-    if required not in active_restore_run:
-        raise SystemExit(f"dev-demo Active runtime credential restore lacks {required}")
-if active_restore_run.index('[[ -z "${DEV_DEMO_RUNTIME_KUBECONFIG:-}" ]]') >= (
-    active_restore_run.index(
-        'echo "KUBECONFIG=$DEV_DEMO_RUNTIME_KUBECONFIG" >> "$GITHUB_ENV"'
-    )
-):
-    raise SystemExit("dev-demo Active restore publishes its runtime path before validating it")
+if "Restore dev-demo runtime kubeconfig after Active request" in deploy_by_name:
+    raise SystemExit("dev-demo Active requester must not require runtime credential restore")
 deploy_requester_cleanup = deploy_by_name["Remove hosted identity requester kubeconfig"]
 if deploy_requester_cleanup.get("if") != "${{ always() }}":
     raise SystemExit("dev-demo deploy requester credential cleanup must run after failures")
@@ -275,14 +256,10 @@ if deploy_requester_cleanup.get("run") != (
     'rm -f -- "$RUNNER_TEMP/hosted-identity-requester.kubeconfig"'
 ):
     raise SystemExit("dev-demo deploy requester credential cleanup targets the wrong file")
-if deploy_names.index("Restore dev-demo runtime kubeconfig after Active request") != (
+if deploy_names.index("Remove hosted identity requester kubeconfig") != (
     deploy_names.index("Apply fixed dev-demo Active request") + 1
 ):
-    raise SystemExit("dev-demo Active runtime credentials are not restored immediately")
-if deploy_names.index("Remove hosted identity requester kubeconfig") != (
-    deploy_names.index("Restore dev-demo runtime kubeconfig after Active request") + 1
-):
-    raise SystemExit("dev-demo Active requester credential is not removed after restore")
+    raise SystemExit("dev-demo Active requester credential is not removed after request")
 standalone_condition = deploy_by_name["Ensure dev-demo gRPC TLS secret exists"].get("if", "")
 if "steps.certificate-identity.outputs.mode == 'standalone'" not in standalone_condition:
     raise SystemExit("standalone gRPC setup is not isolated from controller identity")
@@ -1110,12 +1087,18 @@ if [[ $# -eq 8 && "$1" == -n && "$2" == firemud-system && "$3" == get && "$4" ==
     --argjson telnet_port "${FAKE_PROFILE_TELNET_PORT:?}" \
     --arg revision "$revision" \
     --arg grpc_revision "$grpc_revision" '
-      {
+      ($ready_generation | tonumber? // null) as $parsed_ready_generation
+      | {
         metadata:{generation:7},
         status:{
           observedGeneration:7,
           phase:"Ready",
-          conditions:[{type:"Ready",status:"True",observedGeneration:($ready_generation | tonumber?),reason:"Reconciled",message:"served"}],
+          conditions:[
+            ({type:"Ready",status:"True",reason:"Reconciled",message:"served"}
+             | if $parsed_ready_generation == null then .
+               else .observedGeneration = $parsed_ready_generation
+               end)
+          ],
           profile:{runtimeNamespaceUid:$profile_uid,telnetPort:$telnet_port},
           ingress:{revision:$revision},
           telnet:{revision:$revision},
